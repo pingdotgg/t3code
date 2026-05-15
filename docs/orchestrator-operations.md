@@ -384,7 +384,20 @@ C:\Users\Vivek\Affil\t3code\scripts\install-orchestrator-health-monitor-task.ps1
 ```
 
 The scheduled task runs every five minutes by default and posts only when a
-health check fails.
+health check changes state:
+
+- first failing run posts one failure alert
+- repeated failing runs stay quiet
+- first passing run after a failure posts one recovery alert
+
+The local state file defaults to:
+
+```text
+logs/orchestrator-health-monitor-state.json
+```
+
+Override with `T3CODE_HEALTH_ALERT_STATE_PATH` if the task needs to write state
+somewhere else.
 
 ## Replay Notes
 

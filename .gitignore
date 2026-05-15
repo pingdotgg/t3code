@@ -3,6 +3,7 @@ node_modules
 .turbo
 .DS_Store
 *.log
+logs/
 *.tsbuildinfo
 apps/*/dist
 .astro

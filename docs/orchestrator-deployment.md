@@ -199,6 +199,10 @@ Install the recurring monitor from elevated PowerShell:
 C:\Users\Vivek\Affil\t3code\scripts\install-orchestrator-health-monitor-task.ps1
 ```
 
+The monitor stores local alert state in
+`logs/orchestrator-health-monitor-state.json`. It posts once when checks first
+fail, stays quiet while they remain failing, and posts once when checks recover.
+
 ## Deploy Convex
 
 From `apps/orchestrator`:

@@ -5,7 +5,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface HealthCheckConfig {
@@ -15,6 +16,7 @@ export interface HealthCheckConfig {
   readonly alertEndpointUrl?: string | undefined;
   readonly alertSecret?: string | undefined;
   readonly notifyOnFailure: boolean;
+  readonly alertStatePath: string;
   readonly orchestratorDir: string;
   readonly serverServiceName: string;
   readonly tunnelServiceName: string;
@@ -26,6 +28,14 @@ export interface CheckResult {
   readonly ok: boolean;
   readonly details: string;
 }
+
+export interface HealthMonitorState {
+  readonly status: "passing" | "failing";
+  readonly updatedAt: string;
+  readonly failingCheckNames?: ReadonlyArray<string> | undefined;
+}
+
+export type HealthAlertStatus = "failing" | "recovered";
 
 function envValue(env: NodeJS.ProcessEnv, name: string) {
   const value = env[name]?.trim();
@@ -82,6 +92,8 @@ export function defaultHealthCheckConfig(env: NodeJS.ProcessEnv = process.env): 
         : `${convexSiteUrl.replace(/\/$/, "")}/ops/health-alert`),
     alertSecret: envValue(env, "T3_OPS_ALERT_SECRET"),
     notifyOnFailure: env.T3CODE_HEALTH_NOTIFY === "1",
+    alertStatePath:
+      env.T3CODE_HEALTH_ALERT_STATE_PATH ?? "logs/orchestrator-health-monitor-state.json",
     orchestratorDir: env.T3CODE_HEALTH_ORCHESTRATOR_DIR ?? "apps/orchestrator",
     serverServiceName: env.T3CODE_HEALTH_SERVER_SERVICE ?? "t3code-server",
     tunnelServiceName: env.T3CODE_HEALTH_TUNNEL_SERVICE ?? "cloudflared-t3code",
@@ -293,11 +305,73 @@ function printResults(results: ReadonlyArray<CheckResult>) {
   }
 }
 
-async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArray<CheckResult>) {
-  const failing = results.filter((result) => !result.ok);
-  if (!config.notifyOnFailure || failing.length === 0) {
-    return;
+export function readHealthMonitorState(path: string): HealthMonitorState | null {
+  if (!existsSync(path)) {
+    return null;
   }
+
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<HealthMonitorState>;
+    if (parsed.status !== "passing" && parsed.status !== "failing") {
+      return null;
+    }
+    if (typeof parsed.updatedAt !== "string") {
+      return null;
+    }
+    return {
+      status: parsed.status,
+      updatedAt: parsed.updatedAt,
+      ...(Array.isArray(parsed.failingCheckNames)
+        ? { failingCheckNames: parsed.failingCheckNames.filter((name) => typeof name === "string") }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeHealthMonitorState(path: string, state: HealthMonitorState): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+export function determineHealthAlert(input: {
+  readonly previous: HealthMonitorState | null;
+  readonly results: ReadonlyArray<CheckResult>;
+}): HealthAlertStatus | null {
+  const failing = input.results.filter((result) => !result.ok);
+  if (failing.length > 0) {
+    return input.previous?.status === "failing" ? null : "failing";
+  }
+
+  return input.previous?.status === "failing" ? "recovered" : null;
+}
+
+function stateFromResults(
+  results: ReadonlyArray<CheckResult>,
+  checkedAt: string,
+): HealthMonitorState {
+  const failing = results.filter((result) => !result.ok);
+  return failing.length === 0
+    ? {
+        status: "passing",
+        updatedAt: checkedAt,
+      }
+    : {
+        status: "failing",
+        updatedAt: checkedAt,
+        failingCheckNames: failing.map((result) => result.name),
+      };
+}
+
+async function postHealthAlert(input: {
+  readonly config: HealthCheckConfig;
+  readonly status: HealthAlertStatus;
+  readonly checkedAt: string;
+  readonly results: ReadonlyArray<CheckResult>;
+}) {
+  const { config, status, checkedAt, results } = input;
+  const failing = results.filter((result) => !result.ok);
   if (config.alertEndpointUrl === undefined || config.alertSecret === undefined) {
     console.warn(
       "WARN ops alert: set T3CODE_HEALTH_ALERT_URL/ORCHESTRATOR_BASE_URL and T3_OPS_ALERT_SECRET",
@@ -305,7 +379,6 @@ async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArr
     return;
   }
 
-  const checkedAt = new Date().toISOString();
   const response = await fetchWithTimeout(
     config.alertEndpointUrl,
     {
@@ -316,8 +389,11 @@ async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArr
       },
       body: JSON.stringify({
         checkedAt,
-        status: "failing",
-        summary: `${failing.length} orchestrator health check${failing.length === 1 ? "" : "s"} failed.`,
+        status,
+        summary:
+          status === "recovered"
+            ? "All orchestrator health checks are passing again."
+            : `${failing.length} orchestrator health check${failing.length === 1 ? "" : "s"} failed.`,
         results,
       }),
     },
@@ -329,7 +405,21 @@ async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArr
     console.warn(`WARN ops alert: ${config.alertEndpointUrl} -> HTTP ${response.status} ${body}`);
     return;
   }
-  console.log(`PASS ops alert: posted failure alert to ${config.alertEndpointUrl}`);
+  console.log(`PASS ops alert: posted ${status} alert to ${config.alertEndpointUrl}`);
+}
+
+async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArray<CheckResult>) {
+  if (!config.notifyOnFailure) {
+    return;
+  }
+
+  const checkedAt = new Date().toISOString();
+  const previous = readHealthMonitorState(config.alertStatePath);
+  const status = determineHealthAlert({ previous, results });
+  if (status !== null) {
+    await postHealthAlert({ config, status, checkedAt, results });
+  }
+  writeHealthMonitorState(config.alertStatePath, stateFromResults(results, checkedAt));
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
