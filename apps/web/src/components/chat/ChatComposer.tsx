@@ -31,6 +31,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
+import { serializeComposerMentionPath } from "~/composer-editor-mentions";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import {
   clampCollapsedComposerCursor,
@@ -1478,7 +1479,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
-        const replacement = `@${item.path} `;
+        const replacement = `@${serializeComposerMentionPath(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

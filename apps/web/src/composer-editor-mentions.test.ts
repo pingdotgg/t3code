@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   selectionTouchesMentionBoundary,
+  serializeComposerMentionPath,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -26,6 +27,22 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "one\n" },
       { type: "mention", path: "src/index.ts" },
       { type: "text", text: " \ntwo" },
+    ]);
+  });
+
+  it("splits quoted mention tokens containing whitespace", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: "My File.md" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("unescapes quoted mention token content", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"docs/My \\"File\\".md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: 'docs/My "File".md' },
+      { type: "text", text: " please" },
     ]);
   });
 
@@ -84,6 +101,20 @@ describe("splitPromptIntoComposerSegments", () => {
   });
 });
 
+describe("serializeComposerMentionPath", () => {
+  it("keeps simple paths unquoted", () => {
+    expect(serializeComposerMentionPath("src/index.ts")).toBe("src/index.ts");
+  });
+
+  it("quotes paths containing whitespace", () => {
+    expect(serializeComposerMentionPath("docs/My File.md")).toBe('"docs/My File.md"');
+  });
+
+  it("escapes quoted path content", () => {
+    expect(serializeComposerMentionPath('docs/My "File".md')).toBe('"docs/My \\"File\\".md"');
+  });
+});
+
 describe("selectionTouchesMentionBoundary", () => {
   it("returns true when selection includes the whitespace after a mention", () => {
     expect(
@@ -122,6 +153,16 @@ describe("selectionTouchesMentionBoundary", () => {
         prompt,
         `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
         prompt.length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes whitespace after a quoted mention", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        'hi @"My File.md" there',
+        'hi @"My File.md"'.length,
+        'hi @"My File.md" there'.length,
       ),
     ).toBe(true);
   });
