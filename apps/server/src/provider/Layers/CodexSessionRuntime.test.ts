@@ -147,6 +147,19 @@ describe("buildTurnStartParams", () => {
       ],
     });
   });
+
+  it("omits unsupported service tiers before sending to Codex", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Run",
+        serviceTier: "priority",
+      }),
+    );
+
+    assert.equal("serviceTier" in params, false);
+  });
 });
 
 describe("isRecoverableThreadResumeError", () => {
@@ -235,6 +248,44 @@ describe("openCodexThread", () => {
       calls.map((call) => call.method),
       ["thread/resume", "thread/start"],
     );
+  });
+
+  it("omits unsupported service tiers from thread/start", async () => {
+    const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+    const started = makeThreadOpenResponse("fresh-thread");
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        payload: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        calls.push({ method, payload });
+        return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+      },
+    };
+
+    await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: "priority",
+        resumeThreadId: undefined,
+      }),
+    );
+
+    assert.deepStrictEqual(calls, [
+      {
+        method: "thread/start",
+        payload: {
+          cwd: "/tmp/project",
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+          model: "gpt-5.3-codex",
+        },
+      },
+    ]);
   });
 
   it("propagates non-recoverable resume failures", async () => {

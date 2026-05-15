@@ -7,6 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -67,6 +68,26 @@ interface VerifiedProviderRefresh {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+export function resolveProviderMaintenanceSpawnCommand(
+  command: string,
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
+): string {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    return command;
+  }
+
+  return (
+    resolveCommandPath(command, {
+      platform,
+      env: options.env ?? process.env,
+    }) ?? command
+  );
+}
+
 const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceRunner.runCommand")(
   function* (input: {
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -75,8 +96,9 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
+        const spawnCommand = resolveProviderMaintenanceSpawnCommand(input.command);
         const child = yield* input.spawner
-          .spawn(ChildProcess.make(input.command, [...input.args]))
+          .spawn(ChildProcess.make(spawnCommand, [...input.args]))
           .pipe(
             Effect.mapError(
               (cause) =>

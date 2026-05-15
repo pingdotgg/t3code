@@ -208,6 +208,23 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   );
 
 describe("providerMaintenanceRunner", () => {
+  it("resolves Windows command shims before spawning update commands", () => {
+    const resolvedNpm = ProviderMaintenanceRunner.resolveProviderMaintenanceSpawnCommand("npm", {
+      platform: "win32",
+      env: process.env,
+    });
+    if (resolvedNpm !== "npm") {
+      assert.match(resolvedNpm, /npm\.(cmd|exe|bat|com)$/i);
+    }
+    assert.strictEqual(
+      ProviderMaintenanceRunner.resolveProviderMaintenanceSpawnCommand("npm", {
+        platform: "linux",
+        env: process.env,
+      }),
+      "npm",
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
@@ -271,7 +288,7 @@ describe("providerMaintenanceRunner", () => {
       yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(calls, [
         {
-          command: "bun",
+          command: ProviderMaintenanceRunner.resolveProviderMaintenanceSpawnCommand("bun"),
           args: ["i", "-g", "@openai/codex@latest"],
         },
       ]);
@@ -300,7 +317,7 @@ describe("providerMaintenanceRunner", () => {
 
         assert.deepStrictEqual(calls, [
           {
-            command: "npm",
+            command: ProviderMaintenanceRunner.resolveProviderMaintenanceSpawnCommand("npm"),
             args: ["install", "-g", "@openai/codex@latest"],
           },
         ]);

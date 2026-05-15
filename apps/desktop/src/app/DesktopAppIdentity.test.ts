@@ -25,6 +25,8 @@ const defaultEnvironmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
+const normalizePath = (value: string) => value.replaceAll("\\", "/").replace(/^[A-Z]:/i, "");
+
 type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> & {
   readonly env?: Record<string, string | undefined>;
 };
@@ -138,7 +140,10 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.equal(
+          normalizePath(userDataPath),
+          "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+        );
       }),
       { legacyPathExists: true },
     ),

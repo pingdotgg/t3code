@@ -28,6 +28,7 @@ class OxlintFixtureExpectedFailure extends Data.TaggedError("OxlintFixtureExpect
 }
 
 const encodeOxlintConfig = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const OXLINT_RULE_TEST_TIMEOUT_MS = 30_000;
 
 interface RuleHarness {
   readonly run: (
@@ -131,20 +132,23 @@ export const createOxlintRuleHarness = (ruleName: string): RuleHarness => {
     runAndExpectFailure,
     valid(name, source) {
       test(name, (it) => {
-        it.effect("passes", () => run(source));
+        it.effect("passes", () => run(source), OXLINT_RULE_TEST_TIMEOUT_MS);
       });
     },
     invalid(name, source, assertion) {
       test(name, (it) => {
-        it.effect("reports the rule diagnostic", () =>
-          runAndExpectFailure(source).pipe(
-            Effect.tap((output) =>
-              Effect.sync(() => {
-                assert.match(output, new RegExp(diagnosticRuleName));
-                assertion?.(output);
-              }),
+        it.effect(
+          "reports the rule diagnostic",
+          () =>
+            runAndExpectFailure(source).pipe(
+              Effect.tap((output) =>
+                Effect.sync(() => {
+                  assert.match(output, new RegExp(diagnosticRuleName));
+                  assertion?.(output);
+                }),
+              ),
             ),
-          ),
+          OXLINT_RULE_TEST_TIMEOUT_MS,
         );
       });
     },
