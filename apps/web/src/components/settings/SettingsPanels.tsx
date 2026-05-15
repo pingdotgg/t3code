@@ -393,6 +393,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.defaultOpenChangedFiles !== DEFAULT_UNIFIED_SETTINGS.defaultOpenChangedFiles
+        ? ["Changed-files default state"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -432,6 +435,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.defaultOpenChangedFiles,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
       settings.diffWordWrap,
@@ -589,6 +593,33 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Changed-files default state"
+          description="Choose whether changed-files blocks start expanded before you manually toggle a thread."
+          resetAction={
+            settings.defaultOpenChangedFiles !==
+            DEFAULT_UNIFIED_SETTINGS.defaultOpenChangedFiles ? (
+              <SettingResetButton
+                label="changed-files default state"
+                onClick={() =>
+                  updateSettings({
+                    defaultOpenChangedFiles: DEFAULT_UNIFIED_SETTINGS.defaultOpenChangedFiles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.defaultOpenChangedFiles}
+              onCheckedChange={(checked) =>
+                updateSettings({ defaultOpenChangedFiles: Boolean(checked) })
+              }
+              aria-label="Open changed files by default"
+            />
           }
         />
 

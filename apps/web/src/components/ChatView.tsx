@@ -637,6 +637,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
+  const defaultOpenChangedFiles = settings.defaultOpenChangedFiles;
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -3574,6 +3575,7 @@ export default function ChatView(props: ChatViewProps) {
               markdownCwd={gitCwd ?? undefined}
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
+              defaultOpenChangedFiles={defaultOpenChangedFiles}
               workspaceRoot={activeWorkspaceRoot}
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
               onIsAtEndChange={onIsAtEndChange}
