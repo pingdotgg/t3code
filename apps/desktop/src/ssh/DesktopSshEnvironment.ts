@@ -17,7 +17,7 @@ import {
   SshLaunchError,
   SshPairingError,
   SshPasswordPromptError,
-  SshReadinessError,
+  type SshReadinessError,
 } from "@t3tools/ssh/errors";
 import { SshEnvironmentManager, type RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -79,11 +80,13 @@ function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
 
+const isSshPasswordPromptError = Schema.is(SshPasswordPromptError);
+
 export function isDesktopSshPasswordPromptCancellation(
   error: unknown,
 ): error is SshPasswordPromptError {
   return (
-    error instanceof SshPasswordPromptError &&
+    isSshPasswordPromptError(error) &&
     DesktopSshPasswordPrompts.isDesktopSshPasswordPromptCancellation(error.cause)
   );
 }
