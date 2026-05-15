@@ -50,7 +50,11 @@ function countMatches(haystack: string, needle: string): number {
   return count;
 }
 
-function collectRowSearchText(row: TimelineRow): string[] {
+interface ThreadSearchIndexOptions {
+  workspaceRoot?: string | undefined;
+}
+
+function collectRowSearchText(row: TimelineRow, options?: ThreadSearchIndexOptions): string[] {
   switch (row.kind) {
     case "message": {
       const visibleAssistantText =
@@ -83,8 +87,8 @@ function collectRowSearchText(row: TimelineRow): string[] {
     case "work":
       return row.groupedEntries.flatMap((entry) => [
         renderableWorkEntryHeading(entry),
-        renderableWorkEntryPreview(entry) ?? "",
-        ...renderableWorkEntryChangedFiles(entry),
+        renderableWorkEntryPreview(entry, options?.workspaceRoot) ?? "",
+        ...renderableWorkEntryChangedFiles(entry, options?.workspaceRoot),
       ]);
     case "working":
       return [];
@@ -93,11 +97,12 @@ function collectRowSearchText(row: TimelineRow): string[] {
 
 export function buildThreadSearchIndex(
   rows: ReadonlyArray<TimelineRow>,
+  options?: ThreadSearchIndexOptions,
 ): ReadonlyArray<ThreadSearchIndexEntry> {
   return rows.map((row, rowIndex) => ({
     rowId: row.id,
     rowIndex,
-    normalizedTexts: collectRowSearchText(row).flatMap((value) => {
+    normalizedTexts: collectRowSearchText(row, options).flatMap((value) => {
       const nextValue = normalizeThreadSearchText(value.trim());
       return nextValue.length > 0 ? [nextValue] : [];
     }),
@@ -187,6 +192,7 @@ export function findThreadSearchResultsFromIndex(
 export function findThreadSearchResults(
   rows: ReadonlyArray<TimelineRow>,
   query: string,
+  options?: ThreadSearchIndexOptions,
 ): ReadonlyArray<ThreadSearchResult> {
-  return findThreadSearchResultsFromIndex(buildThreadSearchIndex(rows), query);
+  return findThreadSearchResultsFromIndex(buildThreadSearchIndex(rows, options), query);
 }

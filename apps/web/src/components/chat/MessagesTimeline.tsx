@@ -101,6 +101,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_MATCHED_SEARCH_ROW_IDS = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -162,7 +163,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   skills = EMPTY_TIMELINE_SKILLS,
   onIsAtEndChange,
   activeSearchRowId = null,
-  matchedSearchRowIds = new Set<string>(),
+  matchedSearchRowIds = EMPTY_MATCHED_SEARCH_ROW_IDS,
   searchQuery = "",
 }: MessagesTimelineProps) {
   const rawRows = useMemo(

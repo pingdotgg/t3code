@@ -1660,6 +1660,9 @@ export default function ChatView(props: ChatViewProps) {
     if (!completionSummary) return null;
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
+  const activeProjectCwd = activeProject?.cwd ?? null;
+  const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
+  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const threadSearchRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
@@ -1687,8 +1690,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
   const threadSearchIndex = useMemo(
-    () => (threadSearchOpen ? buildThreadSearchIndex(threadSearchRows) : EMPTY_THREAD_SEARCH_INDEX),
-    [threadSearchOpen, threadSearchRows],
+    () =>
+      threadSearchOpen
+        ? buildThreadSearchIndex(threadSearchRows, { workspaceRoot: activeWorkspaceRoot })
+        : EMPTY_THREAD_SEARCH_INDEX,
+    [activeWorkspaceRoot, threadSearchOpen, threadSearchRows],
   );
   const threadSearchLookupStateRef = useRef<ThreadSearchLookupState>(
     createEmptyThreadSearchLookupState(threadSearchIndex),
@@ -1761,9 +1767,6 @@ export default function ChatView(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const activeProjectCwd = activeProject?.cwd ?? null;
-  const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
-  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext
@@ -2334,7 +2337,7 @@ export default function ChatView(props: ChatViewProps) {
     (select = false) => {
       const activeElement =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      if (!isThreadSearchInputTarget(activeElement)) {
+      if (activeElement && activeElement !== threadSearchInputRef.current) {
         threadSearchRestoreFocusRef.current = activeElement;
       }
       setThreadSearchOpen(true);
@@ -2632,13 +2635,6 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
-      if (isThreadSearchShortcut(event) && !isTerminalFocused() && !expandedImage) {
-        event.preventDefault();
-        event.stopPropagation();
-        openThreadSearch(!isThreadSearchInputTarget(event.target));
-        return;
-      }
-
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
         terminalOpen: Boolean(terminalState.terminalOpen),
@@ -2648,6 +2644,19 @@ export default function ChatView(props: ChatViewProps) {
       const command = resolveShortcutCommand(event, keybindings, {
         context: shortcutContext,
       });
+
+      if (
+        !command &&
+        isThreadSearchShortcut(event) &&
+        !shortcutContext.terminalFocus &&
+        !expandedImage
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadSearch(!isThreadSearchInputTarget(event.target));
+        return;
+      }
+
       if (!command) return;
 
       if (command === "terminal.toggle") {

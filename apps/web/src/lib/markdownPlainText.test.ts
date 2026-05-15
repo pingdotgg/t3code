@@ -30,4 +30,8 @@ describe("markdownToPlainText", () => {
       markdownToPlainText("# Heading\n\n## Summary\n\n- **alpha marker**\n- `thread search`"),
     ).toBe("Heading\nSummary\nalpha marker\nthread search");
   });
+
+  it("strips nested blockquote markers while preserving quoted text", () => {
+    expect(markdownToPlainText("> > nested quote")).toBe("nested quote");
+  });
 });

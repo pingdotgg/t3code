@@ -325,6 +325,43 @@ describe("findThreadSearchResults", () => {
     expect(findThreadSearchResults(rows, "src/e.ts")).toEqual([]);
   });
 
+  it("indexes work-entry changed files by the displayed workspace-relative path", () => {
+    const absolutePathRows: TimelineRow[] = [
+      {
+        kind: "work",
+        id: "absolute-path-work-row",
+        createdAt: "2026-03-28T12:00:15.000Z",
+        groupedEntries: [
+          {
+            id: "absolute-path-work-entry",
+            createdAt: "2026-03-28T12:00:15.000Z",
+            label: "Apply patch completed",
+            command: "git status",
+            changedFiles: ["/repo/apps/web/src/App.tsx"],
+            tone: "info",
+          },
+        ],
+      },
+    ];
+
+    expect(
+      findThreadSearchResults(absolutePathRows, "apps/web/src/app.tsx", {
+        workspaceRoot: "/repo",
+      }),
+    ).toEqual([
+      {
+        rowId: "absolute-path-work-row",
+        rowIndex: 0,
+        matchCount: 1,
+      },
+    ]);
+    expect(
+      findThreadSearchResults(absolutePathRows, "/repo/apps/web/src/app.tsx", {
+        workspaceRoot: "/repo",
+      }),
+    ).toEqual([]);
+  });
+
   it("indexes assistant markdown by rendered text instead of raw markdown syntax", () => {
     expect(findThreadSearchResults(rows, "thread search docs")).toEqual([
       {

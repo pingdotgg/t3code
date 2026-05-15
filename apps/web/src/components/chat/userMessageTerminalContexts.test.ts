@@ -43,6 +43,15 @@ describe("userMessageTerminalContexts", () => {
     ).toBe("yo Terminal 1 lines 12-13 whats up");
   });
 
+  it("ignores empty terminal context headers while replacing visible inline labels", () => {
+    expect(
+      buildRenderedUserMessageText("yo @terminal-1:12-13 whats up", [
+        { header: "   " },
+        { header: "Terminal 1 lines 12-13" },
+      ]),
+    ).toBe("yo Terminal 1 lines 12-13 whats up");
+  });
+
   it("prefixes standalone rendered chip labels ahead of the remaining text", () => {
     expect(
       buildRenderedUserMessageText("follow-up text", [{ header: "Terminal 1 lines 12-13" }]),

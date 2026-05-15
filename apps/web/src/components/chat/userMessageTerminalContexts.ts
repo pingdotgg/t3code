@@ -73,16 +73,14 @@ export function buildRenderedUserMessageText(
     return text;
   }
 
-  if (textContainsInlineTerminalContextLabels(text, contexts)) {
+  const visibleContexts = contexts.filter((context) => context.header.trim().length > 0);
+
+  if (textContainsInlineTerminalContextLabels(text, visibleContexts)) {
     let cursor = 0;
     let renderedText = "";
 
-    for (const context of contexts) {
+    for (const context of visibleContexts) {
       const replacement = context.header.trim();
-      if (replacement.length === 0) {
-        continue;
-      }
-
       const label = formatInlineTerminalContextLabel(context.header);
       const matchIndex = text.indexOf(label, cursor);
       if (matchIndex === -1) {

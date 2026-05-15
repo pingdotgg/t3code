@@ -2,6 +2,7 @@ import * as Equal from "effect/Equal";
 import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type TurnId } from "@t3tools/contracts";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
@@ -88,19 +89,22 @@ export function renderableWorkEntryHeading(workEntry: TimelineWorkEntry): string
 
 export function renderableWorkEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workspaceRoot?: string | undefined,
 ): string | null {
   if (workEntry.command) return workEntry.command;
   if (workEntry.detail) return workEntry.detail;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
+  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
   return workEntry.changedFiles!.length === 1
-    ? firstPath
-    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+    ? displayPath
+    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
 export function renderableWorkEntryChangedFiles(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workspaceRoot?: string | undefined,
 ): string[] {
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length === 0) {
@@ -109,7 +113,9 @@ export function renderableWorkEntryChangedFiles(
   if (!workEntry.command && !workEntry.detail) {
     return [];
   }
-  return changedFiles.slice(0, 4);
+  return changedFiles
+    .slice(0, 4)
+    .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot));
 }
 
 export function resolveAssistantMessageCopyState({
