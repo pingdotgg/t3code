@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Sink from "effect/Sink";
@@ -18,6 +19,8 @@ import {
   resolveAvailableEditors,
   resolveBrowserLaunch,
   resolveEditorLaunch,
+  resolveMacApplicationDirectories,
+  resolveMacEditorApplication,
 } from "./externalLauncher.ts";
 
 function encodeUtf16LeBase64(input: string): string {
@@ -54,7 +57,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     Effect.gen(function* () {
       const antigravityLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "antigravity" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(antigravityLaunch, {
@@ -64,7 +67,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(cursorLaunch, {
@@ -74,7 +77,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const traeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "trae" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(traeLaunch, {
         command: "trae",
@@ -83,7 +86,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const kiroLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "kiro" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(kiroLaunch, {
@@ -93,7 +96,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(vscodeLaunch, {
@@ -103,7 +106,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodeInsidersLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode-insiders" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeInsidersLaunch, {
         command: "code-insiders",
@@ -112,7 +115,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodiumLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscodium" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodiumLaunch, {
         command: "codium",
@@ -121,7 +124,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const zedLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "zed" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(zedLaunch, {
@@ -131,7 +134,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "idea" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(ideaLaunch, {
         command: "idea",
@@ -140,7 +143,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const aquaLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "aqua" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(aquaLaunch, {
         command: "aqua",
@@ -149,7 +152,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const clionLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "clion" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(clionLaunch, {
         command: "clion",
@@ -158,7 +161,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const datagripLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "datagrip" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(datagripLaunch, {
         command: "datagrip",
@@ -167,7 +170,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const dataspellLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "dataspell" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(dataspellLaunch, {
         command: "dataspell",
@@ -176,7 +179,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const golandLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "goland" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(golandLaunch, {
         command: "goland",
@@ -185,7 +188,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const phpstormLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "phpstorm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(phpstormLaunch, {
         command: "phpstorm",
@@ -194,7 +197,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const pycharmLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "pycharm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(pycharmLaunch, {
         command: "pycharm",
@@ -203,7 +206,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const riderLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "rider" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(riderLaunch, {
         command: "rider",
@@ -212,7 +215,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const rubymineLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "rubymine" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(rubymineLaunch, {
         command: "rubymine",
@@ -221,7 +224,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const rustroverLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "rustrover" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(rustroverLaunch, {
         command: "rustrover",
@@ -230,7 +233,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const webstormLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "webstorm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(webstormLaunch, {
         command: "webstorm",
@@ -243,7 +246,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     Effect.gen(function* () {
       const lineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(lineOnly, {
@@ -253,7 +256,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const lineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "cursor" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(lineAndColumn, {
@@ -263,7 +266,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const traeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "trae" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(traeLineAndColumn, {
         command: "trae",
@@ -272,7 +275,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const kiroLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "kiro" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(kiroLineAndColumn, {
@@ -282,7 +285,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "vscode" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(vscodeLineAndColumn, {
@@ -292,7 +295,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodeInsidersLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "vscode-insiders" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeInsidersLineAndColumn, {
         command: "code-insiders",
@@ -301,7 +304,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const vscodiumLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "vscodium" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodiumLineAndColumn, {
         command: "codium",
@@ -310,7 +313,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const zedLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "zed" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(zedLineAndColumn, {
@@ -320,7 +323,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const zedLineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "zed" },
-        "darwin",
+        "linux",
         { PATH: "" },
       );
       assert.deepEqual(zedLineOnly, {
@@ -330,7 +333,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "idea" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(ideaLineOnly, {
         command: "idea",
@@ -339,7 +342,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const ideaLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "idea" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(ideaLineAndColumn, {
         command: "idea",
@@ -348,7 +351,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const aquaLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "aqua" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(aquaLineAndColumn, {
         command: "aqua",
@@ -357,7 +360,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const clionLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "clion" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(clionLineAndColumn, {
         command: "clion",
@@ -366,7 +369,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const datagripLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "datagrip" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(datagripLineAndColumn, {
         command: "datagrip",
@@ -375,7 +378,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const dataspellLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "dataspell" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(dataspellLineAndColumn, {
         command: "dataspell",
@@ -384,7 +387,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const golandLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "goland" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(golandLineAndColumn, {
         command: "goland",
@@ -393,7 +396,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const phpstormLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "phpstorm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(phpstormLineAndColumn, {
         command: "phpstorm",
@@ -402,7 +405,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const pycharmLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "pycharm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(pycharmLineAndColumn, {
         command: "pycharm",
@@ -411,7 +414,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const riderLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "rider" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(riderLineAndColumn, {
         command: "rider",
@@ -420,7 +423,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const rubymineLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "rubymine" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(rubymineLineAndColumn, {
         command: "rubymine",
@@ -429,7 +432,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const rustroverLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "rustrover" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(rustroverLineAndColumn, {
         command: "rustrover",
@@ -438,7 +441,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const webstormLineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "webstorm" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(webstormLineOnly, {
         command: "webstorm",
@@ -476,6 +479,28 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["/tmp/workspace"],
       });
     }),
+  );
+
+  it.effect(
+    "opens macOS app bundles from the user Applications folder when the CLI is absent",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-external-launcher-home-" });
+        yield* fs.makeDirectory(path.join(home, "Applications", "Cursor.app"), { recursive: true });
+
+        const result = yield* resolveEditorLaunch(
+          { cwd: "/tmp/workspace/src/file.ts:42:7", editor: "cursor" },
+          "darwin",
+          { HOME: home, PATH: "" },
+        );
+
+        assert.deepEqual(result, {
+          command: "open",
+          args: ["-a", path.join(home, "Applications", "Cursor.app"), "/tmp/workspace/src/file.ts"],
+        });
+      }),
   );
 
   it.effect("maps file-manager editor to OS open commands", () =>
@@ -792,6 +817,28 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       assert.deepEqual(editors, ["zed", "file-manager"]);
     }),
   );
+
+  it.effect("includes macOS app bundles from the user Applications folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-external-launcher-available-home-",
+      });
+      yield* fs.makeDirectory(path.join(home, "Applications", "Zed.app"), { recursive: true });
+
+      assert.include(resolveAvailableEditors("darwin", { HOME: home, PATH: "" }), "zed");
+    }),
+  );
+
+  it("keeps searching the system Applications folder when HOME is missing", () => {
+    assert.deepEqual(resolveMacApplicationDirectories({}), ["/Applications"]);
+    assert.deepEqual(resolveMacApplicationDirectories({ HOME: "   " }), ["/Applications"]);
+    assert.deepEqual(
+      resolveMacEditorApplication("zed", {}, (path) => path === "/Applications/Zed.app"),
+      Option.some("/Applications/Zed.app"),
+    );
+  });
 
   it("omits file-manager when the platform opener is unavailable", () => {
     const editors = resolveAvailableEditors("linux", {
