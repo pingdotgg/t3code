@@ -64,7 +64,7 @@
     "@effect/language-service": "catalog:",
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
-    "oxfmt": "^0.40.0",
+    "oxfmt": "^0.49.0",
     "oxlint": "^1.63.0",
     "turbo": "^2.3.3",
     "typescript": "catalog:",

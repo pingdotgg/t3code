@@ -20,6 +20,13 @@
       "options": {
         "trailingComma": "none"
       }
+    },
+    {
+      "files": [".devcontainer/devcontainer-lock.json"],
+      "options": {
+        "trailingComma": "none",
+        "insertFinalNewline": false
+      }
     }
   ]
 }
