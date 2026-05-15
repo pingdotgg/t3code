@@ -363,7 +363,7 @@ const mobileEndorsementRows = [
           <TuxIcon class="dl-icon dl-icon--linux" idPrefix="cta-linux-" />
           <span id="cta-download-label">Download for macOS</span>
         </a>
-        <a class="btn btn-ghost btn-lg" href="/download">Windows · Linux · other</a>
+        <a id="cta-other-platforms-link" class="btn btn-ghost btn-lg" href="/download">Windows · Linux · other</a>
       </div>
     </div>
   </section>
@@ -410,6 +410,29 @@ const mobileEndorsementRows = [
     document.documentElement.dataset.platform = platform.os;
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
+
+    const otherPlatformsLink = document.getElementById("cta-other-platforms-link");
+    if (otherPlatformsLink) {
+      const others =
+        platform.os === "win"
+          ? ["macOS", "Linux", "other"]
+          : platform.os === "mac"
+            ? ["Windows", "Linux", "other"]
+            : ["Windows", "macOS", "other"];
+      otherPlatformsLink.textContent = others.join(" · ");
+    }
+
+    const keepClass =
+      platform.os === "mac"
+        ? "dl-icon--apple"
+        : platform.os === "win"
+          ? "dl-icon--windows"
+          : "dl-icon--linux";
+    document.querySelectorAll(".dl-icon").forEach((el) => {
+      if (!el.classList.contains(keepClass)) {
+        el.remove();
+      }
+    });
 
     try {
       const release = await fetchLatestRelease();
@@ -538,17 +561,27 @@ const mobileEndorsementRows = [
   }
 
   /* Download button icons (platform-aware) */
-  .dl-icon {
+  :global(.dl-icon) {
     display: none;
     width: 14px;
     height: 14px;
     flex-shrink: 0;
   }
 
-  :global([data-platform="mac"]) .dl-icon--apple { display: block; }
-  :global([data-platform="win"]) .dl-icon--windows { display: block; }
-  :global([data-platform="linux"]) .dl-icon--linux { display: block; }
-  :global(:not([data-platform])) .dl-icon--apple { display: block; }
+  /* Default (pre-JS / unknown platform): show Apple icon only */
+  :global(.dl-icon--apple) { display: block; }
+
+  :global(html[data-platform="mac"] .dl-icon--apple) { display: block; }
+  :global(html[data-platform="mac"] .dl-icon--windows),
+  :global(html[data-platform="mac"] .dl-icon--linux) { display: none; }
+
+  :global(html[data-platform="win"] .dl-icon--windows) { display: block; }
+  :global(html[data-platform="win"] .dl-icon--apple),
+  :global(html[data-platform="win"] .dl-icon--linux) { display: none; }
+
+  :global(html[data-platform="linux"] .dl-icon--linux) { display: block; }
+  :global(html[data-platform="linux"] .dl-icon--apple),
+  :global(html[data-platform="linux"] .dl-icon--windows) { display: none; }
 
   /* Floating harness marks */
   .hero-float {
