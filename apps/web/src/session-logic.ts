@@ -12,10 +12,17 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  normalizeCommandActivityPayload,
+  normalizeToolCommandCandidate,
+  type LocalhostUrlCandidate,
+  type NormalizedCommandActivity,
+} from "@t3tools/shared/toolActivity";
 
 import type {
   ChatMessage,
   ProposedPlan,
+  SidebarAgentCommandStatus,
   SessionPhase,
   Thread,
   ThreadSession,
@@ -54,6 +61,9 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  urls?: ReadonlyArray<LocalhostUrlCandidate>;
+  hasLocalUrl?: boolean;
+  outputPreview?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -498,6 +508,71 @@ export function deriveWorkLogEntries(
   );
 }
 
+export function deriveSidebarAgentCommandStatus(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: TurnId | null | undefined,
+): SidebarAgentCommandStatus | null {
+  if (!latestTurnId) {
+    return null;
+  }
+
+  // Scan all `tool.completed` activities (any item type) for localhost URLs.
+  // This intentionally widens beyond `command_execution` so URLs that surface
+  // through Monitor/tail/log tools — common when agents background a dev
+  // server — are captured too. We only emit a status when at least one URL is
+  // detected; the icon's visibility is otherwise driven by live process state
+  // (terminal subprocesses + port liveness probes), not stale activity.
+  const completedCommands = activities
+    .filter((activity) => activity.kind === "tool.completed" && activity.turnId === latestTurnId)
+    .flatMap((activity) => {
+      const payload =
+        activity.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      const itemType = extractWorkLogItemType(payload) ?? "command_execution";
+      const title = extractToolTitle(payload);
+      const commandActivity = extractToolCommandActivity({
+        payload,
+        title,
+        itemType,
+      });
+      if (!commandActivity.hasLocalUrl || commandActivity.urls.length === 0) {
+        return [];
+      }
+      return [{ activity, commandActivity }];
+    })
+    .toSorted((left, right) => compareActivitiesByOrder(left.activity, right.activity));
+
+  if (completedCommands.length === 0) {
+    return null;
+  }
+
+  const newestLocalUrlCommand = completedCommands.at(-1);
+  const urls = completedCommands
+    .toReversed()
+    .flatMap((entry) => entry.commandActivity.urls)
+    .filter((url, index, candidates) => {
+      if (!url.href) return false;
+      return candidates.findIndex((candidate) => candidate.href === url.href) === index;
+    });
+  const primaryUrl = urls[0];
+  if (!newestLocalUrlCommand || !primaryUrl) {
+    return null;
+  }
+  return {
+    label: "Agent local URL detected",
+    createdAt: newestLocalUrlCommand.activity.createdAt,
+    hasLocalUrl: true,
+    urls,
+    primaryUrl,
+  };
+}
+
+export function sidebarAgentCommandStatusKey(status: SidebarAgentCommandStatus): string {
+  const urls = status.urls.length > 0 ? status.urls.map((url) => url.href).join(",") : "";
+  return [status.createdAt, status.label, status.hasLocalUrl ? "url" : "command", urls].join("|");
+}
+
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
   if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
     return false;
@@ -515,9 +590,21 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
-  const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const itemType = extractWorkLogItemType(payload);
+  // Run URL/output extraction for every tool kind so Monitor/tail and other
+  // log-style tools can surface localhost URLs in the timeline — matching the
+  // sidebar's `deriveSidebarAgentCommandStatus`, which already widens beyond
+  // command_execution. Keep `commandPreview` narrow for non-command tools so
+  // details like `/tmp/app.ts` aren't inferred as commands.
+  const commandActivity = extractToolCommandActivity({
+    payload,
+    title,
+    itemType: itemType ?? "command_execution",
+  });
+  const commandPreview =
+    itemType === "command_execution" ? commandActivity : extractToolCommand(payload);
+  const changedFiles = extractChangedFiles(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
@@ -552,7 +639,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     activityKind: activity.kind,
   };
-  const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
@@ -562,6 +648,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
+  }
+  if (commandActivity?.urls.length) {
+    entry.urls = commandActivity.urls;
+  }
+  if (commandActivity?.hasLocalUrl) {
+    entry.hasLocalUrl = true;
+  }
+  if (commandActivity?.outputPreview) {
+    entry.outputPreview = commandActivity.outputPreview;
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
@@ -630,9 +725,11 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
+  const urls = mergeLocalhostUrls(previous.urls, next.urls);
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const outputPreview = next.outputPreview ?? previous.outputPreview;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -644,6 +741,8 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(urls.length > 0 ? { urls, hasLocalUrl: true } : {}),
+    ...(outputPreview ? { outputPreview } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -651,6 +750,22 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
   };
+}
+
+function mergeLocalhostUrls(
+  previous: ReadonlyArray<LocalhostUrlCandidate> | undefined,
+  next: ReadonlyArray<LocalhostUrlCandidate> | undefined,
+): LocalhostUrlCandidate[] {
+  const merged: LocalhostUrlCandidate[] = [];
+  const seen = new Set<string>();
+  for (const url of [...(previous ?? []), ...(next ?? [])]) {
+    if (seen.has(url.href)) {
+      continue;
+    }
+    seen.add(url.href);
+    merged.push(url);
+  }
+  return merged;
 }
 
 function mergeChangedFiles(
@@ -712,148 +827,72 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function trimMatchingOuterQuotes(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-    (trimmed.startsWith('"') && trimmed.endsWith('"'))
-  ) {
-    const unquoted = trimmed.slice(1, -1).trim();
-    return unquoted.length > 0 ? unquoted : trimmed;
-  }
-  return trimmed;
-}
-
-function executableBasename(value: string): string | null {
-  const trimmed = trimMatchingOuterQuotes(value);
-  if (trimmed.length === 0) {
-    return null;
-  }
-  const normalized = trimmed.replace(/\\/g, "/");
-  const segments = normalized.split("/");
-  const last = segments.at(-1)?.trim() ?? "";
-  return last.length > 0 ? last.toLowerCase() : null;
-}
-
-function splitExecutableAndRest(value: string): { executable: string; rest: string } | null {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
-    const quote = trimmed.charAt(0);
-    const closeIndex = trimmed.indexOf(quote, 1);
-    if (closeIndex <= 0) {
-      return null;
-    }
-    return {
-      executable: trimmed.slice(0, closeIndex + 1),
-      rest: trimmed.slice(closeIndex + 1).trim(),
-    };
-  }
-
-  const firstWhitespace = trimmed.search(/\s/);
-  if (firstWhitespace < 0) {
-    return {
-      executable: trimmed,
-      rest: "",
-    };
-  }
-
-  return {
-    executable: trimmed.slice(0, firstWhitespace),
-    rest: trimmed.slice(firstWhitespace).trim(),
-  };
-}
-
-const SHELL_WRAPPER_SPECS = [
-  {
-    executables: ["pwsh", "pwsh.exe", "powershell", "powershell.exe"],
-    wrapperFlagPattern: /(?:^|\s)-command\s+/i,
-  },
-  {
-    executables: ["cmd", "cmd.exe"],
-    wrapperFlagPattern: /(?:^|\s)\/c\s+/i,
-  },
-  {
-    executables: ["bash", "sh", "zsh"],
-    wrapperFlagPattern: /(?:^|\s)-(?:l)?c\s+/i,
-  },
-] as const;
-
-function findShellWrapperSpec(shell: string) {
-  return SHELL_WRAPPER_SPECS.find((spec) =>
-    (spec.executables as ReadonlyArray<string>).includes(shell),
+function isLocalhostUrlSource(value: unknown): value is LocalhostUrlCandidate["source"] {
+  return (
+    value === "detail" ||
+    value === "output" ||
+    value === "raw-output" ||
+    value === "structured-data"
   );
 }
 
-function unwrapCommandRemainder(value: string, wrapperFlagPattern: RegExp): string | null {
-  const match = wrapperFlagPattern.exec(value);
-  if (!match) {
+function asLocalhostUrlCandidate(value: unknown): LocalhostUrlCandidate | null {
+  const record = asRecord(value);
+  if (!record) {
     return null;
   }
-
-  const command = value.slice(match.index + match[0].length).trim();
-  if (command.length === 0) {
+  const url = asTrimmedString(record.url);
+  const href = asTrimmedString(record.href);
+  const host = asTrimmedString(record.host);
+  const port = record.port === null ? null : asNumber(record.port);
+  if (!url || !href || !host || !isLocalhostUrlSource(record.source)) {
     return null;
   }
-
-  const unwrapped = trimMatchingOuterQuotes(command);
-  return unwrapped.length > 0 ? unwrapped : null;
+  return {
+    url,
+    href,
+    host,
+    port,
+    source: record.source,
+  };
 }
 
-function unwrapKnownShellCommandWrapper(value: string): string {
-  const split = splitExecutableAndRest(value);
-  if (!split || split.rest.length === 0) {
-    return value;
-  }
-
-  const shell = executableBasename(split.executable);
-  if (!shell) {
-    return value;
-  }
-
-  const spec = findShellWrapperSpec(shell);
-  if (!spec) {
-    return value;
-  }
-
-  return unwrapCommandRemainder(split.rest, spec.wrapperFlagPattern) ?? value;
-}
-
-function formatCommandArrayPart(value: string): string {
-  return /[\s"'`]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
-}
-
-function formatCommandValue(value: unknown): string | null {
-  const direct = asTrimmedString(value);
-  if (direct) {
-    return direct;
-  }
-  if (!Array.isArray(value)) {
+function commandActivityFromPayload(
+  payload: Record<string, unknown> | null,
+): NormalizedCommandActivity | null {
+  const commandActivity = asRecord(payload?.commandActivity);
+  if (!commandActivity) {
     return null;
   }
-  const parts = value
-    .map((entry) => asTrimmedString(entry))
-    .filter((entry): entry is string => entry !== null);
-  if (parts.length === 0) {
-    return null;
-  }
-  return parts.map((part) => formatCommandArrayPart(part)).join(" ");
+  const urls = Array.isArray(commandActivity.urls)
+    ? commandActivity.urls.flatMap((url) => {
+        const parsed = asLocalhostUrlCandidate(url);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+  return {
+    command: asTrimmedString(commandActivity.command) ?? null,
+    rawCommand: asTrimmedString(commandActivity.rawCommand) ?? null,
+    outputPreview: asTrimmedString(commandActivity.outputPreview) ?? null,
+    urls,
+    hasLocalUrl: commandActivity.hasLocalUrl === true || urls.length > 0,
+  };
 }
 
-function normalizeCommandValue(value: unknown): string | null {
-  const formatted = formatCommandValue(value);
-  return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
-}
-
-function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
-  const formatted = formatCommandValue(value);
-  if (!formatted || normalizedCommand === null) {
-    return null;
-  }
-  return formatted === normalizedCommand ? null : formatted;
+function extractToolCommandActivity(input: {
+  readonly payload: Record<string, unknown> | null;
+  readonly title: string | null;
+  readonly itemType: ToolLifecycleItemType;
+}): NormalizedCommandActivity {
+  return (
+    commandActivityFromPayload(input.payload) ??
+    normalizeCommandActivityPayload({
+      itemType: input.itemType,
+      title: input.title,
+      detail: typeof input.payload?.detail === "string" ? input.payload.detail : null,
+      data: input.payload?.data,
+    })
+  );
 }
 
 function extractToolCommand(payload: Record<string, unknown> | null): {
@@ -875,14 +914,11 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   ];
 
   for (const candidate of candidates) {
-    const command = normalizeCommandValue(candidate);
+    const command = normalizeToolCommandCandidate(candidate);
     if (!command) {
       continue;
     }
-    return {
-      command,
-      rawCommand: toRawToolCommand(candidate, command),
-    };
+    return command;
   }
 
   return {

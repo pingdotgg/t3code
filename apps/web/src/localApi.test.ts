@@ -49,6 +49,10 @@ const rpcClientMock = {
       registerListener(terminalEventListeners, listener),
     ),
   },
+  localProcesses: {
+    stopPorts: vi.fn(),
+    probePorts: vi.fn(),
+  },
   projects: {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
@@ -408,6 +412,19 @@ describe("wsApi", () => {
     await api.vcs.refreshStatus({ cwd: "/repo" });
 
     expect(rpcClientMock.vcs.refreshStatus).toHaveBeenCalledWith({ cwd: "/repo" });
+  });
+
+  it("forwards local process stop requests directly to the RPC client", async () => {
+    rpcClientMock.localProcesses.stopPorts.mockResolvedValue({
+      results: [{ port: 5173, killedPids: [123], errors: [] }],
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    expect(api.localProcesses).toBeDefined();
+    await api.localProcesses!.stopPorts({ ports: [5173] });
+
+    expect(rpcClientMock.localProcesses.stopPorts).toHaveBeenCalledWith({ ports: [5173] });
   });
 
   it("forwards shell stream subscription options to the RPC client", async () => {

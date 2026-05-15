@@ -73,6 +73,7 @@ function makeSidebarThreadSummary(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    agentCommandStatus: null,
     ...overrides,
   };
 }

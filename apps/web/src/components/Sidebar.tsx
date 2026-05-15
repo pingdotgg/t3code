@@ -3,7 +3,11 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  ExternalLinkIcon,
   FolderPlusIcon,
+  GlobeIcon,
+  PlugZapIcon,
+  PowerIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -11,6 +15,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import {
+  AgentCommandStatusIcon,
   ChangeRequestStatusIcon,
   prStatusIndicator,
   resolveThreadPr,
@@ -86,6 +91,8 @@ import {
 import { useModelPickerOpen } from "../modelPickerOpenState";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { useGitStatus } from "../lib/gitStatusState";
+import { useListeningPortProbe } from "../lib/portProbeState";
+import { sidebarAgentCommandStatusKey } from "../session-logic";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -189,7 +196,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import type { SidebarThreadSummary } from "../types";
+import type { SidebarAgentCommandStatus, SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectSnapshots,
@@ -216,6 +223,33 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+function agentCommandUrlLabel(url: SidebarAgentCommandStatus["urls"][number]): string {
+  return url.port !== null ? `localhost:${url.port}` : url.host;
+}
+
+function agentCommandStatusUrls(
+  status: SidebarAgentCommandStatus,
+): ReadonlyArray<SidebarAgentCommandStatus["urls"][number]> {
+  return status.urls.length > 0 ? status.urls : status.primaryUrl ? [status.primaryUrl] : [];
+}
+
+function agentCommandStopSummary(input: {
+  killedCount: number;
+  errorCount: number;
+  portCount: number;
+}): string {
+  if (input.errorCount > 0 && input.killedCount > 0) {
+    return `Stopped ${input.killedCount} process${input.killedCount === 1 ? "" : "es"}; ${input.errorCount} port${input.errorCount === 1 ? "" : "s"} reported an error.`;
+  }
+  if (input.errorCount > 0) {
+    return `${input.errorCount} port${input.errorCount === 1 ? "" : "s"} reported an error.`;
+  }
+  if (input.killedCount > 0) {
+    return `Stopped ${input.killedCount} process${input.killedCount === 1 ? "" : "es"}.`;
+  }
+  return `No listening process was found on ${input.portCount} port${input.portCount === 1 ? "" : "s"}.`;
+}
 
 function clampSidebarThreadPreviewCount(value: number): SidebarThreadPreviewCount {
   return Math.min(
@@ -313,6 +347,262 @@ interface SidebarThreadRowProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
 }
 
+function AgentCommandStatusDialog({
+  open,
+  onOpenChange,
+  status,
+  isRunning,
+  listeningPorts,
+  threadKey,
+  environmentId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  status: SidebarAgentCommandStatus | null;
+  isRunning: boolean;
+  listeningPorts: ReadonlySet<number>;
+  threadKey: string;
+  environmentId: SidebarThreadSummary["environmentId"];
+}) {
+  const dismissAgentCommandStatus = useUiStateStore((state) => state.dismissAgentCommandStatus);
+  const [stoppingPorts, setStoppingPorts] = useState<ReadonlySet<number>>(() => new Set());
+  const [stopMessage, setStopMessage] = useState<string | null>(null);
+  const statusKey = useMemo(() => (status ? sidebarAgentCommandStatusKey(status) : null), [status]);
+  const urls = useMemo(() => (status ? agentCommandStatusUrls(status) : []), [status]);
+
+  useEffect(() => {
+    if (!open) {
+      setStoppingPorts(new Set());
+      setStopMessage(null);
+    }
+  }, [open]);
+
+  const dismissStatus = useCallback(() => {
+    if (statusKey) {
+      dismissAgentCommandStatus(threadKey, statusKey);
+    }
+    onOpenChange(false);
+  }, [dismissAgentCommandStatus, onOpenChange, statusKey, threadKey]);
+
+  const stopPorts = useCallback(
+    async (targetPorts: ReadonlyArray<number>) => {
+      if (targetPorts.length === 0) return;
+
+      const api = readEnvironmentApi(environmentId);
+      if (!api?.localProcesses?.stopPorts) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to stop process",
+          description: "This environment does not expose local process controls.",
+        });
+        return;
+      }
+
+      setStoppingPorts((prev) => {
+        const next = new Set(prev);
+        for (const port of targetPorts) next.add(port);
+        return next;
+      });
+      setStopMessage(null);
+      try {
+        const result = await api.localProcesses.stopPorts({ ports: [...targetPorts] });
+        const killedCount = result.results.reduce(
+          (count, item) => count + item.killedPids.length,
+          0,
+        );
+        const errorCount = result.results.reduce((count, item) => count + item.errors.length, 0);
+        const summary = agentCommandStopSummary({
+          killedCount,
+          errorCount,
+          portCount: targetPorts.length,
+        });
+        setStopMessage(summary);
+
+        toastManager.add({
+          type: errorCount > 0 ? "error" : "success",
+          title:
+            errorCount > 0
+              ? targetPorts.length === 1
+                ? `Unable to stop port ${targetPorts[0]}`
+                : "Unable to stop every detected port"
+              : targetPorts.length === 1
+                ? `Stopped port ${targetPorts[0]}`
+                : "Detected ports stopped",
+          description: summary,
+        });
+      } catch (error) {
+        const description = error instanceof Error ? error.message : "An error occurred.";
+        setStopMessage(description);
+        toastManager.add({
+          type: "error",
+          title: "Unable to stop process",
+          description,
+        });
+      } finally {
+        setStoppingPorts((prev) => {
+          const next = new Set(prev);
+          for (const port of targetPorts) next.delete(port);
+          return next;
+        });
+      }
+    },
+    [environmentId],
+  );
+
+  const hasUrls = urls.length > 0;
+  const portsWithoutUrl = useMemo(() => {
+    if (listeningPorts.size === 0) return [] as number[];
+    const urlPorts = new Set<number>();
+    for (const url of urls) {
+      if (url.port != null) urlPorts.add(url.port);
+    }
+    return [...listeningPorts].filter((port) => !urlPorts.has(port)).toSorted((a, b) => a - b);
+  }, [listeningPorts, urls]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup
+        className="max-w-md gap-0 overflow-hidden border-border/60 p-0 shadow-2xl shadow-black/40 dark:border-border/40 dark:shadow-black/70"
+        backdropClassName="bg-background/60 backdrop-blur-none"
+        forceBackdrop
+      >
+        <div className="flex items-start gap-3 px-5 pt-5 pb-4">
+          <div className="relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-muted/60 to-muted/20 text-foreground/80 shadow-inner shadow-black/[0.03] dark:from-muted/30 dark:to-muted/5">
+            <TerminalIcon className="size-4" />
+            {isRunning ? (
+              <span className="absolute -top-0.5 -right-0.5 inline-flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500/60 opacity-75 dark:bg-sky-400/60" />
+                <span className="relative inline-flex size-2 rounded-full bg-sky-500 ring-2 ring-popover dark:bg-sky-400" />
+              </span>
+            ) : null}
+          </div>
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="font-semibold text-[15px] text-foreground leading-tight tracking-tight">
+              {isRunning ? "Server running" : "Agent local URL detected"}
+            </DialogTitle>
+            <DialogDescription className="mt-0.5 text-[11.5px] text-muted-foreground leading-snug">
+              {isRunning
+                ? "A subprocess is active in this thread. Open the detected URLs or stop a listener individually."
+                : "These URLs were detected in agent output. You can open them or stop the underlying process."}
+            </DialogDescription>
+          </div>
+        </div>
+
+        <div className="border-border/50 border-t bg-muted/20 dark:bg-muted/10">
+          {hasUrls ? (
+            <ul className="divide-y divide-border/40">
+              {urls.map((url) => {
+                const isStoppingThis = url.port != null && stoppingPorts.has(url.port);
+                return (
+                  <li
+                    key={url.href}
+                    className="group flex items-center gap-3 px-5 py-2.5 transition-colors hover:bg-muted/40 dark:hover:bg-muted/20"
+                  >
+                    <GlobeIcon className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover:text-sky-600 dark:group-hover:text-sky-300/90" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-mono text-[12.5px] text-foreground">
+                        {agentCommandUrlLabel(url)}
+                      </div>
+                      {url.port != null ? (
+                        <div className="mt-px font-mono text-[10.5px] text-muted-foreground/70">
+                          port {url.port}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <a
+                        href={url.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open ${url.url}`}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-[11px] text-muted-foreground opacity-70 transition-all hover:bg-background hover:text-foreground hover:opacity-100 hover:shadow-sm group-hover:opacity-100"
+                      >
+                        Open
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
+                      {url.port != null ? (
+                        <button
+                          type="button"
+                          onClick={() => void stopPorts([url.port as number])}
+                          disabled={isStoppingThis}
+                          aria-label={`Stop process on port ${url.port}`}
+                          title={`Stop process on port ${url.port}`}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 font-medium text-[11px] text-muted-foreground opacity-70 transition-all hover:bg-destructive/10 hover:text-destructive hover:opacity-100 hover:shadow-sm group-hover:opacity-100 disabled:cursor-progress disabled:opacity-40"
+                        >
+                          {isStoppingThis ? "Stopping…" : "Stop"}
+                          {!isStoppingThis ? <PowerIcon className="size-3" /> : null}
+                        </button>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="flex items-center gap-2 px-5 py-3 text-[11.5px] text-muted-foreground">
+              <GlobeIcon className="size-3.5 text-muted-foreground/60" />
+              No localhost URL was detected.
+            </div>
+          )}
+
+          {portsWithoutUrl.length > 0 ? (
+            <div className="border-border/40 border-t">
+              <div className="flex items-center gap-2 px-5 pt-2.5 pb-1">
+                <PlugZapIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
+                <span className="font-medium text-[10.5px] text-muted-foreground uppercase tracking-wide">
+                  Also listening
+                </span>
+              </div>
+              <ul className="divide-y divide-border/40">
+                {portsWithoutUrl.map((port) => {
+                  const isStoppingThis = stoppingPorts.has(port);
+                  return (
+                    <li
+                      key={port}
+                      className="group flex items-center gap-3 px-5 py-2 transition-colors hover:bg-muted/40 dark:hover:bg-muted/20"
+                    >
+                      <span className="font-mono text-[12.5px] text-foreground">port {port}</span>
+                      <button
+                        type="button"
+                        onClick={() => void stopPorts([port])}
+                        disabled={isStoppingThis}
+                        aria-label={`Stop process on port ${port}`}
+                        title={`Stop process on port ${port}`}
+                        className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 font-medium text-[11px] text-muted-foreground opacity-70 transition-all hover:bg-destructive/10 hover:text-destructive hover:opacity-100 hover:shadow-sm group-hover:opacity-100 disabled:cursor-progress disabled:opacity-40"
+                      >
+                        {isStoppingThis ? "Stopping…" : "Stop"}
+                        {!isStoppingThis ? <PowerIcon className="size-3" /> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
+          {stopMessage ? (
+            <div className="border-border/40 border-t px-5 py-2.5 text-[11.5px] text-muted-foreground">
+              {stopMessage}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-border/50 border-t bg-muted/40 px-5 py-3 dark:bg-muted/20">
+          {isRunning ? (
+            <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={dismissStatus}>
+              Dismiss
+            </Button>
+          )}
+        </div>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     orderedProjectThreadKeys,
@@ -341,6 +631,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const dismissedAgentCommandStatusKey = useUiStateStore(
+    (state) => state.dismissedAgentCommandStatusByThreadKey[threadKey],
+  );
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useTerminalStateStore(
     (state) =>
@@ -386,6 +679,42 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const rawAgentCommandStatus = thread.agentCommandStatus;
+  // Candidate ports come from any localhost URL the agent surfaced in the
+  // current turn. We probe them to decide whether the icon should reflect a
+  // live "server running" state — independent of how the process was started
+  // (t3code terminal, agent-backgrounded bash, etc.).
+  const candidatePorts = useMemo(() => {
+    if (!rawAgentCommandStatus) return [] as number[];
+    const ports = new Set<number>();
+    for (const url of rawAgentCommandStatus.urls) {
+      if (url.port !== null) ports.add(url.port);
+    }
+    if (rawAgentCommandStatus.primaryUrl?.port != null) {
+      ports.add(rawAgentCommandStatus.primaryUrl.port);
+    }
+    return [...ports].toSorted((a, b) => a - b);
+  }, [rawAgentCommandStatus]);
+  const listeningProbedPorts = useListeningPortProbe(thread.environmentId, candidatePorts);
+  const hasListeningProbedPort = listeningProbedPorts.size > 0;
+  const hasRunningSubprocess = runningTerminalIds.length > 0 || hasListeningProbedPort;
+  // Dismissal only suppresses stale activity badges. While we observe a real
+  // running subprocess (terminal pty or probed listening port) we ignore the
+  // dismissed key so the icon faithfully tracks live state.
+  const agentCommandStatus = useMemo(() => {
+    if (!rawAgentCommandStatus) {
+      return null;
+    }
+    if (
+      !hasRunningSubprocess &&
+      dismissedAgentCommandStatusKey === sidebarAgentCommandStatusKey(rawAgentCommandStatus)
+    ) {
+      return null;
+    }
+    return rawAgentCommandStatus;
+  }, [dismissedAgentCommandStatusKey, hasRunningSubprocess, rawAgentCommandStatus]);
+  const showAgentCommandIcon = hasRunningSubprocess || agentCommandStatus !== null;
+  const [agentCommandDialogOpen, setAgentCommandDialogOpen] = useState(false);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
@@ -508,6 +837,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [],
   );
+  const handleAgentCommandPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+  }, []);
+  const handleAgentCommandClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setAgentCommandDialogOpen(true);
+  }, []);
   const handleConfirmArchiveClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -577,6 +914,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {showAgentCommandIcon ? (
+            <AgentCommandStatusIcon
+              interactive
+              status={agentCommandStatus}
+              isRunning={hasRunningSubprocess}
+              onPointerDown={handleAgentCommandPointerDown}
+              onClick={handleAgentCommandClick}
+            />
+          ) : null}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
@@ -714,6 +1060,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </div>
         </div>
       </SidebarMenuSubButton>
+      <AgentCommandStatusDialog
+        open={showAgentCommandIcon && agentCommandDialogOpen}
+        onOpenChange={setAgentCommandDialogOpen}
+        status={agentCommandStatus}
+        isRunning={hasRunningSubprocess}
+        listeningPorts={listeningProbedPorts}
+        threadKey={threadKey}
+        environmentId={thread.environmentId}
+      />
     </SidebarMenuSubItem>
   );
 });

@@ -13,6 +13,7 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveSidebarAgentCommandStatus,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -669,6 +670,101 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
+  it("includes command rows from multiple turns when no latest turn filter is provided", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turn-1-command",
+        turnId: "turn-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command: "bun run lint" } },
+        },
+      }),
+      makeActivity({
+        id: "turn-2-command",
+        turnId: "turn-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command: "bun run typecheck" } },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-1-command", "turn-2-command"]);
+  });
+
+  it("includes command activity URLs, local URL state, and output preview", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-with-url",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          commandActivity: {
+            command: "bun run dev",
+            rawCommand: null,
+            outputPreview: "Local: http://localhost:5173/",
+            urls: [
+              {
+                url: "http://localhost:5173/",
+                href: "http://localhost:5173/",
+                host: "localhost",
+                port: 5173,
+                source: "output",
+              },
+            ],
+            hasLocalUrl: true,
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      command: "bun run dev",
+      hasLocalUrl: true,
+      outputPreview: "Local: http://localhost:5173/",
+    });
+    expect(entry?.urls).toEqual([
+      {
+        url: "http://localhost:5173/",
+        href: "http://localhost:5173/",
+        host: "localhost",
+        port: 5173,
+        source: "output",
+      },
+    ]);
+  });
+
+  it("keeps rendering legacy command payloads without commandActivity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "legacy-command",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            input: {
+              command: "npm run dev",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("npm run dev");
+  });
+
   it("omits checkpoint captured info entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1263,6 +1359,170 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]?.id).toBe("a-complete-same-timestamp");
+  });
+});
+
+describe("deriveSidebarAgentCommandStatus", () => {
+  it("returns URL status for the latest turn with a localhost URL", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "latest-url",
+        turnId: "turn-latest",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          commandActivity: {
+            command: "bun run dev",
+            rawCommand: null,
+            outputPreview: "Local: http://localhost:5173/",
+            urls: [
+              {
+                url: "http://localhost:5173/",
+                href: "http://localhost:5173/",
+                host: "localhost",
+                port: 5173,
+                source: "output",
+              },
+            ],
+            hasLocalUrl: true,
+          },
+        },
+      }),
+    ];
+
+    expect(deriveSidebarAgentCommandStatus(activities, TurnId.make("turn-latest"))).toMatchObject({
+      label: "Agent local URL detected",
+      hasLocalUrl: true,
+      primaryUrl: { href: "http://localhost:5173/" },
+    });
+  });
+
+  it("returns null when the latest turn has commands but no localhost URLs", () => {
+    // The status is reserved for surfaces that have a local URL to act on.
+    // Plain command runs without URLs are represented by live process state
+    // (terminal subprocesses + port liveness probes), not this status.
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "latest-command",
+        turnId: "turn-latest",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command: "bun run lint" } },
+        },
+      }),
+    ];
+
+    expect(deriveSidebarAgentCommandStatus(activities, TurnId.make("turn-latest"))).toBeNull();
+  });
+
+  it("captures localhost URLs from non-command_execution tool completions", () => {
+    // Agents that background a dev server (e.g. with `run_in_background: true`)
+    // typically surface the listening URL through a follow-up `Monitor`/tail
+    // tool, which is not classified as `command_execution`. We still want to
+    // detect the URL so the icon can lead the user to it.
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "monitor-url",
+        turnId: "turn-latest",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Monitor",
+        payload: {
+          itemType: "tool_call",
+          commandActivity: {
+            command: null,
+            rawCommand: null,
+            outputPreview: "Local: http://localhost:5734/",
+            urls: [
+              {
+                url: "http://localhost:5734/",
+                href: "http://localhost:5734/",
+                host: "localhost",
+                port: 5734,
+                source: "output",
+              },
+            ],
+            hasLocalUrl: true,
+          },
+        },
+      }),
+    ];
+
+    expect(deriveSidebarAgentCommandStatus(activities, TurnId.make("turn-latest"))).toMatchObject({
+      label: "Agent local URL detected",
+      hasLocalUrl: true,
+      primaryUrl: { href: "http://localhost:5734/" },
+    });
+  });
+
+  it("returns null when only older turns have command activity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "old-command",
+        turnId: "turn-old",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command: "bun run dev" } },
+        },
+      }),
+    ];
+
+    expect(deriveSidebarAgentCommandStatus(activities, TurnId.make("turn-latest"))).toBeNull();
+  });
+
+  it("prefers latest-turn URL status over command-only status", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "latest-url",
+        turnId: "turn-latest",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        sequence: 1,
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          commandActivity: {
+            command: "bun run dev",
+            rawCommand: null,
+            outputPreview: "Local: http://localhost:3000/",
+            urls: [
+              {
+                url: "http://localhost:3000/",
+                href: "http://localhost:3000/",
+                host: "localhost",
+                port: 3000,
+                source: "output",
+              },
+            ],
+            hasLocalUrl: true,
+          },
+        },
+      }),
+      makeActivity({
+        id: "latest-command",
+        turnId: "turn-latest",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        sequence: 2,
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command: "bun run lint" } },
+        },
+      }),
+    ];
+
+    expect(deriveSidebarAgentCommandStatus(activities, TurnId.make("turn-latest"))).toMatchObject({
+      label: "Agent local URL detected",
+      hasLocalUrl: true,
+      primaryUrl: { href: "http://localhost:3000/" },
+    });
   });
 });
 

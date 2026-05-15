@@ -27,6 +27,12 @@ import type {
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
+  LocalProcessProbePortsInput,
+  LocalProcessProbePortsResult,
+  LocalProcessStopPortsInput,
+  LocalProcessStopPortsResult,
+} from "./localProcess.ts";
+import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -502,6 +508,10 @@ export interface EnvironmentApi {
     restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
     close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
+  };
+  localProcesses?: {
+    stopPorts: (input: LocalProcessStopPortsInput) => Promise<LocalProcessStopPortsResult>;
+    probePorts: (input: LocalProcessProbePortsInput) => Promise<LocalProcessProbePortsResult>;
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;

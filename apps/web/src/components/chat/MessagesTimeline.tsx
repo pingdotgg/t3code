@@ -21,6 +21,7 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowUpRightIcon,
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
@@ -1035,11 +1036,12 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
 }
 
 function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles" | "outputPreview">,
   workspaceRoot: string | undefined,
 ) {
   if (workEntry.command) return workEntry.command;
   if (workEntry.detail) return workEntry.detail;
+  if (workEntry.outputPreview) return workEntry.outputPreview;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
@@ -1057,6 +1059,10 @@ function workEntryRawCommand(
     return null;
   }
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
+}
+
+function localUrlChipLabel(url: NonNullable<TimelineWorkEntry["urls"]>[number]): string {
+  return url.port !== null ? `localhost:${url.port}` : url.host;
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
@@ -1093,6 +1099,9 @@ function capitalizePhrase(value: string): string {
 }
 
 function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
+  if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
+    return "Ran command";
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1117,7 +1126,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const rawCommand = workEntryRawCommand(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const previewIsChangedFiles =
+    hasChangedFiles && !workEntry.command && !workEntry.detail && !workEntry.outputPreview;
+  const localUrls = workEntry.urls?.slice(0, 3) ?? [];
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -1214,6 +1225,27 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               +{(workEntry.changedFiles?.length ?? 0) - 4}
             </span>
           )}
+        </div>
+      )}
+      {localUrls.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1 pl-6">
+          {localUrls.map((url) => (
+            <a
+              key={`${workEntry.id}:${url.href}`}
+              href={url.href}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Open agent local URL ${url.url}`}
+              className="group inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/80 py-0.5 pr-1.5 pl-2 font-mono text-[10.5px] text-foreground/85 shadow-xs transition-all hover:border-sky-500/40 hover:bg-sky-500/[0.06] hover:text-foreground hover:shadow-sm dark:border-border/50 dark:bg-background/50 dark:text-foreground/80 dark:hover:border-sky-400/40 dark:hover:bg-sky-400/[0.07]"
+            >
+              <span className="relative inline-flex size-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500/55 opacity-75 dark:bg-sky-400/55" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-sky-500 dark:bg-sky-400" />
+              </span>
+              <span>{localUrlChipLabel(url)}</span>
+              <ArrowUpRightIcon className="size-3 text-muted-foreground/60 transition-colors group-hover:text-sky-600 dark:group-hover:text-sky-300" />
+            </a>
+          ))}
         </div>
       )}
     </div>

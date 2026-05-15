@@ -28,6 +28,8 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  LocalProcessStopPortsError,
+  LocalProcessProbePortsError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -65,6 +67,7 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { probeLocalPorts, stopLocalPorts } from "./localProcesses.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -1126,6 +1129,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
           }),
+        [WS_METHODS.localProcessStopPorts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.localProcessStopPorts,
+            Effect.tryPromise({
+              try: () => stopLocalPorts(input),
+              catch: (cause) =>
+                new LocalProcessStopPortsError({
+                  message: "Failed to stop detected local ports.",
+                  cause,
+                }),
+            }),
+            { "rpc.aggregate": "local-process" },
+          ),
+        [WS_METHODS.localProcessProbePorts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.localProcessProbePorts,
+            Effect.tryPromise({
+              try: () => probeLocalPorts(input),
+              catch: (cause) =>
+                new LocalProcessProbePortsError({
+                  message: "Failed to probe local ports.",
+                  cause,
+                }),
+            }),
+            { "rpc.aggregate": "local-process" },
+          ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,

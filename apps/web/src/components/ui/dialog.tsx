@@ -48,6 +48,8 @@ function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props)
 
 function DialogPopup({
   className,
+  backdropClassName,
+  forceBackdrop = false,
   children,
   showCloseButton = true,
   bottomStickOnMobile = true,
@@ -55,10 +57,17 @@ function DialogPopup({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
+  backdropClassName?: string;
+  /**
+   * Force the backdrop to render even when Base UI considers this dialog
+   * nested (e.g. opened from inside a Menu/Popover stack). Defaults to false
+   * so existing nested-dialog stacks keep their current visual treatment.
+   */
+  forceBackdrop?: boolean;
 }) {
   return (
     <DialogPortal>
-      <DialogBackdrop />
+      <DialogBackdrop className={backdropClassName} forceRender={forceBackdrop} />
       <DialogViewport
         className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}
       >

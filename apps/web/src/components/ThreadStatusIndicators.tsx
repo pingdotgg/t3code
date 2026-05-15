@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type MouseEventHandler, type PointerEventHandler } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
@@ -13,7 +13,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
-import type { SidebarThreadSummary } from "../types";
+import type { SidebarAgentCommandStatus, SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface PrStatusIndicator {
@@ -93,6 +93,73 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+export function AgentCommandStatusIcon({
+  status,
+  isRunning = false,
+  interactive = false,
+  onPointerDown,
+  onClick,
+}: {
+  status: SidebarAgentCommandStatus | null;
+  isRunning?: boolean;
+  interactive?: boolean;
+  onPointerDown?: PointerEventHandler<HTMLElement>;
+  onClick?: MouseEventHandler<HTMLElement>;
+}) {
+  if (!status && !isRunning) {
+    return null;
+  }
+
+  const hasLocalUrl = status?.hasLocalUrl === true && Boolean(status.primaryUrl);
+  // `status` is only set when `deriveSidebarAgentCommandStatus` detected a
+  // URL, so when `!isRunning` we always have `hasLocalUrl`. The `"Server
+  // running"` branch covers the live-process case without a detected URL.
+  const label = isRunning
+    ? hasLocalUrl
+      ? "Server running — local URL detected"
+      : "Server running"
+    : "Agent local URL detected";
+
+  const isEmerald = isRunning || hasLocalUrl;
+
+  const baseClassName =
+    "inline-flex size-5 items-center justify-center rounded-md outline-hidden transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-ring";
+  const colorClassName = isEmerald
+    ? "text-emerald-600 dark:text-emerald-300/90"
+    : "text-muted-foreground/80";
+  const hoverClassName = isEmerald
+    ? "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:bg-emerald-400/15 dark:hover:text-emerald-200"
+    : "hover:bg-accent hover:text-foreground";
+
+  const iconClassName = isRunning ? "size-3 animate-pulse" : "size-3";
+
+  if (!interactive) {
+    return (
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        className={`${baseClassName} ${colorClassName}`}
+      >
+        <TerminalIcon className={iconClassName} />
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`${baseClassName} ${colorClassName} ${hoverClassName} cursor-pointer active:scale-95`}
+      onPointerDown={onPointerDown as PointerEventHandler<HTMLButtonElement> | undefined}
+      onClick={onClick as MouseEventHandler<HTMLButtonElement> | undefined}
+    >
+      <TerminalIcon className={iconClassName} />
+    </button>
+  );
+}
+
 export function ThreadStatusLabel({
   status,
   compact = false,
@@ -155,6 +222,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     cwd: thread.branch != null ? gitCwd : null,
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const agentCommandStatus = thread.agentCommandStatus;
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
@@ -163,7 +231,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     },
   });
 
-  if (!prStatus && !threadStatus) {
+  if (!prStatus && !threadStatus && !agentCommandStatus) {
     return null;
   }
 
@@ -185,6 +253,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
+      {agentCommandStatus ? <AgentCommandStatusIcon status={agentCommandStatus} /> : null}
     </span>
   );
 }

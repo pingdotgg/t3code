@@ -109,7 +109,9 @@ function mapCodexModelCapabilities(
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const supportsFastMode = (model.additionalSpeedTiers ?? []).includes("fast");
+  const supportsFastMode = globalThis.Array.isArray(model.additionalSpeedTiers)
+    ? model.additionalSpeedTiers.includes("fast")
+    : /^gpt-5(?:[.-]|$)/.test(model.model);
   return createModelCapabilities({
     optionDescriptors: [
       ...(reasoningOptions.length > 0
@@ -143,7 +145,7 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
     .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 };
 
-function parseCodexModelListResponse(
+export function parseCodexModelListResponse(
   response: CodexSchema.V2ModelListResponse,
 ): ReadonlyArray<ServerProviderModel> {
   return response.data.map((model) => ({

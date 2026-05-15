@@ -2445,6 +2445,251 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(true);
   });
 
+  it("attaches command activity URLs from command output deltas to completed command tools", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output"),
+      itemId: asItemId("item-command-output"),
+      payload: {
+        streamKind: "command_output",
+        delta: "  Local: http://localhost:5173/\n",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-command-output-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output"),
+      itemId: asItemId("item-command-output"),
+      payload: {
+        itemType: "command_execution",
+        title: "Bash",
+        data: {
+          item: {
+            command: "bun run dev",
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-command-output-completed"),
+    );
+    const activity = thread.activities.find((entry) => entry.id === "evt-command-output-completed");
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : {};
+    const commandActivity = payload.commandActivity as
+      | { command?: string; outputPreview?: string; urls?: Array<{ href: string }> }
+      | undefined;
+
+    expect(commandActivity?.command).toBe("bun run dev");
+    expect(commandActivity?.outputPreview).toBe("Local: http://localhost:5173/");
+    expect(commandActivity?.urls?.map((url) => url.href)).toEqual(["http://localhost:5173/"]);
+  });
+
+  it("bounds accumulated command output to the latest 32 KB before URL derivation", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-large-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-large"),
+      itemId: asItemId("item-command-output-large"),
+      payload: {
+        streamKind: "command_output",
+        delta: `http://localhost:1111/${"x".repeat(40_000)} http://localhost:2222/`,
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-command-output-large-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-large"),
+      itemId: asItemId("item-command-output-large"),
+      payload: {
+        itemType: "command_execution",
+        title: "Bash",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-command-output-large-completed"),
+    );
+    const activity = thread.activities.find(
+      (entry) => entry.id === "evt-command-output-large-completed",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : {};
+    const commandActivity = payload.commandActivity as
+      | { urls?: Array<{ href: string }> }
+      | undefined;
+
+    expect(commandActivity?.urls?.map((url) => url.href)).toEqual(["http://localhost:2222/"]);
+  });
+
+  it("clears command output after item completion and ignores late output for that item", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-before-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-clear"),
+      itemId: asItemId("item-command-output-clear"),
+      payload: {
+        streamKind: "command_output",
+        delta: "http://localhost:3000/",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-command-output-clear-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-clear"),
+      itemId: asItemId("item-command-output-clear"),
+      payload: {
+        itemType: "command_execution",
+        title: "Bash",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-after-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-clear"),
+      itemId: asItemId("item-command-output-clear"),
+      payload: {
+        streamKind: "command_output",
+        delta: "http://localhost:4000/",
+      },
+    });
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-command-output-clear-updated"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-output-clear"),
+      itemId: asItemId("item-command-output-clear"),
+      payload: {
+        itemType: "command_execution",
+        title: "Bash",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-command-output-clear-updated"),
+    );
+    const updated = thread.activities.find(
+      (entry) => entry.id === "evt-command-output-clear-updated",
+    );
+    const payload =
+      updated?.payload && typeof updated.payload === "object"
+        ? (updated.payload as Record<string, unknown>)
+        : {};
+    const commandActivity = payload.commandActivity as
+      | { urls?: Array<{ href: string }> }
+      | undefined;
+
+    expect(commandActivity?.urls).toEqual([]);
+  });
+
+  it("attaches command activity without output when structured command data exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-command-structured-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-command-structured"),
+      itemId: asItemId("item-command-structured"),
+      payload: {
+        itemType: "command_execution",
+        title: "Bash",
+        data: {
+          item: {
+            command: ["bun", "run", "lint"],
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-command-structured-completed"),
+    );
+    const activity = thread.activities.find(
+      (entry) => entry.id === "evt-command-structured-completed",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : {};
+    const commandActivity = payload.commandActivity as { command?: string } | undefined;
+
+    expect(commandActivity?.command).toBe("bun run lint");
+  });
+
+  it("does not attach command activity to non-command tool lifecycle events", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-file-tool-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-file-tool"),
+      itemId: asItemId("item-file-tool"),
+      payload: {
+        itemType: "file_change",
+        title: "Edit",
+        detail: "apps/web/src/App.tsx",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-file-tool-completed"),
+    );
+    const activity = thread.activities.find((entry) => entry.id === "evt-file-tool-completed");
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : {};
+
+    expect(payload.commandActivity).toBeUndefined();
+  });
+
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
