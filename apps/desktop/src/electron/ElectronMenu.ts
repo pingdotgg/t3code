@@ -74,27 +74,34 @@ const normalizePosition = (
   ).pipe(Option.map(({ x, y }) => ({ x: Math.floor(x), y: Math.floor(y) })));
 
 export const layer = Layer.sync(ElectronMenu, () => {
-  let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
+  const destructiveMenuIconCache = new Map<boolean, Option.Option<Electron.NativeImage>>();
 
   const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
     if (process.platform !== "darwin") {
       return Option.none();
     }
-    if (destructiveMenuIconCache !== undefined) {
-      return destructiveMenuIconCache;
+    const shouldUseDarkColors = Electron.nativeTheme.shouldUseDarkColors;
+    const cachedIcon = destructiveMenuIconCache.get(shouldUseDarkColors);
+    if (cachedIcon !== undefined) {
+      return cachedIcon;
     }
 
     try {
-      const icon = Electron.nativeImage.createFromNamedImage("trash").resize({
-        width: 12,
-        height: 12,
-      });
-      destructiveMenuIconCache = icon.isEmpty() ? Option.none() : Option.some(icon);
+      const icon = Electron.nativeImage
+        .createFromNamedImage("trash", shouldUseDarkColors ? [-1, 0, 1] : [-1, 1, 0])
+        .resize({
+          width: 12,
+          height: 12,
+        });
+      icon.setTemplateImage(true);
+      const iconOption = icon.isEmpty() ? Option.none() : Option.some(icon);
+      destructiveMenuIconCache.set(shouldUseDarkColors, iconOption);
+      return iconOption;
     } catch {
-      destructiveMenuIconCache = Option.none();
+      const iconOption = Option.none<Electron.NativeImage>();
+      destructiveMenuIconCache.set(shouldUseDarkColors, iconOption);
+      return iconOption;
     }
-
-    return destructiveMenuIconCache;
   };
 
   const buildTemplate = (

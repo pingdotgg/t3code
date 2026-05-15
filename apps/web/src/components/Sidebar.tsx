@@ -19,7 +19,15 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
-import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  memo,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -2449,8 +2457,70 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const wordmarkRef = useRef<HTMLDivElement | null>(null);
+  const [isWordmarkVisible, setIsWordmarkVisible] = useState(true);
+
+  useLayoutEffect(() => {
+    if (!isElectron) {
+      setIsWordmarkVisible(true);
+      return;
+    }
+
+    const headerElement = headerRef.current;
+    const wordmarkElement = wordmarkRef.current;
+    if (!headerElement || !wordmarkElement) {
+      return;
+    }
+
+    let frame: number | null = null;
+    const updateWordmarkVisibility = () => {
+      frame = null;
+      const style = window.getComputedStyle(headerElement);
+      const availableWidth =
+        headerElement.clientWidth -
+        (Number.parseFloat(style.paddingLeft) || 0) -
+        (Number.parseFloat(style.paddingRight) || 0);
+      const requiredWidth = wordmarkElement.getBoundingClientRect().width;
+      setIsWordmarkVisible(requiredWidth <= availableWidth + 1);
+    };
+
+    const scheduleUpdate = () => {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(updateWordmarkVisibility);
+    };
+
+    scheduleUpdate();
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            scheduleUpdate();
+          });
+    resizeObserver?.observe(headerElement);
+    resizeObserver?.observe(wordmarkElement);
+    window.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("resize", scheduleUpdate);
+
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+    };
+  }, [isElectron]);
+
   const wordmark = (
-    <div className="flex items-center gap-2">
+    <div
+      ref={wordmarkRef}
+      className={`flex items-center gap-2 ${
+        isWordmarkVisible ? "" : "invisible pointer-events-none"
+      }`}
+    >
       <SidebarTrigger className="shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
@@ -2478,7 +2548,10 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 
   return isElectron ? (
-    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
+    <SidebarHeader
+      ref={headerRef}
+      className="drag-region h-[var(--desktop-titlebar-height,52px)] flex-row items-center gap-2 px-4 py-0 pl-[var(--desktop-titlebar-leading-offset,90px)] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]"
+    >
       {wordmark}
     </SidebarHeader>
   ) : (

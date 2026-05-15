@@ -229,6 +229,16 @@ const make = Effect.gen(function* () {
       void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
     });
 
+    const syncZoomCssVariables = () => {
+      if (window.isDestroyed()) return;
+      window.webContents.send(
+        IpcChannels.ZOOM_FACTOR_CHANGED_CHANNEL,
+        window.webContents.getZoomFactor(),
+      );
+    };
+    window.webContents.on("zoom-changed", syncZoomCssVariables);
+    window.webContents.on("did-finish-load", syncZoomCssVariables);
+
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));

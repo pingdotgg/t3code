@@ -1,7 +1,55 @@
 import type { DesktopBridge } from "@t3tools/contracts";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
+import { normalizeDesktopZoomFactor, resolveDesktopZoomCssVariables } from "./desktopZoom.ts";
 import * as IpcChannels from "./ipc/channels.ts";
+import { scaleContextMenuPositionForElectron } from "./contextMenuPosition.ts";
+
+let lastAppliedDesktopZoomFactor: number | undefined;
+let pendingDesktopZoomSyncFrame: number | null = null;
+
+function applyDesktopZoomCssVariables(zoomFactor: number) {
+  const normalizedZoomFactor = normalizeDesktopZoomFactor(zoomFactor);
+  if (lastAppliedDesktopZoomFactor === normalizedZoomFactor) {
+    return;
+  }
+  lastAppliedDesktopZoomFactor = normalizedZoomFactor;
+
+  const variables = resolveDesktopZoomCssVariables(normalizedZoomFactor);
+  document.documentElement.style.setProperty("--desktop-zoom-factor", String(normalizedZoomFactor));
+  document.documentElement.style.setProperty("--desktop-titlebar-height", variables.titlebarHeight);
+  document.documentElement.style.setProperty(
+    "--desktop-titlebar-leading-offset",
+    variables.titlebarLeadingOffset,
+  );
+}
+
+function syncDesktopZoomCssVariables() {
+  applyDesktopZoomCssVariables(webFrame.getZoomFactor());
+}
+
+function scheduleDesktopZoomCssVariableSync() {
+  if (pendingDesktopZoomSyncFrame !== null) {
+    return;
+  }
+  pendingDesktopZoomSyncFrame = window.requestAnimationFrame(() => {
+    pendingDesktopZoomSyncFrame = null;
+    syncDesktopZoomCssVariables();
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", syncDesktopZoomCssVariables, { once: true });
+} else {
+  syncDesktopZoomCssVariables();
+}
+window.addEventListener("resize", scheduleDesktopZoomCssVariableSync);
+window.visualViewport?.addEventListener("resize", scheduleDesktopZoomCssVariableSync);
+
+ipcRenderer.on(IpcChannels.ZOOM_FACTOR_CHANGED_CHANNEL, (_event, zoomFactor: unknown) => {
+  if (typeof zoomFactor !== "number") return;
+  applyDesktopZoomCssVariables(zoomFactor);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -93,7 +141,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,
-      ...(position === undefined ? {} : { position }),
+      ...(position === undefined
+        ? {}
+        : { position: scaleContextMenuPositionForElectron(position, webFrame.getZoomFactor()) }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   onMenuAction: (listener) => {

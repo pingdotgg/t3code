@@ -40,6 +40,7 @@ function makeFakeBrowserWindow() {
     openDevTools: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
+    getZoomFactor: vi.fn(() => 1),
     setWindowOpenHandler: vi.fn(),
   };
 
