@@ -2,7 +2,7 @@
 
 import { CheckIcon } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
@@ -122,7 +122,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
   const [instanceId, setInstanceId] = useState("");
-  const [instanceIdDirty, setInstanceIdDirty] = useState(false);
+  const instanceIdDirtyRef = useRef(false);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
@@ -135,26 +135,57 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     [settings.providerInstances],
   );
 
-  // Reset the form every time the dialog opens so each creation starts
-  // from a clean slate.
-  useEffect(() => {
-    if (!open) return;
+  const resetForm = useCallback(() => {
     setDriver(DEFAULT_DRIVER_KIND);
     setLabel("");
     setAccentColor("");
     setInstanceId("");
     setWizardStep(0);
-    setInstanceIdDirty(false);
+    instanceIdDirtyRef.current = false;
     setConfigByDriver({});
     setHasAttemptedSubmit(false);
-  }, [open]);
+  }, []);
 
-  // Auto-derive the instance id from driver + label until the user types
-  // in the Instance ID field directly (after which they own its value).
-  useEffect(() => {
-    if (instanceIdDirty) return;
-    setInstanceId(deriveInstanceId(driver, label));
-  }, [driver, label, instanceIdDirty]);
+  const handleDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        resetForm();
+      }
+      onOpenChange(nextOpen);
+    },
+    [onOpenChange, resetForm],
+  );
+
+  const closeDialog = useCallback(() => {
+    resetForm();
+    onOpenChange(false);
+  }, [onOpenChange, resetForm]);
+
+  const updateDriver = useCallback(
+    (value: string) => {
+      const nextDriver = ProviderDriverKind.make(value);
+      setDriver(nextDriver);
+      if (!instanceIdDirtyRef.current) {
+        setInstanceId(deriveInstanceId(nextDriver, label));
+      }
+    },
+    [label],
+  );
+
+  const updateLabel = useCallback(
+    (nextLabel: string) => {
+      setLabel(nextLabel);
+      if (!instanceIdDirtyRef.current) {
+        setInstanceId(deriveInstanceId(driver, nextLabel));
+      }
+    },
+    [driver],
+  );
+
+  const updateInstanceId = useCallback((nextInstanceId: string) => {
+    instanceIdDirtyRef.current = true;
+    setInstanceId(nextInstanceId);
+  }, []);
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
   const driverSettingsFields = useMemo(
@@ -214,7 +245,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
         title: "Provider instance added",
         description: `${driverOption.label} instance '${instanceId}' was added.`,
       });
-      onOpenChange(false);
+      closeDialog();
     } catch (error) {
       toastManager.add({
         type: "error",
@@ -230,13 +261,13 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     instanceIdError,
     label,
     accentColor,
-    onOpenChange,
+    closeDialog,
     settings.providerInstances,
     updateSettings,
   ]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-background shadow-2xl">
           <DialogHeader className="border-b border-border/70 bg-background">
@@ -301,7 +332,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                 </span>
                 <RadioGroup
                   value={driver}
-                  onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
+                  onValueChange={updateDriver}
                   aria-labelledby="add-instance-driver-label"
                   className="grid grid-cols-2 gap-2.5"
                 >
@@ -365,7 +396,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   className="bg-background"
                   placeholder="e.g. Work"
                   value={label}
-                  onChange={(event) => setLabel(event.target.value)}
+                  onChange={(event) => updateLabel(event.target.value)}
                 />
                 <span className="text-[11px] text-muted-foreground">
                   Shown in the provider list. Optional.
@@ -378,10 +409,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   className="bg-background"
                   placeholder={`${driver}_work`}
                   value={instanceId}
-                  onChange={(event) => {
-                    setInstanceIdDirty(true);
-                    setInstanceId(event.target.value);
-                  }}
+                  onChange={(event) => updateInstanceId(event.target.value)}
                   aria-invalid={showInstanceIdError}
                 />
                 {showInstanceIdError ? (
@@ -466,7 +494,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               size="sm"
               onClick={() => {
                 if (wizardStep === 0) {
-                  onOpenChange(false);
+                  closeDialog();
                   return;
                 }
                 setWizardStep((step) => Math.max(0, step - 1));
