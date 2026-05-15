@@ -6,6 +6,7 @@
  *
  * @module ExternalLauncher
  */
+// @effect-diagnostics nodeBuiltinImport:off
 import {
   EDITORS,
   ExternalLauncherError,
@@ -13,6 +14,7 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
+import { existsSync } from "node:fs";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -32,6 +34,8 @@ interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 }
+
+type FileExists = (path: string) => boolean;
 
 interface ProcessLaunch {
   readonly command: string;
@@ -53,6 +57,28 @@ const POWERSHELL_ARGUMENTS_PREFIX = [
   "Bypass",
   "-EncodedCommand",
 ] as const;
+const MAC_EDITOR_APP_BUNDLE_NAMES: Partial<Record<EditorId, readonly [string, ...string[]]>> = {
+  antigravity: ["Google Antigravity.app", "Antigravity.app"],
+  aqua: ["Aqua.app"],
+  clion: ["CLion.app"],
+  cursor: ["Cursor.app"],
+  datagrip: ["DataGrip.app"],
+  dataspell: ["DataSpell.app"],
+  goland: ["GoLand.app"],
+  idea: ["IntelliJ IDEA.app", "IntelliJ IDEA Ultimate.app", "IntelliJ IDEA CE.app"],
+  kiro: ["Kiro.app"],
+  phpstorm: ["PhpStorm.app"],
+  pycharm: ["PyCharm.app"],
+  rider: ["Rider.app"],
+  rubymine: ["RubyMine.app"],
+  rustrover: ["RustRover.app"],
+  trae: ["Trae.app"],
+  vscode: ["Visual Studio Code.app"],
+  "vscode-insiders": ["Visual Studio Code - Insiders.app"],
+  vscodium: ["VSCodium.app"],
+  webstorm: ["WebStorm.app"],
+  zed: ["Zed.app"],
+};
 
 const DETACHED_IGNORE_STDIO_OPTIONS = {
   detached: true,
@@ -107,6 +133,39 @@ function resolveEditorArgs(
 ): ReadonlyArray<string> {
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
   return [...baseArgs, ...resolveCommandEditorArgs(editor, target)];
+}
+
+function resolveMacApplicationDirectories(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = env.HOME?.trim();
+  if (!home) return [];
+  return [`${home}/Applications`, "/Applications"];
+}
+
+function resolveMacEditorApplication(
+  editorId: EditorId,
+  env: NodeJS.ProcessEnv,
+  fileExists: FileExists = existsSync,
+): Option.Option<string> {
+  const appBundleNames = MAC_EDITOR_APP_BUNDLE_NAMES[editorId];
+  if (!appBundleNames) return Option.none();
+
+  for (const directory of resolveMacApplicationDirectories(env)) {
+    for (const appBundleName of appBundleNames) {
+      const appPath = `${directory}/${appBundleName}`;
+      if (fileExists(appPath)) {
+        return Option.some(appPath);
+      }
+    }
+  }
+
+  return Option.none();
+}
+
+function resolveMacAppEditorTarget(target: string): string {
+  return Option.match(parseTargetPathAndPosition(target), {
+    onNone: () => target,
+    onSome: ({ path }) => path,
+  });
 }
 
 function resolveAvailableCommand(
@@ -230,6 +289,11 @@ export function resolveAvailableEditors(
     const command = resolveAvailableCommand(editor.commands, { platform, env });
     if (Option.isSome(command)) {
       available.push(editor.id);
+      continue;
+    }
+
+    if (platform === "darwin" && Option.isSome(resolveMacEditorApplication(editor.id, env))) {
+      available.push(editor.id);
     }
   }
 
@@ -280,12 +344,27 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
-    const command = Option.getOrElse(
-      resolveAvailableCommand(editorDef.commands, { platform, env }),
-      () => editorDef.commands[0],
-    );
+    const availableCommand = resolveAvailableCommand(editorDef.commands, { platform, env });
+    if (Option.isSome(availableCommand)) {
+      return {
+        command: availableCommand.value,
+        args: resolveEditorArgs(editorDef, input.cwd),
+      };
+    }
+
+    const macApplication =
+      platform === "darwin"
+        ? resolveMacEditorApplication(editorDef.id, env)
+        : Option.none<string>();
+    if (Option.isSome(macApplication)) {
+      return {
+        command: "open",
+        args: ["-a", macApplication.value, resolveMacAppEditorTarget(input.cwd)],
+      };
+    }
+
     return {
-      command,
+      command: editorDef.commands[0],
       args: resolveEditorArgs(editorDef, input.cwd),
     };
   }

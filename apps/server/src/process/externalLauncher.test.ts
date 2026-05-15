@@ -478,6 +478,28 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     }),
   );
 
+  it.effect(
+    "opens macOS app bundles from the user Applications folder when the CLI is absent",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-external-launcher-home-" });
+        yield* fs.makeDirectory(path.join(home, "Applications", "Cursor.app"), { recursive: true });
+
+        const result = yield* resolveEditorLaunch(
+          { cwd: "/tmp/workspace/src/file.ts:42:7", editor: "cursor" },
+          "darwin",
+          { HOME: home, PATH: "" },
+        );
+
+        assert.deepEqual(result, {
+          command: "open",
+          args: ["-a", path.join(home, "Applications", "Cursor.app"), "/tmp/workspace/src/file.ts"],
+        });
+      }),
+  );
+
   it.effect("maps file-manager editor to OS open commands", () =>
     Effect.gen(function* () {
       const launch1 = yield* resolveEditorLaunch(
@@ -790,6 +812,19 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATH: dir,
       });
       assert.deepEqual(editors, ["zed", "file-manager"]);
+    }),
+  );
+
+  it.effect("includes macOS app bundles from the user Applications folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-external-launcher-available-home-",
+      });
+      yield* fs.makeDirectory(path.join(home, "Applications", "Zed.app"), { recursive: true });
+
+      assert.include(resolveAvailableEditors("darwin", { HOME: home, PATH: "" }), "zed");
     }),
   );
 
