@@ -18,24 +18,7 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs",
-        "t3code-src": "t3code-src"
-      }
-    },
-    "t3code-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1778827213,
-        "narHash": "sha256-lj871RSuJ82xulQAMcGW39x+LWPuNPoQIxEss6/UoKw=",
-        "owner": "pingdotgg",
-        "repo": "t3code",
-        "rev": "d1e85c4e8fdef82fbaded9539532b754080419e0",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pingdotgg",
-        "repo": "t3code",
-        "type": "github"
+        "nixpkgs": "nixpkgs"
       }
     }
   },
