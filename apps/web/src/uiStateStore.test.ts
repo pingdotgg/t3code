@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearThreadUi,
+  collapseAllProjects,
   hydratePersistedProjectState,
   markThreadVisited,
   markThreadUnread,
@@ -395,6 +396,53 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectExpandedById[project1]).toBe(false);
     expect(next.projectOrder).toEqual([project1]);
+  });
+
+  it("collapseAllProjects sets all given project IDs to collapsed", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const initialState = makeUiState({
+      projectExpandedById: {
+        [project1]: true,
+        [project2]: true,
+      },
+    });
+
+    const next = collapseAllProjects(initialState, [project1, project2]);
+
+    expect(next.projectExpandedById[project1]).toBe(false);
+    expect(next.projectExpandedById[project2]).toBe(false);
+  });
+
+  it("collapseAllProjects does not affect projects not in the list", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const initialState = makeUiState({
+      projectExpandedById: {
+        [project1]: true,
+        [project2]: true,
+      },
+    });
+
+    const next = collapseAllProjects(initialState, [project1]);
+
+    expect(next.projectExpandedById[project1]).toBe(false);
+    expect(next.projectExpandedById[project2]).toBe(true);
+  });
+
+  it("collapseAllProjects is a no-op when all given projects already collapsed", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const initialState = makeUiState({
+      projectExpandedById: {
+        [project1]: false,
+        [project2]: false,
+      },
+    });
+
+    const next = collapseAllProjects(initialState, [project1, project2]);
+
+    expect(next).toBe(initialState);
   });
 
   it("clearThreadUi removes visit state for deleted threads", () => {
