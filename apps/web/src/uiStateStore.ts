@@ -21,6 +21,7 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadDismissedStatusKeyById?: Record<string, string>;
 }
 
 export interface UiProjectState {
@@ -31,6 +32,7 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  threadDismissedStatusKeyById: Record<string, string>;
 }
 
 export interface UiEndpointState {
@@ -57,6 +59,7 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadDismissedStatusKeyById: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -102,6 +105,9 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      threadDismissedStatusKeyById: sanitizePersistedThreadDismissedStatusKeys(
+        parsed.threadDismissedStatusKeyById,
+      ),
     };
   } catch {
     return initialState;
@@ -134,6 +140,24 @@ function sanitizePersistedThreadChangedFilesExpanded(
   }
 
   return nextState;
+}
+
+function sanitizePersistedThreadDismissedStatusKeys(
+  value: PersistedUiState["threadDismissedStatusKeyById"],
+): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([threadId, statusKey]) =>
+        typeof threadId === "string" &&
+        threadId.length > 0 &&
+        typeof statusKey === "string" &&
+        statusKey.length > 0,
+    ),
+  );
 }
 
 export function hydratePersistedProjectState(parsed: PersistedUiState): void {
@@ -184,6 +208,11 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
+    const threadDismissedStatusKeyById = Object.fromEntries(
+      Object.entries(state.threadDismissedStatusKeyById).filter(
+        ([threadId, statusKey]) => threadId.length > 0 && statusKey.length > 0,
+      ),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -192,6 +221,7 @@ export function persistState(state: UiState): void {
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        threadDismissedStatusKeyById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -416,12 +446,18 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextThreadDismissedStatusKeyById = Object.fromEntries(
+    Object.entries(state.threadDismissedStatusKeyById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
-    )
+    ) &&
+    recordsEqual(state.threadDismissedStatusKeyById, nextThreadDismissedStatusKeyById)
   ) {
     return state;
   }
@@ -429,6 +465,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDismissedStatusKeyById: nextThreadDismissedStatusKeyById,
   };
 }
 
@@ -466,14 +503,40 @@ export function markThreadUnread(
     return state;
   }
   const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
-  if (state.threadLastVisitedAtById[threadId] === unreadVisitedAt) {
+  if (
+    state.threadLastVisitedAtById[threadId] === unreadVisitedAt &&
+    !(threadId in state.threadDismissedStatusKeyById)
+  ) {
     return state;
   }
+  const nextThreadDismissedStatusKeyById = { ...state.threadDismissedStatusKeyById };
+  delete nextThreadDismissedStatusKeyById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
       [threadId]: unreadVisitedAt,
+    },
+    threadDismissedStatusKeyById: nextThreadDismissedStatusKeyById,
+  };
+}
+
+export function dismissThreadStatus(
+  state: UiState,
+  threadId: string,
+  statusKey: string | null | undefined,
+): UiState {
+  if (!statusKey) {
+    return state;
+  }
+  if (state.threadDismissedStatusKeyById[threadId] === statusKey) {
+    return state;
+  }
+  return {
+    ...state,
+    threadDismissedStatusKeyById: {
+      ...state.threadDismissedStatusKeyById,
+      [threadId]: statusKey,
     },
   };
 }
@@ -481,17 +544,21 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const hasDismissedStatusState = threadId in state.threadDismissedStatusKeyById;
+  if (!hasVisitedState && !hasChangedFilesState && !hasDismissedStatusState) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextThreadDismissedStatusKeyById = { ...state.threadDismissedStatusKeyById };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  delete nextThreadDismissedStatusKeyById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDismissedStatusKeyById: nextThreadDismissedStatusKeyById,
   };
 }
 
@@ -627,6 +694,7 @@ interface UiStateStore extends UiState {
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
   markThreadVisited: (threadId: string, visitedAt?: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
+  dismissThreadStatus: (threadId: string, statusKey: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
@@ -646,6 +714,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
+  dismissThreadStatus: (threadId, statusKey) =>
+    set((state) => dismissThreadStatus(state, threadId, statusKey)),
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),

@@ -3751,22 +3751,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const threadRow = page.getByTestId(`thread-row-${THREAD_ID}`);
 
       await expect.element(threadRow).toBeInTheDocument();
-      const archiveButton = await waitForElement(
+      const archiveAction = await waitForElement(
         () =>
-          document.querySelector<HTMLButtonElement>(`[data-testid="thread-archive-${THREAD_ID}"]`),
-        "Unable to find archive button.",
+          document.querySelector<HTMLElement>(`[data-testid="thread-hover-actions-${THREAD_ID}"]`),
+        "Unable to find archive visibility wrapper.",
       );
-      const archiveAction = archiveButton.parentElement;
       expect(
-        archiveAction,
-        "Archive button should render inside a visibility wrapper.",
+        document.querySelector<HTMLButtonElement>(`[data-testid="thread-archive-${THREAD_ID}"]`),
+        "Unable to find archive button.",
       ).not.toBeNull();
-      expect(getComputedStyle(archiveAction!).opacity).toBe("0");
+      expect(getComputedStyle(archiveAction).opacity).toBe("0");
 
       await threadRow.hover();
       await vi.waitFor(
         () => {
-          expect(getComputedStyle(archiveAction!).opacity).toBe("1");
+          expect(getComputedStyle(archiveAction).opacity).toBe("1");
         },
         { timeout: 4_000, interval: 16 },
       );
@@ -3774,7 +3773,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("composer-editor").hover();
       await vi.waitFor(
         () => {
-          expect(getComputedStyle(archiveAction!).opacity).toBe("0");
+          expect(getComputedStyle(archiveAction).opacity).toBe("0");
         },
         { timeout: 4_000, interval: 16 },
       );
