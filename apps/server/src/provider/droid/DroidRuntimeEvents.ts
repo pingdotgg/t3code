@@ -187,7 +187,8 @@ export async function handleDroidMessage(input: {
         },
       });
     case DroidMessageType.TokenUsageUpdate:
-      context.activeTokenUsage = toTokenUsageSnapshot(message);
+      context.activeTokenUsage = toTokenUsageSnapshot(message, context.activeTokenUsageBaseline);
+      context.cumulativeTokenUsage = context.activeTokenUsage;
       return emitNow({
         ...base(),
         type: "thread.token-usage.updated",
@@ -234,7 +235,13 @@ export async function handleDroidMessage(input: {
         payload: { message: message.message, class: "provider_error" },
       });
     case DroidMessageType.TurnComplete:
-      if (message.tokenUsage) context.activeTokenUsage = toTokenUsageSnapshot(message.tokenUsage);
+      if (message.tokenUsage) {
+        context.activeTokenUsage = toTokenUsageSnapshot(
+          message.tokenUsage,
+          context.activeTokenUsageBaseline,
+        );
+      }
+      context.cumulativeTokenUsage = context.activeTokenUsage ?? context.cumulativeTokenUsage;
       return;
     default:
       return;

@@ -203,6 +203,8 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           activeThinkingItems: new Map(),
           activeCompletedAssistantItems: new Set(),
           activeTokenUsage: undefined,
+          activeTokenUsageBaseline: undefined,
+          cumulativeTokenUsage: undefined,
         };
         contextRef = context;
         sessions.set(input.threadId, context);
@@ -250,6 +252,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
       context.activeThinkingItems = new Map();
       context.activeCompletedAssistantItems = new Set();
       context.activeTokenUsage = undefined;
+      context.activeTokenUsageBaseline = context.cumulativeTokenUsage;
       context.turns.push({ id: turnId, items: [] });
       updateDroidContextSession(context, {
         status: "running",

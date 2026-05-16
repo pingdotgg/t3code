@@ -181,6 +181,7 @@ it.effect("maps Droid SDK stream messages into canonical runtime events", () =>
         cachedInputTokens: 3,
         outputTokens: 5,
         reasoningOutputTokens: 1,
+        lastUsedTokens: 20,
         lastInputTokens: 15,
         lastCachedInputTokens: 3,
         lastOutputTokens: 5,
@@ -194,6 +195,118 @@ it.effect("maps Droid SDK stream messages into canonical runtime events", () =>
         state: "completed",
         usage: expectedUsage,
       });
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("keeps Droid token usage cumulative across turns", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const usageThreadId = ThreadId.make("thread-droid-token-usage");
+      let streamCalls = 0;
+      const turnUsages: ReadonlyArray<DroidMessage> = [
+        {
+          type: DroidMessageType.TokenUsageUpdate,
+          inputTokens: 10,
+          outputTokens: 4,
+          cacheCreationTokens: 2,
+          cacheReadTokens: 3,
+          thinkingTokens: 1,
+        },
+        {
+          type: DroidMessageType.TokenUsageUpdate,
+          inputTokens: 5,
+          outputTokens: 7,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 1,
+          thinkingTokens: 2,
+        },
+      ];
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () =>
+            fakeSession({
+              onStream: async function* () {
+                const usage = turnUsages[streamCalls];
+                streamCalls += 1;
+                if (!usage) throw new Error("Unexpected extra Droid turn stream.");
+                yield usage;
+                yield { type: DroidMessageType.TurnComplete, tokenUsage: null };
+              },
+            }),
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+      const firstEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === usageThreadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: usageThreadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: usageThreadId, input: "first" });
+      const firstEvents = Array.from(
+        yield* Fiber.join(firstEventsFiber).pipe(Effect.timeout("2 seconds")),
+      );
+
+      const secondEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === usageThreadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId: usageThreadId, input: "second" });
+      const secondEvents = Array.from(
+        yield* Fiber.join(secondEventsFiber).pipe(Effect.timeout("2 seconds")),
+      );
+      const events = [...firstEvents, ...secondEvents];
+      const usageEvents = events.filter((event) => event.type === "thread.token-usage.updated");
+      const completedTurns = events.filter((event) => event.type === "turn.completed");
+
+      assert.deepEqual(
+        usageEvents.map((event) =>
+          event.type === "thread.token-usage.updated" ? event.payload.usage : undefined,
+        ),
+        [
+          {
+            usedTokens: 20,
+            inputTokens: 15,
+            cachedInputTokens: 3,
+            outputTokens: 5,
+            reasoningOutputTokens: 1,
+            lastUsedTokens: 20,
+            lastInputTokens: 15,
+            lastCachedInputTokens: 3,
+            lastOutputTokens: 5,
+            lastReasoningOutputTokens: 1,
+          },
+          {
+            usedTokens: 35,
+            inputTokens: 21,
+            cachedInputTokens: 4,
+            outputTokens: 14,
+            reasoningOutputTokens: 3,
+            lastUsedTokens: 15,
+            lastInputTokens: 6,
+            lastCachedInputTokens: 1,
+            lastOutputTokens: 9,
+            lastReasoningOutputTokens: 2,
+          },
+        ],
+      );
+      assert.deepEqual(
+        completedTurns.map((event) =>
+          event.type === "turn.completed"
+            ? (event.payload as { usage?: { usedTokens?: number } }).usage?.usedTokens
+            : undefined,
+        ),
+        [20, 35],
+      );
     }),
   ).pipe(Effect.provide(testLayer)),
 );

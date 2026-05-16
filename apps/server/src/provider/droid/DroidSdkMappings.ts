@@ -15,6 +15,7 @@ import type {
   ProviderApprovalDecision,
   ProviderSessionStartInput,
   ProviderUserInputAnswers,
+  ThreadTokenUsageSnapshot,
   ToolLifecycleItemType,
   UserInputQuestion,
 } from "@t3tools/contracts";
@@ -169,18 +170,28 @@ export function toOutcome(decision: ProviderApprovalDecision): ToolConfirmationO
   }
 }
 
-export function toTokenUsageSnapshot(usage: TokenUsageUpdate) {
-  const inputTokens = usage.inputTokens + usage.cacheCreationTokens + usage.cacheReadTokens;
-  const outputTokens = usage.outputTokens + usage.thinkingTokens;
+export function toTokenUsageSnapshot(
+  usage: TokenUsageUpdate,
+  previous?: ThreadTokenUsageSnapshot,
+): ThreadTokenUsageSnapshot {
+  const lastInputTokens = usage.inputTokens + usage.cacheCreationTokens + usage.cacheReadTokens;
+  const lastOutputTokens = usage.outputTokens + usage.thinkingTokens;
+  const lastCachedInputTokens = usage.cacheReadTokens;
+  const lastReasoningOutputTokens = usage.thinkingTokens;
+  const inputTokens = (previous?.inputTokens ?? 0) + lastInputTokens;
+  const cachedInputTokens = (previous?.cachedInputTokens ?? 0) + lastCachedInputTokens;
+  const outputTokens = (previous?.outputTokens ?? 0) + lastOutputTokens;
+  const reasoningOutputTokens = (previous?.reasoningOutputTokens ?? 0) + lastReasoningOutputTokens;
   return {
     usedTokens: inputTokens + outputTokens,
     inputTokens,
-    cachedInputTokens: usage.cacheReadTokens,
+    cachedInputTokens,
     outputTokens,
-    reasoningOutputTokens: usage.thinkingTokens,
-    lastInputTokens: inputTokens,
-    lastCachedInputTokens: usage.cacheReadTokens,
-    lastOutputTokens: outputTokens,
-    lastReasoningOutputTokens: usage.thinkingTokens,
+    reasoningOutputTokens,
+    lastUsedTokens: lastInputTokens + lastOutputTokens,
+    lastInputTokens,
+    lastCachedInputTokens,
+    lastOutputTokens,
+    lastReasoningOutputTokens,
   };
 }

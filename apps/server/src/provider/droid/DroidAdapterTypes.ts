@@ -44,6 +44,8 @@ export interface DroidContext {
   activeThinkingItems: Map<string, string>;
   activeCompletedAssistantItems: Set<string>;
   activeTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  activeTokenUsageBaseline: ThreadTokenUsageSnapshot | undefined;
+  cumulativeTokenUsage: ThreadTokenUsageSnapshot | undefined;
 }
 
 export interface DroidAdapterOptions {
