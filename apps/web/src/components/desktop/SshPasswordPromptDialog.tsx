@@ -1,5 +1,5 @@
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -28,16 +28,10 @@ function getPromptErrorMessage(error: unknown): string {
     : message;
 }
 
-export function SshPasswordPromptDialog() {
+const EXPIRED_PROMPT_ERROR = "This SSH password prompt expired. Try connecting again.";
+
+function useSshPasswordPromptQueue() {
   const [queue, setQueue] = useState<readonly DesktopSshPasswordPromptRequest[]>([]);
-  const [password, setPassword] = useState("");
-  const [isResponding, setIsResponding] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [responseError, setResponseError] = useState<string | null>(null);
-  const currentRequest = queue[0] ?? null;
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const isRespondingRef = useRef(false);
-  const formId = useId();
 
   useEffect(() => {
     const bridge = window.desktopBridge;
@@ -50,14 +44,23 @@ export function SshPasswordPromptDialog() {
     });
   }, []);
 
-  useEffect(() => {
-    setPassword("");
-    setResponseError(null);
-    if (!currentRequest) {
-      return;
-    }
+  const removeCurrentPrompt = useCallback((requestId: string) => {
+    setQueue((currentQueue) =>
+      currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
+    );
+  }, []);
 
-    setNow(Date.now());
+  return {
+    currentRequest: queue[0] ?? null,
+    removeCurrentPrompt,
+  };
+}
+
+function useSshPasswordPromptFocus(
+  requestId: string,
+  inputRef: RefObject<HTMLInputElement | null>,
+) {
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
@@ -65,50 +68,72 @@ export function SshPasswordPromptDialog() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [currentRequest]);
+  }, [inputRef, requestId]);
+}
+
+function useSshPasswordPromptNow(requestId: string) {
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!currentRequest) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
       setNow(Date.now());
     }, 1_000);
     return () => {
       window.clearInterval(interval);
     };
-  }, [currentRequest]);
+  }, [requestId]);
 
-  const expiresAtMs = currentRequest ? Date.parse(currentRequest.expiresAt) : Number.NaN;
+  return now;
+}
+
+export function SshPasswordPromptDialog() {
+  const { currentRequest, removeCurrentPrompt } = useSshPasswordPromptQueue();
+
+  if (!currentRequest) {
+    return null;
+  }
+
+  return (
+    <SshPasswordPromptRequestDialog
+      key={currentRequest.requestId}
+      currentRequest={currentRequest}
+      removeCurrentPrompt={removeCurrentPrompt}
+    />
+  );
+}
+
+function SshPasswordPromptRequestDialog({
+  currentRequest,
+  removeCurrentPrompt,
+}: {
+  currentRequest: DesktopSshPasswordPromptRequest;
+  removeCurrentPrompt: (requestId: string) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [isResponding, setIsResponding] = useState(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const isRespondingRef = useRef(false);
+  const formId = useId();
+  const now = useSshPasswordPromptNow(currentRequest.requestId);
+  useSshPasswordPromptFocus(currentRequest.requestId, inputRef);
+
+  const expiresAtMs = Date.parse(currentRequest.expiresAt);
   const remainingMs = Number.isFinite(expiresAtMs) ? Math.max(0, expiresAtMs - now) : null;
   const isExpired = remainingMs !== null && remainingMs <= 0;
   const remainingSeconds = remainingMs === null ? null : Math.ceil(remainingMs / 1_000);
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
-
-  useEffect(() => {
-    if (isExpired) {
-      setResponseError("This SSH password prompt expired. Try connecting again.");
-    }
-  }, [isExpired]);
-
-  const removeCurrentPrompt = (requestId: string) => {
-    setQueue((currentQueue) =>
-      currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
-    );
-    setPassword("");
-    setResponseError(null);
-  };
+  const displayedError = isExpired ? EXPIRED_PROMPT_ERROR : responseError;
 
   const respond = async (nextPassword: string | null) => {
-    if (!currentRequest || isRespondingRef.current) {
+    if (isRespondingRef.current) {
       return;
     }
 
     const requestId = currentRequest.requestId;
     if (nextPassword !== null && isExpired) {
-      setResponseError("This SSH password prompt expired. Try connecting again.");
+      setResponseError(EXPIRED_PROMPT_ERROR);
       return;
     }
 
@@ -198,8 +223,8 @@ export function SshPasswordPromptDialog() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
-            {responseError ? (
-              <p className="text-sm text-destructive">{responseError}</p>
+            {displayedError ? (
+              <p className="text-sm text-destructive">{displayedError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 Use SSH keys to avoid repeated password prompts on new SSH sessions.
