@@ -1,0 +1,24 @@
+{
+  "label": "after",
+  "capturedAt": "2026-05-11T16:21:51.199Z",
+  "reactScanEnabled": true,
+  "webSocketConnectionCoordinatorRenderCount": 2,
+  "webSocketConnectionCoordinatorUpdateCount": 1,
+  "totalActualDurationMs": 1.2,
+  "metrics": [
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "mount",
+      "actualDuration": 1,
+      "startTime": 790.3999999761581,
+      "commitTime": 791.6999999880791
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.20000004768371582,
+      "startTime": 811.3999999761581,
+      "commitTime": 811.6000000238419
+    }
+  ]
+}

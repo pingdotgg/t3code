@@ -1,0 +1,73 @@
+{
+  "label": "before",
+  "capturedAt": "2026-05-11T16:20:08.109Z",
+  "reactScanEnabled": true,
+  "webSocketConnectionCoordinatorRenderCount": 9,
+  "webSocketConnectionCoordinatorUpdateCount": 8,
+  "totalActualDurationMs": 2,
+  "metrics": [
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "mount",
+      "actualDuration": 0.8999999761581421,
+      "startTime": 665.6000000238419,
+      "commitTime": 666.8999999761581
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.30000001192092896,
+      "startTime": 690.6999999880791,
+      "commitTime": 691.1000000238419
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.19999998807907104,
+      "startTime": 769.1000000238419,
+      "commitTime": 769.3999999761581
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.10000002384185791,
+      "startTime": 1692,
+      "commitTime": 1692.199999988079
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.09999996423721313,
+      "startTime": 2691.800000011921,
+      "commitTime": 2691.899999976158
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.19999998807907104,
+      "startTime": 3691.800000011921,
+      "commitTime": 3692
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.10000002384185791,
+      "startTime": 4691.899999976158,
+      "commitTime": 4692.100000023842
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0,
+      "startTime": 5691.899999976158,
+      "commitTime": 5691.899999976158
+    },
+    {
+      "id": "WebSocketConnectionCoordinator",
+      "phase": "update",
+      "actualDuration": 0.10000002384185791,
+      "startTime": 6691.899999976158,
+      "commitTime": 6692
+    }
+  ]
+}

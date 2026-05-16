@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef } from "react";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import {
@@ -147,7 +147,12 @@ export function shouldRestartStalledReconnect(
 
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  useWebSocketConnectionCoordinatorEffects(status);
+
+  return null;
+}
+
+function useWebSocketConnectionCoordinatorEffects(status: WsConnectionStatus) {
   const lastForcedReconnectAtRef = useRef(0);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
@@ -201,73 +206,7 @@ export function WebSocketConnectionCoordinator() {
     runReconnect(false);
   });
 
-  useEffect(() => {
-    const handleOnline = () => {
-      triggerAutoReconnect("online");
-    };
-    const handleFocus = () => {
-      triggerAutoReconnect("focus");
-    };
-
-    syncBrowserOnlineStatus();
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", syncBrowserOnlineStatus);
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", syncBrowserOnlineStatus);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (status.reconnectPhase !== "waiting" || status.nextRetryAt === null) {
-      return;
-    }
-
-    setNowMs(Date.now());
-    const intervalId = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 1_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [status.nextRetryAt, status.reconnectPhase]);
-
-  useEffect(() => {
-    if (
-      status.reconnectPhase !== "waiting" ||
-      status.nextRetryAt === null ||
-      !status.online ||
-      !status.hasConnected
-    ) {
-      return;
-    }
-
-    const nextRetryAt = status.nextRetryAt;
-    const timeoutMs = Math.max(0, new Date(nextRetryAt).getTime() - Date.now()) + 1_500;
-    const timeoutId = window.setTimeout(() => {
-      const currentStatus = getWsConnectionStatus();
-      if (!shouldRestartStalledReconnect(currentStatus, nextRetryAt)) {
-        return;
-      }
-
-      runReconnect(false);
-    }, timeoutMs);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    status.hasConnected,
-    status.nextRetryAt,
-    status.online,
-    status.reconnectAttemptCount,
-    status.reconnectPhase,
-  ]);
-
-  useEffect(() => {
+  const syncConnectionToast = useEffectEvent((nowMs: number) => {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
@@ -365,7 +304,76 @@ export function WebSocketConnectionCoordinator() {
 
     previousUiStateRef.current = uiState;
     previousDisconnectedAtRef.current = status.disconnectedAt;
-  }, [nowMs, status]);
+  });
+
+  useEffect(() => {
+    const handleOnline = () => {
+      triggerAutoReconnect("online");
+    };
+    const handleFocus = () => {
+      triggerAutoReconnect("focus");
+    };
+
+    syncBrowserOnlineStatus();
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", syncBrowserOnlineStatus);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", syncBrowserOnlineStatus);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (status.reconnectPhase !== "waiting" || status.nextRetryAt === null) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      syncConnectionToast(Date.now());
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [status.nextRetryAt, status.reconnectPhase]);
+
+  useEffect(() => {
+    if (
+      status.reconnectPhase !== "waiting" ||
+      status.nextRetryAt === null ||
+      !status.online ||
+      !status.hasConnected
+    ) {
+      return;
+    }
+
+    const nextRetryAt = status.nextRetryAt;
+    const timeoutMs = Math.max(0, new Date(nextRetryAt).getTime() - Date.now()) + 1_500;
+    const timeoutId = window.setTimeout(() => {
+      const currentStatus = getWsConnectionStatus();
+      if (!shouldRestartStalledReconnect(currentStatus, nextRetryAt)) {
+        return;
+      }
+
+      runReconnect(false);
+    }, timeoutMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    status.hasConnected,
+    status.nextRetryAt,
+    status.online,
+    status.reconnectAttemptCount,
+    status.reconnectPhase,
+  ]);
+
+  useEffect(() => {
+    syncConnectionToast(Date.now());
+  }, [status]);
 
   useEffect(() => {
     return () => {
@@ -374,8 +382,6 @@ export function WebSocketConnectionCoordinator() {
       }
     };
   }, []);
-
-  return null;
 }
 
 export function SlowRpcAckToastCoordinator() {
