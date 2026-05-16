@@ -14,6 +14,8 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and Ope
 
 ### Run without installing
 
+**Need help installing Codex?** See our [installation guide](./docs/guide/codex_installation.md)
+
 ```bash
 npx t3
 ```
