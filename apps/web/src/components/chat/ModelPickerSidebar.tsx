@@ -1,4 +1,4 @@
-import { type ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
 import { Gemini, GithubCopilotIcon } from "../Icons";
@@ -75,6 +75,9 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     }
     return counts;
   }, [props.instanceEntries]);
+  const hasCopilotInstance = props.instanceEntries.some(
+    (entry) => entry.driverKind === ProviderDriverKind.make("copilot"),
+  );
 
   return (
     <ScrollArea
@@ -225,36 +228,40 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 Gemini — Coming soon
               </TooltipPopup>
             </Tooltip>
-            {/* Github Copilot button (coming soon) */}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="relative block w-full">
-                    <button
-                      className={cn(
-                        "relative isolate flex w-full aspect-square items-center justify-center rounded opacity-50 cursor-not-allowed transition-colors hover:bg-transparent",
-                      )}
-                      disabled
-                      type="button"
-                      data-model-picker-provider="github-copilot-coming-soon"
-                      aria-label="Github Copilot — coming soon"
-                    >
-                      <GithubCopilotIcon className="size-5 text-muted-foreground/85" aria-hidden />
-                      <span className={SOON_BADGE_CLASS} aria-hidden>
-                        <Clock3Icon className="size-2" />
-                      </span>
-                    </button>
-                  </span>
-                }
-              />
-              <TooltipPopup
-                side={PICKER_TOOLTIP_SIDE}
-                align="center"
-                className={PICKER_TOOLTIP_CLASS}
-              >
-                Github Copilot — Coming soon
-              </TooltipPopup>
-            </Tooltip>
+            {!hasCopilotInstance ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="relative block w-full">
+                      <button
+                        className={cn(
+                          "relative isolate flex w-full aspect-square items-center justify-center rounded opacity-50 cursor-not-allowed transition-colors hover:bg-transparent",
+                        )}
+                        disabled
+                        type="button"
+                        data-model-picker-provider="github-copilot-coming-soon"
+                        aria-label="GitHub Copilot — coming soon"
+                      >
+                        <GithubCopilotIcon
+                          className="size-5 text-muted-foreground/85"
+                          aria-hidden
+                        />
+                        <span className={SOON_BADGE_CLASS} aria-hidden>
+                          <Clock3Icon className="size-2" />
+                        </span>
+                      </button>
+                    </span>
+                  }
+                />
+                <TooltipPopup
+                  side={PICKER_TOOLTIP_SIDE}
+                  align="center"
+                  className={PICKER_TOOLTIP_CLASS}
+                >
+                  GitHub Copilot — Coming soon
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </>
         ) : null}
       </div>

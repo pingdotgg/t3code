@@ -231,6 +231,23 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   };
 }
 
+function buildCopilotProvider(models: ServerProvider["models"]): ServerProvider {
+  return {
+    driver: ProviderDriverKind.make("copilot"),
+    instanceId: ProviderInstanceId.make("copilot"),
+    displayName: "GitHub Copilot",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: new Date().toISOString(),
+    models,
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider {
   return {
     driver: ProviderDriverKind.make("opencode"),
@@ -361,11 +378,72 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        expect(getSidebarProviderOrder().slice(0, 3)).toEqual([
-          "favorites",
-          "codex",
-          "claudeAgent",
-        ]);
+        const order = getSidebarProviderOrder();
+        expect(order[0]).toBe("favorites");
+        expect(order.slice(1, 3)).toEqual(["codex", "claudeAgent"]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows only the real copilot provider in the sidebar", async () => {
+    const providers: ReadonlyArray<ServerProvider> = [
+      TEST_PROVIDERS[0]!,
+      buildCopilotProvider([
+        {
+          slug: "auto",
+          name: "Auto",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
+        },
+        {
+          slug: "gpt-4.1",
+          name: "GPT-4.1",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
+        },
+      ]),
+      TEST_PROVIDERS[1]!,
+    ];
+    const mounted = await mountPicker({
+      activeInstanceId: CLAUDE_INSTANCE_ID,
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+      providers,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getSidebarProviderOrder()).toContain("copilot");
+        expect(getSidebarProviderOrder()).not.toContain("github-copilot-coming-soon");
+      });
+
+      await page.getByRole("button", { name: "GitHub Copilot", exact: true }).click();
+
+      await vi.waitFor(() => {
+        const listText = getModelPickerListText();
+        expect(listText).toContain("Auto");
+        expect(listText).toContain("GPT-4.1");
+        expect(listText).not.toContain("Claude Opus 4.6");
       });
     } finally {
       await mounted.cleanup();
