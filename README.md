@@ -64,7 +64,8 @@ yay -S t3code-bin
 {
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   environment.systemPackages = [
-    inputs.t3code-flake.packages."x86_64-linux".default;
+    pkgs.appimage-run
+    inputs.t3code-flake.packages.${system}
   ];
 }
 ```
