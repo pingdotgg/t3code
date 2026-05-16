@@ -304,6 +304,110 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }),
   );
 
+  it.effect("renders a fallback assistant message when a tool-only turn completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-tool-only-assistant-fallback");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "edit the docs",
+        attachments: [],
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-tool-only-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-tool-only",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-edit-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-edit-file",
+          toolName: "edit_file",
+          arguments: {
+            path: "README.md",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-edit-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-edit-file",
+          success: true,
+          result: {},
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-tool-only-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-tool-only",
+        },
+      } as SessionEvent);
+
+      let thread = yield* adapter.readThread(threadId);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !thread.turns.some((entry) =>
+          entry.items.some(
+            (item) =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              item.type === "assistant_message",
+          ),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+        thread = yield* adapter.readThread(threadId);
+      }
+
+      const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
+      assert.ok(turnSnapshot);
+      const assistantItem = turnSnapshot.items.find(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "type" in item &&
+          item.type === "assistant_message",
+      );
+      assert.deepStrictEqual(assistantItem, {
+        type: "assistant_message",
+        messageId: `copilot-tool-completion-${String(turn.turnId)}`,
+        content: "Done. I completed the requested file changes.",
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("ignores empty SDK tool progress messages without failing the session", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
