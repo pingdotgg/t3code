@@ -684,11 +684,11 @@ describe("terminalNavigationShortcutData", () => {
   it("maps Ctrl+Arrow on non-macOS to word movement", () => {
     assert.strictEqual(
       terminalNavigationShortcutData(event({ key: "ArrowLeft", ctrlKey: true }), "Win32"),
-      "\u001bb",
+      "\u001b[1;5D",
     );
     assert.strictEqual(
       terminalNavigationShortcutData(event({ key: "ArrowRight", ctrlKey: true }), "Linux"),
-      "\u001bf",
+      "\u001b[1;5C",
     );
   });
 
