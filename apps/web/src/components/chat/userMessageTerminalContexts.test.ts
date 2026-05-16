@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildInlineTerminalContextText,
+  buildRenderedUserMessageText,
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
@@ -32,5 +33,28 @@ describe("userMessageTerminalContexts", () => {
         { header: "Terminal 1 lines 12-13" },
       ]),
     ).toBe(false);
+  });
+
+  it("replaces hidden inline terminal tokens with the rendered chip labels", () => {
+    expect(
+      buildRenderedUserMessageText("yo @terminal-1:12-13 whats up", [
+        { header: "Terminal 1 lines 12-13" },
+      ]),
+    ).toBe("yo Terminal 1 lines 12-13 whats up");
+  });
+
+  it("ignores empty terminal context headers while replacing visible inline labels", () => {
+    expect(
+      buildRenderedUserMessageText("yo @terminal-1:12-13 whats up", [
+        { header: "   " },
+        { header: "Terminal 1 lines 12-13" },
+      ]),
+    ).toBe("yo Terminal 1 lines 12-13 whats up");
+  });
+
+  it("prefixes standalone rendered chip labels ahead of the remaining text", () => {
+    expect(
+      buildRenderedUserMessageText("follow-up text", [{ header: "Terminal 1 lines 12-13" }]),
+    ).toBe("Terminal 1 lines 12-13 follow-up text");
   });
 });

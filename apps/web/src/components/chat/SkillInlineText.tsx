@@ -8,14 +8,48 @@ import {
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
+import { renderHighlightedText } from "./threadSearchHighlight";
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
-export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
+export function collectSkillInlineTextLabels(
+  text: string,
+  skills: ReadonlyArray<InlineSkill>,
+): string[] {
+  const labels: string[] = [];
+  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
+    const name = match[2] ?? "";
+    const skill = skills.find((candidate) => candidate.name === name);
+    if (!skill) continue;
+    labels.push(formatProviderSkillDisplayName(skill));
+  }
+  return labels;
+}
+
+export function SkillInlineText(props: {
+  text: string;
+  skills: ReadonlyArray<InlineSkill>;
+  searchQuery?: string | undefined;
+  searchActive?: boolean | undefined;
+  keyPrefix?: string | undefined;
+}) {
   const nodes: ReactNode[] = [];
   let cursor = 0;
+  const renderText = (value: string, keySuffix: string): ReactNode => {
+    if ((props.searchQuery ?? "").trim().length === 0) {
+      return value;
+    }
+    return renderHighlightedText(
+      value,
+      props.searchQuery ?? "",
+      `${props.keyPrefix ?? "skill-inline"}:${keySuffix}`,
+      {
+        active: props.searchActive ?? false,
+      },
+    );
+  };
 
   for (const match of props.text.matchAll(SKILL_TOKEN_REGEX)) {
     const prefix = match[1] ?? "";
@@ -28,17 +62,17 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
     }
 
     if (start > cursor) {
-      nodes.push(props.text.slice(cursor, start));
+      nodes.push(renderText(props.text.slice(cursor, start), `text:${cursor}`));
     }
     nodes.push(<SkillChip key={`${start}:${name}`} skill={skill} rawText={rawText} />);
     cursor = start + rawText.length;
   }
 
   if (cursor === 0) {
-    return <>{props.text}</>;
+    return <>{renderText(props.text, "text")}</>;
   }
   if (cursor < props.text.length) {
-    nodes.push(props.text.slice(cursor));
+    nodes.push(renderText(props.text.slice(cursor), `text:${cursor}`));
   }
   return <>{nodes}</>;
 }
