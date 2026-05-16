@@ -105,6 +105,15 @@ interface ToolMeta {
     | "image_view";
 }
 
+interface CopilotToolExecutionItem {
+  readonly type: "tool_execution";
+  readonly toolCallId: string;
+  readonly toolName?: string;
+  readonly itemType?: ToolMeta["itemType"];
+  readonly success: boolean;
+  readonly detail?: string;
+}
+
 interface CopilotSessionContext {
   readonly threadId: ThreadId;
   readonly client: CopilotClient;
@@ -221,6 +230,47 @@ function appendTurnItem(
     return;
   }
   ensureTurnSnapshot(context, turnId).items.push(item);
+}
+
+function isCopilotToolExecutionItem(item: unknown): item is CopilotToolExecutionItem {
+  return (
+    Predicate.hasProperty(item, "type") &&
+    item.type === "tool_execution" &&
+    Predicate.hasProperty(item, "toolCallId") &&
+    Predicate.isString(item.toolCallId) &&
+    Predicate.hasProperty(item, "success") &&
+    typeof item.success === "boolean"
+  );
+}
+
+function toolOnlyCompletionText(
+  context: CopilotSessionContext,
+  turnId: TurnId,
+): string | undefined {
+  if (context.turnIdsWithAssistantText.has(turnId)) {
+    return undefined;
+  }
+
+  const turn = context.turns.find((entry) => entry.id === turnId);
+  const completedTools =
+    turn?.items.filter(
+      (item): item is CopilotToolExecutionItem => isCopilotToolExecutionItem(item) && item.success,
+    ) ?? [];
+  if (completedTools.length === 0) {
+    return undefined;
+  }
+
+  const itemTypes = new Set(completedTools.map((item) => item.itemType).filter(Boolean));
+  if (itemTypes.has("file_change")) {
+    return "Done. I completed the requested file changes.";
+  }
+  if (itemTypes.has("command_execution")) {
+    return "Done. I ran the requested commands.";
+  }
+  if (itemTypes.has("collab_agent_tool_call")) {
+    return "Done. I completed the requested task.";
+  }
+  return "Done. I completed the requested tool work.";
 }
 
 function processError(
@@ -944,6 +994,40 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       messageId: itemId,
       content,
     });
+    context.turnIdsWithAssistantText.add(turnId);
+  };
+
+  const emitToolOnlyCompletionAsAssistantMessage = async (
+    context: CopilotSessionContext,
+    turnId: TurnId,
+    raw: SessionEvent,
+  ) => {
+    const content = toolOnlyCompletionText(context, turnId);
+    if (!content) {
+      return;
+    }
+
+    const itemId = `copilot-tool-completion-${String(turnId)}`;
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        turnId,
+        itemId,
+        raw,
+      }),
+      type: "item.completed",
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: content,
+      },
+    });
+    appendTurnItem(context, turnId, {
+      type: "assistant_message",
+      messageId: itemId,
+      content,
+    });
+    context.turnIdsWithAssistantText.add(turnId);
   };
 
   const emitPermissionRequestOpened = (
@@ -1341,6 +1425,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (context.activeTurnId) {
           if (!event.data.aborted) {
             await emitPendingTaskCompletionAsAssistantMessage(context, context.activeTurnId, event);
+            await emitToolOnlyCompletionAsAssistantMessage(context, context.activeTurnId, event);
           }
           await emitTurnCompleted(
             context,
@@ -1626,6 +1711,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
+        await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
         await emitTurnCompleted(context, turnId, "completed", {
           raw: event,
           stopReason: null,
@@ -1806,13 +1892,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               : {}),
           },
         });
-        appendTurnItem(context, turnId, {
+        const toolItem: CopilotToolExecutionItem = {
           type: "tool_execution",
           toolCallId: event.data.toolCallId,
-          toolName: toolMeta?.toolName,
+          ...(toolMeta?.toolName ? { toolName: toolMeta.toolName } : {}),
+          ...(toolMeta?.itemType ? { itemType: toolMeta.itemType } : {}),
           success: event.data.success,
-          detail,
-        });
+          ...(detail ? { detail } : {}),
+        };
+        appendTurnItem(context, turnId, toolItem);
         if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
           context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
         }
