@@ -54,12 +54,14 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     sessionCreateUrls: [] as string[],
+    sessionGetCalls: [] as string[],
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
+    sessionGetError: null as unknown,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
@@ -67,12 +69,14 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
+    this.state.sessionGetCalls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
     this.state.promptAsyncError = null;
+    this.state.sessionGetError = null;
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
@@ -128,6 +132,18 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
           return { data: { id: `${baseUrl}/session` } };
+        },
+        get: async ({ sessionID }: { sessionID: string }) => {
+          runtimeMock.state.sessionGetCalls.push(sessionID);
+          if (runtimeMock.state.sessionGetError) {
+            throw runtimeMock.state.sessionGetError;
+          }
+          return {
+            data: {
+              id: sessionID,
+              directory: "/tmp/opencode-resumed",
+            },
+          };
         },
         abort: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
@@ -293,9 +309,101 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("resumes an existing OpenCode session when a resume cursor is provided", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-resume"),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          sessionID: "ses-existing",
+          directory: "/tmp/ignored-by-session-get",
+        },
+      });
+
+      assert.equal(session.provider, "opencode");
+      assert.equal(session.threadId, "thread-opencode-resume");
+      assert.equal(session.cwd, "/tmp/opencode-resumed");
+      assert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+      assert.deepEqual(runtimeMock.state.sessionGetCalls, ["ses-existing"]);
+      assert.deepEqual(session.resumeCursor, {
+        sessionID: "ses-existing",
+        directory: "/tmp/opencode-resumed",
+      });
+    }),
+  );
+
+  it.effect("creates a fresh OpenCode session when resume cursor points to a missing session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      runtimeMock.state.sessionGetError = {
+        response: { status: 404 },
+        error: { message: "session not found" },
+      };
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-stale-resume"),
+        runtimeMode: "approval-required",
+        resumeCursor: {
+          sessionID: "ses-missing",
+          directory: "/tmp/opencode-stale-resume",
+        },
+      });
+
+      assert.equal(session.provider, "opencode");
+      assert.equal(session.threadId, "thread-opencode-stale-resume");
+      assert.equal(session.cwd, "/tmp/opencode-stale-resume");
+      assert.deepEqual(runtimeMock.state.sessionGetCalls, ["ses-missing"]);
+      assert.deepEqual(runtimeMock.state.sessionCreateUrls, ["http://127.0.0.1:9999"]);
+      assert.deepEqual(session.resumeCursor, {
+        sessionID: "http://127.0.0.1:9999/session",
+        directory: "/tmp/opencode-stale-resume",
+      });
+    }),
+  );
+
+  it.effect(
+    "does not fall back to session creation when resume fails for a non-missing session",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        runtimeMock.state.sessionGetError = {
+          response: { status: 401 },
+          error: { message: "unauthorized" },
+        };
+
+        const exit = yield* Effect.exit(
+          adapter.startSession({
+            provider: ProviderDriverKind.make("opencode"),
+            threadId: asThreadId("thread-opencode-resume-auth-failure"),
+            runtimeMode: "full-access",
+            resumeCursor: {
+              sessionID: "ses-existing",
+              directory: "/tmp/opencode-resume-auth-failure",
+            },
+          }),
+        );
+        const sessions = yield* adapter.listSessions();
+
+        assert.equal(Exit.isFailure(exit), true);
+        assert.deepEqual(runtimeMock.state.sessionGetCalls, ["ses-existing"]);
+        assert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+        assert.equal(
+          sessions.some((session) => session.threadId === "thread-opencode-resume-auth-failure"),
+          false,
+        );
+      }),
+  );
+
   it.effect("clears session state even when cleanup finalizers throw", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
+      yield* Effect.exit(adapter.stopAll());
+      runtimeMock.state.closeCalls.length = 0;
+
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId: asThreadId("thread-stop-all-a"),
