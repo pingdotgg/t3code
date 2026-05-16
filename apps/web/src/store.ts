@@ -879,6 +879,42 @@ function buildLatestTurn(params: {
   };
 }
 
+function latestTurnStateFromInactiveSessionStatus(
+  status: OrchestrationSessionStatus,
+): NonNullable<Thread["latestTurn"]>["state"] | null {
+  switch (status) {
+    case "error":
+      return "error";
+    case "ready":
+    case "interrupted":
+    case "stopped":
+      return "interrupted";
+    default:
+      return null;
+  }
+}
+
+function settleRunningLatestTurnForInactiveSession(input: {
+  latestTurn: Thread["latestTurn"];
+  nextSessionStatus: OrchestrationSessionStatus;
+  completedAt: string;
+}): Thread["latestTurn"] {
+  const latestTurn = input.latestTurn;
+  const nextState = latestTurnStateFromInactiveSessionStatus(input.nextSessionStatus);
+  if (nextState === null || latestTurn === null || latestTurn.state !== "running") {
+    return latestTurn;
+  }
+  return buildLatestTurn({
+    previous: latestTurn,
+    turnId: latestTurn.turnId,
+    state: nextState,
+    requestedAt: latestTurn.requestedAt,
+    startedAt: latestTurn.startedAt ?? input.completedAt,
+    completedAt: latestTurn.completedAt ?? input.completedAt,
+    assistantMessageId: latestTurn.assistantMessageId,
+  });
+}
+
 function rebindTurnDiffSummariesForAssistantMessage(
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>,
   turnId: TurnId,
@@ -1473,7 +1509,11 @@ function applyEnvironmentOrchestrationEvent(
                     : null,
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
-            : thread.latestTurn,
+            : settleRunningLatestTurnForInactiveSession({
+                latestTurn: thread.latestTurn,
+                nextSessionStatus: event.payload.session.status,
+                completedAt: event.payload.session.updatedAt,
+              }),
         updatedAt: event.occurredAt,
       }));
 
@@ -1490,6 +1530,11 @@ function applyEnvironmentOrchestrationEvent(
                 activeTurnId: undefined,
                 updatedAt: event.payload.createdAt,
               },
+              latestTurn: settleRunningLatestTurnForInactiveSession({
+                latestTurn: thread.latestTurn,
+                nextSessionStatus: "stopped",
+                completedAt: event.payload.createdAt,
+              }),
               updatedAt: event.occurredAt,
             },
       );

@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -85,6 +86,27 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     ...overrides,
   };
+}
+
+function makeThreadWithRunningTurn(turnId = TurnId.make("turn-1")): Thread {
+  return makeThread({
+    session: {
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      orchestrationStatus: "running",
+      activeTurnId: turnId,
+      createdAt: "2026-02-27T00:00:00.000Z",
+      updatedAt: "2026-02-27T00:00:01.000Z",
+    },
+    latestTurn: {
+      turnId,
+      state: "running",
+      requestedAt: "2026-02-27T00:00:00.000Z",
+      startedAt: "2026-02-27T00:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    },
+  });
 }
 
 function makeState(thread: Thread): AppState {
@@ -779,6 +801,110 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.session?.status).toBe("running");
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
+  });
+
+  it("settles a running latest turn when the session is stopped", () => {
+    const thread = makeThreadWithRunningTurn();
+
+    const next = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Provider runtime is no longer active.",
+          updatedAt: "2026-02-27T00:00:05.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.session?.status).toBe("closed");
+    expect(threadsOf(next)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "interrupted",
+      completedAt: "2026-02-27T00:00:05.000Z",
+    });
+  });
+
+  it("settles a running latest turn across optimistic stop and server confirmation", () => {
+    const thread = makeThreadWithRunningTurn();
+    const stopRequestedAt = "2026-02-27T00:00:04.000Z";
+
+    const afterOptimisticStop = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.session-stop-requested", {
+        threadId: thread.id,
+        createdAt: stopRequestedAt,
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(afterOptimisticStop)[0]?.session).toMatchObject({
+      status: "closed",
+      activeTurnId: undefined,
+    });
+    expect(threadsOf(afterOptimisticStop)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "interrupted",
+      completedAt: stopRequestedAt,
+    });
+
+    const afterServerConfirmation = applyOrchestrationEvent(
+      afterOptimisticStop,
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:05.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(afterServerConfirmation)[0]?.session?.status).toBe("closed");
+    expect(threadsOf(afterServerConfirmation)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "interrupted",
+      completedAt: stopRequestedAt,
+    });
+  });
+
+  it("preserves a failed latest turn when the session enters error", () => {
+    const thread = makeThreadWithRunningTurn();
+
+    const next = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Prompt failed.",
+          updatedAt: "2026-02-27T00:00:05.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.session?.status).toBe("error");
+    expect(threadsOf(next)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "error",
+      completedAt: "2026-02-27T00:00:05.000Z",
+    });
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {

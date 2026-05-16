@@ -1217,9 +1217,10 @@ export function makeOpenCodeAdapter(
       ).pipe(
         Effect.mapError(toRequestError),
         // On failure: clear active-turn state, flip the session back to ready
-        // with lastError set, emit turn.aborted, then let the typed error
-        // propagate. We don't need to rebuild the error here — `toRequestError`
-        // already produced the right shape.
+        // with lastError set, then let the typed error propagate. We don't
+        // emit turn.aborted here because prompt-start failures are not user
+        // interrupts, and the orchestration layer already records the
+        // provider.turn.start.failed activity from the typed error.
         Effect.tapError((requestError) =>
           Effect.gen(function* () {
             context.activeTurnId = undefined;
@@ -1234,16 +1235,6 @@ export function makeOpenCodeAdapter(
               },
               { clearActiveTurnId: true },
             );
-            yield* emit({
-              ...(yield* buildEventBase({
-                threadId: input.threadId,
-                turnId,
-              })),
-              type: "turn.aborted",
-              payload: {
-                reason: requestError.detail,
-              },
-            });
           }),
         ),
       );
@@ -1257,14 +1248,19 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = ensureSessionContext(sessions, threadId);
+        const interruptedTurnId = turnId ?? context.activeTurnId;
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
         ).pipe(Effect.mapError(toRequestError));
-        if (turnId ?? context.activeTurnId) {
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+        if (interruptedTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: turnId ?? context.activeTurnId,
+              turnId: interruptedTurnId,
             })),
             type: "turn.aborted",
             payload: {

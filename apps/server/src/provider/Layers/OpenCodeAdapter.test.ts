@@ -18,6 +18,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -366,6 +367,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMode: "full-access",
       });
 
+      const observedEvents: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === asThreadId("thread-send-turn-failure")),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            observedEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
       runtimeMock.state.promptAsyncError = new Error("prompt failed");
       const error = yield* adapter
         .sendTurn({
@@ -378,6 +391,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         })
         .pipe(Effect.flip);
       const sessions = yield* adapter.listSessions();
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(eventsFiber);
 
       assert.equal(error._tag, "ProviderAdapterRequestError");
       if (error._tag !== "ProviderAdapterRequestError") {
@@ -392,6 +407,81 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(sessions[0]?.status, "ready");
       assert.equal(sessions[0]?.activeTurnId, undefined);
       assert.equal(sessions[0]?.lastError, "prompt failed");
+      assert.equal(
+        observedEvents.some((event) => event.type === "turn.aborted"),
+        false,
+      );
+    }),
+  );
+
+  it.effect("clears active session state after interrupting a turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-turn");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const started = yield* adapter.sendTurn({
+        threadId,
+        input: "Stop this",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      const runningSessions = yield* adapter.listSessions();
+      const runningSession = runningSessions.find((session) => session.threadId === threadId);
+
+      assert.equal(runningSession?.status, "running");
+      assert.equal(runningSession?.activeTurnId, started.turnId);
+
+      yield* adapter.interruptTurn(threadId, started.turnId);
+      const interruptedSessions = yield* adapter.listSessions();
+      const interruptedSession = interruptedSessions.find(
+        (session) => session.threadId === threadId,
+      );
+
+      assert.equal(runtimeMock.state.abortCalls.at(-1), "http://127.0.0.1:9999/session");
+      assert.equal(interruptedSession?.status, "ready");
+      assert.equal(interruptedSession?.activeTurnId, undefined);
+      assert.equal(interruptedSession?.lastError, undefined);
+    }),
+  );
+
+  it.effect("allows an interrupted OpenCode turn to be stopped cleanly", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-then-stop");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const started = yield* adapter.sendTurn({
+        threadId,
+        input: "Steer then stop this",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      yield* adapter.interruptTurn(threadId, started.turnId);
+      const readySessions = yield* adapter.listSessions();
+      const readySession = readySessions.find((session) => session.threadId === threadId);
+      assert.equal(readySession?.status, "ready");
+      assert.equal(readySession?.activeTurnId, undefined);
+
+      yield* adapter.stopSession(threadId);
+      const stoppedSessions = yield* adapter.listSessions();
+      const stoppedSession = stoppedSessions.find((session) => session.threadId === threadId);
+
+      assert.equal(stoppedSession, undefined);
+      assert.equal(runtimeMock.state.abortCalls.at(-1), "http://127.0.0.1:9999/session");
     }),
   );
 
