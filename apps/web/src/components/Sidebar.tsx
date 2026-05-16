@@ -126,6 +126,7 @@ import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -2554,7 +2555,9 @@ interface SidebarProjectsContentProps {
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
   allProjectsCollapsed: boolean;
+  allThreadListsMinimized: boolean;
   collapseAllProjects: () => void;
+  minimizeAllThreadLists: () => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2597,7 +2600,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
     allProjectsCollapsed,
+    allThreadListsMinimized,
     collapseAllProjects,
+    minimizeAllThreadLists,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2690,23 +2695,43 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               onThreadPreviewCountChange={handleThreadPreviewCountChange}
             />
             {projectsLength > 0 && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label="Collapse all projects"
-                      data-testid="sidebar-collapse-all-projects"
+              <Menu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        aria-label="Bulk collapse actions"
+                        data-testid="sidebar-bulk-collapse-menu"
+                        disabled={allProjectsCollapsed && allThreadListsMinimized}
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/60"
+                      />
+                    }
+                  >
+                    <ChevronsDownUpIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Collapse options</TooltipPopup>
+                </Tooltip>
+                <MenuPopup align="end" side="bottom" className="min-w-44">
+                  <MenuGroup>
+                    <MenuItem
                       disabled={allProjectsCollapsed}
-                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={collapseAllProjects}
-                    />
-                  }
-                >
-                  <ChevronsDownUpIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup side="right">Collapse all</TooltipPopup>
-              </Tooltip>
+                      data-testid="sidebar-collapse-all-projects"
+                      className="min-h-7 py-1 sm:text-xs"
+                    >
+                      Collapse all projects
+                    </MenuItem>
+                    <MenuItem
+                      disabled={allThreadListsMinimized}
+                      onClick={minimizeAllThreadLists}
+                      data-testid="sidebar-minimize-all-threads"
+                      className="min-h-7 py-1 sm:text-xs"
+                    >
+                      Minimize all thread lists
+                    </MenuItem>
+                  </MenuGroup>
+                </MenuPopup>
+              </Menu>
             )}
             <Tooltip>
               <TooltipTrigger
@@ -3098,10 +3123,14 @@ export default function Sidebar() {
   const handleCollapseAllProjects = useCallback(() => {
     collapseAllProjectsAction(sortedProjects.map((p) => p.projectKey));
   }, [collapseAllProjectsAction, sortedProjects]);
+  const handleMinimizeAllThreadLists = useCallback(() => {
+    setExpandedThreadListsByProject((current) => (current.size === 0 ? current : new Set()));
+  }, []);
   const allProjectsCollapsed = useMemo(
     () => sortedProjects.every((p) => (projectExpandedById[p.projectKey] ?? true) === false),
     [sortedProjects, projectExpandedById],
   );
+  const allThreadListsMinimized = expandedThreadListsByProject.size === 0;
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3489,7 +3518,9 @@ export default function Sidebar() {
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
             allProjectsCollapsed={allProjectsCollapsed}
+            allThreadListsMinimized={allThreadListsMinimized}
             collapseAllProjects={handleCollapseAllProjects}
+            minimizeAllThreadLists={handleMinimizeAllThreadLists}
           />
 
           <SidebarSeparator />
