@@ -3181,36 +3181,126 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("rejects worktree prep when the PR head branch is checked out in the main repo", () =>
+  it.effect("reuses the launch worktree when T3 starts inside the PR head worktree", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-root-only"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-launch-worktree"]);
+      fs.writeFileSync(path.join(repoDir, "launch-worktree.txt"), "launch worktree\n");
+      yield* runGit(repoDir, ["add", "launch-worktree.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Launch worktree PR branch"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const worktreePath = path.join(repoDir, "..", `pr-launch-${path.basename(repoDir)}`);
+      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-launch-worktree"]);
 
       const { manager } = yield* makeManager({
         ghScenario: {
           pullRequest: {
-            number: 79,
-            title: "Root-only PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/79",
+            number: 179,
+            title: "Launch Worktree PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/179",
             baseRefName: "main",
-            headRefName: "feature/pr-root-only",
+            headRefName: "feature/pr-launch-worktree",
             state: "open",
           },
         },
       });
 
-      const errorMessage = yield* preparePullRequestThread(manager, {
-        cwd: repoDir,
-        reference: "79",
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: worktreePath,
+        reference: "179",
         mode: "worktree",
-      }).pipe(
-        Effect.flip,
-        Effect.map((error) => error.message),
-      );
+      });
 
-      expect(errorMessage).toContain("already checked out in the main repo");
+      expect(result.worktreePath && fs.realpathSync.native(result.worktreePath)).toBe(
+        fs.realpathSync.native(worktreePath),
+      );
+      expect(result.branch).toBe("feature/pr-launch-worktree");
     }),
+  );
+
+  it.effect(
+    "rejects worktree prep when launched from a linked worktree but the PR head is in the main checkout",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-main-checkout"]);
+        fs.writeFileSync(path.join(repoDir, "main-checkout.txt"), "main checkout\n");
+        yield* runGit(repoDir, ["add", "main-checkout.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Main checkout PR branch"]);
+        const launchWorktreePath = path.join(
+          repoDir,
+          "..",
+          `pr-launcher-${path.basename(repoDir)}`,
+        );
+        yield* runGit(repoDir, [
+          "worktree",
+          "add",
+          "-b",
+          "feature/launcher-worktree",
+          launchWorktreePath,
+          "HEAD",
+        ]);
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            pullRequest: {
+              number: 181,
+              title: "Main Checkout PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/181",
+              baseRefName: "main",
+              headRefName: "feature/pr-main-checkout",
+              state: "open",
+            },
+          },
+        });
+
+        const errorMessage = yield* preparePullRequestThread(manager, {
+          cwd: launchWorktreePath,
+          reference: "181",
+          mode: "worktree",
+        }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+
+        expect(errorMessage).toContain("already checked out in the main checkout");
+      }),
+  );
+
+  it.effect(
+    "rejects worktree prep when the PR head branch is checked out in the main checkout",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-root-only"]);
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            pullRequest: {
+              number: 79,
+              title: "Root-only PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/79",
+              baseRefName: "main",
+              headRefName: "feature/pr-root-only",
+              state: "open",
+            },
+          },
+        });
+
+        const errorMessage = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "79",
+          mode: "worktree",
+        }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+
+        expect(errorMessage).toContain("already checked out in the main checkout");
+      }),
   );
 
   it.effect("emits ordered progress events for commit hooks", () =>

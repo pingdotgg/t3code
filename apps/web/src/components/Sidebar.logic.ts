@@ -1,5 +1,9 @@
 import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadGroupingMode,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -12,10 +16,42 @@ import { isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY = "__current_checkout__";
+export const SIDEBAR_FLAT_THREADS_GROUP_KEY = "__flat_threads__";
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export interface SidebarWorktreeThreadGroup<TThread> {
+  key: string;
+  uiKey: string;
+  label: string;
+  expanded: boolean;
+  threadsExpanded: boolean;
+  totalThreadCount: number;
+  threads: TThread[];
+  hiddenThreadCount: number;
+  overflowThreadCount: number;
+}
+export interface SidebarThreadRenderModel<TThread> {
+  groups: SidebarWorktreeThreadGroup<TThread>[];
+  hiddenGroupCount: number;
+  hiddenGroupThreads: TThread[];
+  hiddenThreads: TThread[];
+  hasOverflowingGroups: boolean;
+  hasOverflowingThreads: boolean;
+  visibleThreads: TThread[];
+}
+export type SidebarProjectThreadRenderState<TThread> = {
+  hasOverflowingThreads: boolean;
+  hasOverflowingWorktrees: boolean;
+  hiddenWorktreeCount: number;
+  orderedThreadKeys: string[];
+  pinnedCollapsedThread: TThread | null;
+  renderModel: SidebarThreadRenderModel<TThread>;
+  shouldShowThreadPanel: boolean;
+  showEmptyThreadState: boolean;
+};
 type SidebarProject = {
   id: string;
   name: string;
@@ -257,6 +293,294 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
   limit = SIDEBAR_THREAD_PREWARM_LIMIT,
 ): TThreadId[] {
   return visibleThreadIds.slice(0, Math.max(0, limit));
+}
+
+function basenameOfPath(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
+}
+
+export function getSidebarWorktreeGroupUiKey(projectKey: string, worktreeKey: string): string {
+  return `${projectKey}::${worktreeKey}`;
+}
+
+export function getSidebarThreadWorktreeKey(thread: { worktreePath: string | null }): string {
+  return thread.worktreePath ?? SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY;
+}
+
+function includePinnedThread<TThread>(
+  threads: readonly TThread[],
+  visibleThreads: readonly TThread[],
+  pinnedThread: TThread | null | undefined,
+): TThread[] {
+  if (!pinnedThread || visibleThreads.includes(pinnedThread) || !threads.includes(pinnedThread)) {
+    return [...visibleThreads];
+  }
+
+  const visibleThreadSet = new Set([...visibleThreads, pinnedThread]);
+  return threads.filter((thread) => visibleThreadSet.has(thread));
+}
+
+export function buildSidebarWorktreeThreadGroups<
+  TThread extends {
+    branch: string | null;
+    worktreePath: string | null;
+  },
+>(
+  threads: readonly TThread[],
+  options?: {
+    projectKey?: string;
+    collapsedWorktreeKeys?: ReadonlySet<string>;
+  },
+): SidebarWorktreeThreadGroup<TThread>[] {
+  const groups: SidebarWorktreeThreadGroup<TThread>[] = [];
+  const groupByKey = new Map<string, SidebarWorktreeThreadGroup<TThread>>();
+
+  for (const thread of threads) {
+    const key = getSidebarThreadWorktreeKey(thread);
+    let group = groupByKey.get(key);
+    if (!group) {
+      const uiKey = getSidebarWorktreeGroupUiKey(options?.projectKey ?? "", key);
+      group = {
+        key,
+        uiKey,
+        label: thread.worktreePath
+          ? (thread.branch ?? (basenameOfPath(thread.worktreePath) || "Worktree"))
+          : "Current checkout",
+        expanded: !options?.collapsedWorktreeKeys?.has(uiKey),
+        threadsExpanded: false,
+        totalThreadCount: 0,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [],
+      };
+      groups.push(group);
+      groupByKey.set(key, group);
+    }
+    group.totalThreadCount += 1;
+    group.threads.push(thread);
+  }
+
+  return groups;
+}
+
+export function buildSidebarThreadRenderModel<
+  TThread extends {
+    branch: string | null;
+    worktreePath: string | null;
+  },
+>(input: {
+  threads: readonly TThread[];
+  groupingMode: SidebarThreadGroupingMode;
+  expanded: boolean;
+  expandedWorktreeThreadKeys?: ReadonlySet<string>;
+  threadPreviewCount: number;
+  worktreePreviewCount: number;
+  projectKey?: string;
+  collapsedWorktreeKeys?: ReadonlySet<string>;
+  pinnedThread?: TThread | null;
+}): SidebarThreadRenderModel<TThread> {
+  if (input.groupingMode === "separate") {
+    const hasOverflowingThreads = input.threads.length > input.threadPreviewCount;
+    const visibleThreads =
+      input.expanded || !hasOverflowingThreads
+        ? [...input.threads]
+        : includePinnedThread(
+            input.threads,
+            input.threads.slice(0, input.threadPreviewCount),
+            input.pinnedThread,
+          );
+    const visibleThreadSet = new Set(visibleThreads);
+    return {
+      groups: [
+        {
+          key: SIDEBAR_FLAT_THREADS_GROUP_KEY,
+          uiKey: getSidebarWorktreeGroupUiKey(
+            input.projectKey ?? "",
+            SIDEBAR_FLAT_THREADS_GROUP_KEY,
+          ),
+          label: "",
+          expanded: true,
+          threadsExpanded: true,
+          totalThreadCount: input.threads.length,
+          threads: visibleThreads,
+          hiddenThreadCount: input.threads.length - visibleThreads.length,
+          overflowThreadCount: Math.max(input.threads.length - input.threadPreviewCount, 0),
+        },
+      ],
+      hiddenGroupCount: 0,
+      hiddenGroupThreads: [],
+      hiddenThreads: input.threads.filter((thread) => !visibleThreadSet.has(thread)),
+      hasOverflowingGroups: false,
+      hasOverflowingThreads,
+      visibleThreads,
+    };
+  }
+
+  const allGroups = buildSidebarWorktreeThreadGroups(input.threads, {
+    ...(input.projectKey !== undefined ? { projectKey: input.projectKey } : {}),
+    ...(input.collapsedWorktreeKeys !== undefined
+      ? { collapsedWorktreeKeys: input.collapsedWorktreeKeys }
+      : {}),
+  });
+  if (allGroups.length === 1 && allGroups[0]?.key === SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY) {
+    const group = allGroups[0];
+    const hasOverflowingThreads = group.threads.length > input.threadPreviewCount;
+    const visibleThreads =
+      input.expanded || !hasOverflowingThreads
+        ? group.threads
+        : includePinnedThread(
+            group.threads,
+            group.threads.slice(0, input.threadPreviewCount),
+            input.pinnedThread,
+          );
+    const visibleThreadSet = new Set(visibleThreads);
+    return {
+      groups: [
+        {
+          ...group,
+          expanded: true,
+          threadsExpanded: true,
+          totalThreadCount: group.threads.length,
+          threads: visibleThreads,
+          hiddenThreadCount: group.threads.length - visibleThreads.length,
+          overflowThreadCount: Math.max(group.threads.length - input.threadPreviewCount, 0),
+        },
+      ],
+      hiddenGroupCount: 0,
+      hiddenGroupThreads: [],
+      hiddenThreads: group.threads.filter((thread) => !visibleThreadSet.has(thread)),
+      hasOverflowingGroups: false,
+      hasOverflowingThreads,
+      visibleThreads,
+    };
+  }
+  const visibleGroupCount = input.expanded
+    ? allGroups.length
+    : Math.min(allGroups.length, input.worktreePreviewCount);
+  const visibleGroupIndexes = new Set(
+    Array.from({ length: visibleGroupCount }, (_, index) => index),
+  );
+  if (input.pinnedThread) {
+    const pinnedGroupKey = getSidebarThreadWorktreeKey(input.pinnedThread);
+    const pinnedGroupIndex = allGroups.findIndex((group) => group.key === pinnedGroupKey);
+    if (pinnedGroupIndex >= 0) {
+      visibleGroupIndexes.add(pinnedGroupIndex);
+    }
+  }
+  const visibleGroups = allGroups.flatMap((group, index) => {
+    if (!visibleGroupIndexes.has(index)) {
+      return [];
+    }
+    const previewThreads = group.threads.slice(0, input.threadPreviewCount);
+    const threadsExpanded = input.expandedWorktreeThreadKeys?.has(group.uiKey) ?? false;
+    const pinnedThread =
+      input.pinnedThread && getSidebarThreadWorktreeKey(input.pinnedThread) === group.key
+        ? input.pinnedThread
+        : null;
+    const visibleThreads = threadsExpanded
+      ? group.threads
+      : includePinnedThread(group.threads, previewThreads, pinnedThread);
+    const renderedThreads = group.expanded ? visibleThreads : pinnedThread ? [pinnedThread] : [];
+    const baselineHiddenThreadCount = group.threads.length - previewThreads.length;
+    const renderedThreadSet = new Set(renderedThreads);
+    return [
+      {
+        key: group.key,
+        uiKey: group.uiKey,
+        label: group.label,
+        expanded: group.expanded,
+        threadsExpanded,
+        totalThreadCount: group.threads.length,
+        threads: renderedThreads,
+        hiddenThreadCount: group.expanded
+          ? group.threads.filter((thread) => !renderedThreadSet.has(thread)).length
+          : 0,
+        overflowThreadCount: Math.max(baselineHiddenThreadCount, 0),
+      },
+    ];
+  });
+  const hiddenGroups = allGroups.filter((_, index) => !visibleGroupIndexes.has(index));
+  const hiddenGroupThreads = hiddenGroups.flatMap((group) => group.threads);
+  const renderedThreadSet = new Set(visibleGroups.flatMap((group) => group.threads));
+  const hiddenThreads = [
+    ...allGroups
+      .filter((_, index) => visibleGroupIndexes.has(index))
+      .flatMap((group) => group.threads.filter((thread) => !renderedThreadSet.has(thread))),
+    ...hiddenGroupThreads,
+  ];
+  const hasOverflowingGroups = allGroups.length > input.worktreePreviewCount;
+  const hasOverflowingThreads =
+    hasOverflowingGroups ||
+    allGroups.some((group) => group.threads.length > input.threadPreviewCount);
+  return {
+    groups: visibleGroups,
+    hiddenGroupCount: hiddenGroups.length,
+    hiddenGroupThreads,
+    hiddenThreads,
+    hasOverflowingGroups,
+    hasOverflowingThreads,
+    visibleThreads: visibleGroups.flatMap((group) => group.threads),
+  };
+}
+
+export function buildSidebarProjectThreadRenderState<
+  TThread extends {
+    branch: string | null;
+    worktreePath: string | null;
+  },
+>(input: {
+  activeThreadKey: string | null;
+  collapsedWorktreeKeys: ReadonlySet<string>;
+  expandedWorktreeThreadKeys: ReadonlySet<string>;
+  getThreadKey: (thread: TThread) => string;
+  isThreadListExpanded: boolean;
+  projectExpanded: boolean;
+  projectKey: string;
+  threadGroupingMode: SidebarThreadGroupingMode;
+  threadPreviewCount: number;
+  threads: readonly TThread[];
+  worktreePreviewCount: number;
+}): SidebarProjectThreadRenderState<TThread> {
+  const activeThread = input.activeThreadKey
+    ? (input.threads.find((thread) => input.getThreadKey(thread) === input.activeThreadKey) ?? null)
+    : null;
+  const pinnedCollapsedThread = input.projectExpanded ? null : activeThread;
+  const shouldShowThreadPanel = input.projectExpanded || pinnedCollapsedThread !== null;
+  const renderThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : input.threads;
+  const renderModel = shouldShowThreadPanel
+    ? buildSidebarThreadRenderModel({
+        threads: renderThreads,
+        groupingMode: input.threadGroupingMode,
+        expanded: input.isThreadListExpanded || pinnedCollapsedThread !== null,
+        expandedWorktreeThreadKeys: input.expandedWorktreeThreadKeys,
+        threadPreviewCount: input.threadPreviewCount,
+        worktreePreviewCount: input.worktreePreviewCount,
+        projectKey: input.projectKey,
+        collapsedWorktreeKeys: input.collapsedWorktreeKeys,
+        pinnedThread: pinnedCollapsedThread ?? activeThread,
+      })
+    : {
+        groups: [],
+        hiddenGroupCount: 0,
+        hiddenGroupThreads: [],
+        hiddenThreads: [],
+        hasOverflowingGroups: false,
+        hasOverflowingThreads: false,
+        visibleThreads: [],
+      };
+
+  return {
+    hasOverflowingThreads: pinnedCollapsedThread ? false : renderModel.hasOverflowingThreads,
+    hasOverflowingWorktrees: pinnedCollapsedThread ? false : renderModel.hasOverflowingGroups,
+    hiddenWorktreeCount: pinnedCollapsedThread ? 0 : renderModel.hiddenGroupCount,
+    orderedThreadKeys: renderModel.visibleThreads.map(input.getThreadKey),
+    pinnedCollapsedThread,
+    renderModel,
+    shouldShowThreadPanel,
+    showEmptyThreadState: input.projectExpanded && input.threads.length === 0,
+  };
 }
 
 export function resolveAdjacentThreadId<T>(input: {
