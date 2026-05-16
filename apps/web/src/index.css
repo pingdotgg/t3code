@@ -83,6 +83,27 @@
   animation-duration: 0s !important;
 }
 
+/* iOS Safari auto-zooms into any input/textarea/contenteditable whose
+   computed font-size is below 16px. Per-component fixes (text-base
+   sm:text-sm etc.) catch the obvious cases, but it's easy to miss one,
+   and the `sm:` breakpoint (640px) leaves a gap on iPad and iPhone Pro
+   Max in landscape where the desktop-sized 14px kicks in but the
+   browser still treats the device as touch-zoom-capable.
+
+   This rule scopes a "minimum 16px" floor to touch devices only — so
+   desktop UIs keep their 12-14px density, while every form control on
+   any iOS / iPadOS / Android phone or tablet stays at >=16px and the
+   browser never auto-zooms on focus. `max(16px, 1em)` preserves any
+   intentionally larger font (e.g. heading-style inputs). */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]) {
+    font-size: max(16px, 1em);
+  }
+}
+
 :root {
   color-scheme: light;
   --radius: 0.625rem;
