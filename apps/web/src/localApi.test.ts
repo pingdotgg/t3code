@@ -220,6 +220,18 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       tailscaleServePort: input.port ?? 443,
     }),
     getAdvertisedEndpoints: async () => [],
+    getWslState: async () => ({
+      mode: "local",
+      distro: null,
+      available: false,
+      distros: [],
+    }),
+    setWslBackend: async () => ({
+      mode: "local",
+      distro: null,
+      available: false,
+      distros: [],
+    }),
     pickFolder: async () => null,
     confirm: async () => true,
     setTheme: async () => undefined,

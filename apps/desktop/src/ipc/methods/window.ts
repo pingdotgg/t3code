@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -18,6 +20,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
+import { resolveWslPickFolderDefaultPath } from "../../wsl/wslPathParsing.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -72,9 +75,24 @@ export const pickFolder = makeIpcMethod({
     const dialog = yield* ElectronDialog.ElectronDialog;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    const settings = yield* appSettings.get;
+    const wslAvailable = yield* wslEnvironment.isAvailable;
+    const useWsl = settings.wslMode === "wsl" && wslAvailable;
+    const defaultPath = useWsl
+      ? Option.fromNullishOr(
+          resolveWslPickFolderDefaultPath(
+            options,
+            { distro: settings.wslDistro },
+            yield* wslEnvironment.listDistros,
+            Option.getOrNull(yield* wslEnvironment.getUserHome(settings.wslDistro)),
+          ),
+        )
+      : environment.resolvePickFolderDefaultPath(options);
     const selectedPath = yield* dialog.pickFolder({
       owner: yield* electronWindow.focusedMainOrFirst,
-      defaultPath: environment.resolvePickFolderDefaultPath(options),
+      defaultPath,
     });
     return Option.getOrNull(selectedPath);
   }),

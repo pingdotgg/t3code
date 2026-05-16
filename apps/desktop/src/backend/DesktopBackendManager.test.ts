@@ -31,6 +31,7 @@ const decodeDesktopBackendBootstrap = Schema.decodeEffect(
 
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
+  args: ["/server/bin.mjs", "--bootstrap-fd", "3"],
   entryPath: "/server/bin.mjs",
   cwd: "/server",
   env: { ELECTRON_RUN_AS_NODE: "1" },
@@ -44,8 +45,11 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
+  bootstrapDelivery: "fd3",
+  extendEnv: true,
   httpBaseUrl: new URL("http://127.0.0.1:3773"),
   captureOutput: true,
+  preflightFailure: Option.none(),
 };
 
 const configWithObservability: DesktopBackendBootstrapValue = {

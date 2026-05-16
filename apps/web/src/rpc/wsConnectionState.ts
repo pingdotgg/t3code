@@ -29,6 +29,10 @@ export interface WsConnectionStatus {
   readonly reconnectMaxAttempts: number;
   readonly reconnectPhase: WsReconnectPhase;
   readonly socketUrl: string | null;
+  // True while an intentional backend swap (e.g. WSL mode change) is in
+  // progress and the connection surface should stay silent rather than
+  // surfacing the transient reconnect/error states the swap causes.
+  readonly suppressed: boolean;
 }
 
 const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
@@ -48,6 +52,7 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   reconnectMaxAttempts: WS_RECONNECT_MAX_ATTEMPTS,
   reconnectPhase: "idle",
   socketUrl: null,
+  suppressed: false,
 });
 
 export const wsConnectionStatusAtom = Atom.make(INITIAL_WS_CONNECTION_STATUS).pipe(
@@ -181,6 +186,34 @@ export function setBrowserOnlineStatus(online: boolean): WsConnectionStatus {
     ...current,
     online,
   }));
+}
+
+export function setWsConnectionSuppressed(suppressed: boolean): WsConnectionStatus {
+  return updateWsConnectionStatus((current) => ({
+    ...current,
+    suppressed,
+  }));
+}
+
+let suppressDepth = 0;
+
+// Run `operation` with the WS connection surface silenced. Reentrant — only
+// the outermost caller resets the flag, so nested helpers (descriptor
+// refresh, reauth) won't prematurely re-arm reconnect toasts in the middle
+// of a swap.
+export async function suppressReconnect<T>(operation: () => Promise<T>): Promise<T> {
+  suppressDepth += 1;
+  if (suppressDepth === 1) {
+    setWsConnectionSuppressed(true);
+  }
+  try {
+    return await operation();
+  } finally {
+    suppressDepth -= 1;
+    if (suppressDepth === 0) {
+      setWsConnectionSuppressed(false);
+    }
+  }
 }
 
 export function resetWsReconnectBackoff(): WsConnectionStatus {

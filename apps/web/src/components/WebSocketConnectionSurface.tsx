@@ -271,9 +271,16 @@ export function WebSocketConnectionCoordinator() {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
-    const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
-    const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
+    // Skip ALL connection-state toasts while a known backend swap is in
+    // flight — the caller is rendering its own modal and the transient
+    // reconnect / error states from stopping the old backend would just
+    // compete with it.
+    const shouldShowReconnectToast =
+      !status.suppressed && status.hasConnected && uiState === "reconnecting";
+    const shouldShowOfflineToast =
+      !status.suppressed && uiState === "offline" && status.disconnectedAt !== null;
+    const shouldShowExhaustedToast =
+      !status.suppressed && status.hasConnected && status.reconnectPhase === "exhausted";
 
     if (
       toastResetTimerRef.current !== null &&
@@ -336,6 +343,7 @@ export function WebSocketConnectionCoordinator() {
     }
 
     if (
+      !status.suppressed &&
       uiState === "connected" &&
       (previousUiState === "offline" || previousUiState === "reconnecting") &&
       previousDisconnectedAt !== null

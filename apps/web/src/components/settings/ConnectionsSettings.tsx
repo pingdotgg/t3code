@@ -15,6 +15,7 @@ import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
+  type DesktopWslState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -54,6 +55,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { Spinner } from "../ui/spinner";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -79,9 +81,14 @@ import {
   revokeServerClientSession,
   revokeServerPairingLink,
   isLoopbackHostname,
+  reauthenticatePrimaryEnvironment,
+  readPrimaryEnvironmentDescriptor,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
+import { getWelcomePayload, onWelcome } from "~/rpc/serverState";
+import { suppressReconnect } from "~/rpc/wsConnectionState";
+import { useStore } from "~/store";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import {
   type SavedEnvironmentRecord,
@@ -100,6 +107,12 @@ import { resolveServerConfigVersionMismatch } from "~/versionSkew";
 import { useServerConfig } from "~/rpc/serverState";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+// Select-value sentinels for the backend-runtime dropdown. The colon is
+// rejected by DISTRO_NAME_PATTERN (validated by the desktop side), so these
+// values can never collide with a real WSL distro name.
+const BACKEND_VALUE_LOCAL = "backend:local";
+const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1492,6 +1505,16 @@ export function ConnectionsSettings() {
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
+  const [desktopWslState, setDesktopWslState] = useState<DesktopWslState | null>(null);
+  const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
+  const [desktopWslError, setDesktopWslError] = useState<string | null>(null);
+  const [pendingDesktopWslSelection, setPendingDesktopWslSelection] = useState<{
+    readonly mode: "local" | "wsl";
+    readonly distro: string | null;
+  } | null>(null);
+  const [desktopWslChangeStage, setDesktopWslChangeStage] = useState<
+    "restarting-backend" | "reauthenticating" | "syncing" | null
+  >(null);
   const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
     useState<AdvertisedEndpoint | null>(null);
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
@@ -2037,10 +2060,23 @@ export function ConnectionsSettings() {
             error instanceof Error ? error.message : "Failed to load reachable endpoints.";
           setDesktopServerExposureError(message);
         });
+      void desktopBridge
+        .getWslState()
+        .then((state) => {
+          if (cancelled) return;
+          setDesktopWslState(state);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          const message = error instanceof Error ? error.message : "Failed to load WSL state.";
+          setDesktopWslError(message);
+        });
     } else {
       setDesktopServerExposureState(null);
       setDesktopAdvertisedEndpoints([]);
       setDesktopServerExposureError(null);
+      setDesktopWslState(null);
+      setDesktopWslError(null);
     }
 
     return () => {
@@ -2328,6 +2364,274 @@ export function ConnectionsSettings() {
           );
         })
       : null;
+  const handleWslSelectionChange = useCallback(
+    (value: string) => {
+      if (!desktopWslState) return;
+      const target =
+        value === BACKEND_VALUE_LOCAL
+          ? { mode: "local" as const, distro: null }
+          : {
+              mode: "wsl" as const,
+              distro: value === BACKEND_VALUE_DEFAULT_WSL ? null : value,
+            };
+      // The dropdown maps `state.distro: null` to the actual default distro
+      // name so a real option highlights — re-picking the visually-active row
+      // produces `target.distro = "<defaultName>"` while state is still
+      // `null`. Resolve both sides through the same null→default mapping
+      // before comparing so this is a true no-op.
+      const defaultDistroName =
+        desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
+      const resolvedCurrentDistro =
+        desktopWslState.mode === "wsl" ? (desktopWslState.distro ?? defaultDistroName) : null;
+      const resolvedTargetDistro =
+        target.mode === "wsl" ? (target.distro ?? defaultDistroName) : null;
+      if (target.mode === desktopWslState.mode && resolvedTargetDistro === resolvedCurrentDistro) {
+        return;
+      }
+      setPendingDesktopWslSelection(target);
+    },
+    [desktopWslState],
+  );
+
+  const handleConfirmDesktopWslChange = useCallback(async () => {
+    if (!desktopBridge || !pendingDesktopWslSelection) return;
+    const target = pendingDesktopWslSelection;
+    setIsUpdatingWslBackend(true);
+    setDesktopWslChangeStage("restarting-backend");
+    setDesktopWslError(null);
+
+    const previousPrimaryEnvId = readPrimaryEnvironmentDescriptor()?.environmentId ?? null;
+
+    // Subscribe to welcomes BEFORE the swap so we can wait for the new
+    // backend's welcome before declaring the swap done. Capture the current
+    // welcome's env-id as the baseline instead of comparing against
+    // `previousPrimaryEnvId`: `onWelcome` is `immediate: true` and fires
+    // synchronously with the atom's current value, so if the descriptor
+    // hasn't loaded (`previousPrimaryEnvId === null`) any non-null payload
+    // would otherwise resolve the promise instantly. Using the live welcome
+    // atom as the baseline closes that race.
+    const baselineWelcomeEnvId = getWelcomePayload()?.environment.environmentId ?? null;
+    let resolveNewWelcome: (() => void) | null = null;
+    const newWelcomePromise = new Promise<void>((resolve) => {
+      resolveNewWelcome = resolve;
+    });
+    const unsubscribeWelcome = onWelcome((payload) => {
+      if (payload.environment.environmentId !== baselineWelcomeEnvId) {
+        resolveNewWelcome?.();
+      }
+    });
+
+    // Global ceiling on the whole flow. The IPC handler has two stacked
+    // 2-minute waits worst-case (initial readiness + rollback readiness), so
+    // setWslBackend itself can legitimately take up to ~4 minutes before
+    // resolving; reauth adds another ~60s retry budget and the welcome race
+    // is bounded at 45s. We cap the total at 6 minutes so a true hang surfaces
+    // without firing prematurely while a legitimate rollback is in progress.
+    let aborted = false;
+    let flowTimeoutHandle: number | null = null;
+    const flowTimeout = new Promise<never>((_, reject) => {
+      flowTimeoutHandle = window.setTimeout(() => {
+        aborted = true;
+        reject(new Error("Backend swap took too long. Check WSL is responsive and try again."));
+      }, 360_000);
+    });
+
+    const runSwap = async () => {
+      const updated = await desktopBridge.setWslBackend(target);
+      if (aborted) return;
+      setDesktopWslState(updated);
+
+      if (previousPrimaryEnvId) {
+        useStore.getState().removeEnvironmentState(previousPrimaryEnvId);
+      }
+
+      setDesktopWslChangeStage("reauthenticating");
+      // Each backend signs sessions with its own key, so the OLD cookie is
+      // rejected by the new backend. Re-bootstrap before any WS reconnect.
+      // Descriptor is the same URL across the swap, so it'll be re-fetched
+      // lazily by the next consumer — no need to force a refresh here.
+      await reauthenticatePrimaryEnvironment();
+      if (aborted) return;
+
+      // Wait for the new backend's welcome event so the modal stays open
+      // until threads are actually ready. Bounded by 45s.
+      setDesktopWslChangeStage("syncing");
+      await Promise.race([
+        newWelcomePromise,
+        new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 45_000);
+        }),
+      ]);
+    };
+
+    // Wrap the whole flow (incl. error recovery) in suppressReconnect so the
+    // catch-block reauth doesn't surface transient reconnect/offline toasts
+    // on top of the error toast the user is reading.
+    try {
+      await suppressReconnect(async () => {
+        try {
+          await Promise.race([runSwap(), flowTimeout]);
+
+          setPendingDesktopWslSelection(null);
+          toastManager.add({
+            type: "success",
+            title: "Backend restarted",
+            description:
+              target.mode === "wsl"
+                ? `The local backend is now running inside ${target.distro ?? "the default WSL distro"}.`
+                : "The local backend is now running on Windows.",
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
+          setDesktopWslError(message);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not change backend mode",
+              description: message,
+            }),
+          );
+          await reauthenticatePrimaryEnvironment().catch(() => undefined);
+          await desktopBridge
+            .getWslState()
+            .then((state) => setDesktopWslState(state))
+            .catch(() => undefined);
+        }
+      });
+    } finally {
+      // Clear the global timer on every path so it can't fire after the flow
+      // has settled and reject an unreferenced promise.
+      if (flowTimeoutHandle !== null) window.clearTimeout(flowTimeoutHandle);
+      unsubscribeWelcome();
+      setIsUpdatingWslBackend(false);
+      setDesktopWslChangeStage(null);
+    }
+  }, [desktopBridge, pendingDesktopWslSelection]);
+
+  const renderWslRow = () => {
+    if (!desktopWslState || !desktopWslState.available) return null;
+    // When distro is null ("track the WSL default"), map to the actual default
+    // distro's name if we know one so the Select highlights a real option
+    // instead of an orphan default sentinel with no matching item. Falls back
+    // to BACKEND_VALUE_DEFAULT_WSL only when no distros are listed yet — in
+    // that case the dropdown renders a single placeholder option that matches.
+    const defaultDistroName =
+      desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
+    const wslSelectValue = desktopWslState.distro ?? defaultDistroName ?? BACKEND_VALUE_DEFAULT_WSL;
+    const currentValue = desktopWslState.mode === "wsl" ? wslSelectValue : BACKEND_VALUE_LOCAL;
+    const currentLabel =
+      currentValue === BACKEND_VALUE_LOCAL
+        ? "Local (Windows)"
+        : currentValue === BACKEND_VALUE_DEFAULT_WSL
+          ? "WSL: default distro"
+          : `WSL: ${currentValue}`;
+    const pendingTargetLabel =
+      pendingDesktopWslSelection?.mode === "wsl"
+        ? (pendingDesktopWslSelection.distro ?? "the default WSL distro")
+        : "Windows";
+    const isSwitchingToWsl = pendingDesktopWslSelection?.mode === "wsl";
+    return (
+      <SettingsRow
+        title="Backend runtime"
+        description={
+          desktopWslState.mode === "wsl"
+            ? "Backend runs inside the selected WSL distro."
+            : "Backend runs natively on Windows."
+        }
+        status={
+          desktopWslError ? <span className="block text-destructive">{desktopWslError}</span> : null
+        }
+        control={
+          <AlertDialog
+            open={pendingDesktopWslSelection !== null}
+            onOpenChange={(open) => {
+              if (isUpdatingWslBackend) return;
+              if (!open) setPendingDesktopWslSelection(null);
+            }}
+          >
+            <Select
+              value={currentValue}
+              onValueChange={(value) => {
+                if (typeof value !== "string") return;
+                handleWslSelectionChange(value);
+              }}
+            >
+              <SelectTrigger
+                className="w-full sm:w-56"
+                aria-label="Backend runtime"
+                disabled={isUpdatingWslBackend}
+              >
+                <SelectValue>{currentLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value={BACKEND_VALUE_LOCAL}>
+                  Local (Windows)
+                </SelectItem>
+                {desktopWslState.distros.length === 0 ? (
+                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                    WSL: default distro
+                  </SelectItem>
+                ) : (
+                  desktopWslState.distros.map((distro) => (
+                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                      WSL: {distro.name}
+                      {distro.isDefault ? " (default)" : ""}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectPopup>
+            </Select>
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {isSwitchingToWsl
+                    ? desktopWslState.mode === "wsl"
+                      ? "Switch WSL distro?"
+                      : "Switch to WSL backend?"
+                    : "Switch to local backend?"}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {isSwitchingToWsl
+                    ? `T3 Code will restart the local backend inside ${pendingTargetLabel}. This may take a little while. Each backend keeps its own threads — your Windows threads stay where they are and will return when you switch back.`
+                    : "T3 Code will restart the local backend on Windows. This may take a little while. Each backend keeps its own threads — your WSL threads stay where they are and will return when you switch back."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose
+                  disabled={isUpdatingWslBackend}
+                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
+                >
+                  Cancel
+                </AlertDialogClose>
+                <Button
+                  onClick={() => {
+                    void handleConfirmDesktopWslChange();
+                  }}
+                  disabled={pendingDesktopWslSelection === null || isUpdatingWslBackend}
+                >
+                  {isUpdatingWslBackend ? (
+                    <>
+                      <Spinner className="size-3.5" />
+                      {desktopWslChangeStage === "syncing"
+                        ? "Syncing threads…"
+                        : desktopWslChangeStage === "reauthenticating"
+                          ? "Re-establishing session…"
+                          : "Restarting backend…"}
+                    </>
+                  ) : isSwitchingToWsl ? (
+                    "Restart in WSL"
+                  ) : (
+                    "Restart on Windows"
+                  )}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+        }
+      />
+    );
+  };
+
   const renderTailscaleRow = () => (
     <SettingsRow
       title="Tailscale HTTPS"
@@ -2463,6 +2767,7 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderWslRow()}
               </>
             ) : (
               renderDisabledNetworkAccessRow()

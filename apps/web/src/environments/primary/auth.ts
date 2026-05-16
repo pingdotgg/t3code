@@ -402,6 +402,16 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     });
 }
 
+// Used by the WSL backend swap: invalidate the cached authenticated state
+// (the new backend signs sessions with a different key) and re-bootstrap
+// against the desktop bootstrap credential so the next WS reconnect doesn't
+// hit 401 and start a reauth loop in the renderer.
+export async function reauthenticatePrimaryEnvironment(): Promise<ServerAuthGateState> {
+  resolvedAuthenticatedGateState = null;
+  bootstrapPromise = null;
+  return resolveInitialServerAuthGateState();
+}
+
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;

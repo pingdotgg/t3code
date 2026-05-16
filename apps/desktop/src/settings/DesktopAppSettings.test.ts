@@ -21,6 +21,8 @@ const DesktopSettingsPatch = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
+  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
@@ -95,6 +97,8 @@ describe("DesktopSettings", () => {
       tailscaleServePort: 443,
       updateChannel: "nightly",
       updateChannelConfiguredByUser: false,
+      wslMode: "local",
+      wslDistro: null,
     } satisfies DesktopSettingsValue);
   });
 
@@ -116,6 +120,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          wslMode: "local",
+          wslDistro: null,
         } satisfies DesktopSettingsValue);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
@@ -195,6 +201,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          wslMode: "local",
+          wslDistro: null,
         } satisfies DesktopSettingsValue);
       }),
     ),
@@ -234,6 +242,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
+          wslMode: "local",
+          wslDistro: null,
         } satisfies DesktopSettingsValue);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -256,6 +266,8 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          wslMode: "local",
+          wslDistro: null,
         } satisfies DesktopSettingsValue);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -277,7 +289,46 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          wslMode: "local",
+          wslDistro: null,
         } satisfies DesktopSettingsValue);
+      }),
+    ),
+  );
+
+  it.effect("persists wsl mode and normalizes invalid distro names", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const enable = yield* settings.setWslMode({ mode: "wsl", distro: "Ubuntu-22.04" });
+        assert.isTrue(enable.changed);
+        assert.equal(enable.settings.wslMode, "wsl");
+        assert.equal(enable.settings.wslDistro, "Ubuntu-22.04");
+
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.wslMode, "wsl");
+        assert.equal(reloaded.wslDistro, "Ubuntu-22.04");
+
+        const reject = yield* settings.setWslMode({ mode: "wsl", distro: "bad name!" });
+        assert.equal(reject.settings.wslDistro, null);
+
+        const noop = yield* settings.setWslMode({ mode: "wsl", distro: null });
+        assert.isFalse(noop.changed);
+      }),
+    ),
+  );
+
+  it.effect("drops invalid persisted wsl distro values on load", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          wslMode: "wsl",
+          wslDistro: "bad/name",
+        });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.wslMode, "wsl");
+        assert.equal(loaded.wslDistro, null);
       }),
     ),
   );

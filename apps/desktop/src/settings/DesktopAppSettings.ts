@@ -1,8 +1,10 @@
 import {
   DesktopServerExposureModeSchema,
   DesktopUpdateChannelSchema,
+  DesktopWslModeSchema,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
+  type DesktopWslMode,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
@@ -19,6 +21,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
+import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly serverExposureMode: DesktopServerExposureMode;
@@ -26,6 +29,8 @@ export interface DesktopSettings {
   readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
+  readonly wslMode: DesktopWslMode;
+  readonly wslDistro: string | null;
 }
 
 export interface DesktopSettingsChange {
@@ -41,6 +46,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
+  wslMode: "local",
+  wslDistro: null,
 };
 
 const DesktopSettingsDocument = Schema.Struct({
@@ -49,6 +56,8 @@ const DesktopSettingsDocument = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  wslMode: Schema.optionalKey(DesktopWslModeSchema),
+  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -84,6 +93,10 @@ export interface DesktopAppSettingsShape {
   readonly setUpdateChannel: (
     channel: DesktopUpdateChannel,
   ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+  readonly setWslMode: (input: {
+    readonly mode: DesktopWslMode;
+    readonly distro: string | null;
+  }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
 }
 
 export class DesktopAppSettings extends Context.Service<
@@ -102,6 +115,10 @@ function normalizeTailscaleServePort(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
     ? value
     : DEFAULT_TAILSCALE_SERVE_PORT;
+}
+
+function normalizeWslDistro(value: unknown): string | null {
+  return typeof value === "string" && isValidDistroName(value) ? value : null;
 }
 
 function normalizeDesktopSettingsDocument(
@@ -124,6 +141,8 @@ function normalizeDesktopSettingsDocument(
       ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
+    wslMode: parsed.wslMode === "wsl" ? "wsl" : "local",
+    wslDistro: normalizeWslDistro(parsed.wslDistro),
   };
 }
 
@@ -147,6 +166,12 @@ function toDesktopSettingsDocument(
   }
   if (settings.updateChannelConfiguredByUser !== defaults.updateChannelConfiguredByUser) {
     document.updateChannelConfiguredByUser = settings.updateChannelConfiguredByUser;
+  }
+  if (settings.wslMode !== defaults.wslMode) {
+    document.wslMode = settings.wslMode;
+  }
+  if (settings.wslDistro !== defaults.wslDistro) {
+    document.wslDistro = settings.wslDistro;
   }
 
   return document;
@@ -191,6 +216,20 @@ function setUpdateChannel(
         ...settings,
         updateChannel: requestedChannel,
         updateChannelConfiguredByUser: true,
+      };
+}
+
+function setWslMode(
+  settings: DesktopSettings,
+  input: { readonly mode: DesktopWslMode; readonly distro: string | null },
+): DesktopSettings {
+  const distro = normalizeWslDistro(input.distro);
+  return settings.wslMode === input.mode && settings.wslDistro === distro
+    ? settings
+    : {
+        ...settings,
+        wslMode: input.mode,
+        wslDistro: distro,
       };
 }
 
@@ -285,6 +324,12 @@ export const layer = Layer.effect(
         persist((settings) => setUpdateChannel(settings, channel)).pipe(
           Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
         ),
+      setWslMode: (input) =>
+        persist((settings) => setWslMode(settings, input)).pipe(
+          Effect.withSpan("desktop.settings.setWslMode", {
+            attributes: { mode: input.mode, distro: input.distro ?? null },
+          }),
+        ),
     });
   }),
 );
@@ -313,6 +358,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
         setUpdateChannel: (channel) => update((settings) => setUpdateChannel(settings, channel)),
+        setWslMode: (input) => update((settings) => setWslMode(settings, input)),
       });
     }),
   );

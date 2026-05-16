@@ -369,6 +369,36 @@ export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
+export type DesktopWslMode = "local" | "wsl";
+
+export const DesktopWslModeSchema = Schema.Literals(["local", "wsl"]);
+
+export interface DesktopWslDistro {
+  name: string;
+  isDefault: boolean;
+  version: 1 | 2;
+}
+
+export const DesktopWslDistroSchema = Schema.Struct({
+  name: Schema.String,
+  isDefault: Schema.Boolean,
+  version: Schema.Literals([1, 2]),
+});
+
+export interface DesktopWslState {
+  mode: DesktopWslMode;
+  distro: string | null;
+  available: boolean;
+  distros: readonly DesktopWslDistro[];
+}
+
+export const DesktopWslStateSchema = Schema.Struct({
+  mode: DesktopWslModeSchema,
+  distro: Schema.NullOr(Schema.String),
+  available: Schema.Boolean,
+  distros: Schema.Array(DesktopWslDistroSchema),
+});
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -406,6 +436,11 @@ export interface DesktopBridge {
     readonly port?: number;
   }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
+  getWslState: () => Promise<DesktopWslState>;
+  setWslBackend: (input: {
+    mode: DesktopWslMode;
+    distro: string | null;
+  }) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;

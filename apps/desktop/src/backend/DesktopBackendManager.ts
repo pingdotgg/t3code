@@ -43,14 +43,23 @@ type BackendProcessRunRequirements = BackendProcessLayerServices | Scope.Scope;
 
 export type BackendProcessOutputStream = "stdout" | "stderr";
 
+export type DesktopBackendBootstrapDelivery = "fd3" | "stdin";
+
 export interface DesktopBackendStartConfig {
   readonly executablePath: string;
+  readonly args: ReadonlyArray<string>;
   readonly entryPath: string;
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
+  // When true the spawner merges the desktop process.env on top of `env`;
+  // when false `env` is passed verbatim. WSL mode opts out so a leaking
+  // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
+  readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
+  readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
+  readonly preflightFailure: Option.Option<string>;
 }
 
 interface BackendProcessExit {
@@ -111,6 +120,10 @@ export interface DesktopBackendManagerShape {
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
+  // Polls desiredRunning + ready until the backend reports ready, or the
+  // timeout elapses. Returns true on ready, false on timeout. Used by the
+  // WSL backend swap to drive its rollback path.
+  readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
 }
 
 export class DesktopBackendManager extends Context.Service<
@@ -233,28 +246,25 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.mapError((cause) => new BackendProcessBootstrapEncodeError({ cause })),
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
-  const command = ChildProcess.make(
-    options.executablePath,
-    [options.entryPath, "--bootstrap-fd", "3"],
-    {
-      cwd: options.cwd,
-      env: options.env,
-      extendEnv: true,
-      // In Electron main, process.execPath points to the Electron binary.
-      // Run the child in Node mode so this backend process does not become a GUI app instance.
-      stdin: "ignore",
-      stdout: options.captureOutput ? "pipe" : "inherit",
-      stderr: options.captureOutput ? "pipe" : "inherit",
-      killSignal: "SIGTERM",
-      forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
-      additionalFds: {
-        fd3: {
-          type: "input",
-          stream: Stream.encodeText(Stream.make(`${bootstrapJson}\n`)),
-        },
-      },
-    },
-  );
+  const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const command = ChildProcess.make(options.executablePath, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+    extendEnv: options.extendEnv,
+    // In Electron main, process.execPath points to the Electron binary.
+    // Run the child in Node mode so this backend process does not become a GUI app instance.
+    stdin: options.bootstrapDelivery === "stdin" ? bootstrapStream : "ignore",
+    stdout: options.captureOutput ? "pipe" : "inherit",
+    stderr: options.captureOutput ? "pipe" : "inherit",
+    killSignal: "SIGTERM",
+    forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
+    // wsl.exe drops additional file descriptors when forwarding to the Linux
+    // side, so the WSL spawn path delivers the bootstrap envelope via stdin
+    // (`--bootstrap-fd 0`) instead.
+    ...(options.bootstrapDelivery === "fd3"
+      ? { additionalFds: { fd3: { type: "input" as const, stream: bootstrapStream } } }
+      : {}),
+  });
 
   const handle = yield* spawner
     .spawn(command)
@@ -341,6 +351,11 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           ready: false,
           config: Option.some(config),
         }));
+
+        if (Option.isSome(config.preflightFailure)) {
+          yield* scheduleRestart(config.preflightFailure.value);
+          return;
+        }
 
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.entryPath}`);
@@ -583,6 +598,24 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
     });
   });
 
+  const waitForReady = (timeout: Duration.Duration): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const current = yield* Ref.get(state);
+      // Return false early if an external `stop()` flipped desiredRunning off
+      // — no point polling for a backend that is being torn down.
+      if (!current.desiredRunning) return { done: true, ready: false };
+      const ready = yield* Ref.get(desktopState.backendReady);
+      return ready ? { done: true, ready: true } : { done: false, ready: false };
+    }).pipe(
+      Effect.repeat({
+        until: (status) => status.done,
+        schedule: Schedule.spaced(Duration.millis(100)),
+      }),
+      Effect.map((status) => status.ready),
+      Effect.timeoutOption(timeout),
+      Effect.map(Option.getOrElse(() => false)),
+    );
+
   yield* Effect.addFinalizer(() => stop());
 
   return DesktopBackendManager.of({
@@ -590,6 +623,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
     stop,
     currentConfig,
     snapshot,
+    waitForReady,
   });
 });
 

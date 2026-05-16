@@ -444,6 +444,18 @@ const createDesktopBridgeStub = (overrides?: {
       tailscaleServePort: input.port ?? 443,
     })),
     getAdvertisedEndpoints: vi.fn().mockResolvedValue(overrides?.advertisedEndpoints ?? []),
+    getWslState: vi.fn().mockResolvedValue({
+      mode: "local" as const,
+      distro: null,
+      available: false,
+      distros: [],
+    }),
+    setWslBackend: vi.fn().mockResolvedValue({
+      mode: "local" as const,
+      distro: null,
+      available: false,
+      distros: [],
+    }),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
     setTheme: vi.fn().mockResolvedValue(undefined),

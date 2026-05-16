@@ -112,6 +112,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     }),
+    waitForReady: () => Effect.succeed(true),
   });
 
   const environmentLayer = DesktopEnvironment.layer({
