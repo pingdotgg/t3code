@@ -198,23 +198,29 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
       {props.showInteractionModeToggle ? (
         <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                  size="sm"
+                  type="button"
+                  onClick={props.onToggleInteractionMode}
+                />
+              }
+            >
+              <BotIcon />
+              <span className="sr-only sm:not-sr-only">
+                {props.interactionMode === "plan" ? "Plan" : "Build"}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {props.interactionMode === "plan"
                 ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
+                : "Default mode — click to enter plan mode"}
+            </TooltipPopup>
+          </Tooltip>
 
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
         </>
@@ -224,16 +230,22 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         value={props.runtimeMode}
         onValueChange={(value) => props.onRuntimeModeChange(value!)}
       >
-        <SelectTrigger
-          variant="ghost"
-          size="sm"
-          className="font-medium"
-          aria-label="Runtime mode"
-          title={runtimeModeOption.description}
-        >
-          <RuntimeModeIcon className="size-4" />
-          <SelectValue>{runtimeModeOption.label}</SelectValue>
-        </SelectTrigger>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <SelectTrigger
+                variant="ghost"
+                size="sm"
+                className="font-medium"
+                aria-label="Runtime mode"
+              />
+            }
+          >
+            <RuntimeModeIcon className="size-4" />
+            <SelectValue>{runtimeModeOption.label}</SelectValue>
+          </TooltipTrigger>
+          <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+        </Tooltip>
         <SelectPopup alignItemWithTrigger={false}>
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];
@@ -258,26 +270,32 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       {props.showPlanToggle ? (
         <>
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          <Button
-            variant="ghost"
-            className={cn(
-              "shrink-0 whitespace-nowrap px-2 sm:px-3",
-              props.planSidebarOpen
-                ? "text-blue-400 hover:text-blue-300"
-                : "text-muted-foreground/70 hover:text-foreground/80",
-            )}
-            size="sm"
-            type="button"
-            onClick={props.onTogglePlanSidebar}
-            title={
-              props.planSidebarOpen
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                    props.planSidebarOpen
+                      ? "text-blue-400 hover:text-blue-300"
+                      : "text-muted-foreground/70 hover:text-foreground/80",
+                  )}
+                  size="sm"
+                  type="button"
+                  onClick={props.onTogglePlanSidebar}
+                />
+              }
+            >
+              <ListTodoIcon />
+              <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {props.planSidebarOpen
                 ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
-            }
-          >
-            <ListTodoIcon />
-            <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-          </Button>
+                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`}
+            </TooltipPopup>
+          </Tooltip>
         </>
       ) : null}
     </>

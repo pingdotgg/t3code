@@ -406,20 +406,21 @@ label:has(> select#reasoning-effort) select {
   font-size: 0.75rem;
 }
 
-.markdown-file-link-tooltip-scroll {
+.tooltip-scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
 }
 
-.markdown-file-link-tooltip-scroll::-webkit-scrollbar {
-  height: 6px;
+.tooltip-scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
 
-.markdown-file-link-tooltip-scroll::-webkit-scrollbar-track {
+.tooltip-scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.markdown-file-link-tooltip-scroll::-webkit-scrollbar-thumb {
+.tooltip-scrollbar-thin::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--border) 78%, transparent);
 }

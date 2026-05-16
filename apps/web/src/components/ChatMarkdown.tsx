@@ -180,15 +180,21 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
 
   return (
     <div className="chat-markdown-codeblock leading-snug">
-      <button
-        type="button"
-        className="chat-markdown-copy-button"
-        onClick={handleCopy}
-        title={copied ? "Copied" : "Copy code"}
-        aria-label={copied ? "Copied" : "Copy code"}
-      >
-        {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="chat-markdown-copy-button"
+              onClick={handleCopy}
+              aria-label={copied ? "Copied" : "Copy code"}
+            />
+          }
+        >
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{copied ? "Copied" : "Copy code"}</TooltipPopup>
+      </Tooltip>
       {children}
     </div>
   );
@@ -489,7 +495,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         side="top"
         className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
       >
-        <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
+        <div className="tooltip-scrollbar-thin overflow-x-auto whitespace-nowrap">
           {displayPath}
         </div>
       </TooltipPopup>

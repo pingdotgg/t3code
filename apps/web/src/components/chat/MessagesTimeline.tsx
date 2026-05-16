@@ -393,16 +393,23 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   const activity = use(TimelineRowActivityCtx);
 
   return (
-    <Button
-      type="button"
-      size="xs"
-      variant="outline"
-      disabled={activity.isRevertingCheckpoint || activity.isWorking}
-      onClick={() => ctx.onRevertUserMessage(messageId)}
-      title="Revert to this message"
-    >
-      <Undo2Icon className="size-3" />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            onClick={() => ctx.onRevertUserMessage(messageId)}
+            aria-label="Revert to this message"
+          />
+        }
+      >
+        <Undo2Icon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Revert to this message</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1129,50 +1136,34 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
           {rawCommand ? (
-            <div className="max-w-full">
-              <p
-                className={cn(
-                  "truncate text-xs leading-5",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
+            <Tooltip>
+              <TooltipTrigger className="block max-w-full text-left" aria-label={displayText}>
+                <p
+                  className={cn(
+                    "truncate text-xs leading-5",
+                    workToneClass(workEntry.tone),
+                    preview ? "text-muted-foreground/70" : "",
+                  )}
+                >
+                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                    {heading}
+                  </span>
+                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                </p>
+              </TooltipTrigger>
+              <TooltipPopup
+                align="start"
+                className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
+                side="top"
               >
-                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
-                </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
-                    >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
-              </p>
-            </div>
+                <div className="tooltip-scrollbar-thin max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
+                  {rawCommand}
+                </div>
+              </TooltipPopup>
+            </Tooltip>
           ) : (
             <Tooltip>
-              <TooltipTrigger
-                className="block min-w-0 w-full text-left"
-                title={displayText}
-                aria-label={displayText}
-              >
+              <TooltipTrigger className="block min-w-0 w-full text-left" aria-label={displayText}>
                 <p
                   className={cn(
                     "truncate text-[11px] leading-5",
@@ -1200,13 +1191,20 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
             const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
             return (
-              <span
-                key={`${workEntry.id}:${filePath}`}
-                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
-                title={displayPath}
-              >
-                {displayPath}
-              </span>
+              <Tooltip key={`${workEntry.id}:${filePath}`}>
+                <TooltipTrigger
+                  render={
+                    <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75" />
+                  }
+                >
+                  {displayPath}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-[min(40rem,calc(100vw-2rem))]">
+                  <div className="tooltip-scrollbar-thin overflow-x-auto whitespace-nowrap">
+                    {displayPath}
+                  </div>
+                </TooltipPopup>
+              </Tooltip>
             );
           })}
           {(workEntry.changedFiles?.length ?? 0) > 4 && (
