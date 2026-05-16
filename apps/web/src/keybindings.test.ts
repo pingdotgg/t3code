@@ -163,6 +163,23 @@ describe("isTerminalToggleShortcut", () => {
       }),
     );
   });
+
+  it("matches Ctrl+J on non-macOS from a control-character key event", () => {
+    assert.isTrue(
+      isTerminalToggleShortcut(
+        event({
+          key: "\n",
+          code: "KeyJ",
+          ctrlKey: true,
+        }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Win32",
+          context: { terminalFocus: true },
+        },
+      ),
+    );
+  });
 });
 
 describe("split/new/close terminal shortcuts", () => {
