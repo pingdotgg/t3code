@@ -115,6 +115,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as Data from "effect/Data";
 
@@ -561,6 +562,22 @@ const buildAppUnderTest = (options?: {
               signal: input.signal,
               signaled: true,
               message: Option.none(),
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({
+          readHistory: (input) =>
+            Effect.succeed({
+              readAt: TEST_EPOCH,
+              windowMs: input.windowMs,
+              bucketMs: input.bucketMs,
+              sampleIntervalMs: 5_000,
+              retainedSampleCount: 0,
+              totalCpuSecondsApprox: 0,
+              buckets: [],
+              topProcesses: [],
+              error: Option.none(),
             }),
         }),
       ),

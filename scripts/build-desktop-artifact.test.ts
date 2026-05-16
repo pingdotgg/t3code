@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  resolveDesktopRuntimeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -37,6 +38,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
+  });
+
+  it("omits bundled workspace packages from staged desktop dependencies", () => {
+    assert.deepStrictEqual(
+      resolveDesktopRuntimeDependencies(
+        {
+          "@effect/platform-node": "catalog:",
+          "@t3tools/contracts": "workspace:*",
+          "@t3tools/shared": "workspace:*",
+          "@t3tools/ssh": "workspace:*",
+          "@t3tools/tailscale": "workspace:*",
+          effect: "catalog:",
+          electron: "41.5.0",
+        },
+        {
+          "@effect/platform-node": "4.0.0-beta.59",
+          effect: "4.0.0-beta.59",
+        },
+      ),
+      {
+        "@effect/platform-node": "4.0.0-beta.59",
+        effect: "4.0.0-beta.59",
+      },
+    );
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {

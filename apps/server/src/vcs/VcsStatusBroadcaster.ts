@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -23,6 +24,8 @@ import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
+const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 
 interface VcsStatusChange {
   readonly cwd: string;
@@ -46,6 +49,20 @@ interface ActiveRemotePoller {
 
 interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
+}
+
+export function remoteRefreshFailureDelay(
+  consecutiveFailures: number,
+  configuredInterval: Duration.Duration,
+) {
+  const exponent = Math.max(0, consecutiveFailures - 1);
+  const backoffMs =
+    Duration.toMillis(VCS_STATUS_REFRESH_FAILURE_BASE_DELAY) * Math.pow(2, exponent);
+  const cappedBackoff = Duration.min(
+    Duration.millis(backoffMs),
+    VCS_STATUS_REFRESH_FAILURE_MAX_DELAY,
+  );
+  return Duration.max(configuredInterval, cappedBackoff);
 }
 
 export interface VcsStatusBroadcasterShape {
@@ -241,32 +258,46 @@ export const layer = Layer.effect(
       cwd: string,
       automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     ) => {
-      const logRefreshFailure = (error: GitManagerServiceError) =>
-        Effect.logWarning("VCS remote status refresh failed", {
-          cwd,
-          detail: error.message,
-        });
-      const refreshRemoteStatusIfEnabled = automaticRemoteRefreshInterval.pipe(
-        Effect.flatMap((interval) =>
-          Duration.isZero(interval) ? Effect.void : refreshRemoteStatus(cwd).pipe(Effect.asVoid),
-        ),
-      );
-      const sleepForConfiguredInterval = automaticRemoteRefreshInterval.pipe(
-        Effect.flatMap((interval) =>
-          Effect.sleep(Duration.isZero(interval) ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL : interval),
-        ),
-      );
+      return Effect.gen(function* () {
+        const consecutiveFailuresRef = yield* Ref.make(0);
+        const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
+          const configuredInterval = yield* automaticRemoteRefreshInterval;
+          const activeInterval = Duration.isZero(configuredInterval)
+            ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
+            : configuredInterval;
+          if (Duration.isZero(configuredInterval)) {
+            return activeInterval;
+          }
 
-      return refreshRemoteStatusIfEnabled.pipe(
-        Effect.catch(logRefreshFailure),
-        Effect.andThen(
-          Effect.forever(
-            sleepForConfiguredInterval.pipe(
-              Effect.andThen(refreshRemoteStatusIfEnabled.pipe(Effect.catch(logRefreshFailure))),
+          const exit = yield* refreshRemoteStatus(cwd).pipe(Effect.exit);
+          if (Exit.isSuccess(exit)) {
+            yield* Ref.set(consecutiveFailuresRef, 0);
+            return activeInterval;
+          }
+
+          const consecutiveFailures = yield* Ref.updateAndGet(
+            consecutiveFailuresRef,
+            (count) => count + 1,
+          );
+          const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
+          yield* Effect.logWarning("VCS remote status refresh failed", {
+            cwd,
+            detail: exit.cause.toString(),
+            consecutiveFailures,
+            nextDelayMs: Duration.toMillis(nextDelay),
+          });
+          return nextDelay;
+        });
+
+        return yield* refreshRemoteStatusIfEnabled.pipe(
+          Effect.repeat(
+            Schedule.identity<Duration.Duration>().pipe(
+              Schedule.addDelay((delay) => Effect.succeed(delay)),
             ),
           ),
-        ),
-      );
+          Effect.asVoid,
+        );
+      });
     };
 
     const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
