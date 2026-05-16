@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createThreadSearchHighlightRehypePlugin } from "./threadSearchHighlight";
+import {
+  createThreadSearchHighlightRehypePlugin,
+  renderHighlightedText,
+} from "./threadSearchHighlight";
 
 describe("createThreadSearchHighlightRehypePlugin", () => {
   it("ignores malformed tree children without crashing", () => {
@@ -62,5 +65,19 @@ describe("createThreadSearchHighlightRehypePlugin", () => {
         },
       ]),
     );
+  });
+
+  it("keeps highlight ranges aligned with original text after locale-expanding characters", () => {
+    const nodes = renderHighlightedText("İ abc", "abc", "unicode");
+
+    expect(nodes).toEqual([
+      "İ ",
+      expect.objectContaining({
+        props: expect.objectContaining({
+          children: "abc",
+          "data-thread-search-highlight": "match",
+        }),
+      }),
+    ]);
   });
 });

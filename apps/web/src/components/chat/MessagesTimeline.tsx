@@ -1084,10 +1084,15 @@ function renderSearchableUserText(
   searchActive: boolean,
   keyPrefix: string,
 ): ReactNode {
-  if (searchQuery.trim().length === 0) {
-    return <SkillInlineText text={text} skills={skills} />;
-  }
-  return renderHighlightedText(text, searchQuery, keyPrefix, { active: searchActive });
+  return (
+    <SkillInlineText
+      text={text}
+      skills={skills}
+      searchQuery={searchQuery}
+      searchActive={searchActive}
+      keyPrefix={keyPrefix}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

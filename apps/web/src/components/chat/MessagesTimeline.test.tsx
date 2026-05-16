@@ -223,6 +223,23 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-thread-search-highlight="active"');
   });
 
+  it("preserves skill chips while highlighting searchable user text", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Run $github:gh-fix-ci now")]}
+        activeSearchRowId="entry-1"
+        matchedSearchRowIds={new Set(["entry-1"])}
+        searchQuery="Run"
+        skills={[{ name: "github:gh-fix-ci", displayName: "Fix CI Workflow" }]}
+      />,
+    );
+
+    expect(markup).toContain("Fix CI Workflow");
+    expect(markup).toContain('data-thread-search-highlight="active"');
+  });
+
   it("renders context compaction entries in the normal work log", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

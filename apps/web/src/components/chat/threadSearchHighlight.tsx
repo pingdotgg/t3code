@@ -32,20 +32,25 @@ function findMatchRanges(text: string, query: string): TextMatchRange[] {
     return [];
   }
 
-  const normalizedText = text.toLocaleLowerCase();
   const ranges: TextMatchRange[] = [];
   let searchStart = 0;
 
-  while (searchStart <= normalizedText.length - normalizedQuery.length) {
-    const matchIndex = normalizedText.indexOf(normalizedQuery, searchStart);
-    if (matchIndex < 0) {
-      break;
+  while (searchStart < text.length) {
+    let matchEnd = searchStart;
+    let normalizedCandidate = "";
+    while (matchEnd < text.length && normalizedCandidate.length < normalizedQuery.length) {
+      matchEnd += 1;
+      normalizedCandidate = text.slice(searchStart, matchEnd).toLocaleLowerCase();
     }
-    ranges.push({
-      start: matchIndex,
-      end: matchIndex + normalizedQuery.length,
-    });
-    searchStart = matchIndex + normalizedQuery.length;
+    if (normalizedCandidate === normalizedQuery) {
+      ranges.push({
+        start: searchStart,
+        end: matchEnd,
+      });
+      searchStart = matchEnd;
+      continue;
+    }
+    searchStart += 1;
   }
 
   return ranges;
