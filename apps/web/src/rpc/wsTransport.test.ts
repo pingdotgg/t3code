@@ -14,6 +14,7 @@ import {
 } from "../rpc/requestLatencyState";
 import {
   getWsConnectionStatus,
+  getWsReconnectDelayMsForRetry,
   getWsConnectionUiState,
   resetWsConnectionStateForTests,
 } from "../rpc/wsConnectionState";
@@ -111,6 +112,20 @@ async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> 
   }
 }
 
+async function waitForFakeTimerAssertion(assertion: () => void, timeoutMs = 1_000): Promise<void> {
+  let lastError: unknown;
+  for (let elapsedMs = 0; elapsedMs <= timeoutMs; elapsedMs += 10) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await vi.advanceTimersByTimeAsync(10);
+    }
+  }
+  throw lastError;
+}
+
 function createTransport(...args: ConstructorParameters<typeof WsTransport>): WsTransport {
   const transport = new WsTransport(...args);
   transports.push(transport);
@@ -145,6 +160,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.allSettled(transports.map((transport) => transport.dispose()));
   transports.length = 0;
   globalThis.WebSocket = originalWebSocket;
@@ -258,6 +274,42 @@ describe("WsTransport", () => {
     });
     expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("reconnecting");
 
+    await transport.dispose();
+  });
+
+  it("keeps reconnecting after the previous retry budget would have been exhausted", async () => {
+    const transport = createTransport("ws://localhost:3020");
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    vi.useFakeTimers();
+
+    for (let retryIndex = 0; retryIndex < 8; retryIndex += 1) {
+      const socket = getSocket();
+      socket.error();
+      socket.close(1006, "server unavailable");
+
+      const retryDelayMs = getWsReconnectDelayMsForRetry(retryIndex);
+      if (retryDelayMs === null) {
+        throw new Error(`Expected reconnect delay for retry ${retryIndex}`);
+      }
+
+      await vi.advanceTimersByTimeAsync(retryDelayMs);
+      await waitForFakeTimerAssertion(() => {
+        expect(sockets).toHaveLength(retryIndex + 2);
+      });
+    }
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      attemptCount: 9,
+      phase: "connecting",
+      reconnectAttemptCount: 9,
+      reconnectPhase: "attempting",
+    });
+
+    vi.useRealTimers();
     await transport.dispose();
   });
 

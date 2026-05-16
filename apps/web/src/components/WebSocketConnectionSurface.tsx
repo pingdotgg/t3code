@@ -8,7 +8,6 @@ import {
   type WsConnectionStatus,
   type WsConnectionUiState,
   useWsConnectionStatus,
-  WS_RECONNECT_MAX_ATTEMPTS,
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
@@ -42,11 +41,10 @@ function describeOfflineToast(): string {
 }
 
 function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
-  const reconnectAttempt = Math.max(
-    1,
-    Math.min(status.reconnectAttemptCount, WS_RECONNECT_MAX_ATTEMPTS),
-  );
-  return `Attempt ${reconnectAttempt}/${status.reconnectMaxAttempts}`;
+  const reconnectAttempt = Math.max(1, status.reconnectAttemptCount);
+  return status.reconnectMaxAttempts === null
+    ? `Attempt ${reconnectAttempt}`
+    : `Attempt ${Math.min(reconnectAttempt, status.reconnectMaxAttempts)}/${status.reconnectMaxAttempts}`;
 }
 
 function describeExhaustedToast(): string {
