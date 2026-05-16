@@ -52,6 +52,8 @@ export interface WorkLogEntry {
   createdAt: string;
   label: string;
   detail?: string;
+  runtimeWarningMessage?: string;
+  runtimeWarningDetail?: unknown;
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
@@ -530,6 +532,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     payload.detail.length > 0
       ? payload.detail
       : null;
+  const runtimeWarningMessage =
+    activity.kind === "runtime.warning" &&
+    typeof payload?.message === "string" &&
+    payload.message.length > 0
+      ? payload.message
+      : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
   const detail = isTaskActivity
     ? !taskDetailAsLabel &&
@@ -538,12 +546,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : activity.kind === "runtime.warning"
+      ? null
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    label: taskLabel || activity.summary,
+    label: activity.kind === "runtime.warning" ? activity.summary : taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -556,6 +566,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
+  }
+  if (runtimeWarningMessage) {
+    entry.runtimeWarningMessage = runtimeWarningMessage;
+  }
+  if (activity.kind === "runtime.warning" && payload?.detail !== undefined) {
+    entry.runtimeWarningDetail = payload.detail;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;

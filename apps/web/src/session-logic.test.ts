@@ -653,6 +653,29 @@ describe("deriveWorkLogEntries", () => {
     expect(entries[0]?.tone).toBe("error");
   });
 
+  it("keeps runtime warning rows generic while preserving message and structured details", () => {
+    const detail = { code: "slow_provider", retryInSeconds: 5 };
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "runtime-warning",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "runtime.warning",
+        summary: "Runtime Warning",
+        tone: "info",
+        payload: {
+          message: "Provider got slow",
+          detail,
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.label).toBe("Runtime Warning");
+    expect(entry?.detail).toBeUndefined();
+    expect(entry?.runtimeWarningMessage).toBe("Provider got slow");
+    expect(entry?.runtimeWarningDetail).toEqual(detail);
+  });
+
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),

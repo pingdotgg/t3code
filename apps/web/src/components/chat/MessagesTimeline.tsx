@@ -23,6 +23,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -51,6 +52,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -1034,10 +1036,48 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
+function normalizeRuntimeWarningMessage(message: string | undefined): string | null {
+  const trimmed = message?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function formatRuntimeWarningDetail(detail: unknown): string | null {
+  if (typeof detail === "string") {
+    const trimmed = detail.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (detail === null || detail === undefined) {
+    return null;
+  }
+
+  try {
+    const serialized = JSON.stringify(detail, null, 2);
+    return typeof serialized === "string" && serialized.length > 0 ? serialized : String(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+function hasRenderableRuntimeWarningMeta(
+  workEntry: Pick<TimelineWorkEntry, "runtimeWarningMessage" | "runtimeWarningDetail">,
+): boolean {
+  return (
+    normalizeRuntimeWarningMessage(workEntry.runtimeWarningMessage) !== null ||
+    formatRuntimeWarningDetail(workEntry.runtimeWarningDetail) !== null
+  );
+}
+
 function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workEntry: Pick<
+    TimelineWorkEntry,
+    "detail" | "command" | "changedFiles" | "runtimeWarningMessage" | "runtimeWarningDetail"
+  >,
   workspaceRoot: string | undefined,
 ) {
+  if (hasRenderableRuntimeWarningMeta(workEntry)) {
+    return null;
+  }
   if (workEntry.command) return workEntry.command;
   if (workEntry.detail) return workEntry.detail;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
@@ -1104,6 +1144,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const [showRuntimeWarningDetail, setShowRuntimeWarningDetail] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -1118,104 +1159,159 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const runtimeWarningMessage = normalizeRuntimeWarningMessage(workEntry.runtimeWarningMessage);
+  const runtimeWarningDetail = formatRuntimeWarningDetail(workEntry.runtimeWarningDetail);
+  const hasRuntimeWarningMeta = hasRenderableRuntimeWarningMeta(workEntry);
+
+  if (hasRuntimeWarningMeta) {
+    return (
+      <Collapsible open={showRuntimeWarningDetail} onOpenChange={setShowRuntimeWarningDetail}>
+        <div className="rounded-lg px-1 py-1">
+          <button
+            type="button"
+            className="flex w-full items-start gap-2 rounded-md text-left transition-colors hover:bg-background/45"
+            aria-expanded={showRuntimeWarningDetail}
+            aria-label={`${showRuntimeWarningDetail ? "Hide" : "Show"} runtime warning details`}
+            onClick={() => setShowRuntimeWarningDetail((value) => !value)}
+          >
+            <span
+              className={cn(
+                "mt-0.5 flex size-5 shrink-0 items-center justify-center",
+                iconConfig.className,
+              )}
+            >
+              <EntryIcon className="size-3" />
+            </span>
+            <span className="min-w-0 flex-1 py-0.5 text-[11px] leading-5 text-foreground/80">
+              {heading}
+            </span>
+            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center text-muted-foreground/60">
+              <ChevronDownIcon
+                className={cn(
+                  "size-3.5 transition-transform",
+                  showRuntimeWarningDetail && "rotate-180",
+                )}
+              />
+            </span>
+          </button>
+          <CollapsibleContent>
+            <div className="space-y-1 pl-7 pt-0.5" data-runtime-warning-detail="true">
+              {runtimeWarningMessage ? (
+                <p className="text-[11px] leading-5 whitespace-pre-wrap break-words text-muted-foreground/85">
+                  {runtimeWarningMessage}
+                </p>
+              ) : null}
+              {runtimeWarningDetail ? (
+                <pre className="overflow-x-auto text-[11px] leading-5 whitespace-pre-wrap break-words text-muted-foreground/75">
+                  {runtimeWarningDetail}
+                </pre>
+              ) : null}
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+    );
+  }
 
   return (
-    <div className="rounded-lg px-1 py-1">
-      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
-        <span
-          className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
-        >
-          <EntryIcon className="size-3" />
-        </span>
-        <div className="min-w-0 flex-1 overflow-hidden">
-          {rawCommand ? (
-            <div className="max-w-full">
-              <p
-                className={cn(
-                  "truncate text-xs leading-5",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
-              >
-                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
-                </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
-                    >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
-              </p>
-            </div>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                className="block min-w-0 w-full text-left"
-                title={displayText}
-                aria-label={displayText}
-              >
+    <Collapsible open={showRuntimeWarningDetail} onOpenChange={setShowRuntimeWarningDetail}>
+      <div className="rounded-lg px-1 py-1">
+        <div className="flex items-start gap-2 transition-[opacity,translate] duration-200">
+          <span
+            className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
+          >
+            <EntryIcon className="size-3" />
+          </span>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            {rawCommand ? (
+              <div className="max-w-full">
                 <p
                   className={cn(
-                    "truncate text-[11px] leading-5",
+                    "truncate text-xs leading-5",
                     workToneClass(workEntry.tone),
                     preview ? "text-muted-foreground/70" : "",
                   )}
+                  title={displayText}
                 >
                   <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
                     {heading}
                   </span>
-                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                  {preview && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        closeDelay={0}
+                        delay={75}
+                        render={
+                          <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
+                            {" "}
+                            - {preview}
+                          </span>
+                        }
+                      />
+                      <TooltipPopup
+                        align="start"
+                        className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
+                        side="top"
+                      >
+                        <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
+                          {rawCommand}
+                        </div>
+                      </TooltipPopup>
+                    </Tooltip>
+                  )}
                 </p>
-              </TooltipTrigger>
-              <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
-                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
-                  {displayText}
-                </p>
-              </TooltipPopup>
-            </Tooltip>
-          )}
+              </div>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  className="block min-w-0 w-full text-left"
+                  title={displayText}
+                  aria-label={displayText}
+                >
+                  <p
+                    className={cn(
+                      "truncate text-[11px] leading-5",
+                      workToneClass(workEntry.tone),
+                      preview ? "text-muted-foreground/70" : "",
+                    )}
+                  >
+                    <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                      {heading}
+                    </span>
+                    {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                  </p>
+                </TooltipTrigger>
+                <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
+                  <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
+                    {displayText}
+                  </p>
+                </TooltipPopup>
+              </Tooltip>
+            )}
+          </div>
         </div>
-      </div>
-      {hasChangedFiles && !previewIsChangedFiles && (
-        <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
-            const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
-            return (
-              <span
-                key={`${workEntry.id}:${filePath}`}
-                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
-                title={displayPath}
-              >
-                {displayPath}
+        {hasChangedFiles && !previewIsChangedFiles && (
+          <div className="mt-1 flex flex-wrap gap-1 pl-6">
+            {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
+              const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
+              return (
+                <span
+                  key={`${workEntry.id}:${filePath}`}
+                  className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                  title={displayPath}
+                >
+                  {displayPath}
+                </span>
+              );
+            })}
+            {(workEntry.changedFiles?.length ?? 0) > 4 && (
+              <span className="px-1 text-[10px] text-muted-foreground/55">
+                +{(workEntry.changedFiles?.length ?? 0) - 4}
               </span>
-            );
-          })}
-          {(workEntry.changedFiles?.length ?? 0) > 4 && (
-            <span className="px-1 text-[10px] text-muted-foreground/55">
-              +{(workEntry.changedFiles?.length ?? 0) - 4}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Collapsible>
   );
 });
