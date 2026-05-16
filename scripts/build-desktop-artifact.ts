@@ -775,7 +775,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.verbose,
   );
 
-  // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
+  // electron-builder filters this directory out of Linux bundles, so stage a copy that packaged builds can read.
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
   const stagePackageJson: StagePackageJson = {
@@ -897,7 +897,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   target: Flag.string("target").pipe(
     Flag.withDescription(
-      "Artifact target, for example dmg/AppImage/nsis (env: T3CODE_DESKTOP_TARGET).",
+      "Artifact target, for example dmg/AppImage/deb/nsis (env: T3CODE_DESKTOP_TARGET).",
     ),
     Flag.optional,
   ),
