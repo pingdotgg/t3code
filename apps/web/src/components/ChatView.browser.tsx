@@ -4275,6 +4275,42 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not reseed project defaults when reusing an emptied draft", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-empty-draft-model-reuse-test" as MessageId,
+        targetText: "empty draft model reuse test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const threadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a project-default draft thread.",
+      );
+      const draftId = draftIdFromPath(threadPath);
+      expectProjectDefaultDraftModel(draftId);
+
+      const nextDraftsByThreadKey = { ...useComposerDraftStore.getState().draftsByThreadKey };
+      delete nextDraftsByThreadKey[draftId];
+      useComposerDraftStore.setState({ draftsByThreadKey: nextDraftsByThreadKey });
+
+      await newThreadButton.click();
+
+      expect(mounted.router.state.location.pathname).toBe(threadPath);
+      expect(composerDraftFor(draftId)).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a new thread from the global chat.new shortcut", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
