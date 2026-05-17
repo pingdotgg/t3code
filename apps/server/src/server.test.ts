@@ -114,6 +114,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { AcpRegistryError } from "@t3tools/contracts";
+import { AcpRegistryService } from "./acpRegistry/AcpRegistryService.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -543,6 +545,19 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
           ...options?.layers?.externalLauncher,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(AcpRegistryService)({
+          list: () => Effect.succeed([]),
+          install: (agentId) =>
+            Effect.fail(
+              new AcpRegistryError({
+                agentId,
+                detail: "ACP registry install is disabled in tests.",
+              }),
+            ),
+          uninstall: () => Effect.void,
         }),
       ),
       Layer.provide(

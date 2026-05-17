@@ -46,7 +46,12 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * ACP `authenticate` method id. Omit for agents that don't advertise an
+   * auth method — the `authenticate` step is skipped entirely, matching the
+   * ACP spec (authenticate is only required when the agent declares it).
+   */
+  readonly authMethodId?: string;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -93,6 +98,8 @@ export interface AcpSessionRuntimeShape {
   readonly getEvents: () => Stream.Stream<AcpParsedSessionEvent, never>;
   readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
   readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+  readonly getAuthMethods: Effect.Effect<ReadonlyArray<EffectAcpSchema.AuthMethod>>;
+  readonly getAvailableModes: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionMode>>;
   readonly prompt: (
     payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
   ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
@@ -113,6 +120,7 @@ export interface AcpSessionRuntimeShape {
     method: string,
     payload: unknown,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly authenticate: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
 interface AcpStartedState extends AcpSessionRuntimeStartResult {}
@@ -164,6 +172,8 @@ const makeAcpSessionRuntime = (
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    const authMethodsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AuthMethod>>([]);
+    const availableModesRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionMode>>([]);
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -378,15 +388,19 @@ const makeAcpSessionRuntime = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      yield* Ref.set(authMethodsRef, initializeResult.authMethods ?? []);
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      if (options.authMethodId) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
+
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -436,6 +450,7 @@ const makeAcpSessionRuntime = (
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* Ref.set(availableModesRef, sessionSetupResult.modes?.availableModes ?? []);
 
       const nextState = {
         sessionId,
@@ -549,6 +564,14 @@ const makeAcpSessionRuntime = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
+      getAuthMethods: Ref.get(authMethodsRef),
+      getAvailableModes: Ref.get(availableModesRef),
+      authenticate: (methodId) =>
+        getStartedState.pipe(
+          Effect.flatMap(() =>
+            runLoggedRequest("authenticate", { methodId }, acp.agent.authenticate({ methodId })),
+          ),
+        ),
     } satisfies AcpSessionRuntimeShape;
   });
 
@@ -668,7 +691,12 @@ function shouldEmitToolCallUpdate(
   if (!next.detail) {
     return false;
   }
-  return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
+  return (
+    previous === undefined ||
+    previous.title !== next.title ||
+    previous.detail !== next.detail ||
+    previous.status !== next.status
+  );
 }
 
 const assistantItemId = (sessionId: string, segmentIndex: number) =>

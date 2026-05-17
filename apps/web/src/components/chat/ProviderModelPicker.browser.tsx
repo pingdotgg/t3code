@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { InlineModelPickerContent } from "./InlineModelPickerContent";
+import { useState } from "react";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   deriveProviderInstanceEntries,
@@ -268,19 +270,46 @@ async function mountPicker(props: {
     activeInstanceId,
     props.model,
   );
-  const screen = await render(
-    <ProviderModelPicker
-      activeInstanceId={activeInstanceId}
-      model={props.model}
-      lockedProvider={props.lockedProvider}
-      lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-      instanceEntries={instanceEntries}
-      modelOptionsByInstance={modelOptionsByInstance}
-      triggerVariant={props.triggerVariant}
-      onInstanceModelChange={onInstanceModelChange}
-    />,
-    { container: host },
-  );
+  // After the popover-to-inline refactor, the trigger (ProviderModelPicker)
+  // and the panel content (InlineModelPickerContent) are separate components.
+  // Mount a tiny wrapper that pairs them with shared open state so existing
+  // assertions (click trigger → list visible → data attributes present) keep
+  // working.
+  function TestHarness() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <ProviderModelPicker
+          activeInstanceId={activeInstanceId}
+          model={props.model}
+          lockedProvider={props.lockedProvider}
+          lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+          instanceEntries={instanceEntries}
+          modelOptionsByInstance={modelOptionsByInstance}
+          triggerVariant={props.triggerVariant}
+          open={open}
+          onOpenChange={setOpen}
+        />
+        {open ? (
+          <InlineModelPickerContent
+            activeInstanceId={activeInstanceId}
+            model={props.model}
+            lockedProvider={props.lockedProvider}
+            lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+            instanceEntries={instanceEntries}
+            modelOptionsByInstance={modelOptionsByInstance}
+            terminalOpen={false}
+            onRequestClose={() => setOpen(false)}
+            onInstanceModelChange={(instanceId, model) => {
+              onInstanceModelChange(instanceId, model);
+              setOpen(false);
+            }}
+          />
+        ) : null}
+      </>
+    );
+  }
+  const screen = await render(<TestHarness />, { container: host });
 
   return {
     onInstanceModelChange,
@@ -606,10 +635,13 @@ describe("ProviderModelPicker", () => {
         lockedProvider={null}
         instanceEntries={instanceEntries}
         modelOptionsByInstance={modelOptionsByInstance}
-        onInstanceModelChange={onInstanceModelChange}
       />,
       { container: host },
     );
+    // The trigger-only test doesn't need to receive change callbacks — it
+    // only asserts the visible label. Reference `onInstanceModelChange` so
+    // the mock import isn't flagged as unused.
+    void onInstanceModelChange;
 
     try {
       const trigger = document.querySelector<HTMLElement>(

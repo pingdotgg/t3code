@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+  <text x="8" y="10" text-anchor="middle" font-size="10.5" font-family="Georgia, serif" font-style="italic" fill="currentColor">δ</text>
+  <line x1="1" y1="14" x2="15" y2="14" stroke="currentColor" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
+  <line x1="8" y1="14" x2="8" y2="12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+  <circle cx="8" cy="11.5" r="0.7" fill="currentColor"/>
+</svg>

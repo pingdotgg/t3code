@@ -96,6 +96,7 @@ export const deriveProviderInstanceConfigMap = (
 
     merged[instanceId] = {
       driver: driver.driverKind,
+      enabled: true,
       config: legacyConfig,
     };
   }

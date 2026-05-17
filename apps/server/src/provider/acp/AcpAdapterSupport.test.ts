@@ -2,13 +2,44 @@ import { describe, expect, it } from "vitest";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { acpPermissionOutcome, mapAcpToAdapterError } from "./AcpAdapterSupport.ts";
+import {
+  acpPermissionOutcome,
+  mapAcpToAdapterError,
+  resolveAcpPermissionOutcome,
+} from "./AcpAdapterSupport.ts";
 
 describe("AcpAdapterSupport", () => {
   it("maps ACP approval decisions to permission outcomes", () => {
     expect(acpPermissionOutcome("accept")).toBe("allow-once");
     expect(acpPermissionOutcome("acceptForSession")).toBe("allow-always");
     expect(acpPermissionOutcome("decline")).toBe("reject-once");
+  });
+
+  it("resolves approval decisions to the agent's advertised option ids", () => {
+    // Agents define their own optionId strings — the client must echo one
+    // back, matched by the standard `kind`, not a hardcoded value.
+    const options = [
+      { optionId: "proceed_always", name: "Allow for this session", kind: "allow_always" },
+      { optionId: "proceed_once", name: "Allow", kind: "allow_once" },
+      { optionId: "cancel", name: "Reject", kind: "reject_once" },
+    ] as const;
+
+    expect(resolveAcpPermissionOutcome("accept", options)).toEqual({
+      outcome: "selected",
+      optionId: "proceed_once",
+    });
+    expect(resolveAcpPermissionOutcome("acceptForSession", options)).toEqual({
+      outcome: "selected",
+      optionId: "proceed_always",
+    });
+    expect(resolveAcpPermissionOutcome("decline", options)).toEqual({
+      outcome: "selected",
+      optionId: "cancel",
+    });
+  });
+
+  it("falls back to cancelled when the agent advertises no matching option", () => {
+    expect(resolveAcpPermissionOutcome("accept", [])).toEqual({ outcome: "cancelled" });
   });
 
   it("maps ACP request errors to provider adapter request errors", () => {
