@@ -41,14 +41,33 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.makeDirectory(nested, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          JSON.stringify({ vcs: { kind: "jj" } }),
+          '{"vcs":{"kind":"jj"}}',
         );
 
         const config = yield* VcsProjectConfig.VcsProjectConfig;
         const kind = yield* config.resolveKind({ cwd: nested });
 
         assert.equal(kind, "jj");
+      }),
+    );
+  });
+
+  it.layer(TestLayer)("ignores malformed .t3code/vcs.json files", (it) => {
+    it.effect("falls back to auto", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3code");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(configDir, "vcs.json"), "{ not-json");
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const kind = yield* config.resolveKind({ cwd: root });
+
+        assert.equal(kind, "auto");
       }),
     );
   });

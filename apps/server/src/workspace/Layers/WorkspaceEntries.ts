@@ -29,7 +29,7 @@ import {
 } from "../Services/WorkspaceEntries.ts";
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 
-const WORKSPACE_CACHE_TTL_MS = 15_000;
+const WORKSPACE_CACHE_TTL = Duration.seconds(15);
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
@@ -402,8 +402,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     buildWorkspaceIndex,
     {
       capacity: WORKSPACE_CACHE_MAX_KEYS,
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? WORKSPACE_CACHE_TTL : Duration.zero),
     },
   );
 
