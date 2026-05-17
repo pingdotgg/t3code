@@ -96,6 +96,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  resolveBrowseTabCompletion,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
@@ -1321,6 +1322,32 @@ function OpenCommandPaletteDialog() {
     setBrowseGeneration((generation) => generation + 1);
   }
 
+  function completeBrowsePathFromTab(): boolean {
+    if (!isBrowsing || relativePathNeedsActiveProject || isBrowsePending) {
+      return false;
+    }
+
+    const completion = resolveBrowseTabCompletion({
+      filteredEntries: filteredBrowseEntries,
+      browseFilterQuery,
+      highlightedEntry: highlightedBrowseEntry,
+      exactEntry: exactBrowseEntry,
+    });
+    if (!completion) {
+      return false;
+    }
+
+    setHighlightedItemValue(null);
+    if (completion._tag === "enterDirectory") {
+      setQuery(appendBrowsePathSegment(query, completion.name));
+      setBrowseGeneration((generation) => generation + 1);
+      return true;
+    }
+
+    setQuery(`${getBrowseDirectoryPath(query)}${completion.leaf}`);
+    return true;
+  }
+
   // Resolve the add-project path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
   // directory itself. Otherwise the user typed a partial leaf name, so we need
@@ -1440,6 +1467,11 @@ function OpenCommandPaletteDialog() {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === "Tab" && completeBrowsePathFromTab()) {
+      event.preventDefault();
+      return;
+    }
+
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
       event.preventDefault();
       void submitAddProjectCloneFlow();
