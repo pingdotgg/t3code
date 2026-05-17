@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
@@ -17,7 +18,10 @@ import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import { providerContextFromOverride } from "./RemoteOverride.ts";
 import { ServerConfig } from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -33,6 +37,7 @@ export interface SourceControlProviderRegistration {
 export interface SourceControlProviderHandle {
   readonly provider: SourceControlProvider.SourceControlProviderShape;
   readonly context: SourceControlProvider.SourceControlProviderContext | null;
+  readonly contextSource: "override" | "detected" | null;
 }
 
 export interface SourceControlProviderRegistryShape {
@@ -160,6 +165,8 @@ function bindProviderContext(
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const serverSettings = yield* ServerSettingsService;
     const process = yield* VcsProcess.VcsProcess;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
     const providers = new Map<
@@ -176,17 +183,45 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         const handle = yield* vcsRegistry
           .resolve({ cwd })
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
+        const repository = yield* handle.driver
+          .detectRepository(cwd)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const projectOption = yield* projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(cwd)
+          .pipe(
+            Effect.flatMap((project) =>
+              Option.isSome(project) || repository === null || repository.rootPath === cwd
+                ? Effect.succeed(project)
+                : projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(repository.rootPath),
+            ),
+            Effect.catch(() => Effect.succeed(Option.none())),
+          );
+        if (Option.isSome(projectOption)) {
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)),
+          );
+          const override = settings.projectSettings[projectOption.value.id]?.remoteOverride ?? null;
+          const overrideContext = override ? providerContextFromOverride(override) : null;
+          if (overrideContext) {
+            return { context: overrideContext, source: "override" as const };
+          }
+        }
+
         const remotes = yield* handle.driver
           .listRemotes(cwd)
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
 
-        return selectProviderContext(remotes.remotes);
+        const context = selectProviderContext(remotes.remotes);
+        return { context, source: context ? ("detected" as const) : null };
       },
     );
 
     const providerContextCache = yield* Cache.makeWith<
       string,
-      SourceControlProvider.SourceControlProviderContext | null,
+      {
+        readonly context: SourceControlProvider.SourceControlProviderContext | null;
+        readonly source: "override" | "detected" | null;
+      },
       SourceControlProviderError
     >(detectProviderContext, {
       capacity: PROVIDER_DETECTION_CACHE_CAPACITY,
@@ -195,12 +230,13 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
     const resolveHandle: SourceControlProviderRegistryShape["resolveHandle"] = (input) =>
       Cache.get(providerContextCache, input.cwd).pipe(
-        Effect.map((context) => {
+        Effect.map(({ context, source }) => {
           const kind = context?.provider.kind ?? "unknown";
           const provider = providers.get(kind) ?? unsupportedProvider(kind);
           return {
             provider: bindProviderContext(provider, context),
             context,
+            contextSource: source,
           } satisfies SourceControlProviderHandle;
         }),
       );

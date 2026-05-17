@@ -1,9 +1,16 @@
-import type { EnvironmentId, ProjectSearchEntriesResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectDetails,
+  ProjectId,
+  ProjectSearchEntriesResult,
+} from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 
 export const projectQueryKeys = {
   all: ["projects"] as const,
+  details: (environmentId: EnvironmentId | null, projectId: ProjectId | null) =>
+    ["projects", "details", environmentId ?? null, projectId ?? null] as const,
   searchEntries: (
     environmentId: EnvironmentId | null,
     cwd: string | null,
@@ -18,6 +25,28 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
   entries: [],
   truncated: false,
 };
+
+export function projectDetailsQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  projectId: ProjectId | null;
+  enabled?: boolean;
+  staleTime?: number;
+}) {
+  return queryOptions({
+    queryKey: projectQueryKeys.details(input.environmentId, input.projectId),
+    queryFn: async (): Promise<ProjectDetails> => {
+      if (!input.environmentId || !input.projectId) {
+        throw new Error("Project details are unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.projects.getDetails({
+        projectId: input.projectId,
+      });
+    },
+    enabled: (input.enabled ?? true) && input.environmentId !== null && input.projectId !== null,
+    ...(input.staleTime === undefined ? {} : { staleTime: input.staleTime }),
+  });
+}
 
 export function projectSearchEntriesQueryOptions(input: {
   environmentId: EnvironmentId | null;

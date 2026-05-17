@@ -29,6 +29,7 @@ import {
 } from "@t3tools/client-runtime";
 import {
   applyClaudePromptEffortPrefix,
+  createDefaultModelSelection,
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
@@ -107,7 +108,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { syncProjectScriptKeybinding } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -198,6 +199,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_ACTION_ENVIRONMENT: Record<string, string> = {};
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 type EnvironmentUnavailableState = {
@@ -796,10 +798,7 @@ export default function ChatView(props: ChatViewProps) {
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: DEFAULT_MODEL,
-            },
+            fallbackDraftProject?.defaultModelSelection ?? createDefaultModelSelection(),
             localDraftError,
           )
         : undefined,
@@ -1142,6 +1141,10 @@ export default function ChatView(props: ChatViewProps) {
     primaryEnvironmentId && activeThread?.environmentId === primaryEnvironmentId
       ? primaryServerConfig
       : (activeEnvRuntimeState?.serverConfig ?? primaryServerConfig);
+  const activeEnvironmentSettings = useMemo(
+    () => (serverConfig ? { ...settings, ...serverConfig.settings } : settings),
+    [serverConfig, settings],
+  );
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -1630,7 +1633,11 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
+  const gitStatusQuery = useGitStatus({
+    environmentId,
+    cwd: gitCwd,
+    projectId: activeProject?.id ?? null,
+  });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -1654,6 +1661,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeProjectActionEnvironment =
+    activeProject && serverConfig
+      ? (serverConfig.settings.projectSettings[activeProject.id]?.actionEnvironment ??
+        EMPTY_ACTION_ENVIRONMENT)
+      : EMPTY_ACTION_ENVIRONMENT;
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext
@@ -1904,7 +1916,10 @@ export default function ChatView(props: ChatViewProps) {
           cwd: activeProject.cwd,
         },
         worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        extraEnv: {
+          ...activeProjectActionEnvironment,
+          ...options?.env,
+        },
       });
       const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
         ? {
@@ -1943,6 +1958,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeThreadId,
       activeThreadRef,
+      activeProjectActionEnvironment,
       gitCwd,
       setTerminalOpen,
       setThreadError,
@@ -1975,20 +1991,20 @@ export default function ChatView(props: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
+      const keybindingServer =
+        isElectron && input.keybinding !== undefined ? readLocalApi()?.server : null;
+      if (isElectron && input.keybinding !== undefined && !keybindingServer) {
+        throw new Error("Local API unavailable.");
+      }
+
+      await syncProjectScriptKeybinding({
+        keybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
+        server: keybindingServer,
       });
-
-      if (isElectron && keybindingRule) {
-        const localApi = readLocalApi();
-        if (!localApi) {
-          throw new Error("Local API unavailable.");
-        }
-        await localApi.server.upsertKeybinding(keybindingRule);
-      }
     },
-    [environmentId],
+    [environmentId, keybindings],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -3646,7 +3662,7 @@ export default function ChatView(props: ChatViewProps) {
                   activeThreadModelSelection={activeThread?.modelSelection}
                   activeThreadActivities={activeThread?.activities}
                   resolvedTheme={resolvedTheme}
-                  settings={settings}
+                  settings={activeEnvironmentSettings}
                   keybindings={keybindings}
                   terminalOpen={Boolean(terminalState.terminalOpen)}
                   gitCwd={gitCwd}

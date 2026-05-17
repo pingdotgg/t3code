@@ -1,7 +1,9 @@
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
+  defaultInstanceIdForDriver,
   type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
@@ -324,6 +326,17 @@ export function createModelSelection(
     model,
   };
   return selections.length > 0 ? { ...base, options: selections } : base;
+}
+
+export function createDefaultModelSelection(
+  provider: ProviderDriverKind = DEFAULT_PROVIDER_DRIVER_KIND,
+): ModelSelection {
+  const model = DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
+  return createModelSelection(
+    defaultInstanceIdForDriver(provider),
+    model,
+    DEFAULT_MODEL_OPTIONS_BY_PROVIDER[provider],
+  );
 }
 
 /**

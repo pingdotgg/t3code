@@ -686,7 +686,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           <button
                             type="button"
                             className={cn(
-                              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                              "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
                               getDiffCollapseIconClassName(fileDiff),
                             )}
                             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}

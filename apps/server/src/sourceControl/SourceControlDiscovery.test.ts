@@ -7,6 +7,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -30,6 +32,10 @@ const sourceControlProviderRegistryTestLayer = (input: {
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(ProjectionSnapshotQuery)({
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+        }),
+        ServerSettingsService.layerTest(),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
       ),

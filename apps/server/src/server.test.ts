@@ -536,6 +536,13 @@ const buildAppUnderTest = (options?: {
           ready: Effect.void,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          updateProjectSettings: () =>
+            Effect.succeed({
+              remoteOverride: null,
+              automaticGitFetchInterval: null,
+              actionEnvironment: {},
+              disabledProviderInstanceIds: [],
+            }),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
         }),

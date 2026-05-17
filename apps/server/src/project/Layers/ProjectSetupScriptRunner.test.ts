@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vitest";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { ProjectSetupScriptRunner } from "../Services/ProjectSetupScriptRunner.ts";
 import { ProjectSetupScriptRunnerLive } from "./ProjectSetupScriptRunner.ts";
@@ -51,6 +52,7 @@ describe("ProjectSetupScriptRunner", () => {
         Effect.provide(
           ProjectSetupScriptRunnerLive.pipe(
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
+            Layer.provideMerge(ServerSettingsService.layerTest()),
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,
@@ -111,6 +113,20 @@ describe("ProjectSetupScriptRunner", () => {
           ProjectSetupScriptRunnerLive.pipe(
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
+              ServerSettingsService.layerTest({
+                projectSettings: {
+                  [project.id]: {
+                    remoteOverride: null,
+                    automaticGitFetchInterval: null,
+                    actionEnvironment: {
+                      API_BASE_URL: "https://api.example.test",
+                    },
+                    disabledProviderInstanceIds: [],
+                  },
+                },
+              }),
+            ),
+            Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,
                 write,
@@ -147,6 +163,7 @@ describe("ProjectSetupScriptRunner", () => {
       cwd: "/repo/worktrees/a",
       worktreePath: "/repo/worktrees/a",
       env: {
+        API_BASE_URL: "https://api.example.test",
         T3CODE_PROJECT_ROOT: "/repo/project",
         T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
       },
