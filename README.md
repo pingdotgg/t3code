@@ -52,6 +52,9 @@ yay -S t3code-bin
 
     t3code-flake.url = "github:pingdotgg/t3code";
     t3code-flake.inputs.nixpkgs.follows = "nixpkgs";
+
+    # Optional: pin to a specific release
+    # t3code-flake.releaseTag = "v0.0.23";
   };
 }
 ```
@@ -62,7 +65,7 @@ yay -S t3code-bin
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   environment.systemPackages = [
     pkgs.appimage-run
-    inputs.t3code-flake.packages.${system}
+    inputs.t3code-flake.packages.${system}.default
   ];
 }
 ```
