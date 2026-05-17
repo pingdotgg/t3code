@@ -161,6 +161,40 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces acpRegistryInstalls so uninstalled agents disappear", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      acpRegistryInstalls: {
+        "claude-acp": {
+          version: "0.34.1",
+          installedAt: "2026-05-16T00:00:00.000Z",
+          distribution: "npx" as const,
+        },
+        gemini: {
+          version: "0.42.0",
+          installedAt: "2026-05-14T00:00:00.000Z",
+          distribution: "npx" as const,
+        },
+      },
+    };
+
+    // Passing a smaller record must DELETE the omitted key. With deep-merge
+    // semantics it would silently no-op and "claude-acp" would survive.
+    expect(
+      Object.keys(
+        applyServerSettingsPatch(current, {
+          acpRegistryInstalls: {
+            gemini: {
+              version: "0.42.0",
+              installedAt: "2026-05-14T00:00:00.000Z",
+              distribution: "npx" as const,
+            },
+          },
+        }).acpRegistryInstalls,
+      ),
+    ).toEqual(["gemini"]);
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

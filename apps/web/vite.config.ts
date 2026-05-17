@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
@@ -81,6 +85,36 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
+function copyAcpIcons() {
+  return {
+    name: "copy-acp-icons",
+    async buildStart() {
+      const contractsIconsDir = NodePath.resolve(
+        import.meta.dirname,
+        "../../packages/contracts/src/registry/icons",
+      );
+      const webIconsDir = NodePath.resolve(import.meta.dirname, "public/acp-icons");
+
+      try {
+        await NodeFSP.mkdir(webIconsDir, { recursive: true });
+        const entries = await NodeFSP.readdir(contractsIconsDir);
+        await Promise.all(
+          entries
+            .filter((entry) => entry.endsWith(".svg"))
+            .map((entry) =>
+              NodeFSP.copyFile(
+                NodePath.join(contractsIconsDir, entry),
+                NodePath.join(webIconsDir, entry),
+              ),
+            ),
+        );
+      } catch {
+        // Registry assets are optional when consumers build only the web package.
+      }
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
@@ -95,6 +129,7 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindcss(),
+      copyAcpIcons(),
     ],
     optimizeDeps: {
       include: [

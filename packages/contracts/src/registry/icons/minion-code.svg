@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <rect fill="none" stroke="currentColor" stroke-width="1.1" x="4.5" y="2.5" width="7" height="10" rx="3.5"/>
+  <line stroke="currentColor" stroke-width="1" x1="3" y1="5.5" x2="13" y2="5.5"/>
+  <circle fill="none" stroke="currentColor" stroke-width="1" cx="6.5" cy="5.5" r="1.6"/>
+  <circle fill="none" stroke="currentColor" stroke-width="1" cx="9.5" cy="5.5" r="1.6"/>
+  <circle fill="currentColor" cx="6.8" cy="5.6" r="0.55"/>
+  <circle fill="currentColor" cx="9.8" cy="5.6" r="0.55"/>
+  <path fill="none" stroke="currentColor" stroke-width="0.6" stroke-linecap="round" d="M7 8.3 Q8 9 9 8.3"/>
+  <path fill="none" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" d="M4.5 8 L3 9.5"/>
+  <path fill="none" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" d="M11.5 8 L13 9.5"/>
+  <line stroke="currentColor" stroke-width="0.7" x1="5" y1="9.5" x2="11" y2="9.5"/>
+  <line stroke="currentColor" stroke-width="0.9" x1="6.5" y1="12.5" x2="6.5" y2="14"/>
+  <line stroke="currentColor" stroke-width="0.9" x1="9.5" y1="12.5" x2="9.5" y2="14"/>
+  <line stroke="currentColor" stroke-width="0.9" stroke-linecap="round" x1="6.5" y1="14" x2="5.5" y2="14"/>
+  <line stroke="currentColor" stroke-width="0.9" stroke-linecap="round" x1="9.5" y1="14" x2="10.5" y2="14"/>
+  <line stroke="currentColor" stroke-width="0.7" stroke-linecap="round" x1="8" y1="2.5" x2="7.3" y2="0.8"/>
+  <line stroke="currentColor" stroke-width="0.7" stroke-linecap="round" x1="8" y1="2.5" x2="8" y2="0.5"/>
+  <line stroke="currentColor" stroke-width="0.7" stroke-linecap="round" x1="8" y1="2.5" x2="8.7" y2="0.8"/>
+</svg>

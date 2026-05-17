@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { AcpAuthMethod } from "./acpRegistry.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
@@ -55,6 +56,12 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Auth methods advertised by the agent (ACP `initialize` response).
+   * Populated by ACP registry drivers from the install-time probe; absent
+   * for built-in drivers.
+   */
+  authMethods: Schema.optionalKey(Schema.Array(AcpAuthMethod)),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

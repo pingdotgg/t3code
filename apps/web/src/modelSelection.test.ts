@@ -44,10 +44,12 @@ function settingsWithProviderInstances(): UnifiedSettings {
     providerInstances: {
       [ProviderInstanceId.make("claudeAgent")]: {
         driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
         config: { customModels: [] },
       },
       [ProviderInstanceId.make("claude_openrouter")]: {
         driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
         config: { customModels: ["openai/gpt-5.5"] },
       },
     },

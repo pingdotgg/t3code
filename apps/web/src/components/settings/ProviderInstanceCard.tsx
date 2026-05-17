@@ -10,10 +10,12 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
 import {
+  ACP_REGISTRY_DRIVER_PREFIX,
   isProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -26,6 +28,9 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -33,6 +38,7 @@ import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
+import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -150,6 +156,94 @@ function ProviderAuthEmail(props: {
         hideTooltip="Click to hide email"
       />
     </span>
+  );
+}
+
+function ProviderAuthSection(props: {
+  readonly instanceId: ProviderInstanceId;
+  readonly liveProvider: ServerProvider | undefined;
+}) {
+  const [authenticating, setAuthenticating] = useState<ReadonlySet<string>>(() => new Set());
+  const primaryEnvironment = usePrimaryEnvironment();
+  const authenticateAcpRegistryAgent = useAtomCommand(
+    serverEnvironment.authenticateAcpRegistryAgent,
+    { reportFailure: false },
+  );
+  const live = props.liveProvider;
+  const isAcpRegistry = live?.driver.startsWith(ACP_REGISTRY_DRIVER_PREFIX) ?? false;
+  const authMethods = live?.auth.authMethods ?? [];
+  const isAuthenticated = live?.auth.status === "authenticated";
+
+  if (!isAcpRegistry || authMethods.length === 0 || isAuthenticated) {
+    return null;
+  }
+
+  const handleAuthenticate = async (methodId: string) => {
+    setAuthenticating((current) => new Set(current).add(methodId));
+    try {
+      if (!primaryEnvironment) {
+        throw new Error("Connect to a backend before authenticating this provider.");
+      }
+      const result = await authenticateAcpRegistryAgent({
+        environmentId: primaryEnvironment.environmentId,
+        input: {
+          instanceId: props.instanceId,
+          methodId,
+        },
+      });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
+    } catch (cause) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Authentication failed",
+          description:
+            cause instanceof Error ? cause.message : "The provider could not authenticate.",
+        }),
+      );
+    } finally {
+      setAuthenticating((current) => {
+        if (!current.has(methodId)) return current;
+        const next = new Set(current);
+        next.delete(methodId);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+      <div className="grid gap-2">
+        <span className="text-xs font-medium text-foreground">Authentication</span>
+        <p className="text-xs text-muted-foreground">
+          This provider requires authentication. Choose a method below to authenticate.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {authMethods.map((method) => (
+            <Tooltip key={method.id}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    disabled={authenticating.has(method.id)}
+                    onClick={() => void handleAuthenticate(method.id)}
+                  >
+                    {authenticating.has(method.id) ? <Spinner className="mr-1.5 size-3" /> : null}
+                    Authenticate with {method.name}
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">{method.description ?? method.name}</TooltipPopup>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -763,6 +857,8 @@ export function ProviderInstanceCard({
                 onChange={updateEnvironment}
               />
             </div>
+
+            <ProviderAuthSection instanceId={instanceId} liveProvider={liveProvider} />
 
             {driverOption ? (
               <ProviderSettingsForm

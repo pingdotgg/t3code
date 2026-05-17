@@ -60,6 +60,7 @@ import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
+import * as AcpRegistryService from "./acpRegistry/AcpRegistryService.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -289,6 +290,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
+  [WS_METHODS.acpRegistryList, AuthOrchestrationReadScope],
+  [WS_METHODS.acpRegistryInstall, AuthOrchestrationOperateScope],
+  [WS_METHODS.acpRegistryUninstall, AuthOrchestrationOperateScope],
+  [WS_METHODS.acpRegistryAuthenticate, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
@@ -425,6 +430,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const acpRegistry = yield* AcpRegistryService.AcpRegistryService;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1287,6 +1293,30 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        [WS_METHODS.acpRegistryList]: (_input) =>
+          observeRpcEffect(WS_METHODS.acpRegistryList, acpRegistry.list(), {
+            "rpc.aggregate": "acp-registry",
+          }),
+        [WS_METHODS.acpRegistryInstall]: ({ agentId }) =>
+          observeRpcEffect(WS_METHODS.acpRegistryInstall, acpRegistry.install(agentId), {
+            "rpc.aggregate": "acp-registry",
+          }),
+        [WS_METHODS.acpRegistryUninstall]: ({ agentId }) =>
+          observeRpcEffect(
+            WS_METHODS.acpRegistryUninstall,
+            acpRegistry.uninstall(agentId).pipe(Effect.as({ agentId })),
+            {
+              "rpc.aggregate": "acp-registry",
+            },
+          ),
+        [WS_METHODS.acpRegistryAuthenticate]: ({ instanceId, methodId }) =>
+          observeRpcEffect(
+            WS_METHODS.acpRegistryAuthenticate,
+            acpRegistry.authenticate(instanceId, methodId).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "acp-registry",
+            },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -1807,6 +1837,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(PreviewAutomationBroker.layer),
+              Layer.provide(AcpRegistryService.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(

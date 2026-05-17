@@ -48,7 +48,12 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * ACP `authenticate` method id. Omit for agents that don't advertise an
+   * auth method — the `authenticate` step is skipped entirely, matching the
+   * ACP spec (authenticate is only required when the agent declares it).
+   */
+  readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -165,6 +170,10 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     /** Latest configuration options observed from session setup and configuration writes. */
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
+    /** Authentication methods advertised by the agent during initialization. */
+    readonly getAuthMethods: Effect.Effect<ReadonlyArray<EffectAcpSchema.AuthMethod>>;
+    /** Modes advertised by the active session. */
+    readonly getAvailableModes: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionMode>>;
     /**
      * Sends a prompt turn to the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
@@ -221,6 +230,8 @@ export class AcpSessionRuntime extends Context.Service<
       method: string,
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Authenticates the initialized agent with the selected method. */
+    readonly authenticate: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   }
 >()("t3/provider/acp/AcpSessionRuntime") {}
 
@@ -259,6 +270,8 @@ export const make = (
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    const authMethodsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AuthMethod>>([]);
+    const availableModesRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionMode>>([]);
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -478,15 +491,19 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      yield* Ref.set(authMethodsRef, initializeResult.authMethods ?? []);
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      if (options.authMethodId) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
+
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -536,6 +553,7 @@ export const make = (
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* Ref.set(availableModesRef, sessionSetupResult.modes?.availableModes ?? []);
 
       const nextState = {
         sessionId,
@@ -663,6 +681,14 @@ export const make = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
+      getAuthMethods: Ref.get(authMethodsRef),
+      getAvailableModes: Ref.get(availableModesRef),
+      authenticate: (methodId) =>
+        getStartedState.pipe(
+          Effect.flatMap(() =>
+            runLoggedRequest("authenticate", { methodId }, acp.agent.authenticate({ methodId })),
+          ),
+        ),
     } satisfies AcpSessionRuntime["Service"];
   });
 
@@ -790,7 +816,12 @@ function shouldEmitToolCallUpdate(
   if (!next.detail) {
     return false;
   }
-  return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
+  return (
+    previous === undefined ||
+    previous.title !== next.title ||
+    previous.detail !== next.detail ||
+    previous.status !== next.status
+  );
 }
 
 const assistantItemId = (sessionId: string, segmentIndex: number) =>

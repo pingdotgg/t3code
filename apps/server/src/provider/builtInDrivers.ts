@@ -20,6 +20,9 @@
  *
  * @module provider/builtInDrivers
  */
+import { ACP_REGISTRY } from "@t3tools/contracts";
+
+import { type AcpRegistryDriverEnv, makeAcpRegistryDriver } from "./Drivers/AcpRegistryDriver.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
@@ -37,7 +40,16 @@ export type BuiltInDriversEnv =
   | CodexDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
-  | OpenCodeDriverEnv;
+  | OpenCodeDriverEnv
+  | AcpRegistryDriverEnv;
+
+/**
+ * One generic driver per bundled ACP registry entry. The driver factory is
+ * data-driven — adding agents to the registry snapshot grows this list
+ * without new code.
+ */
+const ACP_REGISTRY_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> =
+  ACP_REGISTRY.map(makeAcpRegistryDriver);
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in
@@ -50,4 +62,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   CursorDriver,
   GrokDriver,
   OpenCodeDriver,
+  ...ACP_REGISTRY_DRIVERS,
 ];

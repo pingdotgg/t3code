@@ -2,6 +2,11 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  AcpRegistryEntryWithStatus,
+  AcpRegistryError,
+  AcpRegistryInstallState,
+} from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -222,6 +227,12 @@ export const WS_METHODS = {
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
+  // ACP registry methods
+  acpRegistryList: "acpRegistry.list",
+  acpRegistryInstall: "acpRegistry.install",
+  acpRegistryUninstall: "acpRegistry.uninstall",
+  acpRegistryAuthenticate: "acpRegistry.authenticate",
+
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -392,6 +403,30 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+});
+
+export const WsAcpRegistryListRpc = Rpc.make(WS_METHODS.acpRegistryList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AcpRegistryEntryWithStatus),
+  error: Schema.Union([AcpRegistryError, EnvironmentAuthorizationError]),
+});
+
+export const WsAcpRegistryInstallRpc = Rpc.make(WS_METHODS.acpRegistryInstall, {
+  payload: Schema.Struct({ agentId: Schema.String }),
+  success: AcpRegistryInstallState,
+  error: Schema.Union([AcpRegistryError, EnvironmentAuthorizationError]),
+});
+
+export const WsAcpRegistryUninstallRpc = Rpc.make(WS_METHODS.acpRegistryUninstall, {
+  payload: Schema.Struct({ agentId: Schema.String }),
+  success: Schema.Struct({ agentId: Schema.String }),
+  error: Schema.Union([AcpRegistryError, EnvironmentAuthorizationError]),
+});
+
+export const WsAcpRegistryAuthenticateRpc = Rpc.make(WS_METHODS.acpRegistryAuthenticate, {
+  payload: Schema.Struct({ instanceId: ProviderInstanceId, methodId: Schema.String }),
+  success: Schema.Struct({}),
+  error: Schema.Union([AcpRegistryError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -748,4 +783,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsAcpRegistryListRpc,
+  WsAcpRegistryInstallRpc,
+  WsAcpRegistryUninstallRpc,
+  WsAcpRegistryAuthenticateRpc,
 );

@@ -65,7 +65,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { AddOrInstallProviderPanel } from "./AddOrInstallProviderPanel";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -989,7 +989,6 @@ export function ProviderSettingsPanel() {
     reportFailure: false,
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -1282,7 +1281,11 @@ export function ProviderSettingsPanel() {
                     size="icon-xs"
                     variant="ghost"
                     className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    onClick={() => {
+                      document
+                        .getElementById("providers-add-or-install")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
                     aria-label="Add provider instance"
                   >
                     <PlusIcon className="size-3" />
@@ -1415,9 +1418,9 @@ export function ProviderSettingsPanel() {
         })}
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
-      ) : null}
+      <div className="px-4 pb-6 pt-2 sm:px-6">
+        <AddOrInstallProviderPanel />
+      </div>
     </SettingsPageContainer>
   );
 }

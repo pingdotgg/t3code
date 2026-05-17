@@ -78,10 +78,16 @@ export function applyServerSettingsPatch(
   const selectionPatch = patch.textGenerationModelSelection;
   const { automaticGitFetchInterval, ...patchForMerge } = patch;
   const next = deepMerge(current, patchForMerge);
+  // Record-shaped fields (providerInstances, acpRegistryInstalls) need
+  // replace-on-set semantics — `deepMerge` can't represent key deletion, so
+  // removing an entry by passing a smaller record would silently no-op.
   const nextWithReplacements = {
     ...next,
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
+      : {}),
+    ...(patch.acpRegistryInstalls !== undefined
+      ? { acpRegistryInstalls: patch.acpRegistryInstalls }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };

@@ -32,6 +32,16 @@ Long term maintainability is a core priority. If you add new functionality, firs
 - `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
 - `packages/client-runtime`: Shared runtime package for sharing client code across web and mobile.
 
+## ACP Registry
+
+In addition to the four bespoke providers (Codex, Claude, Cursor, OpenCode),
+T3 Code bundles a snapshot of the
+[Agent Client Protocol registry](https://agentclientprotocol.com/get-started/registry)
+and exposes a provider installer at **Settings → Providers**. See
+[docs/providers/acp-registry.md](./docs/providers/acp-registry.md) for the
+install pipeline, distribution channels, and how to refresh the bundled
+snapshot (`bun run sync:acp-registry`).
+
 ## Reference Repos
 
 - Open-source Codex repo: https://github.com/openai/codex

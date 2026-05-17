@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { AcpRegistryInstallState } from "./acpRegistry.ts";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
@@ -355,6 +356,28 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const AcpRegistrySettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Binary path",
+        description:
+          "Override the executable used to spawn this ACP registry agent. Leave blank to use the installed distribution.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
+  },
+  {
+    order: ["binaryPath"],
+  },
+);
+export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -406,6 +429,22 @@ export const ServerSettings = Schema.Struct({
   // (forks, downgrades, in-flight PR branches) round-trip without loss.
   // See providerInstance.ts for the forward/backward compatibility invariant.
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Per-agent install state for the bundled ACP registry. Keyed by
+   * `AcpRegistryEntry.id`; absence means "not installed". Records the
+   * resolved version and the distribution channel chosen at install time
+   * so a subsequent server restart can re-spawn the same agent without
+   * re-probing the network.
+   *
+   * For `binary` installs, `binaryPath` holds the absolute path of the
+   * extracted executable; for `npx`/`uvx` installs the spawn target is
+   * resolved at runtime from the bundled registry entry. The field is a
+   * plain `Record<string, …>` because the keys aren't `ProviderInstanceId`
+   * slugs — they're the upstream registry ids (e.g. `gemini`, `goose`).
+   */
+  acpRegistryInstalls: Schema.Record(Schema.String, AcpRegistryInstallState).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -509,6 +548,10 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Whole-map replacement for ACP registry install state. The server is
+  // the source of truth for this field (install/uninstall RPCs mutate it);
+  // the patch path exists for symmetry but is rarely used by the UI.
+  acpRegistryInstalls: Schema.optionalKey(Schema.Record(Schema.String, AcpRegistryInstallState)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

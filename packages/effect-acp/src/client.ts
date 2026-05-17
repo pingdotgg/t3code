@@ -450,7 +450,13 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     Effect.forkScoped,
   );
 
-  let nextRpcRequestId = 1n << 32n;
+  // JSON-RPC `id` MUST fit in 32-bit signed int for JVM-based agents (e.g. JetBrains Junie):
+  // Kotlin/Java parses `id` as Int, and IDs > 2^31 - 1 silently fail. Effect's RpcClient
+  // historically started at 1n << 32n to namespace away from ext-request IDs, but that
+  // wedges agents like Junie. Use 100_000_000 — well above the ext-request counter's range
+  // (also starting at 1) yet still safely below 2^31 - 1 (~2.147B), leaving ~2B headroom
+  // for typed RPC calls within a session.
+  let nextRpcRequestId = 100_000_000n;
   const rpc = yield* RpcClient.make(AcpRpcs.AgentRpcs, {
     generateRequestId: () => nextRpcRequestId++ as never,
   }).pipe(Effect.provideService(RpcClient.Protocol, transport.clientProtocol));

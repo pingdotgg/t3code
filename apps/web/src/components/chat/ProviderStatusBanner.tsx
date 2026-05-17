@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@t3tools/contracts";
+import { ACP_REGISTRY_DRIVER_PREFIX, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -16,11 +16,14 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const isAcpRegistry = status.driver.startsWith(ACP_REGISTRY_DRIVER_PREFIX);
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : `${providerName} provider status`;
   const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
+    ? isAcpRegistry
+      ? "Authenticate this provider from Settings → Providers."
+      : "Sign in via the CLI to authenticate again."
     : (status.message ??
       (status.status === "error"
         ? `${providerName} provider is unavailable.`

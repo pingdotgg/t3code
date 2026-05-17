@@ -128,6 +128,7 @@ export const ProviderInstanceConfig = Schema.Struct({
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
+  authenticatedAt: Schema.optionalKey(Schema.String),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
 

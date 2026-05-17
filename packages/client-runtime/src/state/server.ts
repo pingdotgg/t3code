@@ -162,6 +162,38 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    listAcpRegistry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:list-acp-registry",
+      tag: WS_METHODS.acpRegistryList,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    installAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:install-acp-registry-agent",
+      tag: WS_METHODS.acpRegistryInstall,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    uninstallAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:uninstall-acp-registry-agent",
+      tag: WS_METHODS.acpRegistryUninstall,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    authenticateAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:authenticate-acp-registry-agent",
+      tag: WS_METHODS.acpRegistryAuthenticate,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}:${input.methodId}`,
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,
