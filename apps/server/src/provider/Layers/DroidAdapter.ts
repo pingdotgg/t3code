@@ -425,7 +425,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           ...eventBase(context),
           type: "session.exited",
           payload: { reason: "Session stopped", recoverable: false, exitKind: "graceful" },
-        });
+        }).pipe(Effect.ignore);
       });
 
     return {

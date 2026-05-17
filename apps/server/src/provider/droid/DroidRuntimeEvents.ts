@@ -186,7 +186,10 @@ export async function handleDroidMessage(input: {
         },
       });
     case DroidMessageType.TokenUsageUpdate:
-      context.activeTokenUsage = toTokenUsageSnapshot(message, context.activeTokenUsageBaseline);
+      context.activeTokenUsage = toTokenUsageSnapshot(
+        message,
+        context.activeTokenUsage ?? context.activeTokenUsageBaseline,
+      );
       context.cumulativeTokenUsage = context.activeTokenUsage;
       return emitNow({
         ...base(),
