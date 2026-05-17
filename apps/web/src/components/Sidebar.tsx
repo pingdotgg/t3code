@@ -254,6 +254,7 @@ function buildThreadJumpLabelMap(input: {
     string,
     NonNullable<ReturnType<typeof threadJumpCommandForIndex>>
   >;
+  visibleThreadKeys: readonly string[];
 }): ReadonlyMap<string, string> {
   if (input.threadJumpCommandByKey.size === 0) {
     return EMPTY_THREAD_JUMP_LABELS;
@@ -269,6 +270,20 @@ function buildThreadJumpLabelMap(input: {
   const mapping = new Map<string, string>();
   for (const [threadKey, command] of input.threadJumpCommandByKey) {
     const label = shortcutLabelForCommand(input.keybindings, command, shortcutLabelOptions);
+    if (label) {
+      mapping.set(threadKey, label);
+    }
+  }
+  for (const [index, threadKey] of input.visibleThreadKeys.slice(9, 99).entries()) {
+    const threadNumber = index + 10;
+    const firstDigit = Math.floor(threadNumber / 10);
+    const secondDigit = threadNumber % 10;
+    const command = threadJumpCommandForIndex(firstDigit - 1);
+    if (!command) continue;
+
+    const shortcutLabel = shortcutLabelForCommand(input.keybindings, command, shortcutLabelOptions);
+    const separator = shortcutLabel?.endsWith(String(firstDigit)) ? "" : ",";
+    const label = shortcutLabel ? `${shortcutLabel}${separator}${secondDigit}` : null;
     if (label) {
       mapping.set(threadKey, label);
     }
@@ -2815,6 +2830,8 @@ export default function Sidebar() {
     ReadonlySet<string>
   >(() => new Set());
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
+  const pendingThreadJumpDigitRef = useRef<number | null>(null);
+  const pendingThreadJumpTimeoutRef = useRef<number | null>(null);
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
@@ -2949,8 +2966,17 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.newLocal", newThreadShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", newThreadShortcutLabelOptions);
 
+  const clearPendingThreadJump = useCallback(() => {
+    pendingThreadJumpDigitRef.current = null;
+    if (pendingThreadJumpTimeoutRef.current !== null) {
+      window.clearTimeout(pendingThreadJumpTimeoutRef.current);
+      pendingThreadJumpTimeoutRef.current = null;
+    }
+  }, []);
+
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
+      clearPendingThreadJump();
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
@@ -2963,7 +2989,7 @@ export default function Sidebar() {
         params: buildThreadRouteParams(threadRef),
       });
     },
-    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
+    [clearPendingThreadJump, clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
   );
 
   const projectDnDSensors = useSensors(
@@ -3150,8 +3176,15 @@ export default function Sidebar() {
         platform,
         terminalOpen: sidebarShortcutContext.terminalOpen,
         threadJumpCommandByKey,
+        visibleThreadKeys: visibleSidebarThreadKeys,
       }),
-    [keybindings, platform, sidebarShortcutContext.terminalOpen, threadJumpCommandByKey],
+    [
+      keybindings,
+      platform,
+      sidebarShortcutContext.terminalOpen,
+      threadJumpCommandByKey,
+      visibleSidebarThreadKeys,
+    ],
   );
   const shouldShowThreadJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
     shortcutModifiers,
@@ -3194,12 +3227,52 @@ export default function Sidebar() {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
   }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
+  const navigateToThreadKey = useCallback(
+    (threadKey: string | undefined) => {
+      if (!threadKey) return;
+      const targetThread = sidebarThreadByKey.get(threadKey);
+      if (!targetThread) return;
+
+      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+    },
+    [navigateToThread, sidebarThreadByKey],
+  );
+
+  useEffect(() => {
+    clearPendingThreadJump();
+  }, [clearPendingThreadJump, routeThreadKey]);
+
+  useEffect(() => () => clearPendingThreadJump(), [clearPendingThreadJump]);
+
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
 
       if (event.defaultPrevented || event.repeat) {
         return;
+      }
+
+      const pendingThreadJumpDigit = pendingThreadJumpDigitRef.current;
+      if (pendingThreadJumpDigit !== null) {
+        const digitCodeMatch = /^Digit([0-9])$/.exec(event.code);
+        const nextDigit = /^[0-9]$/.test(event.key)
+          ? Number(event.key)
+          : digitCodeMatch?.[1]
+            ? Number(digitCodeMatch[1])
+            : null;
+        if (nextDigit !== null) {
+          const targetIndex = pendingThreadJumpDigit * 10 + nextDigit - 1;
+          clearPendingThreadJump();
+          event.preventDefault();
+          event.stopPropagation();
+          if (targetIndex >= orderedSidebarThreadKeys.length) return;
+          navigateToThreadKey(orderedSidebarThreadKeys[targetIndex]);
+          return;
+        }
+
+        if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) {
+          clearPendingThreadJump();
+        }
       }
 
       const command = resolveShortcutCommand(event, keybindings, {
@@ -3223,6 +3296,7 @@ export default function Sidebar() {
 
         event.preventDefault();
         event.stopPropagation();
+        clearPendingThreadJump();
         navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return;
       }
@@ -3232,18 +3306,20 @@ export default function Sidebar() {
         return;
       }
 
-      const targetThreadKey = threadJumpThreadKeys[jumpIndex];
-      if (!targetThreadKey) {
-        return;
-      }
-      const targetThread = sidebarThreadByKey.get(targetThreadKey);
-      if (!targetThread) {
+      const firstDigit = jumpIndex + 1;
+      if (firstDigit > orderedSidebarThreadKeys.length) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      clearPendingThreadJump();
+      pendingThreadJumpDigitRef.current = firstDigit;
+      pendingThreadJumpTimeoutRef.current = window.setTimeout(() => {
+        pendingThreadJumpTimeoutRef.current = null;
+        pendingThreadJumpDigitRef.current = null;
+        navigateToThreadKey(threadJumpThreadKeys[jumpIndex]);
+      }, 250);
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
@@ -3252,9 +3328,11 @@ export default function Sidebar() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
+    clearPendingThreadJump,
     getCurrentSidebarShortcutContext,
     keybindings,
     navigateToThread,
+    navigateToThreadKey,
     orderedSidebarThreadKeys,
     platform,
     routeThreadKey,
