@@ -237,7 +237,6 @@ export function resolveSelectableProviderInstance(
  */
 export function resolveProviderDriverKindForInstanceSelection(
   entries: ReadonlyArray<ProviderInstanceEntry>,
-  providers: ReadonlyArray<ServerProvider>,
   selection: ProviderInstanceId | ProviderDriverKind | null | undefined,
 ): ProviderDriverKind | undefined {
   const matchedEntry = entries.find((entry) => entry.instanceId === selection);

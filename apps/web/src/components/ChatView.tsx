@@ -1271,40 +1271,32 @@ export default function ChatView(props: ChatViewProps) {
   const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
   const resolvedUnlockedProvider = resolveProviderDriverKindForInstanceSelection(
     providerInstanceEntries,
-    providerStatuses,
     explicitSelectedInstanceId,
   );
-  const explicitSelectedProviderEntry =
-    explicitSelectedInstanceId === null
-      ? undefined
-      : providerInstanceEntries.find((entry) => entry.instanceId === explicitSelectedInstanceId);
   const selectedProvider: ProviderDriverKind =
     lockedProvider ?? resolvedUnlockedProvider ?? ProviderDriverKind.make("codex");
-  const runtimeModeProvider =
-    lockedProvider ??
-    resolvedUnlockedProvider ??
-    explicitSelectedProviderEntry?.driverKind ??
-    selectedProvider;
+  const runtimeModeProvider = lockedProvider ?? resolvedUnlockedProvider ?? selectedProvider;
   const canNormalizeRuntimeMode = canNormalizeRuntimeModeForProviderSelection({
     serverConfigLoaded: serverConfig !== null,
     lockedProvider,
     explicitSelectedInstanceId,
     resolvedUnlockedProvider,
   });
-  const runtimeMode = canNormalizeRuntimeMode
+  const persistedRuntimeMode = canNormalizeRuntimeMode
     ? normalizeRuntimeModeForProvider(selectedProvider, rawRuntimeMode)
     : rawRuntimeMode;
+  const runtimeMode = normalizeRuntimeModeForProvider(runtimeModeProvider, persistedRuntimeMode);
   useEffect(() => {
-    if (runtimeMode === rawRuntimeMode) return;
-    setComposerDraftRuntimeMode(composerDraftTarget, runtimeMode);
+    if (persistedRuntimeMode === rawRuntimeMode) return;
+    setComposerDraftRuntimeMode(composerDraftTarget, persistedRuntimeMode);
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, { runtimeMode });
+      setDraftThreadContext(composerDraftTarget, { runtimeMode: persistedRuntimeMode });
     }
   }, [
     composerDraftTarget,
     isLocalDraftThread,
     rawRuntimeMode,
-    runtimeMode,
+    persistedRuntimeMode,
     setComposerDraftRuntimeMode,
     setDraftThreadContext,
   ]);

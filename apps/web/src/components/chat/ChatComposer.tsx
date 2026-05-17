@@ -584,7 +584,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const unlockedSelectedProvider =
     resolveProviderDriverKindForInstanceSelection(
       providerInstanceEntries,
-      providerStatuses,
       explicitSelectedInstanceId,
     ) ?? ProviderDriverKind.make("codex");
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
