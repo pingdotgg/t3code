@@ -3,6 +3,7 @@ import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "luci
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type TerminalLayout,
   type TerminalEvent,
   type TerminalSessionSnapshot,
   type ThreadId,
@@ -20,6 +21,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import { cn } from "~/lib/utils";
 import { openInPreferredEditor } from "../editorPreferences";
 import {
   collectWrappedTerminalLinkLine,
@@ -50,17 +52,18 @@ import { readLocalApi } from "~/localApi";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
 
 const MIN_DRAWER_HEIGHT = 180;
-const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const DEFAULT_MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const FLOATING_MAX_DRAWER_HEIGHT_RATIO = 0.92;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
-function maxDrawerHeight(): number {
+function maxDrawerHeight(ratio = DEFAULT_MAX_DRAWER_HEIGHT_RATIO): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
-  return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * MAX_DRAWER_HEIGHT_RATIO));
+  return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * ratio));
 }
 
-function clampDrawerHeight(height: number): number {
+function clampDrawerHeight(height: number, ratio = DEFAULT_MAX_DRAWER_HEIGHT_RATIO): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
-  const maxHeight = maxDrawerHeight();
+  const maxHeight = maxDrawerHeight(ratio);
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
@@ -821,6 +824,7 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
+  layout?: TerminalLayout;
 }
 
 interface TerminalActionButtonProps {
@@ -875,11 +879,16 @@ export default function ThreadTerminalDrawer({
   onHeightChange,
   onAddTerminalContext,
   keybindings,
+  layout = "docked",
 }: ThreadTerminalDrawerProps) {
-  const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
+  const maxHeightRatio =
+    layout === "floating" ? FLOATING_MAX_DRAWER_HEIGHT_RATIO : DEFAULT_MAX_DRAWER_HEIGHT_RATIO;
+  const maxHeightRatioRef = useRef(maxHeightRatio);
+  maxHeightRatioRef.current = maxHeightRatio;
+  const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height, maxHeightRatio));
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
-  const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
+  const lastSyncedHeightRef = useRef(clampDrawerHeight(height, maxHeightRatio));
   const onHeightChangeRef = useRef(onHeightChange);
   const resizeStateRef = useRef<{
     pointerId: number;
@@ -1016,14 +1025,14 @@ export default function ThreadTerminalDrawer({
   }, [drawerHeight]);
 
   const syncHeight = useCallback((nextHeight: number) => {
-    const clampedHeight = clampDrawerHeight(nextHeight);
+    const clampedHeight = clampDrawerHeight(nextHeight, maxHeightRatioRef.current);
     if (lastSyncedHeightRef.current === clampedHeight) return;
     lastSyncedHeightRef.current = clampedHeight;
     onHeightChangeRef.current(clampedHeight);
   }, []);
 
   useEffect(() => {
-    const clampedHeight = clampDrawerHeight(height);
+    const clampedHeight = clampDrawerHeight(height, maxHeightRatioRef.current);
     setDrawerHeight(clampedHeight);
     drawerHeightRef.current = clampedHeight;
     lastSyncedHeightRef.current = clampedHeight;
@@ -1047,6 +1056,7 @@ export default function ThreadTerminalDrawer({
     event.preventDefault();
     const clampedHeight = clampDrawerHeight(
       resizeState.startHeight + (resizeState.startY - event.clientY),
+      maxHeightRatioRef.current,
     );
     if (clampedHeight === drawerHeightRef.current) {
       return;
@@ -1079,7 +1089,7 @@ export default function ThreadTerminalDrawer({
     }
 
     const onWindowResize = () => {
-      const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
+      const clampedHeight = clampDrawerHeight(drawerHeightRef.current, maxHeightRatioRef.current);
       const changed = clampedHeight !== drawerHeightRef.current;
       if (changed) {
         setDrawerHeight(clampedHeight);
@@ -1111,7 +1121,10 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
+      className={cn(
+        "thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-background",
+        layout === "docked" ? "border-t border-border/80" : "border-0",
+      )}
       style={{ height: `${drawerHeight}px` }}
     >
       <div

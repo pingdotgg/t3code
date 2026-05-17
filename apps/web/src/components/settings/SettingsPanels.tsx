@@ -101,6 +101,12 @@ const TIMESTAMP_FORMAT_LABELS = {
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
+const TERMINAL_LAYOUT_LABELS = {
+  docked: "Docked",
+  floating: "Floating",
+} as const;
+
+
 function withoutProviderInstanceKey<V>(
   record: Readonly<Record<ProviderInstanceId, V>> | undefined,
   key: ProviderInstanceId,
@@ -405,6 +411,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.terminalLayout !== DEFAULT_UNIFIED_SETTINGS.terminalLayout
+        ? ["Terminal layout"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -438,6 +447,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
+      settings.terminalLayout,
       settings.timestampFormat,
       theme,
     ],
@@ -692,6 +702,45 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Open the task panel automatically"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Terminal layout"
+          description="Choose whether the terminal opens docked under chat or in a floating window."
+          resetAction={
+            settings.terminalLayout !== DEFAULT_UNIFIED_SETTINGS.terminalLayout ? (
+              <SettingResetButton
+                label="terminal layout"
+                onClick={() =>
+                  updateSettings({
+                    terminalLayout: DEFAULT_UNIFIED_SETTINGS.terminalLayout,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.terminalLayout}
+              onValueChange={(value) => {
+                if (value === "docked" || value === "floating") {
+                  updateSettings({ terminalLayout: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Terminal layout">
+                <SelectValue>{TERMINAL_LAYOUT_LABELS[settings.terminalLayout]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="docked">
+                  {TERMINAL_LAYOUT_LABELS.docked}
+                </SelectItem>
+                <SelectItem hideIndicator value="floating">
+                  {TERMINAL_LAYOUT_LABELS.floating}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
