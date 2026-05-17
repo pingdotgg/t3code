@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -8,52 +8,82 @@ interface ExpandedImageDialogProps {
   onClose: () => void;
 }
 
+function useExpandedImagePreviewNavigation(sourcePreview: ExpandedImagePreview) {
+  const [navigationState, setNavigationState] = useState(() => ({
+    sourcePreview,
+    index: sourcePreview.index,
+  }));
+  const index =
+    navigationState.sourcePreview === sourcePreview ? navigationState.index : sourcePreview.index;
+
+  const navigateImage = useCallback(
+    (direction: -1 | 1) => {
+      setNavigationState((existing) => {
+        if (sourcePreview.images.length <= 1) return existing;
+        const currentIndex =
+          existing.sourcePreview === sourcePreview ? existing.index : sourcePreview.index;
+        const nextIndex =
+          (currentIndex + direction + sourcePreview.images.length) % sourcePreview.images.length;
+        if (nextIndex === currentIndex && existing.sourcePreview === sourcePreview) {
+          return existing;
+        }
+        return { sourcePreview, index: nextIndex };
+      });
+    },
+    [sourcePreview],
+  );
+
+  return {
+    images: sourcePreview.images,
+    index,
+    navigateImage,
+  };
+}
+
+function useExpandedImageKeyboardShortcuts(input: {
+  imageCount: number;
+  navigateImage: (direction: -1 | 1) => void;
+  onClose: () => void;
+}) {
+  const onKeyDown = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      input.onClose();
+      return;
+    }
+    if (input.imageCount <= 1) return;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+      input.navigateImage(-1);
+      return;
+    }
+    if (event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    input.navigateImage(1);
+  });
+
+  useEffect(() => {
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
 export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview: initialPreview,
   onClose,
 }: ExpandedImageDialogProps) {
-  const [preview, setPreview] = useState(initialPreview);
+  const { images, index, navigateImage } = useExpandedImagePreviewNavigation(initialPreview);
 
-  // Sync when the parent hands us a new preview reference.
-  useEffect(() => {
-    setPreview(initialPreview);
-  }, [initialPreview]);
+  useExpandedImageKeyboardShortcuts({
+    imageCount: images.length,
+    navigateImage,
+    onClose,
+  });
 
-  const navigateImage = useCallback((direction: -1 | 1) => {
-    setPreview((existing) => {
-      if (existing.images.length <= 1) return existing;
-      const nextIndex =
-        (existing.index + direction + existing.images.length) % existing.images.length;
-      if (nextIndex === existing.index) return existing;
-      return { ...existing, index: nextIndex };
-    });
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (preview.images.length <= 1) return;
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        event.stopPropagation();
-        navigateImage(-1);
-        return;
-      }
-      if (event.key !== "ArrowRight") return;
-      event.preventDefault();
-      event.stopPropagation();
-      navigateImage(1);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, onClose, preview.images.length]);
-
-  const item = preview.images[preview.index];
+  const item = images[index];
   if (!item) return null;
 
   return (
@@ -69,7 +99,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         aria-label="Close image preview"
         onClick={onClose}
       />
-      {preview.images.length > 1 && (
+      {images.length > 1 && (
         <Button
           type="button"
           size="icon"
@@ -100,10 +130,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         />
         <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
           {item.name}
-          {preview.images.length > 1 ? ` (${preview.index + 1}/${preview.images.length})` : ""}
+          {images.length > 1 ? ` (${index + 1}/${images.length})` : ""}
         </p>
       </div>
-      {preview.images.length > 1 && (
+      {images.length > 1 && (
         <Button
           type="button"
           size="icon"
