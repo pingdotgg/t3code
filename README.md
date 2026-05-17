@@ -1,3 +1,4 @@
+
 # T3 Code
 
 T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and OpenCode, more coming soon).
@@ -38,6 +39,33 @@ brew install --cask t3-code
 
 ```bash
 yay -S t3code-bin
+```
+
+#### NixOS (Flakes)
+
+```nix
+# /path/to/your/flake.nix
+{
+  inputs = {
+    # This flake is pinned to nixpkgs stable
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+
+    t3code-flake.url = "github:pingdotgg/t3code";  
+      # Or pin a version: "github:pingdotgg/t3code?ref=v0.0.23"
+    t3code-flake.inputs.nixpkgs.follows = "nixpkgs";
+  };
+}
+```
+
+```nix
+# /path/to/your/configuration.nix
+{
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  environment.systemPackages = [
+    pkgs.appimage-run
+    inputs.t3code-flake.packages.${system}.default
+  ];
+}
 ```
 
 ## Some notes
