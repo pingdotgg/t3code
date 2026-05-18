@@ -102,6 +102,7 @@ const CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CLAUDE_OAUTH_CLIENT_ID = "22422756-60c9-4084-8eb7-27705fd5cf9a";
 const CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20";
 const CLAUDE_OAUTH_REFRESH_SKEW_MS = 60 * 1000;
+const CLAUDE_STATUSLINE_CAPTURE_ENV = "T3CODE_CLAUDE_STATUSLINE_CAPTURE_PATH";
 const CLAUDE_OAUTH_DEFAULT_SCOPES = [
   "user:profile",
   "user:inference",
@@ -115,6 +116,30 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+type ClaudeAccountUsageSource = "claude.oauth.usage" | "claude.statusline";
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function makeClaudeStatuslineCaptureCommand(): string {
+  const script = [
+    "let input='';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data',(chunk)=>{input+=chunk;});",
+    "process.stdin.on('end',()=>{",
+    `const path=process.env.${CLAUDE_STATUSLINE_CAPTURE_ENV};`,
+    "if(!path)process.exit(0);",
+    "try{JSON.parse(input);require('fs').writeFileSync(path,input);}catch{}",
+    "});",
+  ].join("");
+
+  return `${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
+}
+
+function safeFileComponent(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -201,6 +226,8 @@ interface ClaudeSessionContext {
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownRateLimits: SDKRateLimitEvent | undefined;
   lastKnownOAuthUsageFingerprint: string | undefined;
+  readonly statuslineCapturePath: string | undefined;
+  lastKnownStatuslineUsageFingerprint: string | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
@@ -223,6 +250,7 @@ export interface ClaudeAdapterLiveOptions {
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
   readonly enableOAuthUsage?: boolean;
+  readonly enableStatuslineUsage?: boolean;
   readonly fetchOAuthUsage?: (input: {
     readonly accessToken: string;
     readonly environment: NodeJS.ProcessEnv;
@@ -358,7 +386,10 @@ function normalizeClaudeOAuthUsageWindow(
   };
 }
 
-function normalizeClaudeOAuthUsageRateLimits(value: unknown): Record<string, unknown> | undefined {
+function normalizeClaudeAccountUsageRateLimits(
+  value: unknown,
+  source: ClaudeAccountUsageSource,
+): Record<string, unknown> | undefined {
   const record = asUnknownRecord(value);
   if (!record) {
     return undefined;
@@ -375,7 +406,7 @@ function normalizeClaudeOAuthUsageRateLimits(value: unknown): Record<string, unk
   }
 
   return {
-    source: "claude.oauth.usage",
+    source,
     ...(primary ? { primary } : {}),
     ...(secondary ? { secondary } : {}),
   };
@@ -1235,7 +1266,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     Effect.provideService(Path.Path, path),
   );
   const claudeOAuthUsageEnabled = options?.enableOAuthUsage ?? options?.createQuery === undefined;
+  const claudeStatuslineUsageEnabled =
+    options?.enableStatuslineUsage ?? options?.createQuery === undefined;
   const fetchClaudeOAuthUsage = options?.fetchOAuthUsage ?? defaultFetchClaudeOAuthUsage;
+  const claudeStatuslineCaptureDir = path.join(serverConfig.stateDir, "claude-statusline");
+  const claudeStatuslineCaptureCommand = makeClaudeStatuslineCaptureCommand();
   let cachedClaudeOAuthUsage:
     | {
         readonly fetchedAtMs: number;
@@ -1407,6 +1442,28 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return usage;
   });
 
+  const readClaudeStatuslineUsage = Effect.fn("readClaudeStatuslineUsage")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    if (!claudeStatuslineUsageEnabled || !context.statuslineCapturePath) {
+      return undefined;
+    }
+
+    const text = yield* fileSystem
+      .readFileString(context.statuslineCapturePath)
+      .pipe(Effect.catch(() => Effect.void));
+    if (!text) {
+      return undefined;
+    }
+
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(text) as unknown,
+      catch: (cause) => toMessage(cause, "Failed to parse Claude statusline usage."),
+    }).pipe(Effect.catch(() => Effect.void));
+    const record = asUnknownRecord(parsed);
+    return record?.rate_limits ?? record?.rateLimits;
+  });
+
   const refreshClaudeContextUsage = Effect.fn("refreshClaudeContextUsage")(function* (
     context: ClaudeSessionContext,
   ) {
@@ -1464,7 +1521,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const usage = yield* readClaudeOAuthUsage();
-    const rateLimits = normalizeClaudeOAuthUsageRateLimits(usage);
+    const rateLimits = normalizeClaudeAccountUsageRateLimits(usage, "claude.oauth.usage");
     if (!rateLimits) {
       return;
     }
@@ -1497,6 +1554,47 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const refreshClaudeStatuslineUsage = Effect.fn("refreshClaudeStatuslineUsage")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    if (context.stopped) {
+      return;
+    }
+
+    const usage = yield* readClaudeStatuslineUsage(context);
+    const rateLimits = normalizeClaudeAccountUsageRateLimits(usage, "claude.statusline");
+    if (!rateLimits) {
+      return;
+    }
+
+    const fingerprint =
+      encodeJsonStringForDiagnostics(rateLimits) ?? "[unserializable rate limits]";
+    if (context.lastKnownStatuslineUsageFingerprint === fingerprint) {
+      return;
+    }
+    context.lastKnownStatuslineUsageFingerprint = fingerprint;
+
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "account.rate-limits.updated",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      providerInstanceId: context.session.providerInstanceId,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        rateLimits,
+      },
+      providerRefs: nativeProviderRefs(context),
+      raw: {
+        source: "claude.statusline",
+        method: "statusLine",
+        payload: usage,
+      },
+    });
+  });
+
   const refreshClaudeContextUsageBestEffort = (context: ClaudeSessionContext) =>
     refreshClaudeContextUsage(context).pipe(
       Effect.catch((detail) =>
@@ -1517,9 +1615,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ),
     );
 
+  const refreshClaudeStatuslineUsageBestEffort = (context: ClaudeSessionContext) =>
+    refreshClaudeStatuslineUsage(context).pipe(
+      Effect.catch((detail) =>
+        Effect.logDebug("claude.statusline-usage.refresh.failed", {
+          threadId: context.session.threadId,
+          detail,
+        }),
+      ),
+    );
+
   const refreshClaudeUsageBestEffort = (context: ClaudeSessionContext) =>
     Effect.all(
-      [refreshClaudeContextUsageBestEffort(context), refreshClaudeOAuthUsageBestEffort(context)],
+      [
+        refreshClaudeContextUsageBestEffort(context),
+        refreshClaudeOAuthUsageBestEffort(context),
+        refreshClaudeStatuslineUsageBestEffort(context),
+      ],
       {
         concurrency: "unbounded",
         discard: true,
@@ -2908,6 +3020,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       case "result":
         yield* handleResultMessage(context, message);
+        yield* refreshClaudeStatuslineUsageBestEffort(context);
         return;
       case "system":
         yield* handleSystemMessage(context, message);
@@ -3114,6 +3227,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
+      const statuslineCapturePath = claudeStatuslineUsageEnabled
+        ? path.join(claudeStatuslineCaptureDir, `${safeFileComponent(threadId)}.json`)
+        : undefined;
+      if (statuslineCapturePath) {
+        yield* fileSystem.makeDirectory(path.dirname(statuslineCapturePath), {
+          recursive: true,
+        });
+      }
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId =
         existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
@@ -3459,6 +3580,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
+        ...(statuslineCapturePath
+          ? {
+              statusLine: {
+                type: "command" as const,
+                command: claudeStatuslineCaptureCommand,
+              },
+            }
+          : {}),
+      };
+      const queryEnvironment = {
+        ...claudeEnvironment,
+        ...(statuslineCapturePath
+          ? { [CLAUDE_STATUSLINE_CAPTURE_ENV]: statuslineCapturePath }
+          : {}),
       };
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -3482,7 +3617,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: queryEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
@@ -3565,6 +3700,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTokenUsage: undefined,
         lastKnownRateLimits: undefined,
         lastKnownOAuthUsageFingerprint: undefined,
+        statuslineCapturePath,
+        lastKnownStatuslineUsageFingerprint: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,

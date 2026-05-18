@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveRenderedDrawerHeight,
   resolveTerminalSelectionActionPosition,
+  resolveTerminalKeyboardViewport,
+  resolveTerminalTouchScroll,
   selectPendingTerminalEventEntries,
   selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
@@ -133,5 +136,85 @@ describe("resolveTerminalSelectionActionPosition", () => {
         1,
       ).map((entry) => entry.id),
     ).toEqual([2]);
+  });
+});
+
+describe("resolveTerminalKeyboardViewport", () => {
+  it("returns the keyboard overlap when the visual viewport is covered from the bottom", () => {
+    expect(
+      resolveTerminalKeyboardViewport({
+        layoutViewportHeight: 800,
+        visualViewportHeight: 500,
+        visualViewportOffsetTop: 0,
+      }),
+    ).toEqual({
+      bottomInset: 300,
+      visibleHeight: 500,
+    });
+  });
+
+  it("accounts for visual viewport top offset", () => {
+    expect(
+      resolveTerminalKeyboardViewport({
+        layoutViewportHeight: 800,
+        visualViewportHeight: 500,
+        visualViewportOffsetTop: 40,
+      }),
+    ).toEqual({
+      bottomInset: 260,
+      visibleHeight: 500,
+    });
+  });
+
+  it("ignores small viewport differences that are unlikely to be the keyboard", () => {
+    expect(
+      resolveTerminalKeyboardViewport({
+        layoutViewportHeight: 800,
+        visualViewportHeight: 740,
+        visualViewportOffsetTop: 0,
+      }),
+    ).toEqual({
+      bottomInset: 0,
+      visibleHeight: null,
+    });
+  });
+
+  it("caps the rendered drawer height while the keyboard is visible without changing stored height", () => {
+    expect(
+      resolveRenderedDrawerHeight(500, {
+        bottomInset: 300,
+        visibleHeight: 400,
+      }),
+    ).toBe(300);
+
+    expect(
+      resolveRenderedDrawerHeight(500, {
+        bottomInset: 0,
+        visibleHeight: null,
+      }),
+    ).toBe(500);
+  });
+});
+
+describe("resolveTerminalTouchScroll", () => {
+  it("converts accumulated touch pixels into whole terminal rows", () => {
+    expect(resolveTerminalTouchScroll({ accumulatedPixels: 32, rowHeight: 14 })).toEqual({
+      lines: 2,
+      remainingPixels: 4,
+    });
+  });
+
+  it("preserves partial negative scroll pixels", () => {
+    expect(resolveTerminalTouchScroll({ accumulatedPixels: -31, rowHeight: 14 })).toEqual({
+      lines: -2,
+      remainingPixels: -3,
+    });
+  });
+
+  it("waits until a full row has accumulated", () => {
+    expect(resolveTerminalTouchScroll({ accumulatedPixels: 6, rowHeight: 14 })).toEqual({
+      lines: 0,
+      remainingPixels: 6,
+    });
   });
 });

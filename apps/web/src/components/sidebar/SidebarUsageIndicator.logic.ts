@@ -35,27 +35,11 @@ export type SidebarUsageWindowMap = {
   readonly [Key in SidebarUsageWindowId]: SidebarUsageWindow | null;
 };
 
-export interface SidebarUsageCostSnapshot {
-  readonly totalUsd: number;
-  readonly threadCount: number;
-  readonly updatedAt: string;
-}
-
-export interface SidebarUsageContextSnapshot {
-  readonly usedTokens: number;
-  readonly maxTokens: number | null;
-  readonly usedPercent: number | null;
-  readonly remainingPercent: number | null;
-  readonly updatedAt: string;
-}
-
 export interface SidebarUsageProviderRow {
   readonly driverId: SidebarUsageDriverId;
   readonly driverKind: ProviderDriverKind;
   readonly label: string;
   readonly windows: SidebarUsageWindowMap;
-  readonly cost: SidebarUsageCostSnapshot | null;
-  readonly context: SidebarUsageContextSnapshot | null;
   readonly updatedAt: string | null;
   readonly threadId: string | null;
   readonly threadTitle: string | null;
@@ -436,58 +420,8 @@ export function getSidebarUsagePrimaryWindow(
   );
 }
 
-function latestThreadCostUsd(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): { totalUsd: number; updatedAt: string } | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (!activity || activity.kind !== "context-window.updated") {
-      continue;
-    }
-    const totalUsd = asFiniteNumber(asRecord(activity.payload)?.costUsd);
-    if (totalUsd === null || totalUsd < 0) {
-      continue;
-    }
-    return { totalUsd, updatedAt: activity.createdAt };
-  }
-  return null;
-}
-
-function latestThreadContextUsage(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): SidebarUsageContextSnapshot | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (!activity || activity.kind !== "context-window.updated") {
-      continue;
-    }
-    const payload = asRecord(activity.payload);
-    if (!payload) {
-      continue;
-    }
-    const usedTokens = readNumber(payload, ["usedTokens", "used_tokens"]);
-    const maxTokens = readNumber(payload, ["maxTokens", "max_tokens"]);
-    if (usedTokens === null || usedTokens <= 0) {
-      continue;
-    }
-    const normalizedMaxTokens = maxTokens !== null && maxTokens > 0 ? maxTokens : null;
-    const fallbackUsedPercent = normalizePercent(
-      payload.usedPercent ?? payload.used_percentage ?? payload.percentage,
-      { allowUnitFraction: true },
-    );
-    const usedPercent =
-      normalizedMaxTokens !== null
-        ? Math.max(0, Math.min(100, (usedTokens / normalizedMaxTokens) * 100))
-        : fallbackUsedPercent;
-    return {
-      usedTokens,
-      maxTokens: normalizedMaxTokens,
-      usedPercent,
-      remainingPercent: usedPercent === null ? null : Math.max(0, Math.min(100, 100 - usedPercent)),
-      updatedAt: activity.createdAt,
-    };
-  }
-  return null;
+export function getSidebarUsageDisplayPercent(window: SidebarUsageWindow | null): number | null {
+  return window?.remainingPercent ?? null;
 }
 
 export function deriveSidebarUsageProviderRows(input: {
@@ -506,14 +440,6 @@ export function deriveSidebarUsageProviderRows(input: {
     SidebarUsageDriverId,
     {
       readonly windows: Record<SidebarUsageWindowId, SidebarUsageWindow | null>;
-      costTotalUsd: number;
-      costThreadCount: number;
-      costUpdatedAt: string | null;
-      costThreadId: string | null;
-      costThreadTitle: string | null;
-      context: SidebarUsageContextSnapshot | null;
-      contextThreadId: string | null;
-      contextThreadTitle: string | null;
       threadId: string | null;
       threadTitle: string | null;
     }
@@ -524,14 +450,6 @@ export function deriveSidebarUsageProviderRows(input: {
     if (!entry) {
       entry = {
         windows: emptyWindows(),
-        costTotalUsd: 0,
-        costThreadCount: 0,
-        costUpdatedAt: null,
-        costThreadId: null,
-        costThreadTitle: null,
-        context: null,
-        contextThreadId: null,
-        contextThreadTitle: null,
         threadId: null,
         threadTitle: null,
       };
@@ -574,69 +492,21 @@ export function deriveSidebarUsageProviderRows(input: {
         current.threadTitle = thread.title;
       }
     }
-
-    const threadDriverId = resolveThreadDriverId(thread, driverIdByInstanceId);
-    if (!threadDriverId) {
-      continue;
-    }
-    const entry = ensureEntry(threadDriverId);
-    const threadContext = latestThreadContextUsage(thread.activities);
-    if (
-      threadContext &&
-      (!entry.context || threadContext.updatedAt.localeCompare(entry.context.updatedAt) > 0)
-    ) {
-      entry.context = threadContext;
-      entry.contextThreadId = thread.id;
-      entry.contextThreadTitle = thread.title;
-    }
-    const threadCost = latestThreadCostUsd(thread.activities);
-    if (!threadCost || threadCost.totalUsd <= 0) {
-      continue;
-    }
-    entry.costTotalUsd += threadCost.totalUsd;
-    entry.costThreadCount += 1;
-    if (!entry.costUpdatedAt || threadCost.updatedAt.localeCompare(entry.costUpdatedAt) > 0) {
-      entry.costUpdatedAt = threadCost.updatedAt;
-      entry.costThreadId = thread.id;
-      entry.costThreadTitle = thread.title;
-    }
   }
 
   return SIDEBAR_USAGE_PROVIDER_ROWS.map((row) => {
     const latest = latestByDriverId.get(row.driverId);
     const windows = latest?.windows ?? emptyWindows();
-    const hasRateLimitWindows = windows.fiveHour !== null || windows.weekly !== null;
     const latestWindow = getLatestWindow(windows);
-    const cost: SidebarUsageCostSnapshot | null =
-      latest && latest.costThreadCount > 0 && latest.costUpdatedAt
-        ? {
-            totalUsd: latest.costTotalUsd,
-            threadCount: latest.costThreadCount,
-            updatedAt: latest.costUpdatedAt,
-          }
-        : null;
-    const threadId = hasRateLimitWindows
-      ? (latest?.threadId ?? null)
-      : (latest?.costThreadId ?? latest?.contextThreadId ?? null);
-    const threadTitle = hasRateLimitWindows
-      ? (latest?.threadTitle ?? null)
-      : (latest?.costThreadTitle ?? latest?.contextThreadTitle ?? null);
-    const context = latest?.context ?? null;
-    const updatedAt =
-      latestWindow?.updatedAt ??
-      (hasRateLimitWindows ? null : (cost?.updatedAt ?? context?.updatedAt)) ??
-      null;
 
     return {
       driverId: row.driverId,
       driverKind: row.driverKind,
       label: row.label,
       windows,
-      cost,
-      context,
-      updatedAt,
-      threadId,
-      threadTitle,
+      updatedAt: latestWindow?.updatedAt ?? null,
+      threadId: latest?.threadId ?? null,
+      threadTitle: latest?.threadTitle ?? null,
     } satisfies SidebarUsageProviderRow;
   });
 }

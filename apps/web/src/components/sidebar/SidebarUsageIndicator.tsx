@@ -1,5 +1,4 @@
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
-import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef } from "react";
 import * as Schema from "effect/Schema";
 
@@ -8,17 +7,15 @@ import { ensureLocalApi } from "../../localApi";
 import type { AppState } from "../../store";
 import { useStore } from "../../store";
 import { useServerProviders } from "../../rpc/serverState";
-import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { useSidebar } from "../ui/sidebar";
 import {
   deriveSidebarUsageProviderRows,
+  getSidebarUsageDisplayPercent,
   getSidebarUsagePrimaryWindow,
   getSidebarUsageSummary,
-  type SidebarUsageContextSnapshot,
-  type SidebarUsageCostSnapshot,
   type SidebarUsageSummary,
   type SidebarUsageProviderRow,
   type SidebarUsageThreadInput,
@@ -68,8 +65,9 @@ function formatUsagePrimary(window: SidebarUsageWindow | null): string {
   if (!window) {
     return "--";
   }
-  if (typeof window.remainingPercent === "number") {
-    return `${Math.round(window.remainingPercent)}%`;
+  const displayPercent = getSidebarUsageDisplayPercent(window);
+  if (typeof displayPercent === "number") {
+    return `${Math.round(displayPercent)}%`;
   }
   if (window.status === "rejected") {
     return "Limited";
@@ -116,66 +114,9 @@ function formatUsageDetail(window: SidebarUsageWindow | null): string {
   return "Updated";
 }
 
-function formatCostUsd(totalUsd: number): string {
-  if (totalUsd >= 100) {
-    return `$${Math.round(totalUsd)}`;
-  }
-  if (totalUsd >= 10) {
-    return `$${totalUsd.toFixed(1).replace(/\.0$/, "")}`;
-  }
-  if (totalUsd >= 0.01) {
-    return `$${totalUsd.toFixed(2)}`;
-  }
-  if (totalUsd > 0) {
-    return "<$0.01";
-  }
-  return "$0";
-}
-
-function formatCostPrimary(cost: SidebarUsageCostSnapshot | null): string {
-  if (!cost) {
-    return "--";
-  }
-  return formatCostUsd(cost.totalUsd);
-}
-
-function formatContextPrimary(context: SidebarUsageContextSnapshot | null): string {
-  if (!context) {
-    return "--";
-  }
-  if (context.remainingPercent !== null) {
-    return `${Math.round(context.remainingPercent)}%`;
-  }
-  return formatContextWindowTokens(context.usedTokens);
-}
-
-function formatContextDetail(context: SidebarUsageContextSnapshot | null): string {
-  if (!context) {
-    return "No context data";
-  }
-  if (context.usedPercent !== null) {
-    return `${Math.round(context.usedPercent)}% used`;
-  }
-  if (context.maxTokens !== null) {
-    return `${formatContextWindowTokens(context.usedTokens)} / ${formatContextWindowTokens(
-      context.maxTokens,
-    )}`;
-  }
-  return `${formatContextWindowTokens(context.usedTokens)} used`;
-}
-
-function formatSummary(
-  summary: SidebarUsageSummary | null,
-  costRow: SidebarUsageProviderRow | null,
-): string {
+function formatSummary(summary: SidebarUsageSummary | null): string {
   if (summary) {
     return `${summary.row.label} ${summary.window.label} ${formatUsagePrimary(summary.window)}`;
-  }
-  if (costRow?.cost) {
-    return `${costRow.label} ${formatCostPrimary(costRow.cost)} spent`;
-  }
-  if (costRow?.context) {
-    return `${costRow.label} context ${formatContextPrimary(costRow.context)}`;
   }
   return "No limit data";
 }
@@ -188,27 +129,18 @@ function formatProviderTitle(
     ? `${primaryWindow.label} ${formatUsagePrimary(primaryWindow)}, ${formatUsageDetail(
         primaryWindow,
       )}`
-    : row.cost
-      ? `${formatCostPrimary(row.cost)} spent across ${row.cost.threadCount} thread${
-          row.cost.threadCount === 1 ? "" : "s"
-        }`
-      : row.context
-        ? `Context ${formatContextDetail(row.context)}`
-        : "No limit data yet";
+    : "No limit data yet";
   return row.threadTitle
     ? `${row.label}: ${detail} in ${row.threadTitle}`
     : `${row.label}: ${detail}`;
 }
 
 function usageBarColor(row: SidebarUsageProviderRow, window: SidebarUsageWindow | null): string {
-  const remainingPercent = window?.remainingPercent;
-  if (window?.status === "rejected" || (remainingPercent != null && remainingPercent <= 5)) {
+  const displayPercent = getSidebarUsageDisplayPercent(window);
+  if (window?.status === "rejected" || (displayPercent != null && displayPercent <= 5)) {
     return "bg-destructive";
   }
-  if (
-    window?.status === "allowed_warning" ||
-    (remainingPercent != null && remainingPercent <= 20)
-  ) {
+  if (window?.status === "allowed_warning" || (displayPercent != null && displayPercent <= 20)) {
     return "bg-amber-500";
   }
   return row.driverId === "claudeAgent" ? "bg-[#d97757]" : "bg-muted-foreground";
@@ -223,7 +155,10 @@ function SidebarUsageWindowMeter({
   window: SidebarUsageWindow | null;
   fallbackLabel: string;
 }) {
-  const normalizedPercentage = Math.max(0, Math.min(100, window?.remainingPercent ?? 0));
+  const normalizedPercentage = Math.max(
+    0,
+    Math.min(100, getSidebarUsageDisplayPercent(window) ?? 0),
+  );
 
   return (
     <div className="min-w-0 rounded-md bg-muted/35 px-2 py-1.5">
@@ -251,125 +186,18 @@ function SidebarUsageWindowMeter({
   );
 }
 
-function SidebarUsageCostCard({
-  row,
-  cost,
-}: {
-  row: SidebarUsageProviderRow;
-  cost: SidebarUsageCostSnapshot | null;
-}) {
-  const accentColor = row.driverId === "claudeAgent" ? "text-[#d97757]" : "text-foreground";
-  return (
-    <div className="min-w-0 rounded-md bg-muted/35 px-2 py-1.5">
-      <div className="mb-1 flex min-w-0 items-center justify-between gap-1">
-        <span className="truncate text-[10px] font-medium text-muted-foreground/80">Spent</span>
-        <span className={cn("shrink-0 text-[10px] font-medium tabular-nums", accentColor)}>
-          {formatCostPrimary(cost)}
-        </span>
-      </div>
-      <div className="mt-1 truncate text-[10px] text-muted-foreground/70">
-        {cost
-          ? `${cost.threadCount} thread${cost.threadCount === 1 ? "" : "s"}`
-          : "No subscription — spend pending"}
-      </div>
-    </div>
-  );
-}
-
-function SidebarUsageContextCard({
-  row,
-  context,
-}: {
-  row: SidebarUsageProviderRow;
-  context: SidebarUsageContextSnapshot | null;
-}) {
-  const accentColor = row.driverId === "claudeAgent" ? "text-[#d97757]" : "text-foreground";
-  const normalizedPercentage =
-    context?.remainingPercent === null || context?.remainingPercent === undefined
-      ? 0
-      : Math.max(0, Math.min(100, context.remainingPercent));
-  return (
-    <div className="min-w-0 rounded-md bg-muted/35 px-2 py-1.5">
-      <div className="mb-1 flex min-w-0 items-center justify-between gap-1">
-        <span className="truncate text-[10px] font-medium text-muted-foreground/80">Context</span>
-        <span className={cn("shrink-0 text-[10px] font-medium tabular-nums", accentColor)}>
-          {formatContextPrimary(context)}
-        </span>
-      </div>
-      <div className="h-1 overflow-hidden rounded-full bg-background/80">
-        <div
-          className={cn(
-            "h-full rounded-full transition-[width] duration-300",
-            usageBarColor(row, null),
-          )}
-          style={{ width: `${normalizedPercentage}%` }}
-        />
-      </div>
-      <div className="mt-1 truncate text-[10px] text-muted-foreground/70">
-        {formatContextDetail(context)}
-      </div>
-    </div>
-  );
-}
-
 function SidebarUsageDetailsGrid({ row }: { row: SidebarUsageProviderRow }) {
-  const detailCards: ReactNode[] = [];
-
-  if (row.windows.fiveHour) {
-    detailCards.push(
-      <SidebarUsageWindowMeter
-        key="fiveHour"
-        row={row}
-        window={row.windows.fiveHour}
-        fallbackLabel="5h"
-      />,
-    );
-  }
-  if (row.windows.weekly) {
-    detailCards.push(
-      <SidebarUsageWindowMeter
-        key="weekly"
-        row={row}
-        window={row.windows.weekly}
-        fallbackLabel="Week"
-      />,
-    );
-  }
-  if (detailCards.length < 2 && row.context) {
-    detailCards.push(<SidebarUsageContextCard key="context" row={row} context={row.context} />);
-  }
-  if (detailCards.length < 2 && row.cost) {
-    detailCards.push(<SidebarUsageCostCard key="cost" row={row} cost={row.cost} />);
-  }
-  if (detailCards.length === 0) {
-    detailCards.push(
-      <SidebarUsageWindowMeter key="fiveHour-empty" row={row} window={null} fallbackLabel="5h" />,
-    );
-  }
-  if (detailCards.length < 2) {
-    const missingLabel = row.windows.fiveHour ? "Week" : "5h";
-    detailCards.push(
-      <SidebarUsageWindowMeter
-        key={`${missingLabel}-empty`}
-        row={row}
-        window={null}
-        fallbackLabel={missingLabel}
-      />,
-    );
-  }
-
-  return <div className="grid grid-cols-2 gap-1.5">{detailCards.slice(0, 2)}</div>;
+  return (
+    <div className="grid grid-cols-2 gap-1.5">
+      <SidebarUsageWindowMeter row={row} window={row.windows.fiveHour} fallbackLabel="5h" />
+      <SidebarUsageWindowMeter row={row} window={row.windows.weekly} fallbackLabel="Week" />
+    </div>
+  );
 }
 
 function SidebarUsageProviderRowView({ row }: { row: SidebarUsageProviderRow }) {
   const primaryWindow = getSidebarUsagePrimaryWindow(row);
   const title = formatProviderTitle(row, primaryWindow);
-  const hasRateLimitWindows = row.windows.fiveHour !== null || row.windows.weekly !== null;
-  const primaryLabel = hasRateLimitWindows
-    ? formatUsagePrimary(primaryWindow)
-    : row.cost
-      ? formatCostPrimary(row.cost)
-      : formatContextPrimary(row.context);
 
   return (
     <div className="grid gap-1 rounded-md px-2 py-1.5" title={title}>
@@ -382,16 +210,10 @@ function SidebarUsageProviderRowView({ row }: { row: SidebarUsageProviderRow }) 
         />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground/85">{row.label}</span>
         <span className="shrink-0 text-[11px] font-medium tabular-nums text-foreground">
-          {primaryLabel}
+          {formatUsagePrimary(primaryWindow)}
         </span>
       </div>
-      {hasRateLimitWindows ? (
-        <SidebarUsageDetailsGrid row={row} />
-      ) : row.cost ? (
-        <SidebarUsageCostCard row={row} cost={row.cost} />
-      ) : (
-        <SidebarUsageContextCard row={row} context={row.context} />
-      )}
+      <SidebarUsageDetailsGrid row={row} />
     </div>
   );
 }
@@ -424,21 +246,6 @@ export function SidebarUsageIndicator() {
     [providers, threads],
   );
   const summary = useMemo(() => getSidebarUsageSummary(rows), [rows]);
-  const fallbackRow = useMemo(() => {
-    if (summary) {
-      return null;
-    }
-    for (const row of rows) {
-      if (
-        row.windows.fiveHour === null &&
-        row.windows.weekly === null &&
-        (row.cost || row.context)
-      ) {
-        return row;
-      }
-    }
-    return null;
-  }, [rows, summary]);
 
   useEffect(() => {
     const previousSidebarVisible = previousSidebarVisibleRef.current;
@@ -461,7 +268,7 @@ export function SidebarUsageIndicator() {
         <GaugeIcon className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-xs">Usage</span>
         <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
-          {formatSummary(summary, fallbackRow)}
+          {formatSummary(summary)}
         </span>
         <ChevronDownIcon
           className={cn("size-3 shrink-0 transition-transform", expanded ? "rotate-180" : "")}

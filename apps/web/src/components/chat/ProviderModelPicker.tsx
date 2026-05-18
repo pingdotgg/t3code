@@ -18,6 +18,7 @@ import {
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import { setModelPickerOpen } from "../../modelPickerOpenState";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
@@ -45,6 +46,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  // On phones the picker is a full-screen modal. Make it modal so body
+  // scroll is locked, and ignore incidental dismissals (soft-keyboard
+  // blur / stray taps) — it should only close on an explicit selection,
+  // the close button, or toggling the composer trigger.
+  const isMobile = useMediaQuery({ max: "sm", pointer: "coarse" });
 
   // Resolve the active instance entry by exact routing key. The composer
   // resolves fallbacks before rendering this component; if the selected
@@ -95,9 +101,19 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   return (
     <Popover
       open={isMenuOpen}
-      onOpenChange={(open) => {
+      modal={isMobile}
+      onOpenChange={(open, eventDetails) => {
         if (props.disabled) {
           setIsMenuOpen(false);
+          return;
+        }
+        // Keep the full-screen mobile modal open when the soft keyboard is
+        // dismissed or a stray touch lands outside the floating element.
+        if (
+          !open &&
+          isMobile &&
+          (eventDetails.reason === "outside-press" || eventDetails.reason === "focus-out")
+        ) {
           return;
         }
         setIsMenuOpen(open);
@@ -167,7 +183,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       </PopoverTrigger>
       <PopoverPopup
         align="start"
-        className="border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0] *:data-[slot=popover-viewport]:p-0"
+        positionerClassName="max-sm:fixed! max-sm:inset-0! max-sm:z-50 max-sm:h-auto! max-sm:w-auto! max-sm:max-w-none! max-sm:transform-none! max-sm:transition-none!"
+        className="border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0] *:data-[slot=popover-viewport]:p-0 max-sm:h-dvh! max-sm:w-screen! max-sm:max-w-none! max-sm:rounded-none! max-sm:border-0! max-sm:*:data-[slot=popover-viewport]:max-h-none!"
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}

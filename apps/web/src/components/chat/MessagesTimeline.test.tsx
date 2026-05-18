@@ -27,6 +27,12 @@ vi.mock("@legendapp/list/react", async () => {
   return { LegendList };
 });
 
+vi.mock("../ChatMarkdown", () => ({
+  default: (props: { text: string; environmentId?: EnvironmentId }) => (
+    <div data-chat-markdown-environment-id={props.environmentId ?? ""}>{props.text}</div>
+  ),
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -117,6 +123,21 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry(text: string) {
+  return {
+    id: "entry-1",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: MessageId.make("message-1"),
+      role: "assistant" as const,
+      text,
+      createdAt: MESSAGE_CREATED_AT,
+      streaming: false,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -144,6 +165,19 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
+  });
+
+  it("passes the active environment id into assistant markdown for file previews", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        markdownCwd="/repo/project"
+        timelineEntries={[buildAssistantTimelineEntry("[index.ts](src/index.ts)")]}
+      />,
+    );
+
+    expect(markup).toContain('data-chat-markdown-environment-id="environment-local"');
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {

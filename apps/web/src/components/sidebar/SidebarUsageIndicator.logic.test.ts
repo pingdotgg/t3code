@@ -9,6 +9,7 @@ import {
 
 import {
   deriveSidebarUsageProviderRows,
+  getSidebarUsageDisplayPercent,
   getSidebarUsageSummary,
 } from "./SidebarUsageIndicator.logic";
 
@@ -138,6 +139,7 @@ describe("SidebarUsageIndicator.logic", () => {
     expect(rows[0]?.label).toBe("Codex");
     expect(rows[0]?.windows.fiveHour?.usedPercent).toBe(42);
     expect(rows[0]?.windows.fiveHour?.remainingPercent).toBe(58);
+    expect(getSidebarUsageDisplayPercent(rows[0]?.windows.fiveHour ?? null)).toBe(58);
     expect(rows[0]?.windows.weekly?.usedPercent).toBe(17);
     expect(rows[0]?.windows.weekly?.remainingPercent).toBe(83);
     expect(rows[1]?.label).toBe("Claude");
@@ -180,7 +182,7 @@ describe("SidebarUsageIndicator.logic", () => {
     expect(rows[1]?.windows.fiveHour).toBeNull();
   });
 
-  it("falls back to total cost spent for Claude when no rate-limit data is available", () => {
+  it("ignores thread cost and context usage when no account limit data is available", () => {
     const rows = deriveSidebarUsageProviderRows({
       providerInstances: [
         {
@@ -224,12 +226,12 @@ describe("SidebarUsageIndicator.logic", () => {
     const claudeRow = rows.find((row) => row.driverId === "claudeAgent");
     expect(claudeRow?.windows.fiveHour).toBeNull();
     expect(claudeRow?.windows.weekly).toBeNull();
-    expect(claudeRow?.cost?.totalUsd).toBeCloseTo(1.25, 5);
-    expect(claudeRow?.cost?.threadCount).toBe(2);
-    expect(claudeRow?.threadId).toBe("thread-claude-2");
+    expect(claudeRow?.updatedAt).toBeNull();
+    expect(claudeRow?.threadId).toBeNull();
+    expect(getSidebarUsageSummary(rows)).toBeNull();
   });
 
-  it("populates Claude context usage when no rate-limit or cost data is available", () => {
+  it("does not substitute context usage for missing Claude account limits", () => {
     const rows = deriveSidebarUsageProviderRows({
       providerInstances: [
         {
@@ -256,13 +258,11 @@ describe("SidebarUsageIndicator.logic", () => {
     const claudeRow = rows.find((row) => row.driverId === "claudeAgent");
     expect(claudeRow?.windows.fiveHour).toBeNull();
     expect(claudeRow?.windows.weekly).toBeNull();
-    expect(claudeRow?.cost).toBeNull();
-    expect(claudeRow?.context?.usedPercent).toBe(25);
-    expect(claudeRow?.context?.remainingPercent).toBe(75);
-    expect(claudeRow?.threadId).toBe("thread-claude-context");
+    expect(claudeRow?.updatedAt).toBeNull();
+    expect(claudeRow?.threadId).toBeNull();
   });
 
-  it("ignores expired Claude rate-limit windows so fresh context can populate", () => {
+  it("ignores expired Claude rate-limit windows without falling back to context", () => {
     const rows = deriveSidebarUsageProviderRows({
       providerInstances: [
         {
@@ -305,12 +305,11 @@ describe("SidebarUsageIndicator.logic", () => {
     const claudeRow = rows.find((row) => row.driverId === "claudeAgent");
     expect(claudeRow?.windows.fiveHour).toBeNull();
     expect(claudeRow?.windows.weekly).toBeNull();
-    expect(claudeRow?.context?.usedPercent).toBe(30);
-    expect(claudeRow?.context?.remainingPercent).toBe(70);
-    expect(claudeRow?.threadId).toBe("thread-claude-expired");
+    expect(claudeRow?.updatedAt).toBeNull();
+    expect(claudeRow?.threadId).toBeNull();
   });
 
-  it("keeps Claude context usage when the SDK does not report max tokens", () => {
+  it("keeps zero-percent Claude subscription utilization as account limit data", () => {
     const rows = deriveSidebarUsageProviderRows({
       providerInstances: [
         {
@@ -320,14 +319,30 @@ describe("SidebarUsageIndicator.logic", () => {
       ],
       threads: [
         {
-          id: "thread-claude-token-only",
-          title: "Claude token-only context",
+          id: "thread-claude-zero",
+          title: "Claude zero utilization",
           modelSelectionInstanceId: ProviderInstanceId.make("claude_personal"),
           activities: [
-            makeContextWindowActivity({
-              id: "ctx-token-only",
+            makeRateLimitActivity({
+              id: "activity-claude-zero",
               createdAt: "2026-05-13T04:00:00.000Z",
-              payload: { usedTokens: 42_000 },
+              payload: {
+                provider: "claudeAgent",
+                providerInstanceId: "claude_personal",
+                rateLimits: {
+                  source: "claude.oauth.usage",
+                  primary: {
+                    usedPercent: 0,
+                    windowDurationMins: 300,
+                    resetsAt: FUTURE_RESET_SECONDS,
+                  },
+                  secondary: {
+                    usedPercent: 0,
+                    windowDurationMins: 10_080,
+                    resetsAt: LATER_FUTURE_RESET_SECONDS,
+                  },
+                },
+              },
             }),
           ],
         },
@@ -335,9 +350,9 @@ describe("SidebarUsageIndicator.logic", () => {
     });
 
     const claudeRow = rows.find((row) => row.driverId === "claudeAgent");
-    expect(claudeRow?.context?.usedTokens).toBe(42_000);
-    expect(claudeRow?.context?.maxTokens).toBeNull();
-    expect(claudeRow?.context?.usedPercent).toBeNull();
-    expect(claudeRow?.context?.remainingPercent).toBeNull();
+    expect(claudeRow?.windows.fiveHour?.usedPercent).toBe(0);
+    expect(claudeRow?.windows.fiveHour?.remainingPercent).toBe(100);
+    expect(claudeRow?.windows.weekly?.usedPercent).toBe(0);
+    expect(claudeRow?.threadId).toBe("thread-claude-zero");
   });
 });

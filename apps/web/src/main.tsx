@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 import { isElectron } from "./env";
+import { installIosStandaloneBackSwipeGuard } from "./iosStandaloneBackSwipeGuard";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
@@ -19,6 +20,8 @@ const router = getRouter(history);
 if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
 }
+
+installIosStandaloneBackSwipeGuard();
 
 document.title = APP_DISPLAY_NAME;
 

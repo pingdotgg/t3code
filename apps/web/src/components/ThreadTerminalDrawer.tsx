@@ -52,6 +52,73 @@ import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview"
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+const KEYBOARD_INSET_THRESHOLD = 80;
+const TOUCH_SCROLL_ACTIVATION_PX = 6;
+
+export interface TerminalKeyboardViewport {
+  bottomInset: number;
+  visibleHeight: number | null;
+}
+
+const EMPTY_TERMINAL_KEYBOARD_VIEWPORT: TerminalKeyboardViewport = Object.freeze({
+  bottomInset: 0,
+  visibleHeight: null,
+});
+
+function terminalKeyboardViewportEqual(
+  left: TerminalKeyboardViewport,
+  right: TerminalKeyboardViewport,
+): boolean {
+  return left.bottomInset === right.bottomInset && left.visibleHeight === right.visibleHeight;
+}
+
+export function resolveTerminalKeyboardViewport(input: {
+  layoutViewportHeight: number;
+  visualViewportHeight: number | null | undefined;
+  visualViewportOffsetTop: number | null | undefined;
+}): TerminalKeyboardViewport {
+  const layoutViewportHeight = Number.isFinite(input.layoutViewportHeight)
+    ? Math.max(0, input.layoutViewportHeight)
+    : 0;
+  const visualViewportHeight =
+    typeof input.visualViewportHeight === "number" && Number.isFinite(input.visualViewportHeight)
+      ? Math.max(0, input.visualViewportHeight)
+      : null;
+  const visualViewportOffsetTop =
+    typeof input.visualViewportOffsetTop === "number" &&
+    Number.isFinite(input.visualViewportOffsetTop)
+      ? Math.max(0, input.visualViewportOffsetTop)
+      : 0;
+
+  if (layoutViewportHeight <= 0 || visualViewportHeight === null || visualViewportHeight <= 0) {
+    return EMPTY_TERMINAL_KEYBOARD_VIEWPORT;
+  }
+
+  const bottomInset = Math.max(
+    0,
+    Math.ceil(layoutViewportHeight - visualViewportHeight - visualViewportOffsetTop),
+  );
+  if (bottomInset < KEYBOARD_INSET_THRESHOLD) {
+    return EMPTY_TERMINAL_KEYBOARD_VIEWPORT;
+  }
+
+  return {
+    bottomInset,
+    visibleHeight: visualViewportHeight,
+  };
+}
+
+function readTerminalKeyboardViewport(): TerminalKeyboardViewport {
+  if (typeof window === "undefined" || !window.visualViewport) {
+    return EMPTY_TERMINAL_KEYBOARD_VIEWPORT;
+  }
+
+  return resolveTerminalKeyboardViewport({
+    layoutViewportHeight: window.innerHeight,
+    visualViewportHeight: window.visualViewport.height,
+    visualViewportOffsetTop: window.visualViewport.offsetTop,
+  });
+}
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -62,6 +129,35 @@ function clampDrawerHeight(height: number): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
   const maxHeight = maxDrawerHeight();
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
+}
+
+export function resolveRenderedDrawerHeight(
+  drawerHeight: number,
+  keyboardViewport: TerminalKeyboardViewport,
+): number {
+  if (keyboardViewport.bottomInset <= 0 || keyboardViewport.visibleHeight === null) {
+    return drawerHeight;
+  }
+  const keyboardMaxHeight = Math.max(
+    MIN_DRAWER_HEIGHT,
+    Math.floor(keyboardViewport.visibleHeight * MAX_DRAWER_HEIGHT_RATIO),
+  );
+  return Math.min(drawerHeight, keyboardMaxHeight);
+}
+
+export function resolveTerminalTouchScroll(input: {
+  accumulatedPixels: number;
+  rowHeight: number;
+}): { lines: number; remainingPixels: number } {
+  const rowHeight = Number.isFinite(input.rowHeight) && input.rowHeight > 0 ? input.rowHeight : 1;
+  const lines =
+    input.accumulatedPixels < 0
+      ? Math.ceil(input.accumulatedPixels / rowHeight)
+      : Math.floor(input.accumulatedPixels / rowHeight);
+  return {
+    lines,
+    remainingPixels: input.accumulatedPixels - lines * rowHeight,
+  };
 }
 
 function writeSystemMessage(terminal: Terminal, message: string): void {
@@ -293,6 +389,14 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
+  const touchScrollStateRef = useRef<{
+    accumulatedPixels: number;
+    active: boolean;
+    lastY: number;
+    startX: number;
+    startY: number;
+    touchId: number;
+  } | null>(null);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -558,8 +662,86 @@ export function TerminalViewport({
       clearSelectionAction();
       selectionGestureActiveRef.current = event.button === 0;
     };
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        touchScrollStateRef.current = null;
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) {
+        touchScrollStateRef.current = null;
+        return;
+      }
+      touchScrollStateRef.current = {
+        accumulatedPixels: 0,
+        active: false,
+        lastY: touch.clientY,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        touchId: touch.identifier,
+      };
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const scrollState = touchScrollStateRef.current;
+      const activeTerminal = terminalRef.current;
+      const mountElement = containerRef.current;
+      if (!scrollState || !activeTerminal || !mountElement) {
+        return;
+      }
+
+      const touch = Array.from(event.changedTouches).find(
+        (changedTouch) => changedTouch.identifier === scrollState.touchId,
+      );
+      if (!touch) {
+        return;
+      }
+
+      const totalX = touch.clientX - scrollState.startX;
+      const totalY = touch.clientY - scrollState.startY;
+      if (!scrollState.active) {
+        if (Math.abs(totalY) < TOUCH_SCROLL_ACTIVATION_PX) {
+          return;
+        }
+        if (Math.abs(totalX) > Math.abs(totalY)) {
+          touchScrollStateRef.current = null;
+          return;
+        }
+        scrollState.active = true;
+      }
+
+      event.preventDefault();
+      const deltaPixels = scrollState.lastY - touch.clientY;
+      scrollState.lastY = touch.clientY;
+      scrollState.accumulatedPixels += deltaPixels;
+      const rowHeight = mountElement.clientHeight / Math.max(activeTerminal.rows, 1);
+      const resolved = resolveTerminalTouchScroll({
+        accumulatedPixels: scrollState.accumulatedPixels,
+        rowHeight,
+      });
+      scrollState.accumulatedPixels = resolved.remainingPixels;
+      if (resolved.lines !== 0) {
+        clearSelectionAction();
+        activeTerminal.scrollLines(resolved.lines);
+      }
+    };
+    const handleTouchEnd = (event: TouchEvent) => {
+      const scrollState = touchScrollStateRef.current;
+      if (!scrollState) {
+        return;
+      }
+      const hasTouch = Array.from(event.touches).some(
+        (touch) => touch.identifier === scrollState.touchId,
+      );
+      if (!hasTouch) {
+        touchScrollStateRef.current = null;
+      }
+    };
     window.addEventListener("mouseup", handleMouseUp);
     mount.addEventListener("pointerdown", handlePointerDown);
+    mount.addEventListener("touchstart", handleTouchStart, { passive: true });
+    mount.addEventListener("touchmove", handleTouchMove, { passive: false });
+    mount.addEventListener("touchend", handleTouchEnd);
+    mount.addEventListener("touchcancel", handleTouchEnd);
 
     const themeObserver = new MutationObserver(() => {
       const activeTerminal = terminalRef.current;
@@ -749,6 +931,10 @@ export function TerminalViewport({
       }
       window.removeEventListener("mouseup", handleMouseUp);
       mount.removeEventListener("pointerdown", handlePointerDown);
+      mount.removeEventListener("touchstart", handleTouchStart);
+      mount.removeEventListener("touchmove", handleTouchMove);
+      mount.removeEventListener("touchend", handleTouchEnd);
+      mount.removeEventListener("touchcancel", handleTouchEnd);
       themeObserver.disconnect();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -798,7 +984,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full overflow-hidden rounded-[4px] bg-background"
+      className="relative h-full w-full touch-none overflow-hidden rounded-[4px] bg-background"
     />
   );
 }
@@ -882,8 +1068,13 @@ export default function ThreadTerminalDrawer({
   keybindings,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
+  const [keyboardViewport, setKeyboardViewport] = useState<TerminalKeyboardViewport>(
+    EMPTY_TERMINAL_KEYBOARD_VIEWPORT,
+  );
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const drawerRef = useRef<HTMLElement>(null);
   const drawerHeightRef = useRef(drawerHeight);
+  const keyboardViewportRef = useRef(keyboardViewport);
   const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
   const onHeightChangeRef = useRef(onHeightChange);
   const resizeStateRef = useRef<{
@@ -1004,6 +1195,7 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
+  const renderedDrawerHeight = resolveRenderedDrawerHeight(drawerHeight, keyboardViewport);
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -1019,6 +1211,15 @@ export default function ThreadTerminalDrawer({
   useEffect(() => {
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
+
+  const applyKeyboardViewport = useCallback((nextViewport: TerminalKeyboardViewport) => {
+    if (terminalKeyboardViewportEqual(keyboardViewportRef.current, nextViewport)) {
+      return;
+    }
+    keyboardViewportRef.current = nextViewport;
+    setKeyboardViewport(nextViewport);
+    setResizeEpoch((value) => value + 1);
+  }, []);
 
   const syncHeight = useCallback((nextHeight: number) => {
     const clampedHeight = clampDrawerHeight(nextHeight);
@@ -1080,6 +1281,7 @@ export default function ThreadTerminalDrawer({
 
   useEffect(() => {
     if (!visible) {
+      applyKeyboardViewport(EMPTY_TERMINAL_KEYBOARD_VIEWPORT);
       return;
     }
 
@@ -1099,7 +1301,66 @@ export default function ThreadTerminalDrawer({
     return () => {
       window.removeEventListener("resize", onWindowResize);
     };
-  }, [syncHeight, visible]);
+  }, [applyKeyboardViewport, syncHeight, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      applyKeyboardViewport(EMPTY_TERMINAL_KEYBOARD_VIEWPORT);
+      return;
+    }
+
+    let frame: number | null = null;
+    let focusOutTimer: number | null = null;
+
+    const updateKeyboardViewport = () => {
+      frame = null;
+      const drawer = drawerRef.current;
+      const activeElement = document.activeElement;
+      const terminalFocused = Boolean(
+        drawer && activeElement instanceof Node && drawer.contains(activeElement),
+      );
+      applyKeyboardViewport(
+        terminalFocused ? readTerminalKeyboardViewport() : EMPTY_TERMINAL_KEYBOARD_VIEWPORT,
+      );
+    };
+
+    const scheduleKeyboardViewportUpdate = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(updateKeyboardViewport);
+    };
+
+    const onFocusOut = () => {
+      if (focusOutTimer !== null) {
+        window.clearTimeout(focusOutTimer);
+      }
+      focusOutTimer = window.setTimeout(() => {
+        focusOutTimer = null;
+        scheduleKeyboardViewportUpdate();
+      }, 0);
+    };
+
+    const visualViewport = window.visualViewport;
+    document.addEventListener("focusin", scheduleKeyboardViewportUpdate);
+    document.addEventListener("focusout", onFocusOut);
+    window.addEventListener("resize", scheduleKeyboardViewportUpdate);
+    visualViewport?.addEventListener("resize", scheduleKeyboardViewportUpdate);
+    visualViewport?.addEventListener("scroll", scheduleKeyboardViewportUpdate);
+    scheduleKeyboardViewportUpdate();
+
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+      if (focusOutTimer !== null) {
+        window.clearTimeout(focusOutTimer);
+      }
+      document.removeEventListener("focusin", scheduleKeyboardViewportUpdate);
+      document.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("resize", scheduleKeyboardViewportUpdate);
+      visualViewport?.removeEventListener("resize", scheduleKeyboardViewportUpdate);
+      visualViewport?.removeEventListener("scroll", scheduleKeyboardViewportUpdate);
+    };
+  }, [applyKeyboardViewport, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -1116,8 +1377,13 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
+      ref={drawerRef}
       className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: `${drawerHeight}px` }}
+      style={{
+        height: `${renderedDrawerHeight}px`,
+        marginBottom:
+          keyboardViewport.bottomInset > 0 ? `${keyboardViewport.bottomInset}px` : undefined,
+      }}
     >
       <div
         className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
@@ -1197,7 +1463,7 @@ export default function ThreadTerminalDrawer({
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
-                        drawerHeight={drawerHeight}
+                        drawerHeight={renderedDrawerHeight}
                         keybindings={keybindings}
                       />
                     </div>
@@ -1220,7 +1486,7 @@ export default function ThreadTerminalDrawer({
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}
-                  drawerHeight={drawerHeight}
+                  drawerHeight={renderedDrawerHeight}
                   keybindings={keybindings}
                 />
               </div>
