@@ -1,0 +1,12 @@
+{
+  "name": "@t3tools/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "generate:xcode": "xcodegen generate",
+    "build:app": "xcodegen generate && xcodebuild -project T3Mobile.xcodeproj -scheme T3Mobile -destination 'generic/platform=iOS Simulator' build",
+    "test:app": "xcodegen generate && xcodebuild -project T3Mobile.xcodeproj -scheme T3Mobile -destination 'platform=iOS Simulator,name=iPhone 17' test",
+    "typecheck": "swift build",
+    "test": "swift test"
+  }
+}

@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -17,6 +18,7 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
@@ -196,6 +198,222 @@ describe("decider project scripts", () => {
       ]),
       runtimeMode: "approval-required",
     });
+  });
+
+  it("rejects thread.turn.start while the current turn is still running", async () => {
+    const now = new Date().toISOString();
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withThread = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-create"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          pendingRuntimeMode: null,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const baseThread = withThread.threads.find((thread) => thread.id === threadId);
+    if (!baseThread) {
+      throw new Error("missing thread");
+    }
+    const readModel = {
+      ...withThread,
+      threads: [
+        {
+          ...baseThread,
+          latestTurn: {
+            turnId: activeTurnId,
+            state: "running" as const,
+            requestedAt: "2026-05-16T18:00:00.000Z",
+            startedAt: "2026-05-16T18:00:01.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            threadId,
+            status: "running" as const,
+            providerName: "codex",
+            runtimeMode: "approval-required" as const,
+            activeTurnId,
+            lastError: null,
+            updatedAt: "2026-05-16T18:00:01.000Z",
+          },
+        },
+      ],
+    };
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-start-again"),
+            threadId,
+            message: {
+              messageId: asMessageId("message-user-2"),
+              role: "user",
+              text: "follow-up too early",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: "2026-05-16T18:00:02.000Z",
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("already has a turn in flight");
+  });
+
+  it("rejects thread.turn.start while the previous turn start is pending provider acknowledgement", async () => {
+    const now = new Date().toISOString();
+    const threadId = ThreadId.make("thread-1");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withThread = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-create"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          pendingRuntimeMode: null,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const baseThread = withThread.threads.find((thread) => thread.id === threadId);
+    if (!baseThread) {
+      throw new Error("missing thread");
+    }
+    const readModel = {
+      ...withThread,
+      threads: [
+        {
+          ...baseThread,
+          messages: [
+            {
+              id: asMessageId("message-user-1"),
+              role: "user" as const,
+              text: "first",
+              attachments: [],
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-05-16T18:00:00.000Z",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    };
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-start-again"),
+            threadId,
+            message: {
+              messageId: asMessageId("message-user-2"),
+              role: "user",
+              text: "second",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: "2026-05-16T18:00:01.000Z",
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("already has a turn in flight");
   });
 
   it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {

@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "diff-1",
+  "type": "response",
+  "payload": {
+    "threadId": "thread-fixture",
+    "fromTurnCount": 0,
+    "toTurnCount": 1,
+    "diff": "diff --git a/README.md b/README.md\n+Fixture change\n"
+  }
+}

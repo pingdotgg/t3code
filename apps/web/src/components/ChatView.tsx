@@ -169,6 +169,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  canStartThreadTurn,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -201,6 +202,7 @@ import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
 import { buildChatFindRows, findChatFindMatches, type ChatFindMatch } from "./chat/chatFind";
+import { useChatFindHighlight } from "./chat/useChatFindHighlight";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -208,7 +210,6 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const EMPTY_CHAT_FIND_MATCHED_ROW_IDS = new Set<string>();
 const TIMELINE_ROW_ESTIMATED_SIZE_PX = 90;
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -1658,15 +1659,18 @@ function ChatViewBody(
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
-    if (!completionSummary) return null;
+    if (sessionActivelyWorking) return null;
+    if (isSendBusy) return null;
+    if (!activeLatestTurn?.assistantMessageId) return null;
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
-  }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
+  }, [activeLatestTurn, isSendBusy, latestTurnSettled, sessionActivelyWorking, timelineEntries]);
   const timelineRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
         timelineEntries,
         completionDividerBeforeEntryId,
         isWorking,
+        activeTurnId: activeLatestTurn?.turnId ?? null,
         activeTurnStartedAt: activeWorkStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
@@ -1675,6 +1679,7 @@ function ChatViewBody(
       activeWorkStartedAt,
       completionDividerBeforeEntryId,
       isWorking,
+      activeLatestTurn?.turnId,
       revertTurnCountByUserMessageId,
       timelineEntries,
       turnDiffSummaryByAssistantMessageId,
@@ -1685,19 +1690,21 @@ function ChatViewBody(
     () => findChatFindMatches(chatFindRows, deferredChatFindQuery),
     [chatFindRows, deferredChatFindQuery],
   );
-  const matchedChatFindRowIds = useMemo(
-    () =>
-      chatFindMatches.length === 0
-        ? EMPTY_CHAT_FIND_MATCHED_ROW_IDS
-        : new Set(chatFindMatches.map((match) => match.rowId)),
-    [chatFindMatches],
-  );
   const activeChatFindMatchIndex = useMemo(
     () => chatFindMatches.findIndex((match) => match.id === activeChatFindMatchId),
     [activeChatFindMatchId, chatFindMatches],
   );
   const activeChatFindMatch =
     activeChatFindMatchIndex >= 0 ? (chatFindMatches[activeChatFindMatchIndex] ?? null) : null;
+
+  // DOM-based highlighting via CSS Custom Highlight API
+  useChatFindHighlight(
+    messagesViewportRef,
+    deferredChatFindQuery,
+    activeChatFindMatch?.rowId ?? null,
+    activeChatFindMatch?.matchIndexInRow ?? 0,
+  );
+
   const copilotResumeCommand = getCopilotResumeCommand(activeThread ?? null);
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -2443,7 +2450,7 @@ function ChatViewBody(
     const tryScroll = (attempt: number, offsetScrolled: boolean) => {
       const rowElement = document.querySelector<HTMLElement>(rowSelector);
       if (rowElement) {
-        rowElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        rowElement.scrollIntoView({ block: "nearest" });
         return;
       }
 
@@ -2926,6 +2933,16 @@ function ChatViewBody(
       onAdvanceActivePendingUserInput();
       return;
     }
+    if (
+      !canStartThreadTurn({
+        phase,
+        isSendBusy,
+        isConnecting,
+        sendInFlight: sendInFlightRef.current,
+      })
+    ) {
+      return;
+    }
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx) return;
     const {
@@ -3398,7 +3415,13 @@ function ChatViewBody(
         !isServerThread ||
         isSendBusy ||
         isConnecting ||
-        sendInFlightRef.current
+        sendInFlightRef.current ||
+        !canStartThreadTurn({
+          phase,
+          isSendBusy,
+          isConnecting,
+          sendInFlight: sendInFlightRef.current,
+        })
       ) {
         return;
       }
@@ -3517,6 +3540,7 @@ function ChatViewBody(
       beginLocalDispatch,
       isConnecting,
       isSendBusy,
+      phase,
       isServerThread,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
@@ -3778,6 +3802,51 @@ function ChatViewBody(
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const onForkAssistantMessage = useCallback(
+    async (messageId: MessageId) => {
+      if (!activeThread || !isServerThread) {
+        return;
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        setThreadError(
+          activeThread.id,
+          "Cannot fork chat because the environment is disconnected.",
+        );
+        return;
+      }
+
+      const nextThreadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.fork",
+          commandId: newCommandId(),
+          sourceThreadId: activeThread.id,
+          threadId: nextThreadId,
+          targetMessageId: messageId,
+          createdAt,
+        });
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: nextThreadId,
+          },
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not fork chat",
+            description:
+              error instanceof Error ? error.message : "An error occurred while forking.",
+          }),
+        );
+      }
+    },
+    [activeThread, environmentId, isServerThread, navigate, setThreadError],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3789,15 +3858,21 @@ function ChatViewBody(
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "border-b border-border",
           isElectron
             ? cn(
                 "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
-            : "py-2 sm:py-3",
+            : "",
         )}
+        style={{
+          paddingLeft: "var(--density-chat-header-px)",
+          paddingRight: "var(--density-chat-header-px)",
+          paddingTop: isElectron ? undefined : "var(--density-chat-header-py)",
+          paddingBottom: isElectron ? undefined : "var(--density-chat-header-py)",
+        }}
       >
         <ChatHeader
           activeThreadEnvironmentId={activeThread.environmentId}
@@ -3874,6 +3949,7 @@ function ChatViewBody(
               onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
+              onForkAssistantMessage={onForkAssistantMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onExpandTimelineImage}
               markdownCwd={gitCwd ?? undefined}
@@ -3881,9 +3957,6 @@ function ChatViewBody(
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
-              chatFindQuery={deferredChatFindQuery}
-              matchedRowIds={matchedChatFindRowIds}
-              activeMatchRowId={activeChatFindMatch?.rowId ?? null}
             />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
@@ -3902,7 +3975,16 @@ function ChatViewBody(
           </div>
 
           {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          <div
+            style={{
+              paddingLeft: "var(--density-composer-outer-px)",
+              paddingRight: "var(--density-composer-outer-px)",
+              paddingTop: "var(--density-composer-outer-pt)",
+              paddingBottom: isGitRepo
+                ? "var(--density-composer-outer-pb-git)"
+                : "var(--density-composer-outer-pb)",
+            }}
+          >
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}

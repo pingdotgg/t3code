@@ -1,0 +1,17 @@
+{
+  "id": "dispatch-user-input-1",
+  "type": "request",
+  "protocolVersion": "mobile.v1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "type": "thread.user-input.respond",
+    "commandId": "mobile-user-input-1",
+    "threadId": "thread-fixture",
+    "requestId": "approval-fixture-2",
+    "answers": {
+      "choice": "yes",
+      "confirmed": true
+    },
+    "createdAt": "2026-05-10T00:00:08.000Z"
+  }
+}

@@ -1,7 +1,9 @@
 import type {
+  MessageId,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -14,9 +16,11 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireThreadReadyForTurnStart,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 
+const FORK_TITLE_PREFIX = "Forked: ";
 const nowIso = () => new Date().toISOString();
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -54,6 +58,57 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
+
+function forkedTitle(title: string): string {
+  return title.startsWith(FORK_TITLE_PREFIX) ? title : `${FORK_TITLE_PREFIX}${title}`;
+}
+
+function remapForkTurnId(
+  sourceTurnId: TurnId | null,
+  turnIdBySourceId: Map<string, TurnId>,
+): TurnId | null {
+  if (sourceTurnId === null) {
+    return null;
+  }
+  const existing = turnIdBySourceId.get(sourceTurnId);
+  if (existing) {
+    return existing;
+  }
+  const nextTurnId = crypto.randomUUID() as TurnId;
+  turnIdBySourceId.set(sourceTurnId, nextTurnId);
+  return nextTurnId;
+}
+
+function messageForkEvents(input: {
+  readonly command: Extract<OrchestrationCommand, { type: "thread.fork" }>;
+  readonly messages: OrchestrationReadModel["threads"][number]["messages"];
+}): PlannedOrchestrationEvent[] {
+  const turnIdBySourceId = new Map<string, TurnId>();
+  return input.messages.map((message) => {
+    const nextMessageId = crypto.randomUUID() as MessageId;
+    const nextTurnId = remapForkTurnId(message.turnId, turnIdBySourceId);
+    return {
+      ...withEventBase({
+        aggregateKind: "thread",
+        aggregateId: input.command.threadId,
+        occurredAt: message.createdAt,
+        commandId: input.command.commandId,
+      }),
+      type: "thread.message-sent",
+      payload: {
+        threadId: input.command.threadId,
+        messageId: nextMessageId,
+        role: message.role,
+        text: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        turnId: nextTurnId,
+        streaming: false,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      },
+    };
+  });
+}
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
@@ -234,6 +289,75 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.fork": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (sourceThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
+        });
+      }
+      const targetMessageIndex = sourceThread.messages.findIndex(
+        (message) => message.id === command.targetMessageId,
+      );
+      const targetMessage =
+        targetMessageIndex >= 0 ? sourceThread.messages[targetMessageIndex] : undefined;
+      if (!targetMessage) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.targetMessageId}' does not exist on thread '${command.sourceThreadId}'.`,
+        });
+      }
+      if (targetMessage.role !== "assistant") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.targetMessageId}' is not an assistant response and cannot be forked.`,
+        });
+      }
+      if (targetMessage.streaming) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.targetMessageId}' is still streaming and cannot be forked.`,
+        });
+      }
+
+      const forkedMessages = sourceThread.messages.slice(0, targetMessageIndex + 1);
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.created",
+          payload: {
+            threadId: command.threadId,
+            projectId: sourceThread.projectId,
+            title: forkedTitle(sourceThread.title),
+            modelSelection: sourceThread.modelSelection,
+            runtimeMode: sourceThread.runtimeMode,
+            pendingRuntimeMode: null,
+            interactionMode: sourceThread.interactionMode,
+            branch: sourceThread.branch,
+            worktreePath: sourceThread.worktreePath,
+            createdAt: command.createdAt,
+            updatedAt: command.createdAt,
+          },
+        },
+        ...messageForkEvents({ command, messages: forkedMessages }),
+      ];
+    }
+
     case "thread.delete": {
       yield* requireThread({
         readModel,
@@ -399,7 +523,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      const targetThread = yield* requireThread({
+      const targetThread = yield* requireThreadReadyForTurnStart({
         readModel,
         command,
         threadId: command.threadId,

@@ -1,0 +1,13 @@
+{
+  "id": "dispatch-checkpoint-revert-1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "commandId": "mobile-checkpoint-revert-1",
+    "createdAt": "2026-05-10T00:00:10.000Z",
+    "threadId": "thread-fixture",
+    "turnCount": 1,
+    "type": "thread.checkpoint.revert"
+  },
+  "protocolVersion": "mobile.v1",
+  "type": "request"
+}

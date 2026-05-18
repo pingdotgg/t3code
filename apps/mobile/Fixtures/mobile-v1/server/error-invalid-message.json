@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": null,
+  "type": "error",
+  "error": {
+    "code": "invalid-message",
+    "message": "Mobile WebSocket message failed validation."
+  }
+}

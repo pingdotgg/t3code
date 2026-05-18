@@ -9,10 +9,12 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  reorderPinnedThreads,
   reorderProjects,
   setChangedFilesDiffScope,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  setThreadPinned,
   syncProjects,
   syncThreads,
   type UiState,
@@ -22,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    pinnedThreadKeysByProjectId: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     changedFilesDiffScope: "turn",
@@ -139,6 +142,66 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+  });
+
+  it("setThreadPinned pins a thread to the top of its project pin order", () => {
+    const projectId = ProjectId.make("project-1");
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        [projectId]: [thread1],
+      },
+    });
+
+    const next = setThreadPinned(initialState, projectId, thread2, true);
+
+    expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread2, thread1]);
+  });
+
+  it("setThreadPinned removes the project pin group when its last thread is unpinned", () => {
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        [projectId]: [threadId],
+      },
+    });
+
+    const next = setThreadPinned(initialState, projectId, threadId, false);
+
+    expect(next.pinnedThreadKeysByProjectId).toEqual({});
+  });
+
+  it("reorderPinnedThreads moves a pinned thread before the target pinned thread", () => {
+    const projectId = ProjectId.make("project-1");
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const thread3 = ThreadId.make("thread-3");
+    const initialState = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        [projectId]: [thread1, thread2, thread3],
+      },
+    });
+
+    const next = reorderPinnedThreads(initialState, projectId, thread1, thread3);
+
+    expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread2, thread3, thread1]);
+  });
+
+  it("syncThreads prunes pinned thread keys for deleted threads", () => {
+    const projectId = ProjectId.make("project-1");
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        [projectId]: [thread1, thread2],
+      },
+    });
+
+    const next = syncThreads(initialState, [{ key: thread2 }]);
+
+    expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread2]);
   });
 
   it("reorderProjects places group after target when dragged from before a non-last target", () => {
@@ -411,6 +474,21 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById).toEqual({});
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+
+  it("clearThreadUi removes deleted threads from pinned groups", () => {
+    const project1 = ProjectId.make("project-1");
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        [project1]: [thread1, thread2],
+      },
+    });
+
+    const next = clearThreadUi(initialState, thread1);
+
+    expect(next.pinnedThreadKeysByProjectId[project1]).toEqual([thread2]);
   });
 
   it("setThreadChangedFilesExpanded stores collapsed turns per thread", () => {

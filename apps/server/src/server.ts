@@ -75,6 +75,7 @@ import {
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import { NetService } from "@t3tools/shared/Net";
+import { mobileRouteLayer } from "./mobileProtocol.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -255,6 +256,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
+  mobileRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,

@@ -50,6 +50,7 @@ export const PROVIDER_OPTIONS: Array<{
 
 export interface WorkLogEntry {
   id: string;
+  stableId?: string;
   createdAt: string;
   label: string;
   detail?: string;
@@ -67,6 +68,7 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
   toolCallId?: string;
+  turnId?: string;
 }
 
 export interface PendingApproval {
@@ -577,7 +579,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           ? "info"
           : activity.tone,
     activityKind: activity.kind,
-    isComplete: activity.kind === "tool.completed" || activity.kind === "task.completed",
+    isComplete: activity.kind !== "tool.updated" && activity.kind !== "task.progress",
+    ...(activity.turnId ? { turnId: activity.turnId } : {}),
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
@@ -605,6 +608,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolCallId) {
     entry.toolCallId = toolCallId;
   }
+  const stableId = deriveToolLifecycleStableId(entry);
+  if (stableId) {
+    entry.stableId = stableId;
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
@@ -617,14 +624,31 @@ function collapseDerivedWorkLogEntries(
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
   for (const entry of entries) {
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const matchingOpenIndex = findMatchingOpenToolLifecycleEntryIndex(collapsed, entry);
+    if (matchingOpenIndex !== -1) {
+      const previous = collapsed[matchingOpenIndex];
+      if (previous) {
+        collapsed.splice(matchingOpenIndex, 1);
+        collapsed.push(mergeDerivedWorkLogEntries(previous, entry));
+      }
       continue;
     }
     collapsed.push(entry);
   }
   return collapsed;
+}
+
+function findMatchingOpenToolLifecycleEntryIndex(
+  entries: ReadonlyArray<DerivedWorkLogEntry>,
+  next: DerivedWorkLogEntry,
+): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const previous = entries[index];
+    if (previous && shouldCollapseToolLifecycleEntries(previous, next)) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function shouldCollapseToolLifecycleEntries(
@@ -640,6 +664,9 @@ function shouldCollapseToolLifecycleEntries(
   if (previous.activityKind === "tool.completed") {
     return false;
   }
+  if (!isSameTurnScope(previous, next)) {
+    return false;
+  }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
     return true;
   }
@@ -649,6 +676,12 @@ function shouldCollapseToolLifecycleEntries(
     previous.itemType === next.itemType &&
     normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
       normalizeCompactToolLabel(next.toolTitle ?? next.label)
+  );
+}
+
+function isSameTurnScope(previous: DerivedWorkLogEntry, next: DerivedWorkLogEntry): boolean {
+  return (
+    previous.turnId === undefined || next.turnId === undefined || previous.turnId === next.turnId
   );
 }
 
@@ -665,6 +698,8 @@ function mergeDerivedWorkLogEntries(
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
+  const stableId = next.stableId ?? previous.stableId;
+  const turnId = next.turnId ?? previous.turnId;
   return {
     ...previous,
     ...next,
@@ -677,6 +712,8 @@ function mergeDerivedWorkLogEntries(
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
+    ...(stableId ? { stableId } : {}),
+    ...(turnId ? { turnId } : {}),
   };
 }
 
@@ -695,8 +732,8 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
+  if (entry.stableId) {
+    return entry.stableId;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -704,7 +741,17 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
     return undefined;
   }
-  return [itemType, normalizedLabel, detail].join("\u001f");
+  return [entry.turnId ?? "", itemType, normalizedLabel, detail].join("\u001f");
+}
+
+function deriveToolLifecycleStableId(entry: DerivedWorkLogEntry): string | undefined {
+  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+    return undefined;
+  }
+  if (!entry.toolCallId) {
+    return undefined;
+  }
+  return entry.turnId ? `tool:${entry.turnId}:${entry.toolCallId}` : `tool:${entry.toolCallId}`;
 }
 
 function normalizeCompactToolLabel(value: string): string {
@@ -1131,6 +1178,7 @@ export function deriveTimelineEntries(
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
 ): TimelineEntry[] {
+  const messageOrderById = new Map(messages.map((message, index) => [message.id, index]));
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
     kind: "message",
@@ -1144,14 +1192,17 @@ export function deriveTimelineEntries(
     proposedPlan,
   }));
   const workRows: TimelineEntry[] = workEntries.map((entry) => ({
-    id: entry.id,
+    id: entry.stableId ?? entry.id,
     kind: "work",
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) => {
+    if (a.kind === "message" && b.kind === "message") {
+      return (messageOrderById.get(a.message.id) ?? 0) - (messageOrderById.get(b.message.id) ?? 0);
+    }
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 export function deriveCompletionDividerBeforeEntryId(

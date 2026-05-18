@@ -12,6 +12,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
+  CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
@@ -395,6 +396,33 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
     };
+  }
+
+  async function completeTurnForNextStart(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    input: {
+      readonly commandId: string;
+      readonly turnId?: TurnId;
+      readonly completedAt?: string;
+    },
+  ): Promise<void> {
+    const completedAt = input.completedAt ?? new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        turnId: input.turnId ?? asTurnId("turn-1"),
+        checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/thread-1/${input.commandId}`),
+        status: "ready",
+        files: [],
+        agentTouchedPaths: [],
+        turnFiles: [],
+        checkpointTurnCount: 1,
+        completedAt,
+        createdAt: completedAt,
+      }),
+    );
   }
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
@@ -833,6 +861,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-unsupported-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -933,6 +962,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-unchanged-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -982,6 +1012,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-compatible-codex-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1046,6 +1077,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-workspace-1" });
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
     });
@@ -1124,6 +1156,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-claude-effort-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1192,6 +1225,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-runtime-mode-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1380,6 +1414,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await completeTurnForNextStart(harness, { commandId: "cmd-complete-provider-switch-1" });
 
     await Effect.runPromise(
       harness.engine.dispatch({

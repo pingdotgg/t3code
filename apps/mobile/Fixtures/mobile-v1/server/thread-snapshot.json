@@ -1,0 +1,64 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "thread-1",
+  "type": "stream",
+  "payload": {
+    "kind": "snapshot",
+    "snapshot": {
+      "snapshotSequence": 5,
+      "thread": {
+        "id": "thread-fixture",
+        "projectId": "project-fixture",
+        "title": "Fixture Thread",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5-codex"
+        },
+        "interactionMode": "default",
+        "runtimeMode": "full-access",
+        "pendingRuntimeMode": null,
+        "branch": "main",
+        "worktreePath": null,
+        "createdAt": "2026-05-10T00:00:00.000Z",
+        "updatedAt": "2026-05-10T00:00:01.000Z",
+        "archivedAt": null,
+        "latestTurn": null,
+        "messages": [
+          {
+            "id": "message-user-1",
+            "role": "user",
+            "text": "Summarize this repository.",
+            "attachments": [],
+            "turnId": "turn-fixture-1",
+            "streaming": false,
+            "createdAt": "2026-05-10T00:00:01.000Z",
+            "updatedAt": "2026-05-10T00:00:01.000Z"
+          }
+        ],
+        "session": {
+          "threadId": "thread-fixture",
+          "status": "ready",
+          "providerName": "codex",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-05-10T00:00:02.000Z"
+        },
+        "activities": [],
+        "proposedPlans": [],
+        "checkpoints": [],
+        "deletedAt": null
+      }
+    }
+  }
+}

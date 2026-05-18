@@ -103,14 +103,11 @@ function buildProps() {
 }
 
 describe("MessagesTimeline", () => {
-  it("highlights matching substrings in open chat search results", async () => {
+  it("renders text content that chat search can match against", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        chatFindQuery="needle"
-        matchedRowIds={new Set(["entry-1", "entry-2"])}
-        activeMatchRowId="entry-1"
         timelineEntries={[
           {
             id: "entry-1",
@@ -140,9 +137,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("<mark");
-    expect(markup).toContain(">Needle</mark>");
-    expect(markup).toContain(">needle</mark>");
+    // Text content renders as plain text (highlighting is via CSS Custom Highlight API)
+    expect(markup).toContain("Needle alpha");
+    expect(markup).toContain("needle");
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {
@@ -246,6 +243,293 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Ran command");
   });
 
+  it("collapses completed tool-call groups while the response is still active", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        activeTurnId={TurnId.make("turn-1")}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Ran command",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Tool calls (2)");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Read file");
+    expect(markup).not.toContain("Ran command");
+  });
+
+  it("collapses active tool-call groups once following assistant text starts", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        activeTurnId={TurnId.make("turn-1")}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Read file",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Ran command",
+              tone: "tool",
+            },
+          },
+          {
+            id: "assistant-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:35.000Z",
+            message: {
+              id: MessageId.make("assistant-1"),
+              role: "assistant",
+              text: "I have the screenshot symptom.",
+              turnId: TurnId.make("turn-1"),
+              createdAt: "2026-03-17T19:12:35.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Tool calls (2)");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Read file");
+    expect(markup).not.toContain("Ran command");
+    expect(markup).toContain("I have the screenshot symptom.");
+  });
+
+  it("collapses completed work-log groups to an expandable header", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Plan updated",
+              tone: "info",
+              isComplete: true,
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Work log (2)");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Expand");
+    expect(markup).not.toContain("Plan updated");
+    expect(markup).not.toContain("Read file");
+  });
+
+  it("collapses reasoning before the response into a worked-for divider", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        completionDividerBeforeEntryId="assistant-final-entry"
+        timelineEntries={[
+          {
+            id: "user-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:00.000Z",
+            message: {
+              id: MessageId.make("message-user"),
+              role: "user",
+              text: "Review the plan",
+              createdAt: "2026-03-17T19:12:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "work-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:20.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:20.000Z",
+              label: "Read files",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+          {
+            id: "assistant-final-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:13:55.000Z",
+            message: {
+              id: MessageId.make("message-assistant"),
+              role: "assistant",
+              text: "Here is the review.",
+              createdAt: "2026-03-17T19:13:55.000Z",
+              completedAt: "2026-03-17T19:14:10.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Worked for 1m 55s");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Read files");
+    expect(markup).not.toContain(">Response<");
+    expect(markup).toContain("Here is the review.");
+  });
+
+  it("keeps reasoning visible while the response is still active", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        activeTurnId={TurnId.make("turn-1")}
+        timelineEntries={[
+          {
+            id: "user-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:00.000Z",
+            message: {
+              id: MessageId.make("message-user"),
+              role: "user",
+              text: "Review the plan",
+              createdAt: "2026-03-17T19:12:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "work-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:20.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:20.000Z",
+              label: "Read files",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+          {
+            id: "assistant-final-entry",
+            kind: "message",
+            createdAt: "2026-03-17T19:13:55.000Z",
+            message: {
+              id: MessageId.make("message-assistant"),
+              role: "assistant",
+              text: "Here is the review.",
+              createdAt: "2026-03-17T19:13:55.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("Worked for");
+    expect(markup).toContain("Read files");
+    expect(markup).toContain("Here is the review.");
+  });
+
+  it("keeps incomplete work-log groups expanded while the response is active", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        activeTurnId={TurnId.make("turn-1")}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Plan updated",
+              tone: "info",
+              isComplete: true,
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Reading file",
+              tone: "tool",
+              isComplete: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Work log (2)");
+    expect(markup).not.toContain('aria-expanded="false"');
+    expect(markup).toContain("Plan updated");
+    expect(markup).toContain("Reading file");
+  });
+
   it("formats changed file paths from the workspace root", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -315,6 +599,79 @@ describe("MessagesTimeline", () => {
 
     expect(markup.match(new RegExp(`>${copilotResumeCommand}</span>`, "g"))).toHaveLength(1);
     expect(markup.indexOf(copilotResumeCommand)).toBeGreaterThan(markup.indexOf("All set."));
+  });
+
+  it("hides the Copilot resume command while the terminal assistant message is still active", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const copilotResumeCommand = "copilot --resume=a7f0c803-7cce-4554-9ad6-dfd9df539e33";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        activeTurnId={TurnId.make("turn-1")}
+        copilotResumeCommand={copilotResumeCommand}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-04-22T19:03:33.000Z",
+            message: {
+              id: MessageId.make("message-assistant-1"),
+              role: "assistant",
+              text: "Still working.",
+              createdAt: "2026-04-22T19:03:33.000Z",
+              completedAt: "2026-04-22T19:03:40.000Z",
+              turnId: TurnId.make("turn-1"),
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain(copilotResumeCommand);
+  });
+
+  it("renders the fork action only on the last assistant metadata row for a response", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-04-22T19:00:45.000Z",
+            message: {
+              id: MessageId.make("message-assistant-1"),
+              role: "assistant",
+              text: "I am checking this.",
+              createdAt: "2026-04-22T19:00:45.000Z",
+              completedAt: "2026-04-22T19:01:00.000Z",
+              turnId: TurnId.make("turn-1"),
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "message",
+            createdAt: "2026-04-22T19:03:33.000Z",
+            message: {
+              id: MessageId.make("message-assistant-2"),
+              role: "assistant",
+              text: "All set.",
+              createdAt: "2026-04-22T19:03:33.000Z",
+              completedAt: "2026-04-22T19:03:40.000Z",
+              turnId: TurnId.make("turn-1"),
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Fork chat from this response"/g)).toHaveLength(1);
+    expect(markup.indexOf("Fork chat")).toBeGreaterThan(markup.indexOf("All set."));
   });
 
   it("renders turn-scoped changed files by default", async () => {

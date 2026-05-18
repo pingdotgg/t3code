@@ -20,6 +20,7 @@ export interface PersistedUiState {
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  pinnedThreadKeysByProjectId?: Record<string, string[]>;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   changedFilesDiffScope?: TurnDiffScope;
 }
@@ -27,6 +28,7 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  pinnedThreadKeysByProjectId: Record<string, string[]>;
 }
 
 export interface UiThreadState {
@@ -53,6 +55,7 @@ export interface SyncThreadInput {
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  pinnedThreadKeysByProjectId: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   changedFilesDiffScope: "turn",
@@ -92,6 +95,9 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(parsed);
     return {
       ...initialState,
+      pinnedThreadKeysByProjectId: sanitizePersistedPinnedThreadKeysByProjectId(
+        parsed.pinnedThreadKeysByProjectId,
+      ),
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
@@ -100,6 +106,33 @@ function readPersistedState(): UiState {
   } catch {
     return initialState;
   }
+}
+
+function sanitizePersistedPinnedThreadKeysByProjectId(
+  value: PersistedUiState["pinnedThreadKeysByProjectId"],
+): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const nextState: Record<string, string[]> = {};
+  for (const [projectId, threadKeys] of Object.entries(value)) {
+    if (!projectId || !Array.isArray(threadKeys)) {
+      continue;
+    }
+
+    const uniqueThreadKeys = threadKeys.filter(
+      (threadKey, index) =>
+        typeof threadKey === "string" &&
+        threadKey.length > 0 &&
+        threadKeys.indexOf(threadKey) === index,
+    );
+    if (uniqueThreadKeys.length > 0) {
+      nextState[projectId] = uniqueThreadKeys;
+    }
+  }
+
+  return nextState;
 }
 
 function sanitizePersistedDiffScope(value: unknown): TurnDiffScope {
@@ -182,12 +215,18 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
+    const pinnedThreadKeysByProjectId = Object.fromEntries(
+      Object.entries(state.pinnedThreadKeysByProjectId).flatMap(([projectId, threadKeys]) =>
+        threadKeys.length > 0 ? [[projectId, threadKeys]] : [],
+      ),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
         collapsedProjectCwds,
         expandedProjectCwds,
         projectOrderCwds,
+        pinnedThreadKeysByProjectId,
         threadChangedFilesExpandedById,
         changedFilesDiffScope: state.changedFilesDiffScope,
       } satisfies PersistedUiState),
@@ -236,6 +275,24 @@ function nestedBooleanRecordsEqual(
   }
   for (const [key, value] of leftEntries) {
     if (!(key in right) || !recordsEqual(value, right[key]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function arrayRecordsEqual(
+  left: Record<string, readonly string[]>,
+  right: Record<string, readonly string[]>,
+): boolean {
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+  for (const [key, value] of leftEntries) {
+    const rightValue = right[key];
+    if (!rightValue || !projectOrdersEqual(value, rightValue)) {
       return false;
     }
   }
@@ -414,8 +471,15 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextPinnedThreadKeysByProjectId = Object.fromEntries(
+    Object.entries(state.pinnedThreadKeysByProjectId).flatMap(([projectId, threadKeys]) => {
+      const retainedThreadKeys = threadKeys.filter((threadKey) => retainedThreadIds.has(threadKey));
+      return retainedThreadKeys.length > 0 ? [[projectId, retainedThreadKeys]] : [];
+    }),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
+    arrayRecordsEqual(state.pinnedThreadKeysByProjectId, nextPinnedThreadKeysByProjectId) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
@@ -425,6 +489,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
   }
   return {
     ...state,
+    pinnedThreadKeysByProjectId: nextPinnedThreadKeysByProjectId,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
   };
@@ -479,15 +544,28 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const pinnedProjectsContainingThread = Object.entries(state.pinnedThreadKeysByProjectId).filter(
+    ([, threadKeys]) => threadKeys.includes(threadId),
+  );
+  if (!hasVisitedState && !hasChangedFilesState && pinnedProjectsContainingThread.length === 0) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextPinnedThreadKeysByProjectId = { ...state.pinnedThreadKeysByProjectId };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  for (const [projectId, threadKeys] of pinnedProjectsContainingThread) {
+    const nextThreadKeys = threadKeys.filter((key) => key !== threadId);
+    if (nextThreadKeys.length === 0) {
+      delete nextPinnedThreadKeysByProjectId[projectId];
+    } else {
+      nextPinnedThreadKeysByProjectId[projectId] = nextThreadKeys;
+    }
+  }
   return {
     ...state,
+    pinnedThreadKeysByProjectId: nextPinnedThreadKeysByProjectId,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
   };
@@ -619,6 +697,75 @@ export function reorderProjects(
   };
 }
 
+export function setThreadPinned(
+  state: UiState,
+  projectId: string,
+  threadId: string,
+  pinned: boolean,
+): UiState {
+  const currentPinnedThreadKeys = state.pinnedThreadKeysByProjectId[projectId] ?? [];
+  const isPinned = currentPinnedThreadKeys.includes(threadId);
+  if (isPinned === pinned) {
+    return state;
+  }
+
+  const nextPinnedThreadKeysByProjectId = { ...state.pinnedThreadKeysByProjectId };
+  if (pinned) {
+    nextPinnedThreadKeysByProjectId[projectId] = [
+      threadId,
+      ...currentPinnedThreadKeys.filter((key) => key !== threadId),
+    ];
+  } else {
+    const nextThreadKeys = currentPinnedThreadKeys.filter((key) => key !== threadId);
+    if (nextThreadKeys.length === 0) {
+      delete nextPinnedThreadKeysByProjectId[projectId];
+    } else {
+      nextPinnedThreadKeysByProjectId[projectId] = nextThreadKeys;
+    }
+  }
+
+  return {
+    ...state,
+    pinnedThreadKeysByProjectId: nextPinnedThreadKeysByProjectId,
+  };
+}
+
+export function reorderPinnedThreads(
+  state: UiState,
+  projectId: string,
+  draggedThreadId: string,
+  targetThreadId: string,
+): UiState {
+  if (draggedThreadId === targetThreadId) {
+    return state;
+  }
+
+  const currentPinnedThreadKeys = state.pinnedThreadKeysByProjectId[projectId] ?? [];
+  const draggedIndex = currentPinnedThreadKeys.indexOf(draggedThreadId);
+  const targetIndex = currentPinnedThreadKeys.indexOf(targetThreadId);
+  if (draggedIndex < 0 || targetIndex < 0) {
+    return state;
+  }
+
+  const nextThreadKeys = [...currentPinnedThreadKeys];
+  const [draggedThreadKey] = nextThreadKeys.splice(draggedIndex, 1);
+  if (!draggedThreadKey) {
+    return state;
+  }
+  nextThreadKeys.splice(targetIndex, 0, draggedThreadKey);
+  if (projectOrdersEqual(currentPinnedThreadKeys, nextThreadKeys)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    pinnedThreadKeysByProjectId: {
+      ...state.pinnedThreadKeysByProjectId,
+      [projectId]: nextThreadKeys,
+    },
+  };
+}
+
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
@@ -632,6 +779,12 @@ interface UiStateStore extends UiState {
   reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+  ) => void;
+  setThreadPinned: (projectId: string, threadId: string, pinned: boolean) => void;
+  reorderPinnedThreads: (
+    projectId: string,
+    draggedThreadId: string,
+    targetThreadId: string,
   ) => void;
 }
 
@@ -652,6 +805,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
+  setThreadPinned: (projectId, threadId, pinned) =>
+    set((state) => setThreadPinned(state, projectId, threadId, pinned)),
+  reorderPinnedThreads: (projectId, draggedThreadId, targetThreadId) =>
+    set((state) => reorderPinnedThreads(state, projectId, draggedThreadId, targetThreadId)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

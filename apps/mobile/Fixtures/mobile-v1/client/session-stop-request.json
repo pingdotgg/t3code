@@ -1,0 +1,12 @@
+{
+  "id": "dispatch-session-stop-1",
+  "type": "request",
+  "protocolVersion": "mobile.v1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "type": "thread.session.stop",
+    "commandId": "mobile-session-stop-1",
+    "threadId": "thread-fixture",
+    "createdAt": "2026-05-10T00:00:09.000Z"
+  }
+}

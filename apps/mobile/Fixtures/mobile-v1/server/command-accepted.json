@@ -1,0 +1,22 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "dispatch-1",
+  "type": "response",
+  "payload": {
+    "status": "accepted",
+    "commandId": "mobile-command-1",
+    "payloadHash": "sha256-fixture",
+    "acceptedAt": "2026-05-10T00:00:04.000Z",
+    "sequence": 7
+  }
+}

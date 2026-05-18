@@ -88,6 +88,32 @@ describe("ChatSplitArea", () => {
     await screen.unmount();
   });
 
+  it("fills a focused blank split pane when sidebar navigation changes threads", async () => {
+    const environmentId = EnvironmentId.make("env-local");
+    const targetA = serverTarget(environmentId, "thread-a");
+    const targetB = serverTarget(environmentId, "thread-b");
+    const screen = await render(<ChatSplitArea routeTarget={targetA} routeDiffSearch={{}} />);
+
+    await expect.poll(() => document.querySelectorAll('[data-testid="chat-view"]').length).toBe(1);
+    clickLastButtonByLabel("Split right");
+    await expect
+      .poll(
+        () =>
+          document.body.textContent?.includes(
+            "Click or drag another chat you would like to split with",
+          ) ?? false,
+      )
+      .toBe(true);
+
+    await screen.rerender(<ChatSplitArea routeTarget={targetB} routeDiffSearch={{}} />);
+
+    await expect.poll(() => document.querySelectorAll('[data-testid="chat-view"]').length).toBe(2);
+    expect(document.body.textContent?.includes("thread-a")).toBe(true);
+    expect(document.body.textContent?.includes("thread-b")).toBe(true);
+
+    await screen.unmount();
+  });
+
   it("focuses an inactive chat pane and navigates to that leaf target", async () => {
     const environmentId = EnvironmentId.make("env-local");
     const targetA = serverTarget(environmentId, "thread-a");

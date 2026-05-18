@@ -29,6 +29,7 @@ const ignoreCancel = process.env.T3_ACP_IGNORE_CANCEL === "1";
 const promptDelayMs = Number.parseInt(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0", 10);
 const promptStartedText = process.env.T3_ACP_PROMPT_STARTED_TEXT;
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const loadSessionAgentText = process.env.T3_ACP_LOAD_SESSION_AGENT_TEXT;
 const authMethods = (process.env.T3_ACP_AUTH_METHODS ?? "")
   .split(",")
   .map((method) => method.trim())
@@ -316,20 +317,29 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleLoadSession((request) =>
-    agent.client
-      .sessionUpdate({
-        sessionId: String(request.sessionId ?? sessionId),
+    Effect.gen(function* () {
+      const requestedSessionId = String(request.sessionId ?? sessionId);
+      yield* agent.client.sessionUpdate({
+        sessionId: requestedSessionId,
         update: {
           sessionUpdate: "user_message_chunk",
           content: { type: "text", text: "replay" },
         },
-      })
-      .pipe(
-        Effect.as({
-          modes: modeState(),
-          configOptions: configOptions(),
-        }),
-      ),
+      });
+      if (loadSessionAgentText) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: loadSessionAgentText },
+          },
+        });
+      }
+      return {
+        modes: modeState(),
+        configOptions: configOptions(),
+      };
+    }),
   );
 
   yield* agent.handleSetSessionConfigOption((request) =>

@@ -176,6 +176,56 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("drops assistant history chunks emitted while resuming a Copilot ACP session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("copilot-resume-history-thread");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockCopilotWrapper({
+          T3_ACP_LOAD_SESSION_AGENT_TEXT: "stale history",
+          T3_ACP_PROMPT_RESPONSE_TEXT: "fresh answer",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: COPILOT_DRIVER,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          schemaVersion: 1,
+          sessionId: "mock-session-1",
+        },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello after resume",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const assistantDeltas = runtimeEvents.flatMap((event) =>
+        event.type === "content.delta" ? [event.payload.delta] : [],
+      );
+
+      assert.deepEqual(assistantDeltas, ["fresh answer"]);
+      assert.notInclude(assistantDeltas, "stale history");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("reports running status while a Copilot prompt is in flight", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

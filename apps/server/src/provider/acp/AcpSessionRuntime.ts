@@ -90,6 +90,7 @@ export interface AcpSessionRuntimeShape {
   readonly handleExtNotification: EffectAcpClient.AcpClientShape["handleExtNotification"];
   readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
   readonly getEvents: () => Stream.Stream<AcpParsedSessionEvent, never>;
+  readonly discardPendingEvents: Effect.Effect<ReadonlyArray<AcpParsedSessionEvent>>;
   readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
   readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly prompt: (
@@ -520,6 +521,9 @@ const makeAcpSessionRuntime = (
       });
       return yield* effect;
     });
+    const discardPendingEvents = Queue.clear(eventQueue).pipe(
+      Effect.tap(() => Ref.set(assistantSegmentRef, { nextSegmentIndex: 0 })),
+    );
 
     return {
       handleRequestPermission: acp.handleRequestPermission,
@@ -539,6 +543,7 @@ const makeAcpSessionRuntime = (
       handleExtNotification: acp.handleExtNotification,
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
+      discardPendingEvents,
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload) =>

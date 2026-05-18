@@ -1,0 +1,33 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "minSupportedProtocolVersion": "mobile.v1",
+  "endpoints": {
+    "descriptor": "/mobile/v1",
+    "authBearerBootstrap": "/mobile/v1/auth/bootstrap/bearer",
+    "authSession": "/mobile/v1/auth/session",
+    "authWebSocketToken": "/mobile/v1/auth/ws-token",
+    "websocket": "/mobile/v1/ws"
+  },
+  "environment": {
+    "environmentId": "environment-fixture",
+    "label": "Fixture Mac",
+    "platform": {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    "serverVersion": "0.0.0-fixture",
+    "capabilities": {
+      "repositoryIdentity": true
+    }
+  }
+}

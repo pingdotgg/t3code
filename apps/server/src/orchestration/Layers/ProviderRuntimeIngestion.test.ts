@@ -1274,7 +1274,7 @@ describe("ProviderRuntimeIngestion", () => {
       throw new Error("Expected source plan to exist.");
     }
 
-    await Effect.runPromise(
+    const rejectedStartExit = await Effect.runPromiseExit(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-plan-target-guarded"),
@@ -1294,6 +1294,7 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt: new Date().toISOString(),
       }),
     );
+    expect(Exit.isFailure(rejectedStartExit)).toBe(true);
 
     harness.emit({
       type: "turn.started",

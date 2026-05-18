@@ -41,6 +41,10 @@
         "typescript": "catalog:",
       },
     },
+    "apps/mobile": {
+      "name": "@t3tools/mobile",
+      "version": "0.0.0",
+    },
     "apps/server": {
       "name": "t3",
       "version": "0.0.21",
@@ -734,6 +738,8 @@
     "@t3tools/desktop": ["@t3tools/desktop@workspace:apps/desktop"],
 
     "@t3tools/marketing": ["@t3tools/marketing@workspace:apps/marketing"],
+
+    "@t3tools/mobile": ["@t3tools/mobile@workspace:apps/mobile"],
 
     "@t3tools/scripts": ["@t3tools/scripts@workspace:scripts"],
 

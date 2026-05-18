@@ -1505,6 +1505,66 @@ describe("deriveTimelineEntries", () => {
       }),
     ).toBe("assistant-final");
   });
+
+  it("does not anchor the completion divider before latestTurn completion", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "streaming answer",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: true,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(
+      deriveCompletionDividerBeforeEntryId(entries, {
+        assistantMessageId: MessageId.make("assistant-final"),
+        startedAt: "2026-02-23T00:00:00.000Z",
+        completedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves server message sequence when an optimistic user message is newer than a late-timestamped assistant response", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("previous-user"),
+          role: "user",
+          text: "previous question",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.make("previous-assistant"),
+          role: "assistant",
+          text: "previous answer",
+          createdAt: "2026-02-23T00:00:10.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.make("optimistic-user"),
+          role: "user",
+          text: "next question",
+          createdAt: "2026-02-23T00:00:05.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "previous-user",
+      "previous-assistant",
+      "optimistic-user",
+    ]);
+  });
 });
 
 describe("deriveWorkLogEntries context window handling", () => {

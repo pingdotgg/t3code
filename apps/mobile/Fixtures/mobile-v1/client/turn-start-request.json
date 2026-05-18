@@ -1,0 +1,20 @@
+{
+  "id": "dispatch-turn-start-1",
+  "type": "request",
+  "protocolVersion": "mobile.v1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "type": "thread.turn.start",
+    "commandId": "mobile-turn-start-1",
+    "threadId": "thread-fixture",
+    "message": {
+      "messageId": "message-mobile-1",
+      "role": "user",
+      "text": "Continue from mobile.",
+      "attachments": []
+    },
+    "runtimeMode": "full-access",
+    "interactionMode": "default",
+    "createdAt": "2026-05-10T00:00:05.000Z"
+  }
+}

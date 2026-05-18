@@ -88,6 +88,44 @@ export function requireThread(input: {
   );
 }
 
+export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
+  if (thread.latestTurn?.state === "running") {
+    return true;
+  }
+
+  if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
+    return true;
+  }
+
+  const latestMessage = thread.messages.at(-1);
+  if (latestMessage?.role !== "user") {
+    return false;
+  }
+  if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
+    return true;
+  }
+  return latestMessage.createdAt >= thread.latestTurn.completedAt;
+}
+
+export function requireThreadReadyForTurnStart(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+  return requireThread(input).pipe(
+    Effect.flatMap((thread) =>
+      threadHasInFlightTurn(thread)
+        ? Effect.fail(
+            invariantError(
+              input.command.type,
+              `Thread '${input.threadId}' already has a turn in flight. Wait for it to finish or interrupt it before starting another turn.`,
+            ),
+          )
+        : Effect.succeed(thread),
+    ),
+  );
+}
+
 export function requireThreadArchived(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;

@@ -967,47 +967,65 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             return mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error);
           }),
         );
+        if (input.resumeSessionId) {
+          yield* acp.discardPendingEvents;
+        }
 
+        const assistantItemTurnIdByItemId = new Map<string, TurnId>();
         const notificationFiber = yield* Stream.runDrain(
           Stream.mapEffect(acp.getEvents(), (rawEvent) =>
             Effect.gen(function* () {
               const normalizedEvents = normalizeCopilotParsedSessionEvent(rawEvent);
               for (const event of normalizedEvents) {
+                const activeTurnId = input.getCurrentTurnId();
                 switch (event._tag) {
                   case "ModeChanged":
                     break;
                   case "AssistantItemStarted":
+                    if (!activeTurnId) {
+                      break;
+                    }
+                    assistantItemTurnIdByItemId.set(event.itemId, activeTurnId);
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: input.threadId,
-                        turnId: input.getCurrentTurnId(),
+                        turnId: activeTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.started",
                       }),
                     );
                     break;
-                  case "AssistantItemCompleted":
+                  case "AssistantItemCompleted": {
+                    const eventTurnId = assistantItemTurnIdByItemId.get(event.itemId);
+                    if (!eventTurnId) {
+                      break;
+                    }
+                    assistantItemTurnIdByItemId.delete(event.itemId);
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: input.threadId,
-                        turnId: input.getCurrentTurnId(),
+                        turnId: eventTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.completed",
                       }),
                     );
                     break;
+                  }
                   case "PlanUpdated":
+                    if (!activeTurnId) {
+                      break;
+                    }
                     yield* logNative(input.threadId, "session/update", event.rawPayload);
                     yield* offerRuntimeEvent(
                       makeAcpPlanUpdatedEvent({
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: input.threadId,
-                        turnId: input.getCurrentTurnId(),
+                        turnId: activeTurnId,
                         payload: event.payload,
                         source: "acp.jsonrpc",
                         method: "session/update",
@@ -1016,6 +1034,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                     );
                     break;
                   case "ToolCallUpdated":
+                    if (!activeTurnId) {
+                      break;
+                    }
                     yield* logNative(input.threadId, "session/update", event.rawPayload);
                     {
                       const planUpdate = extractCopilotPlanUpdate(event.toolCall);
@@ -1025,7 +1046,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                             stamp: yield* makeEventStamp(),
                             provider: PROVIDER,
                             threadId: input.threadId,
-                            turnId: input.getCurrentTurnId(),
+                            turnId: activeTurnId,
                             payload: planUpdate,
                             source: "acp.jsonrpc",
                             method: "session/update",
@@ -1039,13 +1060,19 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: input.threadId,
-                        turnId: input.getCurrentTurnId(),
+                        turnId: activeTurnId,
                         toolCall: event.toolCall,
                         rawPayload: event.rawPayload,
                       }),
                     );
                     break;
                   case "ContentDelta": {
+                    const eventTurnId = event.itemId
+                      ? assistantItemTurnIdByItemId.get(event.itemId)
+                      : activeTurnId;
+                    if (!eventTurnId) {
+                      break;
+                    }
                     yield* logNative(input.threadId, "session/update", event.rawPayload);
                     const fatal = detectCopilotFatalToolCallError(event.text);
                     const friendlyMessage = fatal
@@ -1056,17 +1083,14 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                         stamp: yield* makeEventStamp(),
                         provider: PROVIDER,
                         threadId: input.threadId,
-                        turnId: input.getCurrentTurnId(),
+                        turnId: eventTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: friendlyMessage ?? event.text,
                         rawPayload: event.rawPayload,
                       }),
                     );
                     if (fatal && friendlyMessage) {
-                      const fatalTurnId = input.getCurrentTurnId();
-                      if (fatalTurnId !== undefined) {
-                        input.onFatalCopilotError?.(fatalTurnId, friendlyMessage);
-                      }
+                      input.onFatalCopilotError?.(eventTurnId, friendlyMessage);
                       // Best-effort: SIGINT the Copilot CLI so the in-flight
                       // session/prompt fails fast. The send-turn finalizer will
                       // recreate the runtime so a fresh thread can recover.
@@ -1466,6 +1490,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           activeTurnId: turnId,
           updatedAt: yield* nowIso,
         };
+        yield* ctx.acp.discardPendingEvents;
 
         yield* offerRuntimeEvent({
           type: "turn.started",

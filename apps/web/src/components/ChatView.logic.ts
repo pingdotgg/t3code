@@ -204,6 +204,17 @@ export function deriveComposerSendState(options: {
   };
 }
 
+export function canStartThreadTurn(input: {
+  phase: SessionPhase;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  sendInFlight: boolean;
+}): boolean {
+  return (
+    input.phase !== "running" && !input.isSendBusy && !input.isConnecting && !input.sendInFlight
+  );
+}
+
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",

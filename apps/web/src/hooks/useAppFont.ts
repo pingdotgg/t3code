@@ -94,33 +94,16 @@ function normalizeUiDensity(value: unknown): UiDensity {
     : DEFAULT_UI_DENSITY;
 }
 
-function getStoredUiFont(): UiFont {
-  return normalizeUiFont(readBrowserClientSettings()?.uiFont);
-}
-
-function getStoredCodeFont(): CodeFont {
-  return normalizeCodeFont(readBrowserClientSettings()?.codeFont);
-}
-
-function getStoredFontSizes(): {
-  codeFontSize: FontSize;
-  chatFontSize: FontSize;
-  toolFontSize: FontSize;
-} {
-  const stored = readBrowserClientSettings();
-  return {
-    codeFontSize: normalizeFontSize(stored?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
-    chatFontSize: normalizeFontSize(stored?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
-    toolFontSize: normalizeFontSize(stored?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
-  };
-}
-
 if (typeof document !== "undefined") {
-  applyAppFont(getStoredUiFont());
-  applyCodeFont(getStoredCodeFont());
-  applyUiDensity(normalizeUiDensity(readBrowserClientSettings()?.uiDensity));
-  const sizes = getStoredFontSizes();
-  applyFontSizes(sizes.codeFontSize, sizes.chatFontSize, sizes.toolFontSize);
+  const storedSettings = readBrowserClientSettings();
+  applyAppFont(normalizeUiFont(storedSettings?.uiFont));
+  applyCodeFont(normalizeCodeFont(storedSettings?.codeFont));
+  applyUiDensity(normalizeUiDensity(storedSettings?.uiDensity));
+  applyFontSizes(
+    normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
+    normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
+  );
 }
 
 export function useAppFont() {

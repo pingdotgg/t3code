@@ -1,0 +1,41 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "replay-1",
+  "type": "response",
+  "payload": {
+    "status": "complete",
+    "fromSequenceExclusive": 5,
+    "returnedFromSequenceExclusive": 5,
+    "returnedToSequenceInclusive": 6,
+    "serverHighWaterSequence": 6,
+    "events": [
+      {
+        "sequence": 6,
+        "eventId": "event-mobile-1",
+        "aggregateKind": "thread",
+        "aggregateId": "thread-fixture",
+        "occurredAt": "2026-05-10T00:00:03.000Z",
+        "commandId": "command-session-stop-1",
+        "causationEventId": null,
+        "correlationId": "command-session-stop-1",
+        "metadata": {},
+        "type": "thread.session-stop-requested",
+        "payload": {
+          "threadId": "thread-fixture",
+          "createdAt": "2026-05-10T00:00:03.000Z"
+        }
+      }
+    ],
+    "resnapshot": []
+  }
+}

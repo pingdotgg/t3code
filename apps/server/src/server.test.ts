@@ -10,6 +10,9 @@ import {
   GitCommandError,
   KeybindingRule,
   MessageId,
+  MOBILE_PROTOCOL_VERSION,
+  MOBILE_V1_SERVER_CAPABILITIES,
+  MobileServerMessage,
   OpenError,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
@@ -37,6 +40,7 @@ import {
   Option,
   Path,
   Stream,
+  Schema,
 } from "effect";
 import {
   FetchHttpClient,
@@ -707,6 +711,37 @@ const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrap
     return body.sessionToken;
   });
 
+const bootstrapMobileBearerSession = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    const bootstrapUrl = yield* getHttpServerUrl("/mobile/v1/auth/bootstrap/bearer");
+    const response = yield* Effect.promise(() =>
+      fetch(bootstrapUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          credential,
+        }),
+      }),
+    );
+    const body = (yield* Effect.promise(() => response.json())) as {
+      readonly protocolVersion?: string;
+      readonly serverCapabilities?: ReadonlyArray<string>;
+      readonly result?: {
+        readonly authenticated: boolean;
+        readonly sessionMethod: string;
+        readonly expiresAt: string;
+        readonly sessionToken?: string;
+      };
+      readonly error?: string;
+    };
+    return {
+      response,
+      body,
+    };
+  });
+
 const extractSessionTokenFromSetCookie = (cookieHeader: string): string => {
   const [nameValue] = cookieHeader.split(";", 1);
   const token = nameValue?.split("=", 2)[1];
@@ -755,6 +790,51 @@ const getWsServerUrl = (
       yield* getAuthenticatedSessionCookieHeader(options?.credential),
     );
   });
+
+type NodeWsSocket = InstanceType<typeof NodeSocket.NodeWS.WebSocket>;
+
+const connectNodeWebSocket = (url: string) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<NodeWsSocket>((resolve, reject) => {
+          const socket = new NodeSocket.NodeWS.WebSocket(url);
+          socket.once("open", () => resolve(socket));
+          socket.once("error", reject);
+        }),
+    ),
+    (socket) =>
+      Effect.sync(() => {
+        socket.close();
+      }),
+  );
+
+const readNodeWebSocketJson = (socket: NodeWsSocket) =>
+  Effect.promise(
+    () =>
+      new Promise<unknown>((resolve, reject) => {
+        const handleMessage = (data: NodeSocket.NodeWS.RawData) => {
+          socket.off("error", handleError);
+          const text =
+            typeof data === "string"
+              ? data
+              : Buffer.isBuffer(data)
+                ? data.toString("utf8")
+                : Array.isArray(data)
+                  ? Buffer.concat(data).toString("utf8")
+                  : Buffer.from(data as ArrayBuffer).toString("utf8");
+          resolve(JSON.parse(text));
+        };
+        const handleError = (error: Error) => {
+          socket.off("message", handleMessage);
+          reject(error);
+        };
+        socket.once("message", handleMessage);
+        socket.once("error", handleError);
+      }),
+  );
+
+const decodeMobileServerMessage = Schema.decodeUnknownSync(MobileServerMessage);
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("serves static index content for GET / when staticDir is configured", () =>
@@ -1501,6 +1581,421 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
         assert.equal(response.auth.policy, "desktop-managed-local");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves versioned mobile descriptor and auth wrappers", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const descriptorResponse = yield* HttpClient.get("/mobile/v1");
+      const descriptor = (yield* descriptorResponse.json) as {
+        readonly protocolVersion: string;
+        readonly serverCapabilities: ReadonlyArray<string>;
+        readonly endpoints: {
+          readonly authBearerBootstrap: string;
+          readonly authSession: string;
+          readonly authWebSocketToken: string;
+          readonly websocket: string;
+        };
+        readonly environment: {
+          readonly environmentId: string;
+        };
+      };
+
+      assert.equal(descriptorResponse.status, 200);
+      assert.equal(descriptor.protocolVersion, MOBILE_PROTOCOL_VERSION);
+      assert.deepEqual(descriptor.serverCapabilities, [...MOBILE_V1_SERVER_CAPABILITIES]);
+      assert.equal(descriptor.endpoints.authBearerBootstrap, "/mobile/v1/auth/bootstrap/bearer");
+      assert.equal(descriptor.endpoints.authSession, "/mobile/v1/auth/session");
+      assert.equal(descriptor.endpoints.authWebSocketToken, "/mobile/v1/auth/ws-token");
+      assert.equal(descriptor.endpoints.websocket, "/mobile/v1/ws");
+      assert.equal(descriptor.environment.environmentId, testEnvironmentDescriptor.environmentId);
+
+      const { response: bootstrapResponse, body: bootstrapBody } =
+        yield* bootstrapMobileBearerSession();
+      assert.equal(bootstrapResponse.status, 200);
+      assert.equal(bootstrapBody.protocolVersion, MOBILE_PROTOCOL_VERSION);
+      assert.equal(bootstrapBody.result?.authenticated, true);
+      assert.equal(bootstrapBody.result?.sessionMethod, "bearer-session-token");
+      assert.isDefined(bootstrapBody.result?.sessionToken);
+
+      const sessionResponse = yield* HttpClient.get("/mobile/v1/auth/session", {
+        headers: {
+          authorization: `Bearer ${bootstrapBody.result?.sessionToken}`,
+        },
+      });
+      const sessionBody = (yield* sessionResponse.json) as {
+        readonly protocolVersion: string;
+        readonly result: {
+          readonly authenticated: boolean;
+          readonly sessionMethod?: string;
+        };
+      };
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.protocolVersion, MOBILE_PROTOCOL_VERSION);
+      assert.equal(sessionBody.result.authenticated, true);
+      assert.equal(sessionBody.result.sessionMethod, "bearer-session-token");
+
+      const wsTokenResponse = yield* HttpClient.post("/mobile/v1/auth/ws-token", {
+        headers: {
+          authorization: `Bearer ${bootstrapBody.result?.sessionToken}`,
+        },
+      });
+      const wsTokenBody = (yield* wsTokenResponse.json) as {
+        readonly protocolVersion: string;
+        readonly result: {
+          readonly token?: string;
+        };
+      };
+      assert.equal(wsTokenResponse.status, 200);
+      assert.equal(wsTokenBody.protocolVersion, MOBILE_PROTOCOL_VERSION);
+      assert.isDefined(wsTokenBody.result.token);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves the mobile v1 websocket contract with fixtures and command receipts", () =>
+    Effect.gen(function* () {
+      const readModel = makeDefaultOrchestrationReadModel();
+      const defaultThread = readModel.threads[0];
+      assert.isDefined(defaultThread);
+      let dispatchCount = 0;
+      let startupGateCount = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 5,
+                projects: [
+                  {
+                    id: defaultProjectId,
+                    title: "Default Project",
+                    workspaceRoot: "/tmp/default-project",
+                    defaultModelSelection,
+                    scripts: [],
+                    createdAt: "2026-05-10T00:00:00.000Z",
+                    updatedAt: "2026-05-10T00:00:00.000Z",
+                  },
+                ],
+                threads: [makeDefaultOrchestrationThreadShell()],
+                updatedAt: "2026-05-10T00:00:00.000Z",
+              }),
+            getThreadDetailById: () => Effect.succeed(Option.some(defaultThread)),
+          },
+          orchestrationEngine: {
+            getReadModel: () => Effect.succeed({ ...readModel, snapshotSequence: 5 }),
+            readEvents: () =>
+              Stream.make({
+                sequence: 6,
+                eventId: EventId.make("event-mobile-1"),
+                aggregateKind: "thread",
+                aggregateId: defaultThreadId,
+                occurredAt: "2026-05-10T00:00:01.000Z",
+                commandId: CommandId.make("cmd-replayed"),
+                causationEventId: null,
+                correlationId: CommandId.make("cmd-replayed"),
+                metadata: {},
+                type: "thread.session-stop-requested",
+                payload: {
+                  threadId: defaultThreadId,
+                  createdAt: "2026-05-10T00:00:01.000Z",
+                },
+              } satisfies Extract<OrchestrationEvent, { type: "thread.session-stop-requested" }>),
+            dispatch: () => {
+              dispatchCount += 1;
+              return Effect.succeed({ sequence: 7 });
+            },
+          },
+          serverRuntimeStartup: {
+            enqueueCommand: (effect) => {
+              startupGateCount += 1;
+              return effect;
+            },
+          },
+          checkpointDiffQuery: {
+            getTurnDiff: (input) =>
+              Effect.succeed({
+                threadId: input.threadId,
+                fromTurnCount: input.fromTurnCount,
+                toTurnCount: input.toTurnCount,
+                diff: "mobile-turn-diff",
+              }),
+            getFullThreadDiff: (input) =>
+              Effect.succeed({
+                threadId: input.threadId,
+                fromTurnCount: 0,
+                toTurnCount: input.toTurnCount,
+                diff: "mobile-full-diff",
+              }),
+          },
+        },
+      });
+
+      const { body: bootstrapBody } = yield* bootstrapMobileBearerSession();
+      const wsTokenResponse = yield* HttpClient.post("/mobile/v1/auth/ws-token", {
+        headers: {
+          authorization: `Bearer ${bootstrapBody.result?.sessionToken}`,
+        },
+      });
+      const wsTokenBody = (yield* wsTokenResponse.json) as {
+        readonly result: {
+          readonly token: string;
+        };
+      };
+      const wsUrl = `${yield* getWsServerUrl("/mobile/v1/ws", { authenticated: false })}?wsToken=${encodeURIComponent(wsTokenBody.result.token)}`;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* connectNodeWebSocket(wsUrl);
+          socket.send(
+            JSON.stringify({
+              id: "pre-hello-shell-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.subscribeShell",
+              payload: {},
+            }),
+          );
+          const preHello = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (preHello.type !== "error") {
+            assert.fail("Expected pre-hello protocol error");
+          }
+          assert.equal(preHello.id, "pre-hello-shell-1");
+          assert.equal(preHello.error.code, "invalid-message");
+
+          socket.send(
+            JSON.stringify({
+              id: "hello-v2",
+              type: "hello",
+              protocolVersion: "mobile.v2",
+              capabilities: ["orchestration.shell"],
+            }),
+          );
+          const unsupportedVersion = decodeMobileServerMessage(
+            yield* readNodeWebSocketJson(socket),
+          );
+          if (unsupportedVersion.type !== "error") {
+            assert.fail("Expected unsupported protocol version error");
+          }
+          assert.equal(unsupportedVersion.id, "hello-v2");
+          assert.equal(unsupportedVersion.error.code, "unsupported-protocol-version");
+
+          socket.send(
+            JSON.stringify({
+              id: "hello-1",
+              type: "hello",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              capabilities: [...MOBILE_V1_SERVER_CAPABILITIES],
+            }),
+          );
+          const hello = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (hello.type !== "hello") {
+            assert.fail("Expected hello fixture");
+          }
+          assert.equal(hello.protocolVersion, MOBILE_PROTOCOL_VERSION);
+          assert.deepEqual(hello.serverCapabilities, [...MOBILE_V1_SERVER_CAPABILITIES]);
+
+          socket.send(
+            JSON.stringify({
+              id: "shell-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.subscribeShell",
+              payload: {},
+            }),
+          );
+          const shell = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (shell.type !== "stream") {
+            assert.fail("Expected shell stream fixture");
+          }
+          assert.equal(shell.id, "shell-1");
+          assert.equal(shell.payload.kind, "snapshot");
+          if (shell.payload.kind === "snapshot" && "projects" in shell.payload.snapshot) {
+            assert.equal(shell.payload.snapshot.snapshotSequence, 5);
+            assert.equal(shell.payload.snapshot.projects[0]?.title, "Default Project");
+          } else {
+            assert.fail("Expected shell snapshot fixture");
+          }
+
+          socket.send(
+            JSON.stringify({
+              id: "thread-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.subscribeThread",
+              payload: {
+                threadId: defaultThreadId,
+              },
+            }),
+          );
+          const thread = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (thread.type !== "stream") {
+            assert.fail("Expected thread stream fixture");
+          }
+          assert.equal(thread.id, "thread-1");
+          assert.equal(thread.payload.kind, "snapshot");
+          if (thread.payload.kind === "snapshot" && "thread" in thread.payload.snapshot) {
+            assert.equal(thread.payload.snapshot.snapshotSequence, 5);
+            assert.equal(thread.payload.snapshot.thread.id, defaultThreadId);
+          } else {
+            assert.fail("Expected thread snapshot fixture");
+          }
+
+          socket.send(
+            JSON.stringify({
+              id: "replay-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.replayEvents",
+              payload: {
+                fromSequenceExclusive: 5,
+              },
+            }),
+          );
+          const replay = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (replay.type !== "response") {
+            assert.fail("Expected replay response fixture");
+          }
+          assert.equal(replay.id, "replay-1");
+          if ("events" in replay.payload) {
+            assert.equal(replay.payload.status, "complete");
+            assert.equal(replay.payload.returnedToSequenceInclusive, 6);
+            assert.equal(replay.payload.events[0]?.type, "thread.session-stop-requested");
+          } else {
+            assert.fail("Expected replay envelope fixture");
+          }
+
+          const commandPayload = {
+            type: "thread.session.stop",
+            commandId: CommandId.make("mobile-command-1"),
+            threadId: defaultThreadId,
+            createdAt: "2026-05-10T00:00:02.000Z",
+          };
+          socket.send(
+            JSON.stringify({
+              id: "dispatch-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.dispatchCommand",
+              payload: commandPayload,
+            }),
+          );
+          const accepted = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (accepted.type !== "response") {
+            assert.fail("Expected accepted command response fixture");
+          }
+          if ("commandId" in accepted.payload) {
+            assert.equal(accepted.payload.status, "accepted");
+            assert.equal(accepted.payload.sequence, 7);
+          } else {
+            assert.fail("Expected command receipt fixture");
+          }
+
+          socket.send(
+            JSON.stringify({
+              id: "dispatch-2",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.dispatchCommand",
+              payload: commandPayload,
+            }),
+          );
+          const duplicate = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (duplicate.type !== "response") {
+            assert.fail("Expected duplicate command response fixture");
+          }
+          if ("commandId" in duplicate.payload) {
+            assert.equal(duplicate.payload.status, "duplicate");
+            assert.equal(duplicate.payload.sequence, 7);
+          } else {
+            assert.fail("Expected duplicate command receipt fixture");
+          }
+          assert.equal(dispatchCount, 1);
+          assert.equal(startupGateCount, 1);
+
+          socket.send(
+            JSON.stringify({
+              id: "dispatch-archive-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.dispatchCommand",
+              payload: {
+                type: "thread.archive",
+                commandId: CommandId.make("mobile-archive-1"),
+                threadId: defaultThreadId,
+                createdAt: "2026-05-10T00:00:03.000Z",
+              },
+            }),
+          );
+          const rejectedArchive = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (rejectedArchive.type !== "error") {
+            assert.fail("Expected non-MVP command validation error");
+          }
+          assert.equal(rejectedArchive.id, "dispatch-archive-1");
+          assert.equal(rejectedArchive.error.code, "invalid-message");
+          assert.equal(dispatchCount, 1);
+
+          socket.send(
+            JSON.stringify({
+              id: "diff-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.getTurnDiff",
+              payload: {
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 1,
+                scope: "snapshot",
+              },
+            }),
+          );
+          const diff = decodeMobileServerMessage(yield* readNodeWebSocketJson(socket));
+          if (diff.type !== "response") {
+            assert.fail("Expected diff response fixture");
+          }
+          if ("diff" in diff.payload) {
+            assert.equal(diff.payload.diff, "mobile-turn-diff");
+          } else {
+            assert.fail("Expected turn diff fixture");
+          }
+
+          const limitedSocket = yield* connectNodeWebSocket(wsUrl);
+          limitedSocket.send(
+            JSON.stringify({
+              id: "limited-hello-1",
+              type: "hello",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              capabilities: ["orchestration.shell"],
+            }),
+          );
+          const limitedHello = decodeMobileServerMessage(
+            yield* readNodeWebSocketJson(limitedSocket),
+          );
+          if (limitedHello.type !== "hello") {
+            assert.fail("Expected limited hello response");
+          }
+          limitedSocket.send(
+            JSON.stringify({
+              id: "limited-replay-1",
+              type: "request",
+              protocolVersion: MOBILE_PROTOCOL_VERSION,
+              method: "orchestration.replayEvents",
+              payload: {
+                fromSequenceExclusive: 5,
+              },
+            }),
+          );
+          const limitedReplay = decodeMobileServerMessage(
+            yield* readNodeWebSocketJson(limitedSocket),
+          );
+          if (limitedReplay.type !== "error") {
+            assert.fail("Expected missing capability error");
+          }
+          assert.equal(limitedReplay.id, "limited-replay-1");
+          assert.equal(limitedReplay.error.code, "invalid-message");
+        }),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("serves attachment files from state dir", () =>

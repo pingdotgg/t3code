@@ -13,6 +13,8 @@ export interface ChatFindMatch {
   id: string;
   rowId: string;
   rowIndex: number;
+  /** Which occurrence of the query within this row (0-based). */
+  matchIndexInRow: number;
 }
 
 function normalizeSearchText(value: string): string {
@@ -46,58 +48,46 @@ function collectProposedPlanSearchText(proposedPlan: ProposedPlan): string {
   return normalizeSearchText(proposedPlan.planMarkdown);
 }
 
-function buildChatFindRowFromTimelineRow(
-  row: MessagesTimelineRow,
-  rowIndex: number,
-): ChatFindRow | null {
+function collectTimelineRowSearchText(row: MessagesTimelineRow): string {
   switch (row.kind) {
-    case "message": {
-      const searchText = collectMessageSearchText(row.message);
-      return searchText.length === 0
-        ? null
-        : {
-            id: row.id,
-            rowId: row.id,
-            rowIndex,
-            searchText,
-          };
-    }
+    case "message":
+      return collectMessageSearchText(row.message);
 
-    case "work": {
-      const searchText = normalizeSearchText(
+    case "work":
+      return normalizeSearchText(
         row.groupedEntries.map((entry) => collectWorkEntrySearchText(entry)).join("\n"),
       );
-      return searchText.length === 0
-        ? null
-        : {
-            id: row.id,
-            rowId: row.id,
-            rowIndex,
-            searchText,
-          };
-    }
 
-    case "proposed-plan": {
-      const searchText = collectProposedPlanSearchText(row.proposedPlan);
-      return searchText.length === 0
-        ? null
-        : {
-            id: row.id,
-            rowId: row.id,
-            rowIndex,
-            searchText,
-          };
-    }
+    case "proposed-plan":
+      return collectProposedPlanSearchText(row.proposedPlan);
+
+    case "reasoning":
+      return "";
 
     case "working":
-      return null;
+      return "";
   }
+}
+
+/** Count occurrences of `needle` in `haystack` (case-insensitive). */
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let pos = 0;
+  while (pos < haystack.length) {
+    const idx = haystack.indexOf(needle, pos);
+    if (idx === -1) break;
+    count++;
+    pos = idx + needle.length;
+  }
+  return count;
 }
 
 export function buildChatFindRows(rows: ReadonlyArray<MessagesTimelineRow>): ChatFindRow[] {
   return rows.flatMap((row, rowIndex) => {
-    const nextRow = buildChatFindRowFromTimelineRow(row, rowIndex);
-    return nextRow ? [nextRow] : [];
+    if (row.kind === "working") return [];
+    const searchText = collectTimelineRowSearchText(row);
+    if (searchText.length === 0) return [];
+    return [{ id: row.id, rowId: row.id, rowIndex, searchText }];
   });
 }
 
@@ -110,17 +100,21 @@ export function findChatFindMatches(
     return [];
   }
 
-  return rows.flatMap((row) => {
-    if (!row.searchText.toLocaleLowerCase().includes(normalizedQuery)) {
-      return [];
-    }
+  const matches: ChatFindMatch[] = [];
 
-    return [
-      {
-        id: `${row.id}:${normalizedQuery}`,
+  for (const row of rows) {
+    const lowerText = row.searchText.toLocaleLowerCase();
+    const count = countOccurrences(lowerText, normalizedQuery);
+
+    for (let i = 0; i < count; i++) {
+      matches.push({
+        id: `${row.id}:${normalizedQuery}:${i}`,
         rowId: row.rowId,
         rowIndex: row.rowIndex,
-      } satisfies ChatFindMatch,
-    ];
-  });
+        matchIndexInRow: i,
+      });
+    }
+  }
+
+  return matches;
 }

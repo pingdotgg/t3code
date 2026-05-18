@@ -1,0 +1,14 @@
+{
+  "id": "dispatch-approval-1",
+  "type": "request",
+  "protocolVersion": "mobile.v1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "type": "thread.approval.respond",
+    "commandId": "mobile-approval-1",
+    "threadId": "thread-fixture",
+    "requestId": "approval-fixture-1",
+    "decision": "accept",
+    "createdAt": "2026-05-10T00:00:07.000Z"
+  }
+}

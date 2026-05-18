@@ -14,6 +14,7 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  canStartThreadTurn,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -87,6 +88,38 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("canStartThreadTurn", () => {
+  it("blocks a new user turn while the current turn is running", () => {
+    expect(
+      canStartThreadTurn({
+        phase: "running",
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows a new user turn only when the thread can accept a send", () => {
+    expect(
+      canStartThreadTurn({
+        phase: "ready",
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+      }),
+    ).toBe(true);
+    expect(
+      canStartThreadTurn({
+        phase: "ready",
+        isSendBusy: true,
+        isConnecting: false,
+        sendInFlight: false,
+      }),
+    ).toBe(false);
   });
 });
 

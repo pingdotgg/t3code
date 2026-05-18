@@ -530,6 +530,15 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
+const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  sourceThreadId: ThreadId,
+  threadId: ThreadId,
+  targetMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRuntimeModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.runtime-mode.set"),
   commandId: CommandId,
@@ -669,6 +678,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadMetaUpdateCommand,
+  ThreadForkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadPendingRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
@@ -691,6 +701,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadMetaUpdateCommand,
+  ThreadForkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadPendingRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,

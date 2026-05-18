@@ -105,6 +105,42 @@ function createSingleLeafLayout(
   });
 }
 
+function getNonNullLeafTargets(layout: ChatSplitLayout): ThreadRouteTarget[] {
+  return Object.values(layout.nodesById).flatMap((node) =>
+    node.kind === "leaf" && node.target ? [node.target] : [],
+  );
+}
+
+function syncRouteTargetIntoLayout(
+  layout: ChatSplitLayout,
+  target: ThreadRouteTarget,
+  diff?: DiffRouteSearch,
+): ChatSplitLayout {
+  if (!allTargetsShareSplitScope([...getNonNullLeafTargets(layout), target])) {
+    return createSingleLeafLayout(target, diff);
+  }
+
+  const existingLeaf = findLeafNodeByTarget(layout, target);
+  if (existingLeaf) {
+    const focusedLayout = focusLeafInLayout(layout, existingLeaf.id);
+    const nextLayout = replaceLeafTargetInLayout(focusedLayout, existingLeaf.id, target, diff);
+    if (nextLayout.maximizedLeafId && nextLayout.maximizedLeafId !== existingLeaf.id) {
+      return {
+        ...nextLayout,
+        maximizedLeafId: null,
+      };
+    }
+    return nextLayout;
+  }
+
+  const focusedLeaf = getFocusedLeaf(layout);
+  if (!focusedLeaf) {
+    return createSingleLeafLayout(target, diff);
+  }
+
+  return replaceLeafTargetInLayout(layout, focusedLeaf.id, target, diff);
+}
+
 export function selectActiveChatSplitLayout(
   state: Pick<ChatSplitLayoutStoreState, "layout">,
 ): ChatSplitLayout | null {
@@ -121,10 +157,19 @@ export function selectChatSplitNode(
 export const useChatSplitLayoutStore = create<ChatSplitLayoutStoreState>((set, get) => ({
   layout: null,
   syncRouteTarget: (target, diff) => {
-    set((state) => ({
-      ...state,
-      layout: createSingleLeafLayout(target, diff),
-    }));
+    set((state) => {
+      const activeLayout = selectActiveChatSplitLayout(state);
+      const nextLayout = activeLayout
+        ? syncRouteTargetIntoLayout(activeLayout, target, diff)
+        : createSingleLeafLayout(target, diff);
+      if (nextLayout === activeLayout) {
+        return state;
+      }
+      return {
+        ...state,
+        layout: nextLayout,
+      };
+    });
   },
   focusLeaf: (leafId) => {
     const activeLayout = selectActiveChatSplitLayout(get());

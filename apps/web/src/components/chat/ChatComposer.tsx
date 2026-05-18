@@ -1856,10 +1856,10 @@ export const ChatComposer = memo(
               style={{
                 paddingLeft: "var(--density-composer-px)",
                 paddingRight: "var(--density-composer-px)",
-                paddingBottom: "var(--density-composer-py)",
+                paddingBottom: "var(--density-composer-pb)",
                 paddingTop: hasComposerHeader
-                  ? "var(--density-composer-py)"
-                  : "var(--density-composer-px)",
+                  ? "var(--density-composer-pt-with-header)"
+                  : "var(--density-composer-pt)",
               }}
             >
               {composerMenuOpen && !isComposerApprovalState && (
@@ -1985,7 +1985,14 @@ export const ChatComposer = memo(
 
             {/* Bottom toolbar */}
             {activePendingApproval ? (
-              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+              <div
+                className="flex items-center justify-end gap-2"
+                style={{
+                  paddingLeft: "var(--density-composer-footer-px)",
+                  paddingRight: "var(--density-composer-footer-px)",
+                  paddingBottom: "var(--density-composer-footer-pb)",
+                }}
+              >
                 <ComposerPendingApprovalActions
                   requestId={activePendingApproval.requestId}
                   isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}

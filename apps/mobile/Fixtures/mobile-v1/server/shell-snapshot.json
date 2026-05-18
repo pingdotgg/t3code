@@ -1,0 +1,74 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "shell-1",
+  "type": "stream",
+  "payload": {
+    "kind": "snapshot",
+    "snapshot": {
+      "snapshotSequence": 5,
+      "projects": [
+        {
+          "id": "project-fixture",
+          "title": "Fixture Project",
+          "workspaceRoot": "/tmp/fixture-project",
+          "repositoryIdentity": {
+            "canonicalKey": "github.com/ronak-guliani/t3code",
+            "locator": {
+              "source": "git-remote",
+              "remoteName": "origin",
+              "remoteUrl": "https://github.com/ronak-guliani/t3code.git"
+            },
+            "rootPath": "/tmp/fixture-project",
+            "displayName": "ronak-guliani/t3code",
+            "provider": "github",
+            "owner": "ronak-guliani",
+            "name": "t3code"
+          },
+          "defaultModelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5-codex"
+          },
+          "scripts": [],
+          "createdAt": "2026-05-10T00:00:00.000Z",
+          "updatedAt": "2026-05-10T00:00:00.000Z"
+        }
+      ],
+      "threads": [
+        {
+          "id": "thread-fixture",
+          "projectId": "project-fixture",
+          "title": "Fixture Thread",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5-codex"
+          },
+          "runtimeMode": "full-access",
+          "pendingRuntimeMode": null,
+          "interactionMode": "default",
+          "branch": "main",
+          "worktreePath": null,
+          "latestTurn": null,
+          "createdAt": "2026-05-10T00:00:00.000Z",
+          "updatedAt": "2026-05-10T00:00:01.000Z",
+          "archivedAt": null,
+          "session": null,
+          "latestUserMessageAt": null,
+          "hasPendingApprovals": false,
+          "hasPendingUserInput": false,
+          "hasActionableProposedPlan": false
+        }
+      ],
+      "updatedAt": "2026-05-10T00:00:01.000Z"
+    }
+  }
+}

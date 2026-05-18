@@ -241,6 +241,37 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
+export function orderProjectThreadsWithPinned<
+  T extends Pick<Thread, "id"> & ThreadSortInput,
+>(input: {
+  threads: readonly T[];
+  pinnedThreadKeys: readonly string[];
+  sortOrder: SidebarThreadSortOrder;
+  getThreadKey: (thread: T) => string;
+}): T[] {
+  const sortedThreads = sortThreads(input.threads, input.sortOrder);
+  const sortedThreadByKey = new Map(
+    sortedThreads.map((thread) => [input.getThreadKey(thread), thread] as const),
+  );
+  const pinnedThreadKeySet = new Set(input.pinnedThreadKeys);
+  const emittedPinnedThreadKeys = new Set<string>();
+  const pinnedThreads = input.pinnedThreadKeys.flatMap((threadKey) => {
+    if (emittedPinnedThreadKeys.has(threadKey)) {
+      return [];
+    }
+    const thread = sortedThreadByKey.get(threadKey);
+    if (!thread) {
+      return [];
+    }
+    emittedPinnedThreadKeys.add(threadKey);
+    return [thread];
+  });
+  const unpinnedThreads = sortedThreads.filter(
+    (thread) => !pinnedThreadKeySet.has(input.getThreadKey(thread)),
+  );
+  return [...pinnedThreads, ...unpinnedThreads];
+}
+
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;

@@ -22,7 +22,7 @@ function getActiveLayout() {
 }
 
 describe("chatSplitLayoutStore", () => {
-  it("replaces the active layout with a fresh single pane when route targets change", () => {
+  it("preserves same-environment split panes when route targets change", () => {
     const envA = EnvironmentId.make("env-a");
     const envB = EnvironmentId.make("env-b");
     const targetA = {
@@ -49,7 +49,19 @@ describe("chatSplitLayoutStore", () => {
     expect(countLeafNodes(getActiveLayout())).toBe(1);
 
     useChatSplitLayoutStore.getState().syncRouteTarget(targetA);
-    expect(countLeafNodes(getActiveLayout())).toBe(1);
+    useChatSplitLayoutStore.getState().splitFocusedLeaf("row");
+    expect(countLeafNodes(getActiveLayout())).toBe(2);
+
+    useChatSplitLayoutStore.getState().syncRouteTarget({
+      kind: "server",
+      threadRef: {
+        environmentId: envA,
+        threadId: ThreadId.make("thread-c"),
+      },
+    });
+    const layout = getActiveLayout();
+    expect(countLeafNodes(layout)).toBe(2);
+    expect(findLeafNodeByTarget(layout, targetA)).not.toBeNull();
   });
 
   it("opens selected targets as the only active split workspace", () => {
@@ -85,10 +97,16 @@ describe("chatSplitLayoutStore", () => {
     expect(findLeafNodeByTarget(layout, targetC)).not.toBeNull();
     expect(findLeafNodeByTarget(layout, targetD)).not.toBeNull();
 
-    useChatSplitLayoutStore.getState().syncRouteTarget(targetA);
+    useChatSplitLayoutStore.getState().syncRouteTarget({
+      kind: "server",
+      threadRef: {
+        environmentId: EnvironmentId.make("env-b"),
+        threadId: ThreadId.make("thread-a"),
+      },
+    });
     layout = getActiveLayout();
     expect(countLeafNodes(layout)).toBe(1);
-    expect(findLeafNodeByTarget(layout, targetA)).not.toBeNull();
+    expect(findLeafNodeByTarget(layout, targetA)).toBeNull();
     expect(findLeafNodeByTarget(layout, targetC)).toBeNull();
     expect(findLeafNodeByTarget(layout, targetD)).toBeNull();
   });
@@ -131,7 +149,7 @@ describe("chatSplitLayoutStore", () => {
     expect(findLeafNodeByTarget(layout, targetC)).not.toBeNull();
   });
 
-  it("starts a fresh single pane when routing to a thread outside the current split", () => {
+  it("replaces the focused pane when routing to a thread outside the current split", () => {
     const envA = EnvironmentId.make("env-a");
     const targetA = {
       kind: "server" as const,
@@ -164,7 +182,8 @@ describe("chatSplitLayoutStore", () => {
     useChatSplitLayoutStore.getState().syncRouteTarget(targetC);
 
     const layout = getActiveLayout();
-    expect(countLeafNodes(layout)).toBe(1);
+    expect(countLeafNodes(layout)).toBe(2);
+    expect(findLeafNodeByTarget(layout, targetA)).not.toBeNull();
     expect(findLeafNodeByTarget(layout, targetB)).toBeNull();
     expect(findLeafNodeByTarget(layout, targetC)).not.toBeNull();
   });
@@ -279,7 +298,7 @@ describe("chatSplitLayoutStore", () => {
     ]);
   });
 
-  it("route selection replaces the split instead of filling a blank leaf", () => {
+  it("route selection fills a focused blank split leaf", () => {
     const envA = EnvironmentId.make("env-a");
     const targetA = {
       kind: "server" as const,
@@ -299,14 +318,11 @@ describe("chatSplitLayoutStore", () => {
     useChatSplitLayoutStore.getState().syncRouteTarget(targetA);
     useChatSplitLayoutStore.getState().splitFocusedLeaf("row");
 
-    const targetALeafId = findLeafNodeByTarget(getActiveLayout(), targetA)!.id;
-    useChatSplitLayoutStore.getState().focusLeaf(targetALeafId);
-
     useChatSplitLayoutStore.getState().syncRouteTarget(targetB);
 
     const layout = getActiveLayout();
-    expect(countLeafNodes(layout)).toBe(1);
-    expect(findLeafNodeByTarget(layout, targetA)).toBeNull();
+    expect(countLeafNodes(layout)).toBe(2);
+    expect(findLeafNodeByTarget(layout, targetA)).not.toBeNull();
     expect(findLeafNodeByTarget(layout, targetB)).not.toBeNull();
   });
 

@@ -1,0 +1,28 @@
+{
+  "protocolVersion": "mobile.v1",
+  "serverCapabilities": [
+    "auth.bearer-bootstrap",
+    "auth.ws-token",
+    "orchestration.shell",
+    "orchestration.thread-detail",
+    "orchestration.replay-envelope",
+    "orchestration.command-receipts",
+    "diff.turn",
+    "diff.full-thread"
+  ],
+  "id": "replay-gap-1",
+  "type": "response",
+  "payload": {
+    "status": "cursor-too-old",
+    "fromSequenceExclusive": 1,
+    "returnedFromSequenceExclusive": 1,
+    "returnedToSequenceInclusive": 0,
+    "serverHighWaterSequence": 8,
+    "events": [],
+    "resnapshot": ["all"],
+    "error": {
+      "code": "replay-gap",
+      "message": "Replay cursor is older than the retained mobile event range."
+    }
+  }
+}

@@ -33,13 +33,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   environmentId,
   cwd,
   workspaceRoot,
-  highlightQuery,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  highlightQuery?: string | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -165,19 +163,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              isStreaming={false}
-              highlightQuery={highlightQuery}
-            />
+            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
           ) : (
-            <ChatMarkdown
-              text={displayedPlanMarkdown}
-              cwd={cwd}
-              isStreaming={false}
-              highlightQuery={highlightQuery}
-            />
+            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />

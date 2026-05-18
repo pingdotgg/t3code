@@ -5,6 +5,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveWorkGroupExpanded,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -204,6 +205,33 @@ describe("resolveAssistantMessageCopyState", () => {
   });
 });
 
+describe("resolveWorkGroupExpanded", () => {
+  it("auto-collapses by default but respects explicit expansion", () => {
+    expect(
+      resolveWorkGroupExpanded({
+        shouldAutoCollapse: true,
+        expansionOverride: null,
+      }),
+    ).toBe(false);
+
+    expect(
+      resolveWorkGroupExpanded({
+        shouldAutoCollapse: true,
+        expansionOverride: "expanded",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps an explicit collapse while auto-collapse is inactive", () => {
+    expect(
+      resolveWorkGroupExpanded({
+        shouldAutoCollapse: false,
+        expansionOverride: "collapsed",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("deriveMessagesTimelineRows", () => {
   it("only enables terminal assistant affordances for the final assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
@@ -252,6 +280,7 @@ describe("deriveMessagesTimelineRows", () => {
       ],
       completionDividerBeforeEntryId: "assistant-final-entry",
       isWorking: false,
+      activeTurnId: null,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
@@ -262,12 +291,168 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "message" && row.message.role === "assistant",
     );
 
-    expect(assistantRows).toHaveLength(2);
-    expect(assistantRows[0]?.showAssistantCopyButton).toBe(false);
-    expect(assistantRows[0]?.showAssistantTerminalMetadata).toBe(false);
-    expect(assistantRows[1]?.showAssistantCopyButton).toBe(true);
-    expect(assistantRows[1]?.showAssistantTerminalMetadata).toBe(true);
-    expect(assistantRows[1]?.showCompletionDivider).toBe(true);
+    const reasoningRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "reasoning" }> =>
+        row.kind === "reasoning",
+    );
+
+    expect(assistantRows).toHaveLength(1);
+    expect(reasoningRow?.workedFor).toBe("20s");
+    expect(reasoningRow?.rows).toHaveLength(1);
+    expect(assistantRows[0]?.showAssistantCopyButton).toBe(true);
+    expect(assistantRows[0]?.showAssistantTerminalMetadata).toBe(true);
+    expect(assistantRows[0]?.showCompletionDivider).toBe(true);
+  });
+
+  it("collapses reasoning before every completed terminal assistant response", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "First",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-1-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:05Z",
+            label: "Read files",
+            tone: "tool",
+          },
+        },
+        {
+          id: "assistant-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant",
+            text: "Done first",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            completedAt: "2026-01-01T00:00:12Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "user-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "user-2" as never,
+            role: "user",
+            text: "Second",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-2-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:01:03Z",
+          entry: {
+            id: "work-2",
+            createdAt: "2026-01-01T00:01:03Z",
+            label: "Edited files",
+            tone: "tool",
+          },
+        },
+        {
+          id: "assistant-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:20Z",
+          message: {
+            id: "assistant-2" as never,
+            role: "assistant",
+            text: "Done second",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:01:20Z",
+            completedAt: "2026-01-01T00:01:24Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const reasoningRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "reasoning" }> =>
+        row.kind === "reasoning",
+    );
+
+    expect(reasoningRows.map((row) => row.workedFor)).toEqual(["10s", "20s"]);
+    expect(reasoningRows.map((row) => row.rows).flat()).toHaveLength(2);
+  });
+
+  it("does not collapse reasoning for the active turn while work continues", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Build it",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:05Z",
+            label: "Read files",
+            tone: "tool",
+          },
+        },
+        {
+          id: "assistant-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant",
+            text: "I'll update it.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            completedAt: "2026-01-01T00:00:12Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnId: "turn-1" as never,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.some((row) => row.kind === "reasoning")).toBe(false);
+    expect(rows.map((row) => row.kind)).toEqual(["message", "work", "message", "working"]);
   });
 
   it("projects assistant diff summaries and user revert counts onto the affected rows", () => {
@@ -311,6 +496,7 @@ describe("deriveMessagesTimelineRows", () => {
       ],
       completionDividerBeforeEntryId: null,
       isWorking: false,
+      activeTurnId: null,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map([
         ["assistant-1" as never, assistantTurnDiffSummary],
@@ -368,6 +554,7 @@ describe("computeStableMessagesTimelineRows", () => {
       ],
       completionDividerBeforeEntryId: null,
       isWorking: false,
+      activeTurnId: null,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
@@ -419,6 +606,7 @@ describe("computeStableMessagesTimelineRows", () => {
       ],
       completionDividerBeforeEntryId: null,
       isWorking: false,
+      activeTurnId: null,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
@@ -433,5 +621,52 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+
+  it("reuses equivalent work rows when grouped entry arrays are recreated", () => {
+    const buildRows = () =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "work-entry-1",
+            kind: "work",
+            createdAt: "2026-01-01T00:00:00Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-01-01T00:00:00Z",
+              label: "Read files",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+          {
+            id: "work-entry-2",
+            kind: "work",
+            createdAt: "2026-01-01T00:00:01Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-01-01T00:00:01Z",
+              label: "Ran command",
+              tone: "tool",
+              isComplete: true,
+            },
+          },
+        ],
+        completionDividerBeforeEntryId: null,
+        isWorking: true,
+        activeTurnId: "turn-1" as never,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+    const initial = computeStableMessagesTimelineRows(buildRows(), {
+      byId: new Map(),
+      result: [],
+    });
+    const repeated = computeStableMessagesTimelineRows(buildRows(), initial);
+
+    expect(repeated).toBe(initial);
+    expect(repeated.result[0]).toBe(initial.result[0]);
   });
 });

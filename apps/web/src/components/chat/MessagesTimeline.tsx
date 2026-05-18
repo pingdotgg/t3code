@@ -51,8 +51,10 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveWorkGroupExpanded,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  type WorkGroupExpansionOverride,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -333,7 +335,12 @@ function TimelineRowContent(props: { row: TimelineRow }) {
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" && <WorkGroupSection groupedEntries={row.groupedEntries} />}
+      {row.kind === "work" && (
+        <WorkGroupSection
+          groupedEntries={row.groupedEntries}
+          shouldAutoCollapse={row.shouldAutoCollapse}
+        />
+      )}
 
       {row.kind === "reasoning" && <ReasoningSection row={row} />}
 
@@ -582,38 +589,35 @@ function LiveMessageMeta({
 // re-render only the affected row, not the entire list.
 // ---------------------------------------------------------------------------
 
-/** Owns its own expand/collapse state so toggling re-renders only this row.
- *  State resets on unmount which is fine — work groups start collapsed. */
+/** Owns user expand/collapse overrides so streaming updates do not reset a chosen state. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
+  shouldAutoCollapse,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
+  shouldAutoCollapse: boolean;
 }) {
-  const { activeTurnInProgress, workspaceRoot } = use(TimelineRowCtx);
+  const { workspaceRoot } = use(TimelineRowCtx);
   const onlyToolEntries =
     groupedEntries.length > 0 && groupedEntries.every((entry) => entry.tone === "tool");
-  const isCompletedCollapsibleGroup =
-    groupedEntries.length > 1 &&
-    (groupedEntries.every((entry) => entry.isComplete === true) || !activeTurnInProgress);
-  const [isExpanded, setIsExpanded] = useState(() => !isCompletedCollapsibleGroup);
-  useEffect(() => {
-    if (isCompletedCollapsibleGroup) {
-      setIsExpanded(false);
-    }
-  }, [isCompletedCollapsibleGroup]);
+  const [expansionOverride, setExpansionOverride] = useState<WorkGroupExpansionOverride>(null);
+  const isExpanded = resolveWorkGroupExpanded({
+    shouldAutoCollapse,
+    expansionOverride,
+  });
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
-    isCompletedCollapsibleGroup && !isExpanded
+    shouldAutoCollapse && !isExpanded
       ? []
       : hasOverflow && !isExpanded
         ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
         : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
-  const showHeader = isCompletedCollapsibleGroup || hasOverflow || !onlyToolEntries;
+  const showHeader = shouldAutoCollapse || hasOverflow || !onlyToolEntries;
   const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
-  const showCollapseToggle = isCompletedCollapsibleGroup || hasOverflow;
+  const showCollapseToggle = shouldAutoCollapse || hasOverflow;
   const CollapseIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
-  const toggleLabel = isCompletedCollapsibleGroup
+  const toggleLabel = shouldAutoCollapse
     ? isExpanded
       ? "Collapse"
       : "Expand"
@@ -640,7 +644,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             <button
               type="button"
               className="inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
-              onClick={() => setIsExpanded((v) => !v)}
+              onClick={() => setExpansionOverride(isExpanded ? "collapsed" : "expanded")}
               aria-expanded={isExpanded}
             >
               <CollapseIcon className="size-3" />

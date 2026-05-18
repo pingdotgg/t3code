@@ -1,0 +1,13 @@
+{
+  "id": "dispatch-interrupt-1",
+  "type": "request",
+  "protocolVersion": "mobile.v1",
+  "method": "orchestration.dispatchCommand",
+  "payload": {
+    "type": "thread.turn.interrupt",
+    "commandId": "mobile-interrupt-1",
+    "threadId": "thread-fixture",
+    "turnId": "turn-fixture-1",
+    "createdAt": "2026-05-10T00:00:06.000Z"
+  }
+}

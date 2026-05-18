@@ -1,0 +1,61 @@
+name: T3Mobile
+options:
+  bundleIdPrefix: tools.t3
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.0"
+settings:
+  base:
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.0.0
+    SWIFT_VERSION: 6.2
+packages:
+  T3MobileProtocol:
+    path: .
+targets:
+  T3Mobile:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+    dependencies:
+      - package: T3MobileProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tools.t3.mobile
+        GENERATE_INFOPLIST_FILE: YES
+        OTHER_LDFLAGS: $(inherited) -lsqlite3
+        INFOPLIST_KEY_CFBundleDisplayName: T3 Code
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+  T3MobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    hostApplication: T3Mobile
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: T3Mobile
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  T3Mobile:
+    build:
+      targets:
+        T3Mobile: all
+        T3MobileTests: [test]
+    test:
+      targets:
+        - T3MobileTests

@@ -36,6 +36,10 @@ import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
 import { Open, resolveAvailableEditors } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import {
+  dispatchThroughStartupGate,
+  toOrchestrationDispatchCommandError,
+} from "./orchestration/gatedDispatch.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -188,14 +192,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           },
           createdAt: input.createdAt,
         });
-
-      const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        Schema.is(OrchestrationDispatchCommandError)(cause)
-          ? cause
-          : new OrchestrationDispatchCommandError({
-              message: cause instanceof Error ? cause.message : fallbackMessage,
-              cause,
-            });
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
@@ -495,21 +491,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                  ),
-                );
+            : dispatchThroughStartupGate(normalizedCommand, orchestrationEngine, startup);
 
-        return startup
-          .enqueueCommand(dispatchEffect)
-          .pipe(
-            Effect.mapError((cause) =>
-              toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-            ),
-          );
+        return normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+          ? startup
+              .enqueueCommand(dispatchEffect)
+              .pipe(
+                Effect.mapError((cause) =>
+                  toOrchestrationDispatchCommandError(
+                    cause,
+                    "Failed to dispatch orchestration command",
+                  ),
+                ),
+              )
+          : dispatchEffect;
       };
 
       const loadServerConfig = Effect.gen(function* () {

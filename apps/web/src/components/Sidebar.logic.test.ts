@@ -12,6 +12,7 @@ import {
   hasUnseenCompletion,
   isContextMenuPointerDown,
   orderItemsByPreferredIds,
+  orderProjectThreadsWithPinned,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -141,6 +142,62 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
+  });
+});
+
+describe("orderProjectThreadsWithPinned", () => {
+  it("keeps pinned threads above sorted unpinned threads", () => {
+    const sorted = orderProjectThreadsWithPinned({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-1"),
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-2"),
+          createdAt: "2026-03-09T10:10:00.000Z",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-3"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+      ],
+      pinnedThreadKeys: ["thread-1", "thread-3"],
+      sortOrder: "updated_at",
+      getThreadKey: (thread) => thread.id,
+    });
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-1"),
+      ThreadId.make("thread-3"),
+      ThreadId.make("thread-2"),
+    ]);
+  });
+
+  it("ignores duplicate or stale pinned thread keys", () => {
+    const sorted = orderProjectThreadsWithPinned({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-1"),
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-2"),
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+      ],
+      pinnedThreadKeys: ["missing", "thread-1", "thread-1"],
+      sortOrder: "updated_at",
+      getThreadKey: (thread) => thread.id,
+    });
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      ThreadId.make("thread-1"),
+      ThreadId.make("thread-2"),
+    ]);
   });
 });
 
