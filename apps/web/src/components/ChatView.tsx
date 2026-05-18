@@ -115,7 +115,11 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import { getProviderModelCapabilities } from "../providerModels";
+import {
+  deriveProviderInstanceEntries,
+  resolveProviderDriverKindForInstanceSelection,
+} from "../providerInstances";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -147,6 +151,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { normalizeRuntimeModeForProvider } from "./chat/runtimeModePresentation";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -157,6 +162,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  canNormalizeRuntimeModeForProviderSelection,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -807,7 +813,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const rawRuntimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
@@ -1123,6 +1129,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
+    activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
@@ -1257,11 +1264,50 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const unlockedSelectedProvider = resolveSelectableProvider(
-    providerStatuses,
-    selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
+  const providerInstanceEntries = useMemo(
+    () => deriveProviderInstanceEntries(providerStatuses),
+    [providerStatuses],
   );
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
+  const resolvedUnlockedProvider = resolveProviderDriverKindForInstanceSelection(
+    providerInstanceEntries,
+    explicitSelectedInstanceId,
+  );
+  const explicitSelectedProviderEntry =
+    explicitSelectedInstanceId === null
+      ? undefined
+      : providerInstanceEntries.find((entry) => entry.instanceId === explicitSelectedInstanceId);
+  const selectedProvider: ProviderDriverKind =
+    lockedProvider ?? resolvedUnlockedProvider ?? ProviderDriverKind.make("codex");
+  const runtimeModeProvider =
+    lockedProvider ??
+    resolvedUnlockedProvider ??
+    explicitSelectedProviderEntry?.driverKind ??
+    selectedProvider;
+  const canNormalizeRuntimeMode = canNormalizeRuntimeModeForProviderSelection({
+    serverConfigLoaded: serverConfig !== null,
+    lockedProvider,
+    explicitSelectedInstanceId,
+    resolvedUnlockedProvider,
+  });
+  const persistedRuntimeMode = canNormalizeRuntimeMode
+    ? normalizeRuntimeModeForProvider(selectedProvider, rawRuntimeMode)
+    : rawRuntimeMode;
+  const runtimeMode = normalizeRuntimeModeForProvider(runtimeModeProvider, persistedRuntimeMode);
+  useEffect(() => {
+    if (persistedRuntimeMode === rawRuntimeMode) return;
+    setComposerDraftRuntimeMode(composerDraftTarget, persistedRuntimeMode);
+    if (isLocalDraftThread) {
+      setDraftThreadContext(composerDraftTarget, { runtimeMode: persistedRuntimeMode });
+    }
+  }, [
+    composerDraftTarget,
+    isLocalDraftThread,
+    rawRuntimeMode,
+    persistedRuntimeMode,
+    setComposerDraftRuntimeMode,
+    setDraftThreadContext,
+  ]);
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -3639,6 +3685,7 @@ export default function ChatView(props: ChatViewProps) {
                   planSidebarLabel={planSidebarLabel}
                   planSidebarOpen={planSidebarOpen}
                   runtimeMode={runtimeMode}
+                  runtimeModeProvider={runtimeModeProvider}
                   interactionMode={interactionMode}
                   lockedProvider={lockedProvider}
                   providerStatuses={providerStatuses as ServerProvider[]}

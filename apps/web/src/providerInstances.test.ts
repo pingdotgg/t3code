@@ -108,10 +108,31 @@ describe("resolveProviderDriverKindForInstanceSelection", () => {
     expect(
       resolveProviderDriverKindForInstanceSelection(
         entries,
-        providers,
         ProviderInstanceId.make("claude_openrouter"),
       ),
     ).toBe("claudeAgent");
+  });
+
+  it("does not return disabled or unavailable provider instances", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("droid"), instanceId: "droid", enabled: false }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        availability: "unavailable",
+      }),
+    ];
+    const entries = deriveProviderInstanceEntries(providers);
+
+    expect(
+      resolveProviderDriverKindForInstanceSelection(entries, ProviderInstanceId.make("droid")),
+    ).toBeUndefined();
+    expect(
+      resolveProviderDriverKindForInstanceSelection(
+        entries,
+        ProviderInstanceId.make("claudeAgent"),
+      ),
+    ).toBeUndefined();
   });
 
   it("does not guess a provider kind when the instance selection is unknown", () => {
@@ -124,7 +145,6 @@ describe("resolveProviderDriverKindForInstanceSelection", () => {
     expect(
       resolveProviderDriverKindForInstanceSelection(
         entries,
-        providers,
         ProviderInstanceId.make("removed_instance"),
       ),
     ).toBeUndefined();

@@ -269,6 +269,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
         sandbox: "read-only",
       };
     case "auto-accept-edits":
+    case "medium-access":
       return {
         approvalPolicy: "on-request",
         sandbox: "workspace-write",
@@ -307,6 +308,7 @@ function runtimeModeToTurnSandboxPolicy(
         type: "readOnly",
       };
     case "auto-accept-edits":
+    case "medium-access":
       return {
         type: "workspaceWrite",
       };

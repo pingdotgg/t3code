@@ -4,6 +4,7 @@ import {
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
@@ -23,6 +24,20 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export function canNormalizeRuntimeModeForProviderSelection(input: {
+  readonly serverConfigLoaded: boolean;
+  readonly lockedProvider: ProviderDriverKind | null;
+  readonly explicitSelectedInstanceId: ProviderInstanceId | null;
+  readonly resolvedUnlockedProvider: ProviderDriverKind | undefined;
+}): boolean {
+  if (!input.serverConfigLoaded) return false;
+  return (
+    input.lockedProvider !== null ||
+    input.explicitSelectedInstanceId === null ||
+    input.resolvedUnlockedProvider !== undefined
+  );
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

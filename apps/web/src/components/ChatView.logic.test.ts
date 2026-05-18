@@ -14,6 +14,7 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  canNormalizeRuntimeModeForProviderSelection,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -24,6 +25,63 @@ import {
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("canNormalizeRuntimeModeForProviderSelection", () => {
+  it("waits for server config before normalizing", () => {
+    expect(
+      canNormalizeRuntimeModeForProviderSelection({
+        serverConfigLoaded: false,
+        lockedProvider: null,
+        explicitSelectedInstanceId: null,
+        resolvedUnlockedProvider: ProviderDriverKind.make("codex"),
+      }),
+    ).toBe(false);
+  });
+
+  it("normalizes when there is no explicit provider selection", () => {
+    expect(
+      canNormalizeRuntimeModeForProviderSelection({
+        serverConfigLoaded: true,
+        lockedProvider: null,
+        explicitSelectedInstanceId: null,
+        resolvedUnlockedProvider: undefined,
+      }),
+    ).toBe(true);
+  });
+
+  it("normalizes resolved selectable provider selections", () => {
+    expect(
+      canNormalizeRuntimeModeForProviderSelection({
+        serverConfigLoaded: true,
+        lockedProvider: null,
+        explicitSelectedInstanceId: ProviderInstanceId.make("droid"),
+        resolvedUnlockedProvider: ProviderDriverKind.make("droid"),
+      }),
+    ).toBe(true);
+  });
+
+  it("does not normalize known disabled or unavailable provider selections against fallback codex", () => {
+    expect(
+      canNormalizeRuntimeModeForProviderSelection({
+        serverConfigLoaded: true,
+        lockedProvider: null,
+        explicitSelectedInstanceId: ProviderInstanceId.make("droid"),
+        resolvedUnlockedProvider: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("normalizes using locked provider sessions", () => {
+    expect(
+      canNormalizeRuntimeModeForProviderSelection({
+        serverConfigLoaded: true,
+        lockedProvider: ProviderDriverKind.make("codex"),
+        explicitSelectedInstanceId: ProviderInstanceId.make("droid"),
+        resolvedUnlockedProvider: undefined,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
