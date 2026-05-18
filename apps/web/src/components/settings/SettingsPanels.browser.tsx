@@ -1142,6 +1142,57 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
   });
 
+  it("expands Hermes provider settings when the Hermes row is clicked", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        {
+          instanceId: ProviderInstanceId.make("hermes"),
+          driver: ProviderDriverKind.make("hermes"),
+          displayName: "Hermes",
+          enabled: true,
+          installed: true,
+          version: "0.11.0",
+          status: "ready",
+          auth: { status: "unknown" },
+          checkedAt: new Date().toISOString(),
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("hermes")]: {
+            driver: ProviderDriverKind.make("hermes"),
+            enabled: true,
+            config: {
+              enabled: true,
+              binaryPath: "/Users/me/.local/bin/hermes",
+              customModels: [],
+            },
+          },
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Expand Hermes provider details" }).click();
+
+    await vi.waitFor(() => {
+      const input = Array.from(document.querySelectorAll<HTMLInputElement>("input")).find(
+        (element) => element.value === "/Users/me/.local/bin/hermes",
+      );
+      expect(input).toBeTruthy();
+    });
+  });
+
   it("runs one-click provider updates from the provider card", async () => {
     const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
       providers: [createOutdatedProvider("codex")],

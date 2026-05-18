@@ -247,6 +247,31 @@ function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider
   };
 }
 
+function buildHermesProvider(overrides: Partial<ServerProvider> = {}): ServerProvider {
+  return {
+    driver: ProviderDriverKind.make("hermes"),
+    instanceId: ProviderInstanceId.make("hermes"),
+    displayName: "Hermes",
+    enabled: true,
+    installed: true,
+    version: "0.11.0",
+    status: "ready",
+    auth: { status: "unknown" },
+    checkedAt: new Date().toISOString(),
+    models: [
+      {
+        slug: "gpt-5.5",
+        name: "GPT 5.5",
+        isCustom: false,
+        capabilities: createModelCapabilities({ optionDescriptors: [] }),
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+    ...overrides,
+  };
+}
+
 async function mountPicker(props: {
   activeInstanceId?: ProviderInstanceId;
   model: string;
@@ -1199,6 +1224,56 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("GPT-5 Codex");
         // Disabled provider should not have its models shown
         expect(text).not.toContain("Claude Opus 4.6");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not offer a disabled Hermes provider as an empty model source", async () => {
+    const providers = [
+      ...TEST_PROVIDERS,
+      buildHermesProvider({
+        enabled: false,
+        status: "disabled",
+        models: [],
+      }),
+    ];
+    const mounted = await mountPicker({
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      providers,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const text = document.body.textContent ?? "";
+        expect(text).toContain("GPT-5 Codex");
+      });
+
+      expect(document.querySelector('[data-model-picker-provider="hermes"]')).toBeNull();
+      expect(document.body.textContent ?? "").not.toContain("No models found");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the configured Hermes model when Hermes is ready", async () => {
+    const mounted = await mountPicker({
+      activeInstanceId: ProviderInstanceId.make("hermes"),
+      model: "gpt-5.5",
+      lockedProvider: null,
+      providers: [...TEST_PROVIDERS, buildHermesProvider()],
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("button", { name: "Hermes", exact: true }).click();
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("GPT 5.5");
       });
     } finally {
       await mounted.cleanup();
