@@ -2338,6 +2338,7 @@ export default function ChatView(props: ChatViewProps) {
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
+    branch: gitStatusQuery.data?.branch,
   });
 
   useEffect(() => {
