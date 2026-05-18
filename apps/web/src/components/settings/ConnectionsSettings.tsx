@@ -1504,6 +1504,16 @@ export function ConnectionsSettings() {
   const [desktopWslState, setDesktopWslState] = useState<DesktopWslState | null>(null);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslError, setDesktopWslError] = useState<string | null>(null);
+  // Pending WSL setting change waiting on user confirmation. Set when
+  // the user tries a destructive change (disable, switch distro) while
+  // the WSL backend has saved-env state on this machine. Confirming
+  // applies the change; cancelling drops it without touching the
+  // persisted setting. Null when nothing is pending.
+  type PendingWslChange =
+    | { readonly kind: "disable" }
+    | { readonly kind: "distro"; readonly nextDistro: string | null };
+  const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
+  const isWslConfirmDialogOpen = pendingWslChange !== null;
   const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
     useState<AdvertisedEndpoint | null>(null);
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
@@ -2395,12 +2405,34 @@ export function ConnectionsSettings() {
     [desktopBridge],
   );
 
+  // True when the WSL backend has any saved-env record on this machine.
+  // We use this as a proxy for "the user has work that lives on the
+  // WSL side": if WSL has connected at least once in a way that
+  // registered the env, disabling or switching distros could disrupt
+  // open threads/projects. If WSL never connected (fresh install,
+  // toggled on then immediately off, etc.) we skip the confirmation
+  // dialog because there's nothing to lose.
+  const hasWslRegistrationToLose = useMemo(() => {
+    for (const record of Object.values(savedEnvironmentsById)) {
+      if (record.desktopLocal?.instanceId?.startsWith("wsl:")) return true;
+    }
+    return false;
+  }, [savedEnvironmentsById]);
+
   const handleToggleWslBackend = useCallback(
     (enabled: boolean) => {
       if (!desktopBridge || !desktopWslState || desktopWslState.enabled === enabled) return;
+      // Enabling is non-destructive: it just starts a new backend
+      // alongside the Windows one. Skip the dialog. Disabling only
+      // prompts when there's actual WSL state in the registry that the
+      // user might lose access to.
+      if (!enabled && hasWslRegistrationToLose) {
+        setPendingWslChange({ kind: "disable" });
+        return;
+      }
       void applyWslSettingChange(() => desktopBridge.setWslBackendEnabled(enabled));
     },
-    [applyWslSettingChange, desktopBridge, desktopWslState],
+    [applyWslSettingChange, desktopBridge, desktopWslState, hasWslRegistrationToLose],
   );
 
   const handleSelectWslDistro = useCallback(
@@ -2414,10 +2446,29 @@ export function ConnectionsSettings() {
       const resolvedCurrent = desktopWslState.distro ?? defaultDistroName;
       const resolvedNext = nextDistro ?? defaultDistroName;
       if (resolvedCurrent === resolvedNext) return;
+      // Switching distros restarts the WSL backend on a different
+      // Linux home, which interrupts whatever's running on the current
+      // distro. Prompt before doing that, but only when there's
+      // already-registered WSL state worth warning about.
+      if (hasWslRegistrationToLose) {
+        setPendingWslChange({ kind: "distro", nextDistro });
+        return;
+      }
       void applyWslSettingChange(() => desktopBridge.setWslDistro(nextDistro));
     },
-    [applyWslSettingChange, desktopBridge, desktopWslState],
+    [applyWslSettingChange, desktopBridge, desktopWslState, hasWslRegistrationToLose],
   );
+
+  const handleConfirmWslChange = useCallback(() => {
+    if (!desktopBridge || !pendingWslChange) return;
+    const change = pendingWslChange;
+    setPendingWslChange(null);
+    if (change.kind === "disable") {
+      void applyWslSettingChange(() => desktopBridge.setWslBackendEnabled(false));
+      return;
+    }
+    void applyWslSettingChange(() => desktopBridge.setWslDistro(change.nextDistro));
+  }, [applyWslSettingChange, desktopBridge, pendingWslChange]);
 
   const renderWslRow = () => {
     if (!desktopWslState || !desktopWslState.available) return null;
@@ -2697,6 +2748,52 @@ export function ConnectionsSettings() {
                     "Restart and enable"
                   ) : (
                     "Restart and disable"
+                  )}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+          <AlertDialog
+            open={isWslConfirmDialogOpen}
+            onOpenChange={(open) => {
+              if (isUpdatingWslBackend) return;
+              if (!open) setPendingWslChange(null);
+            }}
+          >
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {pendingWslChange?.kind === "disable"
+                    ? "Disable WSL backend?"
+                    : "Switch WSL distro?"}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {pendingWslChange?.kind === "disable"
+                    ? "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
+                    : "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose
+                  disabled={isUpdatingWslBackend}
+                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
+                >
+                  Cancel
+                </AlertDialogClose>
+                <Button
+                  variant={pendingWslChange?.kind === "disable" ? "destructive" : "default"}
+                  onClick={handleConfirmWslChange}
+                  disabled={isUpdatingWslBackend}
+                >
+                  {isUpdatingWslBackend ? (
+                    <>
+                      <Spinner className="size-3.5" />
+                      Applying…
+                    </>
+                  ) : pendingWslChange?.kind === "disable" ? (
+                    "Disable WSL"
+                  ) : (
+                    "Switch distro"
                   )}
                 </Button>
               </AlertDialogFooter>
