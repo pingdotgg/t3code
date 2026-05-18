@@ -7,6 +7,7 @@ import {
   ReasoningEffort,
 } from "@factory/droid-sdk";
 import { tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type DroidSettings,
   ProviderDriverKind,
@@ -90,6 +91,13 @@ class DroidModelDiscoveryError extends Data.TaggedError("DroidModelDiscoveryErro
   readonly message: string;
   readonly cause: unknown;
 }> {}
+
+class DroidModelDiscoveryTimeoutError extends Error {
+  constructor() {
+    super("Timed out while discovering Droid models.");
+    this.name = "DroidModelDiscoveryTimeoutError";
+  }
+}
 
 export function droidDiscoveryFailureMessage(failure: unknown): string {
   const error = Cause.isCause(failure) ? Cause.squash(failure) : failure;
@@ -194,17 +202,47 @@ const discoverDroidModels = (
 ): Effect.Effect<ReadonlyArray<ServerProviderModel>, DroidModelDiscoveryError> =>
   Effect.tryPromise({
     try: async (abortSignal) => {
+      const controller = new AbortController();
+      const timeoutController = new AbortController();
+      const onAbort = () => controller.abort(abortSignal.reason);
+      abortSignal.addEventListener("abort", onAbort, { once: true });
       let session: DroidSession | undefined;
+      let shouldCloseLateSession = false;
       try {
-        session = await (options?.sdk ?? defaultSdk).createSession({
+        const sessionPromise = (options?.sdk ?? defaultSdk).createSession({
           cwd: tmpdir(),
           execPath: settings.binaryPath,
           env: compactEnvironment(environment),
-          abortSignal,
+          abortSignal: controller.signal,
         });
+        sessionPromise
+          .then((lateSession) => {
+            if (shouldCloseLateSession) {
+              void lateSession.close().catch(() => undefined);
+            }
+          })
+          .catch(() => undefined);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
+            once: true,
+          });
+        });
+        const discoveryTimeoutPromise = sleep(DROID_MODEL_DISCOVERY_TIMEOUT_MS, undefined, {
+          signal: timeoutController.signal,
+        }).then(() => {
+          const error = new DroidModelDiscoveryTimeoutError();
+          controller.abort(error);
+          throw error;
+        });
+        session = await Promise.race([sessionPromise, timeoutPromise, discoveryTimeoutPromise]);
         return buildDroidModelsFromSdkModels(session.initResult.availableModels);
       } finally {
-        await session?.close().catch(() => undefined);
+        shouldCloseLateSession = controller.signal.aborted && session === undefined;
+        timeoutController.abort();
+        abortSignal.removeEventListener("abort", onAbort);
+        if (!shouldCloseLateSession) {
+          await session?.close().catch(() => undefined);
+        }
       }
     },
     catch: (cause) =>
@@ -314,18 +352,14 @@ export function checkDroidProviderStatus(
     const discoveredModels =
       commandResult.code === 0
         ? yield* discoverDroidModels(settings, environment, options).pipe(
-            Effect.timeoutOption(DROID_MODEL_DISCOVERY_TIMEOUT_MS),
+            Effect.map(Option.some),
             Effect.result,
           )
         : Result.succeed(Option.none<ReadonlyArray<ServerProviderModel>>());
-    const modelDiscoveryFailed =
-      commandResult.code === 0 &&
-      (Result.isFailure(discoveredModels) || Option.isNone(discoveredModels.success));
+    const modelDiscoveryFailed = commandResult.code === 0 && Result.isFailure(discoveredModels);
     const discoveryMessage = Result.isFailure(discoveredModels)
       ? droidDiscoveryFailureMessage(discoveredModels.failure)
-      : modelDiscoveryFailed
-        ? "Timed out while discovering Droid models."
-        : undefined;
+      : undefined;
     const models =
       Result.isSuccess(discoveredModels) && Option.isSome(discoveredModels.success)
         ? modelsWithSettingsFallback(discoveredModels.success.value, settings)

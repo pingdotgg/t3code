@@ -581,12 +581,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null;
   const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
 
-  const unlockedSelectedProvider =
-    resolveProviderDriverKindForInstanceSelection(
-      providerInstanceEntries,
-      explicitSelectedInstanceId,
-    ) ?? ProviderDriverKind.make("codex");
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const unlockedSelectedProvider = resolveProviderDriverKindForInstanceSelection(
+    providerInstanceEntries,
+    explicitSelectedInstanceId,
+  );
+  const explicitSelectedProviderEntry =
+    explicitSelectedInstanceId === null
+      ? undefined
+      : providerInstanceEntries.find((entry) => entry.instanceId === explicitSelectedInstanceId);
+  const selectedProvider: ProviderDriverKind =
+    lockedProvider ??
+    unlockedSelectedProvider ??
+    explicitSelectedProviderEntry?.driverKind ??
+    ProviderDriverKind.make("codex");
   const lockedContinuationGroupKey = useMemo((): string | null => {
     if (!lockedProvider || !activeThread) return null;
     const lockedInstanceId =
