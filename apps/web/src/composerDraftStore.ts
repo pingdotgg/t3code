@@ -371,6 +371,7 @@ interface ComposerDraftStoreState {
     provider: ProviderDriverKind,
     nextProviderOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
     options?: {
+      instanceId?: ProviderInstanceId | null | undefined;
       model?: string | null | undefined;
       persistSticky?: boolean;
     },
@@ -2456,7 +2457,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           if (normalizedProvider === null) {
             return;
           }
-          const instanceKey = defaultInstanceIdForDriver(normalizedProvider);
+          const instanceKey = options?.instanceId ?? defaultInstanceIdForDriver(normalizedProvider);
           const fallbackModel =
             normalizeModelSlug(options?.model, normalizedProvider) ??
             DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
@@ -2501,7 +2502,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[instanceKey] = rest as ModelSelection;
               }
-              nextStickyActiveProvider = base.activeProvider ?? instanceKey;
+              nextStickyActiveProvider = options.instanceId
+                ? instanceKey
+                : (base.activeProvider ?? instanceKey);
             }
 
             if (
@@ -2514,6 +2517,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
             const nextDraft: ComposerThreadDraftState = {
               ...base,
+              ...(options?.instanceId ? { activeProvider: instanceKey } : {}),
               modelSelectionByProvider: nextMap,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
