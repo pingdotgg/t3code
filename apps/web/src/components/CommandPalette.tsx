@@ -121,6 +121,8 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
+type CommandPaletteOpenIntent = ReturnType<typeof useCommandPaletteStore.getState>["openIntent"];
+type BrowseEntry = FilesystemBrowseResult["entries"][number];
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
@@ -327,11 +329,31 @@ function errorMessage(error: unknown): string {
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const composerHandleRef = useRef<ChatComposerHandle | null>(null);
+
+  return (
+    <ComposerHandleContext value={composerHandleRef}>
+      {children}
+      <CommandPaletteController />
+    </ComposerHandleContext>
+  );
+}
+
+function CommandPaletteController() {
   const open = useCommandPaletteStore((store) => store.open);
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
+  useCommandPaletteShortcut();
+
+  return (
+    <CommandDialog open={open} onOpenChange={setOpen}>
+      <CommandPaletteDialog />
+    </CommandDialog>
+  );
+}
+
+function useCommandPaletteShortcut() {
   const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
   const keybindings = useServerKeybindings();
-  const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -362,32 +384,82 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [keybindings, terminalOpen, toggleOpen]);
-
-  return (
-    <ComposerHandleContext value={composerHandleRef}>
-      <CommandDialog open={open} onOpenChange={setOpen}>
-        {children}
-        <CommandPaletteDialog />
-      </CommandDialog>
-    </ComposerHandleContext>
-  );
 }
 
 function CommandPaletteDialog() {
   const open = useCommandPaletteStore((store) => store.open);
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
-
-  useEffect(() => {
-    return () => {
-      setOpen(false);
-    };
-  }, [setOpen]);
+  useCloseCommandPaletteOnUnmount(setOpen);
 
   if (!open) {
     return null;
   }
 
   return <OpenCommandPaletteDialog />;
+}
+
+function useCloseCommandPaletteOnUnmount(setOpen: (open: boolean) => void) {
+  useEffect(() => {
+    return () => {
+      setOpen(false);
+    };
+  }, [setOpen]);
+}
+
+function usePrefetchBrowsePaths({
+  exactBrowseEntry,
+  filteredBrowseEntryCount,
+  highlightedBrowseEntry,
+  isBrowsing,
+  prefetchBrowsePath,
+  query,
+}: {
+  readonly exactBrowseEntry: BrowseEntry | null;
+  readonly filteredBrowseEntryCount: number;
+  readonly highlightedBrowseEntry: BrowseEntry | null;
+  readonly isBrowsing: boolean;
+  readonly prefetchBrowsePath: (partialPath: string) => void;
+  readonly query: string;
+}) {
+  // Prefetch the parent and the most likely next child so browse navigation
+  // stays warm without scanning every child directory in large trees.
+  useEffect(() => {
+    if (!isBrowsing || filteredBrowseEntryCount === 0) return;
+
+    if (canNavigateUp(query)) {
+      prefetchBrowsePath(getBrowseParentPath(query)!);
+    }
+
+    const nextChild = highlightedBrowseEntry ?? exactBrowseEntry;
+    if (nextChild) {
+      prefetchBrowsePath(appendBrowsePathSegment(query, nextChild.name));
+    }
+  }, [
+    exactBrowseEntry,
+    filteredBrowseEntryCount,
+    highlightedBrowseEntry,
+    isBrowsing,
+    prefetchBrowsePath,
+    query,
+  ]);
+}
+
+function useOpenAddProjectIntent({
+  clearOpenIntent,
+  openAddProjectFlow,
+  openIntent,
+}: {
+  readonly clearOpenIntent: () => void;
+  readonly openAddProjectFlow: () => void;
+  readonly openIntent: CommandPaletteOpenIntent;
+}) {
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "add-project") {
+      return;
+    }
+    clearOpenIntent();
+    openAddProjectFlow();
+  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 }
 
 function OpenCommandPaletteDialog() {
@@ -587,27 +659,14 @@ function OpenCommandPaletteDialog() {
     [browseEnvironmentId, currentProjectCwdForBrowse, fetchBrowseResult, queryClient],
   );
 
-  // Prefetch the parent and the most likely next child so browse navigation
-  // stays warm without scanning every child directory in large trees.
-  useEffect(() => {
-    if (!isBrowsing || filteredBrowseEntries.length === 0) return;
-
-    if (canNavigateUp(query)) {
-      prefetchBrowsePath(getBrowseParentPath(query)!);
-    }
-
-    const nextChild = highlightedBrowseEntry ?? exactBrowseEntry;
-    if (nextChild) {
-      prefetchBrowsePath(appendBrowsePathSegment(query, nextChild.name));
-    }
-  }, [
+  usePrefetchBrowsePaths({
     exactBrowseEntry,
-    filteredBrowseEntries.length,
+    filteredBrowseEntryCount: filteredBrowseEntries.length,
     highlightedBrowseEntry,
     isBrowsing,
     prefetchBrowsePath,
     query,
-  ]);
+  });
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
@@ -971,13 +1030,7 @@ function OpenCommandPaletteDialog() {
     startAddProjectSourceSelection,
   ]);
 
-  useLayoutEffect(() => {
-    if (openIntent?.kind !== "add-project") {
-      return;
-    }
-    clearOpenIntent();
-    openAddProjectFlow();
-  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+  useOpenAddProjectIntent({ clearOpenIntent, openAddProjectFlow, openIntent });
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
