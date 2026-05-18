@@ -25,6 +25,10 @@ function isHermesProvider(provider: ServerProvider): boolean {
   return String(provider.driver) === "hermes";
 }
 
+function isPiProvider(provider: ServerProvider): boolean {
+  return String(provider.driver) === "pi";
+}
+
 /**
  * Derive the headline + detail copy shown under a provider's name in the
  * settings page. Prefers `provider.message` for server-supplied detail and
@@ -84,7 +88,9 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       provider.message ??
       (isHermesProvider(provider)
         ? "Installed and ready. Hermes manages authentication through its own CLI and local config."
-        : "Installed and ready, but authentication could not be verified."),
+        : isPiProvider(provider)
+          ? "Installed and ready. Pi manages authentication through its own CLI and local config."
+          : "Installed and ready, but authentication could not be verified."),
   };
 }
 

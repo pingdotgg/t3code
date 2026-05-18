@@ -4,6 +4,7 @@ import {
   CursorSettings,
   HermesSettings,
   OpenCodeSettings,
+  PiSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -66,6 +67,13 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: OpenCodeIcon,
     badgeLabel: "Early Access",
     settingsSchema: HermesSettings,
+  },
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    icon: OpenCodeIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: PiSettings,
   },
 ];
 

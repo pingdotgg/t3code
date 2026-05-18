@@ -135,6 +135,12 @@ function createBaseServerConfig(): ServerConfig {
           binaryPath: "",
           customModels: [],
         },
+        pi: {
+          enabled: false,
+          binaryPath: "",
+          piBinaryPath: "",
+          customModels: [],
+        },
       },
     },
   };

@@ -1,19 +1,21 @@
 # T3 Code
 
-T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, OpenCode, and Hermes, more coming soon).
+T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, OpenCode, Hermes, and Pi, more coming soon).
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, OpenCode, and Hermes.
+> T3 Code currently supports Codex, Claude, OpenCode, Hermes, and Pi.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Hermes: install [Hermes Agent](https://github.com/nousresearch/hermes-agent) and run `hermes model`
+> - Pi: install [Pi Agent](https://github.com/earendil-works/pi) plus `pi-acp`, then run `pi`
 
 Hermes setup notes: [docs/providers/hermes.md](./docs/providers/hermes.md)
+Pi setup notes: [docs/providers/pi.md](./docs/providers/pi.md)
 
 ## Hermes Agent support
 
@@ -41,6 +43,24 @@ Hermes manages authentication through its own CLI and local config; T3 Code star
 only when a Hermes conversation needs it.
 
 Full setup and troubleshooting guide: [docs/providers/hermes.md](./docs/providers/hermes.md)
+
+## Pi Agent support
+
+T3 Code can run [Pi Agent](https://github.com/earendil-works/pi) through the
+[`pi-acp`](https://github.com/svkozak/pi-acp) adapter. Enable Pi from
+**Settings -> Providers**, set the ACP adapter path to `pi-acp`, set the Pi binary path to `pi` or
+an absolute path, then select Pi from the chat model picker.
+
+```bash
+npm install -g @earendil-works/pi-coding-agent pi-acp
+pi --version
+pi-acp --help
+```
+
+T3 Code passes the configured Pi binary to the adapter with `PI_ACP_PI_COMMAND`, which keeps the
+packaged macOS app working even when `/opt/homebrew/bin` is not on the GUI app `PATH`.
+
+Full setup and troubleshooting guide: [docs/providers/pi.md](./docs/providers/pi.md)
 
 ### Run without installing
 

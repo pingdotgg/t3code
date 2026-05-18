@@ -526,6 +526,7 @@ export function ProviderInstanceCard({
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const suggestedBinaryPath = liveProvider?.suggestedBinaryPath?.trim();
   const isHermesDriver = String(instance.driver) === "hermes";
+  const isPiDriver = String(instance.driver) === "pi";
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -783,6 +784,62 @@ export function ProviderInstanceCard({
     </div>
   ) : null;
 
+  const piSetupNode = isPiDriver ? (
+    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+      <div className="grid gap-3">
+        <div className="grid gap-1">
+          <span className="text-xs font-medium text-foreground">Pi setup</span>
+          <p className="text-xs leading-snug text-muted-foreground">
+            T3 Code starts Pi through the pi-acp adapter. Install Pi, install pi-acp, then verify
+            both commands before sending a turn.
+          </p>
+        </div>
+        {suggestedBinaryPath ? (
+          <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
+            <span className="text-xs text-muted-foreground">
+              Detected pi-acp at <code className="text-foreground">{suggestedBinaryPath}</code>
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="w-fit"
+              onClick={() => applySuggestedBinaryPath(suggestedBinaryPath)}
+              aria-label="Use detected Pi ACP adapter path"
+            >
+              Use detected path
+            </Button>
+          </div>
+        ) : null}
+        <div className="grid gap-2">
+          <ProviderSetupCommandRow
+            command="npm install -g @earendil-works/pi-coding-agent pi-acp"
+            label="Pi install command"
+            onCopy={(command, label) => copyToClipboard(command, { providerName: label })}
+          />
+          <ProviderSetupCommandRow
+            command="pi --version"
+            label="Pi verification command"
+            onCopy={(command, label) => copyToClipboard(command, { providerName: label })}
+          />
+          <ProviderSetupCommandRow
+            command="pi-acp --help"
+            label="Pi ACP verification command"
+            onCopy={(command, label) => copyToClipboard(command, { providerName: label })}
+          />
+        </div>
+        <a
+          href="https://github.com/joeynyc/t3code/blob/hermes-agent-provider/docs/providers/pi.md"
+          target="_blank"
+          rel="noreferrer"
+          className="w-fit text-xs font-medium text-primary hover:underline"
+        >
+          Pi setup docs
+        </a>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="border-t border-border/60 first:border-t-0">
       <div
@@ -955,6 +1012,7 @@ export function ProviderInstanceCard({
             </div>
 
             {hermesSetupNode}
+            {piSetupNode}
 
             {driverOption ? (
               <ProviderSettingsForm

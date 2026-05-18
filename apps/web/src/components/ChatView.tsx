@@ -1263,6 +1263,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const isHermesSelected = String(selectedProvider) === "hermes";
+  const isPiSelected = String(selectedProvider) === "pi";
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -3556,8 +3557,11 @@ export default function ChatView(props: ChatViewProps) {
             className={cn(
               "relative flex min-h-0 flex-1 flex-col transition-colors duration-300",
               isHermesSelected && "chat-surface-hermes",
+              isPiSelected && "chat-surface-pi",
             )}
-            data-chat-provider-surface={isHermesSelected ? "hermes" : "default"}
+            data-chat-provider-surface={
+              isHermesSelected ? "hermes" : isPiSelected ? "pi" : "default"
+            }
           >
             {/* Messages — LegendList handles virtualization and scrolling internally */}
             <MessagesTimeline

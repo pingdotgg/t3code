@@ -132,6 +132,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const HERMES_DRIVER_KIND = ProviderDriverKind.make("hermes");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
@@ -142,6 +143,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [HERMES_DRIVER_KIND]: "hermes-default",
+  [PI_DRIVER_KIND]: "pi-default",
 };
 
 /** Per-provider text generation model defaults. */
@@ -153,6 +155,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [HERMES_DRIVER_KIND]: "hermes-default",
+  [PI_DRIVER_KIND]: "pi-default",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -195,6 +198,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   },
   [OPENCODE_DRIVER_KIND]: {},
   [HERMES_DRIVER_KIND]: {},
+  [PI_DRIVER_KIND]: {},
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -205,4 +209,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [HERMES_DRIVER_KIND]: "Hermes",
+  [PI_DRIVER_KIND]: "Pi",
 };

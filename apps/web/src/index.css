@@ -86,15 +86,15 @@
 .chat-surface-hermes {
   isolation: isolate;
   background:
-    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px)
-      0 0 / 42px 42px,
-    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px)
-      0 0 / 42px 42px,
+    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px) 0
+      0 / 42px 42px,
+    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px) 0 0 /
+      42px 42px,
     radial-gradient(
-      circle at 12% 10%,
-      color-mix(in srgb, #f5c542 18%, transparent) 0 5px,
-      transparent 6px
-    )
+        circle at 12% 10%,
+        color-mix(in srgb, #f5c542 18%, transparent) 0 5px,
+        transparent 6px
+      )
       0 0 / 96px 96px,
     linear-gradient(
       180deg,
@@ -139,10 +139,10 @@
   inset: 0;
   opacity: 0.1;
   background:
-    linear-gradient(90deg, transparent 0 18px, #f5c542 18px 24px, transparent 24px 42px)
-      right 9% top 8% / 252px 54px no-repeat,
-    linear-gradient(90deg, transparent 0 12px, #d4961c 12px 18px, transparent 18px 36px)
-      right 6% top calc(8% + 54px) / 216px 42px no-repeat,
+    linear-gradient(90deg, transparent 0 18px, #f5c542 18px 24px, transparent 24px 42px) right 9%
+      top 8% / 252px 54px no-repeat,
+    linear-gradient(90deg, transparent 0 12px, #d4961c 12px 18px, transparent 18px 36px) right 6%
+      top calc(8% + 54px) / 216px 42px no-repeat,
     repeating-linear-gradient(
       0deg,
       color-mix(in srgb, var(--foreground) 5%, transparent) 0 1px,
@@ -153,15 +153,15 @@
 
 .dark .chat-surface-hermes {
   background:
-    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px)
-      0 0 / 42px 42px,
-    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px)
-      0 0 / 42px 42px,
+    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px) 0
+      0 / 42px 42px,
+    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px) 0 0 /
+      42px 42px,
     radial-gradient(
-      circle at 12% 10%,
-      color-mix(in srgb, #f5c542 16%, transparent) 0 5px,
-      transparent 6px
-    )
+        circle at 12% 10%,
+        color-mix(in srgb, #f5c542 16%, transparent) 0 5px,
+        transparent 6px
+      )
       0 0 / 96px 96px,
     linear-gradient(
       180deg,
@@ -173,6 +173,87 @@
 }
 
 .dark .chat-surface-hermes::after {
+  mix-blend-mode: screen;
+}
+
+.chat-surface-pi {
+  isolation: isolate;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, #22c55e 12%, transparent) 0 1px, transparent 1px) 0
+      0 / 36px 36px,
+    linear-gradient(0deg, color-mix(in srgb, #14b8a6 10%, transparent) 0 1px, transparent 1px) 0 0 /
+      36px 36px,
+    radial-gradient(
+        circle at 18% 16%,
+        color-mix(in srgb, #22c55e 18%, transparent) 0 4px,
+        transparent 5px
+      )
+      0 0 / 108px 108px,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 91%, #22c55e) 0%,
+      color-mix(in srgb, var(--background) 95%, #14b8a6) 42%,
+      color-mix(in srgb, var(--background) 97%, #0f172a) 74%,
+      var(--background) 100%
+    );
+}
+
+.chat-surface-pi::before,
+.chat-surface-pi::after {
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+  content: "";
+}
+
+.chat-surface-pi::before {
+  top: max(2rem, 9%);
+  right: max(1.5rem, 6%);
+  width: min(30rem, 54vw);
+  aspect-ratio: 1;
+  opacity: 0.12;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 0 35%, #22c55e 36% 39%, transparent 40%),
+    conic-gradient(from 45deg, transparent 0 12%, #14b8a6 12% 16%, transparent 16% 25%),
+    linear-gradient(90deg, transparent 0 46%, #22c55e 46% 54%, transparent 54%),
+    linear-gradient(0deg, transparent 0 46%, #14b8a6 46% 54%, transparent 54%);
+  clip-path: polygon(50% 0, 92% 26%, 76% 84%, 50% 100%, 24% 84%, 8% 26%);
+  filter: saturate(1.1);
+}
+
+.chat-surface-pi::after {
+  inset: 0;
+  opacity: 0.09;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, #22c55e 35%, transparent) 0 2px,
+      transparent 2px 14px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--foreground) 4%, transparent) 0 1px,
+      transparent 1px 5px
+    );
+  mix-blend-mode: multiply;
+}
+
+.dark .chat-surface-pi {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, #22c55e 14%, transparent) 0 1px, transparent 1px) 0
+      0 / 36px 36px,
+    linear-gradient(0deg, color-mix(in srgb, #14b8a6 12%, transparent) 0 1px, transparent 1px) 0 0 /
+      36px 36px,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 82%, #22c55e) 0%,
+      color-mix(in srgb, var(--background) 90%, #14b8a6) 42%,
+      color-mix(in srgb, var(--background) 96%, #0f172a) 74%,
+      var(--background) 100%
+    );
+}
+
+.dark .chat-surface-pi::after {
   mix-blend-mode: screen;
 }
 
