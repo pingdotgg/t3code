@@ -160,8 +160,8 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve `.cmd` shims on PATH.
-          shell: process.platform === "win32",
+          // `process.execPath` is already an absolute executable path. Running it
+          // through the Windows shell breaks when the path contains spaces.
         }),
       );
 
