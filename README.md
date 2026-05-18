@@ -51,6 +51,8 @@ T3 Code can run [Pi Agent](https://github.com/earendil-works/pi) through the
 **Settings -> Providers**, set the ACP adapter path to `pi-acp`, set the Pi binary path to `pi` or
 an absolute path, then select Pi from the chat model picker.
 
+![Pi themed chat surface](./docs/assets/pi-chat-theme.jpg)
+
 ```bash
 npm install -g @earendil-works/pi-coding-agent pi-acp
 pi --version
@@ -59,6 +61,8 @@ pi-acp --help
 
 T3 Code passes the configured Pi binary to the adapter with `PI_ACP_PI_COMMAND`, which keeps the
 packaged macOS app working even when `/opt/homebrew/bin` is not on the GUI app `PATH`.
+Provider Settings also exposes a Pi update action, so users can run `pi update` from the same
+place they configure the provider.
 
 For GPT-5.5, run `pi`, use `/login`, choose ChatGPT Plus/Pro Codex, and set Pi's defaults to
 `openai-codex` with `gpt-5.5`.

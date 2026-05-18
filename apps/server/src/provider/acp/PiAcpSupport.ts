@@ -12,6 +12,50 @@ import {
 } from "./AcpSessionRuntime.ts";
 
 type PiAcpRuntimePiSettings = Pick<PiSettings, "binaryPath" | "piBinaryPath">;
+const PATH_DELIMITER = process.platform === "win32" ? ";" : ":";
+
+function dirnameForExecutablePath(value: string | undefined): string | null {
+  if (!value || !value.startsWith("/")) {
+    return null;
+  }
+  const separatorIndex = value.lastIndexOf("/");
+  return separatorIndex > 0 ? value.slice(0, separatorIndex) : "/";
+}
+
+function prependUniquePathEntries(
+  currentPath: string | undefined,
+  entries: ReadonlyArray<string | null>,
+): string {
+  const seen = new Set<string>();
+  const next: Array<string> = [];
+  for (const entry of [...entries, ...(currentPath ? currentPath.split(PATH_DELIMITER) : [])]) {
+    if (!entry || seen.has(entry)) {
+      continue;
+    }
+    seen.add(entry);
+    next.push(entry);
+  }
+  return next.join(PATH_DELIMITER);
+}
+
+function buildPiAcpEnvironment(
+  piSettings: PiAcpRuntimePiSettings | null | undefined,
+  environment?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv | undefined {
+  if (!piSettings?.piBinaryPath && !piSettings?.binaryPath && !environment) {
+    return undefined;
+  }
+
+  const env = { ...environment };
+  if (piSettings?.piBinaryPath) {
+    env.PI_ACP_PI_COMMAND = piSettings.piBinaryPath;
+  }
+  env.PATH = prependUniquePathEntries(env.PATH, [
+    dirnameForExecutablePath(piSettings?.binaryPath),
+    dirnameForExecutablePath(piSettings?.piBinaryPath),
+  ]);
+  return env;
+}
 
 export interface PiAcpRuntimeInput extends Omit<
   AcpSessionRuntimeOptions,
@@ -27,13 +71,7 @@ export function buildPiAcpSpawnInput(
   cwd: string,
   environment?: NodeJS.ProcessEnv,
 ): AcpSpawnInput {
-  const env =
-    piSettings?.piBinaryPath || environment
-      ? {
-          ...environment,
-          ...(piSettings?.piBinaryPath ? { PI_ACP_PI_COMMAND: piSettings.piBinaryPath } : {}),
-        }
-      : undefined;
+  const env = buildPiAcpEnvironment(piSettings, environment);
 
   return {
     command: piSettings?.binaryPath || "pi-acp",

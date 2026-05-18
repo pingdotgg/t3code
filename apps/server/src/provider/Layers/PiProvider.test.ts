@@ -79,7 +79,11 @@ describe("parsePiConfigModelDefaults", () => {
         "defaultProvider": "anthropic",
         "defaultModel": "claude-haiku-4-5"
       }`),
-    ).toEqual({ defaultModel: "claude-haiku-4-5", malformed: false });
+    ).toEqual({
+      defaultModel: "claude-haiku-4-5",
+      defaultProvider: "anthropic",
+      malformed: false,
+    });
   });
 });
 
@@ -217,6 +221,7 @@ describe("checkPiProviderStatus", () => {
     expect(snapshot.status).toBe("error");
     expect(snapshot.auth.status).toBe("unauthenticated");
     expect(snapshot.models[0]?.slug).toBe("gpt-5.5");
+    expect(snapshot.models.map((model) => model.slug)).toContain("gpt-5.4");
     expect(snapshot.message).toContain("openai-codex");
     expect(snapshot.message).toContain("ChatGPT Plus/Pro (Codex)");
   });

@@ -45,12 +45,30 @@ const PI_FALLBACK_MODEL: ServerProviderModel = {
   isCustom: false,
   capabilities: EMPTY_CAPABILITIES,
 };
+const PI_OPENAI_CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.2-codex",
+  "gpt-5.2",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1",
+].map((slug) => ({
+  slug,
+  name: formatPiModelName(slug),
+  isCustom: false,
+  capabilities: EMPTY_CAPABILITIES,
+}));
 const PI_DEFAULT_MODELS: ReadonlyArray<ServerProviderModel> = [PI_FALLBACK_MODEL];
 const ABOUT_TIMEOUT_MS = 4_000;
 const LOGIN_SHELL_TIMEOUT_MS = 2_000;
 
 export interface PiConfigModelDefaults {
   readonly defaultModel: string | null;
+  readonly defaultProvider: string | null;
   readonly malformed: boolean;
 }
 
@@ -77,9 +95,14 @@ function stripQuotes(value: string): string {
 }
 
 export function parsePiConfigModelDefaults(raw: string): PiConfigModelDefaults {
+  const jsonDefaultProvider = extractJsonStringField(raw, "defaultProvider");
   const jsonDefaultModel = extractJsonStringField(raw, "defaultModel");
   if (jsonDefaultModel?.trim()) {
-    return { defaultModel: jsonDefaultModel.trim(), malformed: false };
+    return {
+      defaultModel: jsonDefaultModel.trim(),
+      defaultProvider: jsonDefaultProvider?.trim() || null,
+      malformed: false,
+    };
   }
 
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
@@ -110,10 +133,18 @@ export function parsePiConfigModelDefaults(raw: string): PiConfigModelDefaults {
     if (!defaultMatch?.[1]) continue;
 
     const value = stripQuotes(defaultMatch[1]);
-    return { defaultModel: value.length > 0 ? value : null, malformed: false };
+    return {
+      defaultModel: value.length > 0 ? value : null,
+      defaultProvider: jsonDefaultProvider?.trim() || null,
+      malformed: false,
+    };
   }
 
-  return { defaultModel: null, malformed: sawModelBlock };
+  return {
+    defaultModel: null,
+    defaultProvider: jsonDefaultProvider?.trim() || null,
+    malformed: sawModelBlock,
+  };
 }
 
 function formatPiModelName(slug: string): string {
@@ -151,7 +182,9 @@ function readPiConfigModelDefaults(
     const raw = yield* fs
       .readFileString(path.join(home, "settings.json"))
       .pipe(Effect.catch(() => Effect.succeed(null)));
-    return raw ? parsePiConfigModelDefaults(raw) : { defaultModel: null, malformed: false };
+    return raw
+      ? parsePiConfigModelDefaults(raw)
+      : { defaultModel: null, defaultProvider: null, malformed: false };
   });
 }
 
@@ -351,8 +384,12 @@ function getPiModels(
   piSettings: Pick<PiSettings, "customModels">,
   defaults: PiConfigModelDefaults,
 ): ReadonlyArray<ServerProviderModel> {
+  const baseModels =
+    defaults.defaultProvider === "openai-codex"
+      ? PI_OPENAI_CODEX_MODELS
+      : [modelFromPiDefault(defaults.defaultModel)];
   return providerModelsFromSettings(
-    [modelFromPiDefault(defaults.defaultModel)],
+    baseModels,
     PROVIDER,
     piSettings.customModels,
     EMPTY_CAPABILITIES,
@@ -643,7 +680,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   const configMessage =
     parsed.status === "ready" && configDefaults.malformed
       ? "Pi Agent is ready, but T3 Code could not read a configured default model; add a custom model in Settings if the picker needs a specific model name."
-      : parsed.message;
+      : (parsed.message ??
+        (parsed.status === "ready" && configDefaults.defaultProvider && configDefaults.defaultModel
+          ? `Pi Agent is ready. Auth provider: ${configDefaults.defaultProvider}. Default model: ${configDefaults.defaultModel}.`
+          : undefined));
   return withPiHints(
     buildServerProvider({
       presentation: PI_PRESENTATION,

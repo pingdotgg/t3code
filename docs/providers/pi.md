@@ -60,6 +60,13 @@ Absolute paths are recommended for packaged macOS builds because GUI apps can ha
 T3 Code passes the configured Pi binary to `pi-acp` through `PI_ACP_PI_COMMAND`, so the adapter can
 find Pi even when the app is launched outside your shell.
 
+The Pi provider card also includes a provider update action. Use it after Pi reports a newer
+version, or run the same update manually from a terminal:
+
+```bash
+pi update
+```
+
 ## Test a Chat
 
 In T3 Code, select Pi in the model picker and send a small prompt. Pi manages authentication and
