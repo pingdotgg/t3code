@@ -94,6 +94,29 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
+const nonEmpty = (value: string | null | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+export function resolveCodexRequiresOpenaiAuth(
+  config: CodexSchema.V2ConfigReadResponse["config"],
+  profileName?: string,
+): boolean | undefined {
+  const modelProvider =
+    (profileName ? nonEmpty(config.profiles?.[profileName]?.model_provider) : undefined) ??
+    nonEmpty(config.model_provider);
+  if (!modelProvider) return undefined;
+
+  const provider = isRecord(config.model_providers) ? config.model_providers[modelProvider] : null;
+  return isRecord(provider) && typeof provider.requires_openai_auth === "boolean"
+    ? provider.requires_openai_auth
+    : undefined;
+}
+
 function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
@@ -294,10 +317,18 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
 
-  const accountResponse = yield* client.request("account/read", {});
-  if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+  const [accountResponse, configResponse] = yield* Effect.all(
+    [client.request("account/read", {}), client.request("config/read", {})],
+    { concurrency: "unbounded" },
+  );
+  const requiresOpenaiAuth =
+    resolveCodexRequiresOpenaiAuth(configResponse.config, input.profileName) ??
+    accountResponse.requiresOpenaiAuth;
+  const account = { ...accountResponse, requiresOpenaiAuth };
+
+  if (!account.account && account.requiresOpenaiAuth) {
     return {
-      account: accountResponse,
+      account,
       version,
       models: appendCustomCodexModels([], input.customModels ?? []),
       skills: [],
@@ -315,7 +346,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   );
 
   return {
-    account: accountResponse,
+    account,
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),

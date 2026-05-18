@@ -289,6 +289,7 @@ function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
+  readonly modelProvider: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
@@ -297,9 +298,30 @@ function buildThreadStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
 }
+
+const nonEmpty = (value: string | null | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const readCodexProfileModelProvider = (
+  client: CodexClient.CodexAppServerClientShape,
+  profileName: string | undefined,
+): Effect.Effect<string | undefined, CodexErrors.CodexAppServerError> =>
+  client.request("config/read", {}).pipe(
+    Effect.map((response) => {
+      const config = response.config;
+      return (
+        (profileName ? nonEmpty(config.profiles?.[profileName]?.model_provider) : undefined) ??
+        nonEmpty(config.model_provider)
+      );
+    }),
+    Effect.catch(() => Effect.sync((): string | undefined => undefined)),
+  );
 
 function runtimeModeToTurnSandboxPolicy(
   input: RuntimeMode,
@@ -438,6 +460,7 @@ export const openCodexThread = (input: {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
+  readonly requestedModelProvider: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
@@ -446,6 +469,7 @@ export const openCodexThread = (input: {
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
+    modelProvider: input.requestedModelProvider,
     serviceTier: input.serviceTier,
   });
 
@@ -1188,6 +1212,10 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
+      const requestedModelProvider = yield* readCodexProfileModelProvider(
+        client,
+        options.profileName,
+      );
 
       const opened = yield* openCodexThread({
         client,
@@ -1195,6 +1223,7 @@ export const makeCodexSessionRuntime = (
         runtimeMode: options.runtimeMode,
         cwd: options.cwd,
         requestedModel,
+        requestedModelProvider,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
       });

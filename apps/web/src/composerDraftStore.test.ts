@@ -1277,6 +1277,27 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
   });
 
+  it("replaces active drafts scoped to the same provider instances when storing a sticky profile", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-profile");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const profileInstance = ProviderInstanceId.make("codex_work");
+
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    store.setStickyModelSelectionForInstances(createModelSelection(profileInstance, "gpt-5.4"), [
+      CODEX_INSTANCE,
+      profileInstance,
+    ]);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: profileInstance,
+      modelSelectionByProvider: {
+        [profileInstance]: createModelSelection(profileInstance, "gpt-5.4"),
+      },
+    });
+    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe(profileInstance);
+  });
+
   it("normalizes empty sticky model options by dropping selection options", () => {
     const store = useComposerDraftStore.getState();
 

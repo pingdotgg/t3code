@@ -562,6 +562,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (store) => store.stickyModelSelectionByProvider,
+  );
+  const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -667,6 +671,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (explicitSelectedInstanceId) {
       return ProviderInstanceId.make(explicitSelectedInstanceId);
     }
+    if (stickyActiveProvider) {
+      const stickyEntry = providerInstanceEntries.find(
+        (entry) => entry.instanceId === stickyActiveProvider && entry.enabled,
+      );
+      if (
+        stickyEntry &&
+        stickyEntry.driverKind === selectedProvider &&
+        (!lockedContinuationGroupKey ||
+          stickyEntry.continuationGroupKey === lockedContinuationGroupKey)
+      ) {
+        return stickyEntry.instanceId;
+      }
+    }
+    for (const stickySelection of Object.values(stickyModelSelectionByProvider)) {
+      if (!stickySelection) continue;
+      const stickyEntry = providerInstanceEntries.find(
+        (entry) => entry.instanceId === stickySelection.instanceId && entry.enabled,
+      );
+      if (
+        stickyEntry &&
+        stickyEntry.driverKind === selectedProvider &&
+        (!lockedContinuationGroupKey ||
+          stickyEntry.continuationGroupKey === lockedContinuationGroupKey)
+      ) {
+        return stickyEntry.instanceId;
+      }
+    }
     const byKind = providerInstanceEntries.find(
       (entry) =>
         entry.enabled &&
@@ -692,6 +723,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedProvider,
     providerInstanceEntries,
     selectedProvider,
+    stickyActiveProvider,
+    stickyModelSelectionByProvider,
   ]);
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({

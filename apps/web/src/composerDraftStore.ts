@@ -2279,12 +2279,34 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               }
             }
             nextMap[normalized.instanceId] = normalized;
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            for (const [threadKey, draft] of Object.entries(state.draftsByThreadKey)) {
+              if (!draft.activeProvider || !replaceable.has(draft.activeProvider)) {
+                continue;
+              }
+              const current = draft.modelSelectionByProvider[normalized.instanceId];
+              const nextDraftMap = {
+                ...draft.modelSelectionByProvider,
+                [normalized.instanceId]: createModelSelection(
+                  normalized.instanceId,
+                  current?.model ?? normalized.model,
+                  current?.options ?? normalized.options,
+                ),
+              };
+              nextDraftsByThreadKey[threadKey] = {
+                ...draft,
+                modelSelectionByProvider: nextDraftMap,
+                activeProvider: normalized.instanceId,
+              };
+            }
             return Equal.equals(state.stickyModelSelectionByProvider, nextMap) &&
-              state.stickyActiveProvider === normalized.instanceId
+              state.stickyActiveProvider === normalized.instanceId &&
+              Equal.equals(state.draftsByThreadKey, nextDraftsByThreadKey)
               ? state
               : {
                   stickyModelSelectionByProvider: nextMap,
                   stickyActiveProvider: normalized.instanceId,
+                  draftsByThreadKey: nextDraftsByThreadKey,
                 };
           });
         },

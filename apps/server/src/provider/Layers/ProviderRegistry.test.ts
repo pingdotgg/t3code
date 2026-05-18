@@ -30,7 +30,11 @@ import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  resolveCodexRequiresOpenaiAuth,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
@@ -302,6 +306,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
+      it("resolves OpenAI auth requirements from the configured Codex profile provider", () => {
+        assert.strictEqual(
+          resolveCodexRequiresOpenaiAuth(
+            {
+              model_provider: null,
+              profiles: {
+                work: {
+                  model: "gpt-5.5",
+                  model_provider: "codex-lb",
+                },
+              },
+              model_providers: {
+                "codex-lb": {
+                  requires_openai_auth: false,
+                },
+              },
+            },
+            "work",
+          ),
+          false,
+        );
+      });
+
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
