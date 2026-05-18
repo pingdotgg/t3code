@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 interface TraceRecordLike {
   readonly name?: unknown;
@@ -65,6 +66,8 @@ interface TraceDiagnosticsErrorSummary {
 const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
+const decodeTraceRecordJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
 function toRotatedTracePaths(traceFilePath: string, maxFiles: number): ReadonlyArray<string> {
   const backupCount = Math.max(0, Math.floor(maxFiles));
   const backups = Array.from(
@@ -217,14 +220,13 @@ export function aggregateTraceDiagnostics(
     for (const line of lines) {
       if (line.trim().length === 0) continue;
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
+      const decoded = decodeTraceRecordJson(line);
+      if (Option.isNone(decoded)) {
         parseErrorCount += 1;
         continue;
       }
 
+      const parsed = decoded.value;
       if (!isRecordObject(parsed)) {
         parseErrorCount += 1;
         continue;

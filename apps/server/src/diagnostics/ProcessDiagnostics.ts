@@ -26,7 +26,7 @@ export interface ProcessRow {
   readonly command: string;
 }
 
-const PROCESS_QUERY_TIMEOUT_MS = 1_000;
+const PROCESS_QUERY_TIMEOUT = Duration.seconds(1);
 const POSIX_PROCESS_QUERY_COMMAND = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
 const PROCESS_QUERY_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
@@ -52,6 +52,24 @@ class ProcessDiagnosticsError extends Schema.TaggedErrorClass<ProcessDiagnostics
 ) {}
 const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
 
+const WindowsProcessRecordJson = Schema.Struct({
+  ProcessId: Schema.optional(Schema.Number),
+  ParentProcessId: Schema.optional(Schema.Number),
+  Name: Schema.optional(Schema.String),
+  CommandLine: Schema.optional(Schema.String),
+  Status: Schema.optional(Schema.String),
+  WorkingSetSize: Schema.optional(Schema.Number),
+  PercentProcessorTime: Schema.optional(Schema.Number),
+});
+type WindowsProcessRecordJson = typeof WindowsProcessRecordJson.Type;
+const WindowsProcessJson = Schema.Union([
+  WindowsProcessRecordJson,
+  Schema.Array(WindowsProcessRecordJson),
+]);
+const decodeWindowsProcessJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(WindowsProcessJson),
+);
+
 function toProcessDiagnosticsError(message: string, cause?: unknown): ProcessDiagnosticsError {
   return new ProcessDiagnosticsError({
     message,
@@ -72,6 +90,14 @@ function parseNonNegativeInt(value: string): number | null {
 function parseNumber(value: string): number | null {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function finiteNumberOption(value: number | undefined): Option.Option<number> {
+  return typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none();
+}
+
+function nonEmptyStringOption(value: string | undefined): Option.Option<string> {
+  return typeof value === "string" && value.trim().length > 0 ? Option.some(value) : Option.none();
 }
 
 export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow> {
@@ -139,51 +165,52 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
   return rows;
 }
 
-function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const pid = typeof record.ProcessId === "number" ? record.ProcessId : null;
-  const ppid = typeof record.ParentProcessId === "number" ? record.ParentProcessId : null;
-  const commandLine =
-    typeof record.CommandLine === "string" && record.CommandLine.trim().length > 0
-      ? record.CommandLine
-      : typeof record.Name === "string"
-        ? record.Name
-        : null;
-  const workingSet =
-    typeof record.WorkingSetSize === "number" && Number.isFinite(record.WorkingSetSize)
-      ? Math.max(0, Math.round(record.WorkingSetSize))
-      : 0;
-  const cpuPercent =
-    typeof record.PercentProcessorTime === "number" && Number.isFinite(record.PercentProcessorTime)
-      ? Math.max(0, record.PercentProcessorTime)
-      : 0;
+function normalizeWindowsProcessRow(record: WindowsProcessRecordJson): Option.Option<ProcessRow> {
+  const pid = finiteNumberOption(record.ProcessId).pipe(Option.filter((value) => value > 0));
+  const ppid = finiteNumberOption(record.ParentProcessId).pipe(
+    Option.filter((value) => value >= 0),
+  );
+  const commandLine = nonEmptyStringOption(record.CommandLine).pipe(
+    Option.orElse(() => nonEmptyStringOption(record.Name)),
+  );
 
-  if (!pid || pid <= 0 || ppid === null || ppid < 0 || !commandLine) return null;
-  return {
-    pid,
-    ppid,
+  if (Option.isNone(pid) || Option.isNone(ppid) || Option.isNone(commandLine)) {
+    return Option.none();
+  }
+
+  const workingSet = finiteNumberOption(record.WorkingSetSize).pipe(
+    Option.map((value) => Math.max(0, Math.round(value))),
+    Option.getOrElse(() => 0),
+  );
+  const cpuPercent = finiteNumberOption(record.PercentProcessorTime).pipe(
+    Option.map((value) => Math.max(0, value)),
+    Option.getOrElse(() => 0),
+  );
+  const status = nonEmptyStringOption(record.Status).pipe(Option.getOrElse(() => "Live"));
+
+  return Option.some({
+    pid: pid.value,
+    ppid: ppid.value,
     pgid: null,
-    status: typeof record.Status === "string" && record.Status.length > 0 ? record.Status : "Live",
+    status,
     cpuPercent,
     rssBytes: workingSet,
     elapsed: "",
-    command: commandLine,
-  };
+    command: commandLine.value,
+  });
 }
 
 function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
   if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
+  const decoded = decodeWindowsProcessJson(output);
+  if (Option.isNone(decoded)) {
     return [];
   }
+  const records = Array.isArray(decoded.value) ? decoded.value : [decoded.value];
+  return records.flatMap((record) => {
+    const row = normalizeWindowsProcessRow(record);
+    return Option.isSome(row) ? [row.value] : [];
+  });
 }
 
 export function buildDescendantEntries(
@@ -309,7 +336,7 @@ const runProcess = Effect.fn("runProcess")(
   (effect, input) =>
     effect.pipe(
       Effect.scoped,
-      Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
+      Effect.timeoutOption(PROCESS_QUERY_TIMEOUT),
       Effect.flatMap((result) =>
         Option.match(result, {
           onNone: () => Effect.fail(toProcessDiagnosticsError(`${input.errorMessage} timed out.`)),
