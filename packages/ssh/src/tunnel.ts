@@ -1153,7 +1153,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     .spawn(
       ChildProcess.make("ssh", args, {
         env: childEnvironment,
-        shell: process.platform === "win32",
+        shell: false,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,
