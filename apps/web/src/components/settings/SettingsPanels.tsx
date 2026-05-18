@@ -25,7 +25,9 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { InlineModelPickerContent } from "../chat/InlineModelPickerContent";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
@@ -54,7 +56,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { AddOrInstallProviderPanel } from "./AddOrInstallProviderPanel";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -140,6 +142,61 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
         <>Checked {lastCheckedRelative.value}</>
       )}
     </span>
+  );
+}
+
+/**
+ * Settings-only wrapper that keeps the popover UX for the text-generation
+ * model picker. The chat composer switched to the new inline panel surface,
+ * but a settings row is too cramped for inline expansion — popover behavior
+ * still fits there.
+ */
+function TextGenModelPickerPopover(props: {
+  activeInstanceId: ProviderInstanceId;
+  model: string;
+  instanceEntries: ReadonlyArray<
+    Parameters<typeof ProviderModelPicker>[0]["instanceEntries"][number]
+  >;
+  modelOptionsByInstance: Parameters<typeof ProviderModelPicker>[0]["modelOptionsByInstance"];
+  onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <ProviderModelPicker
+            activeInstanceId={props.activeInstanceId}
+            model={props.model}
+            lockedProvider={null}
+            instanceEntries={props.instanceEntries}
+            modelOptionsByInstance={props.modelOptionsByInstance}
+            triggerVariant="outline"
+            triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+            open={open}
+            onOpenChange={setOpen}
+          />
+        }
+      />
+      <PopoverPopup
+        align="end"
+        className="w-100 max-w-[min(28rem,calc(100vw-1rem))] border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0] *:data-[slot=popover-viewport]:p-0"
+      >
+        <InlineModelPickerContent
+          activeInstanceId={props.activeInstanceId}
+          model={props.model}
+          lockedProvider={null}
+          instanceEntries={props.instanceEntries}
+          modelOptionsByInstance={props.modelOptionsByInstance}
+          terminalOpen={false}
+          onRequestClose={() => setOpen(false)}
+          onInstanceModelChange={(instanceId, model) => {
+            props.onInstanceModelChange(instanceId, model);
+            setOpen(false);
+          }}
+        />
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -834,14 +891,11 @@ export function GeneralSettingsPanel() {
           }
           control={
             <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <ProviderModelPicker
+              <TextGenModelPickerPopover
                 activeInstanceId={textGenInstanceId}
                 model={textGenModel}
-                lockedProvider={null}
                 instanceEntries={gitModelInstanceEntries}
                 modelOptionsByInstance={gitModelOptionsByInstance}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
@@ -919,7 +973,6 @@ export function ProviderSettingsPanel() {
   const { updateSettings } = useUpdateSettings();
   const serverProviders = useServerProviders();
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -958,9 +1011,7 @@ export function ProviderSettingsPanel() {
     setIsRefreshingProviders(true);
     void ensureLocalApi()
       .server.refreshProviders()
-      .catch((error: unknown) => {
-        console.warn("Failed to refresh providers", error);
-      })
+      .catch(() => undefined)
       .finally(() => {
         refreshingRef.current = false;
         setIsRefreshingProviders(false);
@@ -1190,7 +1241,10 @@ export function ProviderSettingsPanel() {
                     size="icon-xs"
                     variant="ghost"
                     className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    onClick={() => {
+                      const target = document.getElementById("providers-add-or-install");
+                      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
                     aria-label="Add provider instance"
                   >
                     <PlusIcon className="size-3" />
@@ -1323,10 +1377,9 @@ export function ProviderSettingsPanel() {
         })}
       </SettingsSection>
 
-      <AddProviderInstanceDialog
-        open={isAddInstanceDialogOpen}
-        onOpenChange={setIsAddInstanceDialogOpen}
-      />
+      <div className="px-4 pb-6 pt-2 sm:px-6">
+        <AddOrInstallProviderPanel />
+      </div>
     </SettingsPageContainer>
   );
 }

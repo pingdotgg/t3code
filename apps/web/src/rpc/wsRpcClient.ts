@@ -143,6 +143,12 @@ export interface WsRpcClient {
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
+  readonly acpRegistry: {
+    readonly list: RpcUnaryNoArgMethod<typeof WS_METHODS.acpRegistryList>;
+    readonly install: RpcUnaryMethod<typeof WS_METHODS.acpRegistryInstall>;
+    readonly uninstall: RpcUnaryMethod<typeof WS_METHODS.acpRegistryUninstall>;
+    readonly authenticate: RpcUnaryMethod<typeof WS_METHODS.acpRegistryAuthenticate>;
+  };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
@@ -294,6 +300,15 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           ...options,
           tag: WS_METHODS.subscribeAuthAccess,
         }),
+    },
+    acpRegistry: {
+      list: () => transport.request((client) => client[WS_METHODS.acpRegistryList]({})),
+      install: (input) =>
+        transport.request((client) => client[WS_METHODS.acpRegistryInstall](input)),
+      uninstall: (input) =>
+        transport.request((client) => client[WS_METHODS.acpRegistryUninstall](input)),
+      authenticate: (input) =>
+        transport.request((client) => client[WS_METHODS.acpRegistryAuthenticate](input)),
     },
     orchestration: {
       dispatchCommand: (input) =>

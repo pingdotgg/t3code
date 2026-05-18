@@ -18,6 +18,7 @@ import type {
   VcsStatusResult,
   VcsCreateRefResult,
 } from "./git.ts";
+import type { AcpRegistryEntryWithStatus, AcpRegistryInstallState } from "./acpRegistry.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
   ProjectSearchEntriesInput,
@@ -458,6 +459,15 @@ export interface LocalApi {
     getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
     setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
     removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
+  };
+  acpRegistry: {
+    list: () => Promise<ReadonlyArray<AcpRegistryEntryWithStatus>>;
+    install: (input: { readonly agentId: string }) => Promise<AcpRegistryInstallState>;
+    uninstall: (input: { readonly agentId: string }) => Promise<{ readonly agentId: string }>;
+    authenticate: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly methodId: string;
+    }) => Promise<Record<string, never>>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;

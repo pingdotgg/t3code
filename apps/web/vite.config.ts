@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
@@ -55,6 +57,30 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
+// Custom plugin to copy ACP registry icons from contracts to web public directory
+function copyAcpIcons() {
+  return {
+    name: "copy-acp-icons",
+    async buildStart() {
+      const contractsIconsDir = path.resolve(__dirname, "../../packages/contracts/src/registry/icons");
+      const webIconsDir = path.resolve(__dirname, "public/acp-icons");
+
+      try {
+        await fs.mkdir(webIconsDir, { recursive: true });
+        const entries = await fs.readdir(contractsIconsDir);
+        for (const entry of entries) {
+          if (entry.endsWith(".svg")) {
+            await fs.copyFile(path.join(contractsIconsDir, entry), path.join(webIconsDir, entry));
+          }
+        }
+      } catch (error) {
+        // If contracts icons don't exist yet, that's okay
+        console.warn("ACP icons copy skipped (contracts icons may not exist yet)");
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     tanstackRouter(),
@@ -68,6 +94,7 @@ export default defineConfig({
       presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
+    copyAcpIcons(),
   ],
   optimizeDeps: {
     include: [

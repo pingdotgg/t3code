@@ -1,7 +1,8 @@
 import { type CSSProperties, memo } from "react";
-import { type ProviderDriverKind } from "@t3tools/contracts";
+import { acpRegistryIdFromDriverKind, type ProviderDriverKind } from "@t3tools/contracts";
 
 import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { AcpRegistryIcon } from "../AcpRegistryIcon";
 import { cn } from "~/lib/utils";
 
 export function providerInstanceInitials(label: string): string {
@@ -25,6 +26,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   statusDotClassName?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const acpRegistryId = Icon ? undefined : acpRegistryIdFromDriverKind(props.driverKind);
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
@@ -40,6 +42,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     >
       {Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
+      ) : acpRegistryId ? (
+        <AcpRegistryIcon
+          agentId={acpRegistryId}
+          className={cn("size-5 shrink-0", props.iconClassName)}
+        />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}

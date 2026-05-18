@@ -61,6 +61,8 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { InlineModelPickerContent } from "./InlineModelPickerContent";
+import { AnimatedHeight } from "../AnimatedHeight";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -1945,6 +1947,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-208"
       data-chat-composer-form="true"
     >
+      <AnimatedHeight>
+        {isComposerModelPickerOpen ? (
+          <div className="mb-2" data-chat-composer-inline-model-picker="true">
+            <InlineModelPickerContent
+              activeInstanceId={selectedInstanceId}
+              model={selectedModelForPickerWithCustomFallback}
+              lockedProvider={lockedProvider}
+              lockedContinuationGroupKey={lockedContinuationGroupKey}
+              instanceEntries={providerInstanceEntries}
+              keybindings={keybindings}
+              modelOptionsByInstance={modelOptionsByInstance}
+              terminalOpen={terminalOpen}
+              onRequestClose={() => setIsComposerModelPickerOpen(false)}
+              onInstanceModelChange={(instanceId, model) => {
+                onProviderModelSelect(instanceId, model);
+                setIsComposerModelPickerOpen(false);
+              }}
+            />
+          </div>
+        ) : null}
+      </AnimatedHeight>
       <div
         className={cn(
           "group rounded-[22px] p-px transition-colors duration-200",
@@ -2322,9 +2345,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   lockedProvider={lockedProvider}
                   lockedContinuationGroupKey={lockedContinuationGroupKey}
                   instanceEntries={providerInstanceEntries}
-                  keybindings={keybindings}
                   modelOptionsByInstance={modelOptionsByInstance}
-                  terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}
                   {...(composerProviderState.modelPickerIconClassName
                     ? {
@@ -2334,7 +2355,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onOpenChange={(open) => {
                     setIsComposerModelPickerOpen(open);
                   }}
-                  onInstanceModelChange={onProviderModelSelect}
                 />
 
                 {isComposerFooterCompact ? (

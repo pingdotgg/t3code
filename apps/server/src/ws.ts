@@ -37,6 +37,7 @@ import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
+import { AcpRegistryService, layer as AcpRegistryLive } from "./acpRegistry/AcpRegistryService.ts";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
@@ -195,6 +196,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const sessions = yield* SessionCredentialService;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const acpRegistry = yield* AcpRegistryService;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -923,6 +925,30 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.acpRegistryList]: (_input) =>
+          observeRpcEffect(WS_METHODS.acpRegistryList, acpRegistry.list(), {
+            "rpc.aggregate": "acp-registry",
+          }),
+        [WS_METHODS.acpRegistryInstall]: ({ agentId }) =>
+          observeRpcEffect(WS_METHODS.acpRegistryInstall, acpRegistry.install(agentId), {
+            "rpc.aggregate": "acp-registry",
+          }),
+        [WS_METHODS.acpRegistryUninstall]: ({ agentId }) =>
+          observeRpcEffect(
+            WS_METHODS.acpRegistryUninstall,
+            acpRegistry.uninstall(agentId).pipe(Effect.as({ agentId })),
+            {
+              "rpc.aggregate": "acp-registry",
+            },
+          ),
+        [WS_METHODS.acpRegistryAuthenticate]: ({ instanceId, methodId }) =>
+          observeRpcEffect(
+            WS_METHODS.acpRegistryAuthenticate,
+            acpRegistry.authenticate(instanceId, methodId).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "acp-registry",
+            },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -1255,6 +1281,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer(session.sessionId).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(AcpRegistryLive),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 SourceControlDiscoveryLayer.layer.pipe(

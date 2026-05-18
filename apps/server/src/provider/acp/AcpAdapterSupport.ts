@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   ProviderAdapterRequestError,
@@ -53,4 +54,23 @@ export function acpPermissionOutcome(decision: ProviderApprovalDecision): string
     default:
       return "reject-once";
   }
+}
+
+export function resolveAcpPermissionOutcome(
+  decision: ProviderApprovalDecision,
+  options: ReadonlyArray<EffectAcpSchema.PermissionOption>,
+): EffectAcpSchema.RequestPermissionResponse["outcome"] {
+  const preferredKinds: ReadonlyArray<EffectAcpSchema.PermissionOption["kind"]> =
+    decision === "acceptForSession"
+      ? ["allow_always", "allow_once"]
+      : decision === "accept"
+        ? ["allow_once", "allow_always"]
+        : ["reject_once", "reject_always"];
+  for (const kind of preferredKinds) {
+    const match = options.find((option) => option.kind === kind);
+    if (match) {
+      return { outcome: "selected", optionId: match.optionId };
+    }
+  }
+  return { outcome: "cancelled" };
 }

@@ -1,4 +1,4 @@
-import { type ServerProvider } from "@t3tools/contracts";
+import { ACP_REGISTRY_DRIVER_PREFIX, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { CircleAlertIcon } from "lucide-react";
@@ -14,6 +14,25 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   }
 
   const providerLabel = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const isAcpRegistry = status.driver.startsWith(ACP_REGISTRY_DRIVER_PREFIX);
+  const isUnauthenticated = status.auth.status === "unauthenticated";
+
+  if (isAcpRegistry && isUnauthenticated) {
+    return (
+      <div className="pt-3 mx-auto max-w-3xl">
+        <Alert variant="warning">
+          <CircleAlertIcon />
+          <AlertTitle>{providerLabel} requires authentication</AlertTitle>
+          <AlertDescription>
+            This provider requires authentication before it can be used. Go to{" "}
+            <strong>Settings → Providers</strong> and click the "Authenticate" button for this
+            provider.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   const defaultMessage =
     status.status === "error"
       ? `${providerLabel} provider is unavailable.`

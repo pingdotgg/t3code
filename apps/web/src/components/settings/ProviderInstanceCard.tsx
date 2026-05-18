@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ACP_REGISTRY_DRIVER_PREFIX,
   isProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -23,6 +24,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { ensureLocalApi } from "../../localApi";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -30,6 +32,7 @@ import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
+import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -154,6 +157,79 @@ function ProviderAuthEmail(props: {
         hideTooltip="Click to hide email"
       />
     </span>
+  );
+}
+
+function ProviderAuthSection(props: {
+  readonly instanceId: ProviderInstanceId;
+  readonly liveProvider: ServerProvider | undefined;
+}) {
+  const [authenticating, setAuthenticating] = useState<ReadonlySet<string>>(() => new Set());
+  const live = props.liveProvider;
+  const isAcpRegistry = live?.driver.startsWith(ACP_REGISTRY_DRIVER_PREFIX) ?? false;
+  const authMethods = live?.auth.authMethods ?? [];
+  const isAuthenticated = live?.auth.status === "authenticated";
+
+  if (!isAcpRegistry || authMethods.length === 0 || isAuthenticated) {
+    return null;
+  }
+
+  const handleAuthenticate = async (methodId: string) => {
+    setAuthenticating((prev) => new Set(prev).add(methodId));
+    try {
+      await ensureLocalApi().acpRegistry.authenticate({
+        instanceId: props.instanceId,
+        methodId,
+      });
+    } catch (cause) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Authentication failed`,
+          description: cause instanceof Error ? cause.message : String(cause),
+        }),
+      );
+    } finally {
+      setAuthenticating((prev) => {
+        if (!prev.has(methodId)) return prev;
+        const next = new Set(prev);
+        next.delete(methodId);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+      <div className="grid gap-2">
+        <span className="text-xs font-medium text-foreground">Authentication</span>
+        <p className="text-xs text-muted-foreground">
+          This provider requires authentication. Choose a method below to authenticate.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {authMethods.map((method) => (
+            <Tooltip key={method.id}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    disabled={authenticating.has(method.id)}
+                    onClick={() => void handleAuthenticate(method.id)}
+                  >
+                    {authenticating.has(method.id) ? <Spinner className="mr-1.5 size-3" /> : null}
+                    Authenticate with {method.name}
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">{method.description ?? method.name}</TooltipPopup>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -480,7 +556,6 @@ export function ProviderInstanceCard({
   const authenticatedDetail = hasAuthenticatedEmail
     ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
     : null;
-  const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
@@ -658,11 +733,11 @@ export function ProviderInstanceCard({
         </>
       ) : (
         <>
-          <span>{summary.headline}</span>
+          <span>{rawSummary.headline}</span>
           <ProviderAuthEmail email={authEmail} separator prefix="Email" />
         </>
       )}
-      {summary.detail ? <span>- {summary.detail}</span> : null}
+      {rawSummary.detail ? <span>- {rawSummary.detail}</span> : null}
     </p>
   );
 
@@ -842,6 +917,8 @@ export function ProviderInstanceCard({
                 onChange={updateConfig}
               />
             ) : null}
+
+            <ProviderAuthSection instanceId={instanceId} liveProvider={liveProvider} />
 
             {driverOption !== undefined ? (
               <ProviderModelsSection

@@ -20,3 +20,5 @@ export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";
 export * from "./rpc.ts";
+export * from "./acpRegistry.ts";
+export * from "./registry/index.ts";

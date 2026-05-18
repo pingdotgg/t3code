@@ -476,6 +476,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providerInstances: {
           [instanceId]: {
             driver: ProviderDriverKind.make("codex"),
+            enabled: true,
             environment: [
               { name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true },
               { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
@@ -512,6 +513,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providerInstances: {
           [instanceId]: {
             driver: ProviderDriverKind.make("codex"),
+            enabled: true,
             displayName: "Codex Personal",
             environment: [
               { name: "OPENROUTER_API_KEY", value: "", sensitive: true, valueRedacted: true },
