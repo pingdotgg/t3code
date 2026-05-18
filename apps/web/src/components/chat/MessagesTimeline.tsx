@@ -69,7 +69,7 @@ import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 // ---------------------------------------------------------------------------
-// Context — shared state consumed by every row component via useContext.
+// Context — shared state consumed by every row component via Context.
 // Propagates through LegendList's memo boundaries for shared callbacks and
 // non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
 // components (WorkingTimer, LiveElapsed) handle it.
@@ -89,11 +89,8 @@ interface TimelineRowSharedState {
 }
 
 interface TimelineRowActivityState {
-  activeTurnInProgress: boolean;
-  activeTurnId: TurnId | null;
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
-  completionSummary: string | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -166,7 +163,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       deriveMessagesTimelineRows({
         timelineEntries,
         completionDividerBeforeEntryId,
+        completionSummary,
         isWorking,
+        activeTurnInProgress,
+        activeTurnId: activeTurnId ?? null,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
@@ -174,7 +174,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       timelineEntries,
       completionDividerBeforeEntryId,
+      completionSummary,
       isWorking,
+      activeTurnInProgress,
+      activeTurnId,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
@@ -239,13 +242,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
-      activeTurnInProgress,
-      activeTurnId: activeTurnId ?? null,
       isWorking,
       isRevertingCheckpoint,
-      completionSummary,
     }),
-    [activeTurnInProgress, activeTurnId, completionSummary, isRevertingCheckpoint, isWorking],
+    [isRevertingCheckpoint, isWorking],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -270,8 +270,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <TimelineRowCtx.Provider value={sharedState}>
-      <TimelineRowActivityCtx.Provider value={activityState}>
+    <TimelineRowCtx value={sharedState}>
+      <TimelineRowActivityCtx value={activityState}>
         <div
           className="h-full min-h-0"
           onTouchMoveCapture={handleUserScrollIntent}
@@ -284,15 +284,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             renderItem={renderItem}
             estimatedItemSize={90}
             initialScrollAtEnd
-            maintainVisibleContentPosition={{ data: false, size: true }}
+            maintainScrollAtEnd
+            maintainScrollAtEndThreshold={0.1}
+            maintainVisibleContentPosition
             onScroll={handleScroll}
             className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
             ListHeaderComponent={TIMELINE_LIST_HEADER}
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
         </div>
-      </TimelineRowActivityCtx.Provider>
-    </TimelineRowCtx.Provider>
+      </TimelineRowActivityCtx>
+    </TimelineRowCtx>
   );
 });
 
@@ -422,12 +424,13 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
 
   return (
     <>
-      {row.showCompletionDivider && <AssistantCompletionDivider />}
+      {row.showCompletionDivider && (
+        <AssistantCompletionDivider completionSummary={row.completionSummary} />
+      )}
       <div className="min-w-0 px-1 py-0.5">
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
-          environmentId={ctx.activeThreadEnvironmentId}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
         />
@@ -460,14 +463,12 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
-function AssistantCompletionDivider() {
-  const activity = use(TimelineRowActivityCtx);
-
+function AssistantCompletionDivider({ completionSummary }: { completionSummary: string | null }) {
   return (
     <div className="my-3 flex items-center gap-3">
       <span className="h-px flex-1 bg-border" />
       <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-        {activity.completionSummary ? `Response • ${activity.completionSummary}` : "Response"}
+        {completionSummary ? `Response • ${completionSummary}` : "Response"}
       </span>
       <span className="h-px flex-1 bg-border" />
     </div>
@@ -475,15 +476,10 @@ function AssistantCompletionDivider() {
 }
 
 function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
-  const activity = use(TimelineRowActivityCtx);
-  const assistantTurnStillInProgress =
-    activity.activeTurnInProgress &&
-    activity.activeTurnId !== null &&
-    row.message.turnId === activity.activeTurnId;
   const assistantCopyState = resolveAssistantMessageCopyState({
     text: row.message.text ?? null,
     showCopyButton: row.showAssistantCopyButton,
-    streaming: row.message.streaming || assistantTurnStillInProgress,
+    streaming: row.assistantCopyStreaming,
   });
 
   if (!assistantCopyState.visible) {

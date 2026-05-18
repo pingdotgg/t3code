@@ -1,32 +1,28 @@
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
-import { createRef } from "react";
+import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { LegendListRef } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
-  const React = await import("react");
+  const legendListTestId = "legend-list";
 
-  const LegendList = React.forwardRef(function MockLegendList(
-    props: {
-      data: Array<{ id: string }>;
-      keyExtractor: (item: { id: string }) => string;
-      renderItem: (args: { item: { id: string } }) => React.ReactNode;
-      ListHeaderComponent?: React.ReactNode;
-      ListFooterComponent?: React.ReactNode;
-    },
-    _ref: React.ForwardedRef<LegendListRef>,
-  ) {
-    return (
-      <div data-testid="legend-list">
-        {props.ListHeaderComponent}
-        {props.data.map((item) => (
-          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-        ))}
-        {props.ListFooterComponent}
-      </div>
-    );
-  });
+  const LegendList = (props: {
+    data: Array<{ id: string }>;
+    keyExtractor: (item: { id: string }) => string;
+    renderItem: (args: { item: { id: string } }) => ReactNode;
+    ListHeaderComponent?: ReactNode;
+    ListFooterComponent?: ReactNode;
+    ref?: Ref<LegendListRef>;
+  }) => (
+    <div data-testid={legendListTestId}>
+      {props.ListHeaderComponent}
+      {props.data.map((item) => (
+        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+      ))}
+      {props.ListFooterComponent}
+    </div>
+  );
 
   return { LegendList };
 });
