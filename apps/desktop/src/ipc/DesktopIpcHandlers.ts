@@ -35,18 +35,19 @@ import {
 import {
   confirm,
   getAppBranding,
-  getLocalEnvironmentBootstrap,
+  getLocalEnvironmentBootstraps,
   openExternal,
   pickFolder,
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
+import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
 export const installDesktopIpcHandlers = Effect.gen(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
 
   yield* ipc.handleSync(getAppBranding);
-  yield* ipc.handleSync(getLocalEnvironmentBootstrap);
+  yield* ipc.handleSync(getLocalEnvironmentBootstraps);
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
@@ -69,6 +70,11 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(setServerExposureMode);
   yield* ipc.handle(setTailscaleServeEnabled);
   yield* ipc.handle(getAdvertisedEndpoints);
+
+  yield* ipc.handle(getWslState);
+  yield* ipc.handle(setWslBackendEnabled);
+  yield* ipc.handle(setWslDistro);
+  yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(confirm);

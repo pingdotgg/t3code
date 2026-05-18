@@ -29,7 +29,7 @@ import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
-import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
@@ -44,6 +44,8 @@ import * as DesktopSshRemoteApi from "./ssh/DesktopSshRemoteApi.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
+import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -127,10 +129,23 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
 
 const desktopWindowLayer = DesktopWindow.layer.pipe(Layer.provideMerge(desktopServerExposureLayer));
 
-const desktopBackendLayer = DesktopBackendManager.layer.pipe(
+// Pool layer instantiates the backend factory once for the Windows
+// primary instance and exposes it via pool.primary. Consumers go through
+// the pool now; the legacy DesktopBackendManager service is gone. The
+// WSL second instance gets registered later in the migration. See
+// DesktopBackendPool.ts header for the full rollout plan.
+const desktopBackendLayer = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(desktopWindowLayer),
+);
+
+// WSL orchestrator hangs off the backend layer because it needs the
+// pool + configuration + serverExposure; it pulls NetService and the
+// foundation services through the same provideMerge chain.
+const desktopWslBackendLayer = DesktopWslBackend.layer.pipe(
+  Layer.provideMerge(desktopBackendLayer),
 );
 
 const desktopApplicationLayer = Layer.mergeAll(
@@ -138,7 +153,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopApplicationMenu.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
-).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
+).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopWslBackendLayer));
 
 const desktopRuntimeLayer = ElectronProtocol.layerSchemePrivileges.pipe(
   Layer.flatMap(() =>

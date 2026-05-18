@@ -155,12 +155,15 @@ describe("environmentBootstrap", () => {
         replaceState: vi.fn(),
       },
       desktopBridge: {
-        getLocalEnvironmentBootstrap: () => ({
-          label: "Local environment",
-          httpBaseUrl: "http://127.0.0.1:3773",
-          wsBaseUrl: "ws://127.0.0.1:3773",
-          bootstrapToken: "desktop-bootstrap-token",
-        }),
+        getLocalEnvironmentBootstraps: () => [
+          {
+            id: "primary",
+            label: "Windows",
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+            bootstrapToken: "desktop-bootstrap-token",
+          },
+        ],
       },
     });
 

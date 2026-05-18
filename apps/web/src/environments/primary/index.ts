@@ -20,6 +20,7 @@ export {
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,
+  reauthenticatePrimaryEnvironment,
   resolveInitialServerAuthGateState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,

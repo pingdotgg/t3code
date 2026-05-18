@@ -13,7 +13,9 @@ import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
@@ -40,10 +42,23 @@ export interface DesktopBackendOutputLogShape {
   ) => Effect.Effect<void>;
 }
 
-export class DesktopBackendOutputLog extends Context.Service<
-  DesktopBackendOutputLog,
-  DesktopBackendOutputLogShape
->()("t3/desktop/BackendOutputLog") {}
+// Factory for per-instance backend output logs. `forInstance(id)` returns
+// a writer that targets a distinct rotating log file — the primary
+// instance keeps `server-child.log` so the historical path stays stable
+// for ops; other instances get `server-child-<sanitized-id>.log`.
+//
+// Writers are cached per id within a single factory instance so repeated
+// `forInstance` calls (e.g. during a backend restart that re-resolves
+// services) reuse the same rotating writer rather than racing each other
+// on the same file.
+export interface DesktopBackendOutputLogFactoryShape {
+  readonly forInstance: (id: string) => Effect.Effect<DesktopBackendOutputLogShape>;
+}
+
+export class DesktopBackendOutputLogFactory extends Context.Service<
+  DesktopBackendOutputLogFactory,
+  DesktopBackendOutputLogFactoryShape
+>()("t3/desktop/BackendOutputLogFactory") {}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -293,13 +308,34 @@ const writeBackendChildLogRecord = Effect.fn("desktop.observability.writeBackend
   },
 );
 
-const backendOutputLogLayer = Layer.effect(
-  DesktopBackendOutputLog,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+const PRIMARY_BACKEND_LOG_INSTANCE_ID = "primary";
 
+const sanitizeInstanceIdForFileName = (id: string): string => id.replace(/[^a-zA-Z0-9._-]+/g, "_");
+
+const backendLogFilePathForInstance = (
+  environment: DesktopEnvironment.DesktopEnvironmentShape,
+  id: string,
+): string => {
+  // Primary keeps the historical "server-child.log" path so ops scripts
+  // and packaged-build log inspection still find it where it always lived.
+  if (id === PRIMARY_BACKEND_LOG_INSTANCE_ID) {
+    return environment.path.join(environment.logDir, "server-child.log");
+  }
+  const sanitized = sanitizeInstanceIdForFileName(id);
+  return environment.path.join(environment.logDir, `server-child-${sanitized}.log`);
+};
+
+const makeBackendOutputLogForInstance = (
+  environment: DesktopEnvironment.DesktopEnvironmentShape,
+  id: string,
+): Effect.Effect<
+  DesktopBackendOutputLogShape,
+  never,
+  FileSystem.FileSystem | Path.Path | Scope.Scope
+> =>
+  Effect.gen(function* () {
     const writer = yield* makeRotatingLogFileWriter({
-      filePath: environment.path.join(environment.logDir, "server-child.log"),
+      filePath: backendLogFilePathForInstance(environment, id),
     }).pipe(Effect.option);
 
     return Option.match(writer, {
@@ -316,6 +352,7 @@ const backendOutputLogLayer = Layer.effect(
               annotations: {
                 component: "desktop-backend-child",
                 runId,
+                instanceId: id,
                 phase,
                 details: sanitizeLogValue(details),
               },
@@ -333,6 +370,7 @@ const backendOutputLogLayer = Layer.effect(
                 annotations: {
                   component: "desktop-backend-child",
                   runId,
+                  instanceId: id,
                   stream: streamName,
                   text: textDecoder.decode(chunk),
                 },
@@ -340,6 +378,49 @@ const backendOutputLogLayer = Layer.effect(
             },
           ),
         }) satisfies DesktopBackendOutputLogShape,
+    });
+  });
+
+const backendOutputLogFactoryLayer = Layer.effect(
+  DesktopBackendOutputLogFactory,
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const factoryScope = yield* Scope.Scope;
+    // Per-id cache so repeated forInstance(id) calls reuse the same
+    // rotating writer instead of opening a second handle on the same
+    // file. Each writer pins itself to the factory's scope so all log
+    // resources tear down together at app exit. Mutex serializes
+    // concurrent first-time lookups for the same id.
+    const cacheRef = yield* SynchronizedRef.make<ReadonlyMap<string, DesktopBackendOutputLogShape>>(
+      new Map(),
+    );
+
+    const makeForId = (id: string): Effect.Effect<DesktopBackendOutputLogShape> =>
+      SynchronizedRef.modifyEffect(cacheRef, (cache) => {
+        // Key the cache by the resolved file path, not the raw id.
+        // Otherwise two ids that sanitize to the same filename (e.g.
+        // `wsl:default` and `wsl_default`) would each create their
+        // own RotatingLogFileWriter pointing at the same file, with
+        // independent currentSize tracking and a race on writes.
+        const cacheKey = backendLogFilePathForInstance(environment, id);
+        const cached = cache.get(cacheKey);
+        if (cached !== undefined) return Effect.succeed([cached, cache] as const);
+        return makeBackendOutputLogForInstance(environment, id).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Scope.provide(factoryScope),
+          Effect.map((shape) => {
+            const next = new Map(cache);
+            next.set(cacheKey, shape);
+            return [shape, next as ReadonlyMap<string, DesktopBackendOutputLogShape>] as const;
+          }),
+        );
+      });
+
+    return DesktopBackendOutputLogFactory.of({
+      forInstance: (id) => makeForId(id),
     });
   }),
 );
@@ -387,7 +468,7 @@ const tracerLayer = Layer.unwrap(
 ).pipe(Layer.provideMerge(OtlpSerialization.layerJson));
 
 export const layer = Layer.mergeAll(
-  backendOutputLogLayer,
+  backendOutputLogFactoryLayer,
   desktopLoggerLayer,
   tracerLayer,
   Layer.succeed(Tracer.MinimumTraceLevel, "Info"),

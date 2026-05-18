@@ -3,7 +3,9 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  ContainerIcon,
   FolderPlusIcon,
+  LoaderIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -61,6 +63,10 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
+import {
+  reconcileLocalSecondaryEnvironments,
+  useLocalSecondaryReconcileStore,
+} from "../environments/local";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -355,8 +361,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const remoteEnvSavedLabel = useSavedEnvironmentRegistryStore(
     (s) => s.byId[thread.environmentId]?.label ?? null,
   );
+  // desktopLocal entries (e.g. the WSL backend) live in the
+  // saved-environment registry alongside true remote envs, but they
+  // run on the user's own machine. The cloud icon is misleading for
+  // them. The project header already shows a container icon for
+  // desktopLocal-only projects (see sidebarProjectGrouping), so for
+  // threads we just suppress the cloud icon instead of doubling up.
+  const isDesktopLocalThread = useSavedEnvironmentRegistryStore((s) =>
+    Boolean(s.byId[thread.environmentId]?.desktopLocal),
+  );
   const threadEnvironmentLabel = isRemoteThread
-    ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
+    ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? (isDesktopLocalThread ? "Local" : "Remote"))
     : null;
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
@@ -674,7 +689,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
-                {isRemoteThread && (
+                {isRemoteThread && !isDesktopLocalThread && (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -2035,18 +2050,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               render={
                 <span
                   aria-label={
-                    project.environmentPresence === "remote-only"
-                      ? "Remote project"
-                      : "Available in multiple environments"
+                    project.allRemoteMembersAreDesktopLocal
+                      ? "Local sandbox project"
+                      : "Remote project"
                   }
                   className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
                 />
               }
             >
-              <CloudIcon className="size-3" />
+              {project.allRemoteMembersAreDesktopLocal ? (
+                <ContainerIcon className="size-3" />
+              ) : (
+                <CloudIcon className="size-3" />
+              )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              Remote environment: {project.remoteEnvironmentLabels.join(", ")}
+              {project.allRemoteMembersAreDesktopLocal
+                ? `Local sandbox: ${project.remoteEnvironmentLabels.join(", ")}`
+                : `Remote environment: ${project.remoteEnvironmentLabels.join(", ")}`}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -2236,6 +2257,99 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
     </SidebarMenuItem>
   );
 });
+
+function LocalSecondaryStatus() {
+  const pendingIds = useLocalSecondaryReconcileStore((state) => state.pendingInstanceIds);
+  const errors = useLocalSecondaryReconcileStore((state) => state.registrationErrors);
+  const bootstraps = useLocalSecondaryReconcileStore((state) => state.bootstrapsSeen);
+  const budgetExhausted = useLocalSecondaryReconcileStore((state) => state.budgetExhausted);
+  const savedEnvRegistry = useSavedEnvironmentRegistryStore((state) => state.byId);
+
+  const labelForId = useCallback(
+    (id: string) => {
+      const match = bootstraps.find((b) => b.id === id);
+      return match?.label ?? id;
+    },
+    [bootstraps],
+  );
+
+  // The set of secondary instances that haven't landed in the saved-env
+  // registry yet. We derive this rather than tracking it directly so the
+  // indicator stays steady between retry attempts: pendingInstanceIds
+  // empties out during the backoff delay between attempts, but the
+  // "we're still trying" state hasn't actually changed.
+  const registryInstanceIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const record of Object.values(savedEnvRegistry)) {
+      const instanceId = record.desktopLocal?.instanceId;
+      if (instanceId !== undefined) ids.add(instanceId);
+    }
+    return ids;
+  }, [savedEnvRegistry]);
+
+  const unsettledSecondaryIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const entry of bootstraps) {
+      if (entry.id === "primary") continue;
+      if (!registryInstanceIds.has(entry.id)) ids.push(entry.id);
+    }
+    return ids;
+  }, [bootstraps, registryInstanceIds]);
+
+  // "Connecting" stays true through the entire retry budget so the
+  // user sees a single steady indicator while the backend cold-boots,
+  // rather than the alert flickering once per setTimeout fire. The
+  // pendingIds.length > 0 disjunct handles the case where the user
+  // hits Retry after the budget exhausted: budget gets reset to
+  // false but pendingIds will populate as soon as the new attempt
+  // starts.
+  const connectingIds = pendingIds.length > 0 || !budgetExhausted ? unsettledSecondaryIds : [];
+
+  // Failures only become user-actionable once the auto-retry budget
+  // has run out and the instance still isn't in the registry. While
+  // we're still retrying we suppress the failure alert because a
+  // transient error from the prior attempt is just noise.
+  const failedIds = budgetExhausted ? unsettledSecondaryIds.filter((id) => id in errors) : [];
+
+  if (connectingIds.length === 0 && failedIds.length === 0) return null;
+
+  const handleRetry = () => {
+    void reconcileLocalSecondaryEnvironments();
+  };
+
+  return (
+    <SidebarGroup className="px-2 pt-2 pb-0">
+      {connectingIds.length > 0 ? (
+        <Alert
+          variant="default"
+          className="rounded-2xl border-border/40 bg-accent/40 text-muted-foreground"
+        >
+          <LoaderIcon className="animate-spin" />
+          <AlertTitle className="text-xs font-medium text-foreground">
+            Connecting {connectingIds.map(labelForId).join(", ")}
+          </AlertTitle>
+        </Alert>
+      ) : null}
+      {failedIds.length > 0 ? (
+        <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
+          <TriangleAlertIcon />
+          <AlertTitle>Couldn't connect {failedIds.map(labelForId).join(", ")}</AlertTitle>
+          <AlertDescription>
+            {failedIds
+              .map((id) => errors[id]?.message)
+              .filter(Boolean)
+              .join("; ") || "The backend didn't respond."}
+          </AlertDescription>
+          <AlertAction>
+            <Button size="xs" variant="outline" onClick={handleRetry}>
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
+    </SidebarGroup>
+  );
+}
 
 function T3Wordmark() {
   return (
@@ -2668,6 +2782,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </Alert>
         </SidebarGroup>
       ) : null}
+      <LocalSecondaryStatus />
       <SidebarGroup className="px-2 py-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -2865,6 +2980,8 @@ export default function Sidebar() {
         const saved = savedEnvironmentRegistry[environmentId];
         return rt?.descriptor?.label ?? saved?.label ?? null;
       },
+      isDesktopLocalEnvironment: (environmentId) =>
+        Boolean(savedEnvironmentRegistry[environmentId]?.desktopLocal),
     });
   }, [
     orderedProjects,

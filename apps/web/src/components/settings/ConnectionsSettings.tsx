@@ -15,6 +15,7 @@ import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
+  type DesktopWslState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -54,6 +55,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { Spinner } from "../ui/spinner";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -82,6 +84,10 @@ import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
+import {
+  markSecondariesConfigured,
+  reconcileLocalSecondaryEnvironments,
+} from "~/environments/local";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import {
   type SavedEnvironmentRecord,
@@ -100,6 +106,12 @@ import { resolveServerConfigVersionMismatch } from "~/versionSkew";
 import { useServerConfig } from "~/rpc/serverState";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+// Sentinels for the consolidated WSL backend picker. The colon is
+// rejected by DISTRO_NAME_PATTERN (validated on the desktop side) so
+// neither can collide with a real distro name.
+const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
+const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1492,6 +1504,31 @@ export function ConnectionsSettings() {
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
+  const [desktopWslState, setDesktopWslState] = useState<DesktopWslState | null>(null);
+  const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
+  const [desktopWslError, setDesktopWslError] = useState<string | null>(null);
+  // Pending WSL setting change waiting on user confirmation. Set when
+  // the user tries a destructive change (disable, switch distro,
+  // toggle wsl-only) while the WSL backend has saved-env state on this
+  // machine. Confirming applies the change; cancelling drops it
+  // without touching the persisted setting. Null when nothing is
+  // pending.
+  type PendingWslChange =
+    // wasWslOnly is true when the user picked Off while wsl-only mode
+    // was active. In that case "disable" also clears wsl-only and
+    // relaunches onto the Windows backend, because leaving wsl-only on
+    // with wslBackendEnabled off is a meaningless state (wsl-only is
+    // only honoured when the WSL backend is enabled).
+    | { readonly kind: "disable"; readonly wasWslOnly: boolean }
+    | { readonly kind: "distro"; readonly nextDistro: string | null }
+    // Asked at enable time so the user picks the mode upfront instead
+    // of being dropped into "both backends" and having to discover the
+    // wsl-only switch separately. Resolved through enable-mode action
+    // buttons on the dialog rather than a single Confirm.
+    | { readonly kind: "enable"; readonly nextDistro: string | null }
+    | { readonly kind: "wsl-only"; readonly nextValue: boolean };
+  const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
+  const isWslConfirmDialogOpen = pendingWslChange !== null;
   const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
     useState<AdvertisedEndpoint | null>(null);
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
@@ -2037,10 +2074,23 @@ export function ConnectionsSettings() {
             error instanceof Error ? error.message : "Failed to load reachable endpoints.";
           setDesktopServerExposureError(message);
         });
+      void desktopBridge
+        .getWslState()
+        .then((state) => {
+          if (cancelled) return;
+          setDesktopWslState(state);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          const message = error instanceof Error ? error.message : "Failed to load WSL state.";
+          setDesktopWslError(message);
+        });
     } else {
       setDesktopServerExposureState(null);
       setDesktopAdvertisedEndpoints([]);
       setDesktopServerExposureError(null);
+      setDesktopWslState(null);
+      setDesktopWslError(null);
     }
 
     return () => {
@@ -2328,6 +2378,259 @@ export function ConnectionsSettings() {
           );
         })
       : null;
+  // Apply a setting change immediately. The orchestrator reconciles the
+  // pool in the background and the primary backend is untouched, so we
+  // don't gate this behind a confirmation dialog. After the desktop
+  // side persists the change and nudges its orchestrator, we trigger
+  // the renderer's reconciler so the WSL backend's saved-env-shaped
+  // entry catches up (registers/unregisters) without a reload.
+  const applyWslSettingChange = useCallback(
+    async (apply: () => Promise<DesktopWslState>) => {
+      if (!desktopBridge) return;
+      setIsUpdatingWslBackend(true);
+      setDesktopWslError(null);
+      try {
+        const next = await apply();
+        setDesktopWslState(next);
+        // Keep the renderer's auto-retry loop awake while the user is
+        // running both backends, and let it park otherwise. wsl-only
+        // mode counts as "no secondaries": the desktop pool routes
+        // wsl through the primary slot and doesn't register a
+        // separate wsl: instance (DesktopWslBackend.reconcile gates
+        // on `!wslOnly`). Without this the loop would never resume
+        // after a fresh desktop install where the initial probe
+        // latched "no WSL configured".
+        markSecondariesConfigured(next.enabled && !next.wslOnly);
+        // The desktop orchestrator may take a moment to register the new
+        // WSL instance with bootstrap info — fire the renderer reconciler
+        // now to remove stale entries (toggle-off, distro change), then
+        // again after a short delay to pick up a freshly-registered one.
+        void reconcileLocalSecondaryEnvironments();
+        setTimeout(() => {
+          void reconcileLocalSecondaryEnvironments();
+        }, 1_500);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
+        setDesktopWslError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not change WSL backend",
+            description: message,
+          }),
+        );
+        await desktopBridge
+          .getWslState()
+          .then((state) => setDesktopWslState(state))
+          .catch(() => undefined);
+      } finally {
+        setIsUpdatingWslBackend(false);
+      }
+    },
+    [desktopBridge],
+  );
+
+  // True when the WSL backend has any saved-env record on this machine.
+  // We use this as a proxy for "the user has work that lives on the
+  // WSL side": if WSL has connected at least once in a way that
+  // registered the env, disabling or switching distros could disrupt
+  // open threads/projects. If WSL never connected (fresh install,
+  // toggled on then immediately off, etc.) we skip the confirmation
+  // dialog because there's nothing to lose.
+  const hasWslRegistrationToLose = useMemo(() => {
+    for (const record of Object.values(savedEnvironmentsById)) {
+      if (record.desktopLocal?.instanceId?.startsWith("wsl:")) return true;
+    }
+    return false;
+  }, [savedEnvironmentsById]);
+
+  // Single picker for "WSL backend off" vs "running on distro X". The
+  // dropdown maps "Off" to disable and any distro entry to enable +
+  // run on that distro. Splitting these into a separate switch and
+  // dropdown was confusing — they're the same decision.
+  const handleSelectWslMode = useCallback(
+    (value: string) => {
+      if (!desktopBridge || !desktopWslState) return;
+      const defaultDistroName =
+        desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
+      if (value === BACKEND_VALUE_WSL_OFF) {
+        if (!desktopWslState.enabled) return;
+        const wasWslOnly = desktopWslState.wslOnly;
+        // Confirm when there's WSL state to lose, OR when wsl-only is
+        // on (turning the only running backend off needs to switch
+        // back to Windows and restart — always consequential).
+        if (hasWslRegistrationToLose || wasWslOnly) {
+          setPendingWslChange({ kind: "disable", wasWslOnly });
+          return;
+        }
+        void applyWslSettingChange(() => desktopBridge.setWslBackendEnabled(false));
+        return;
+      }
+      const nextDistro = value === BACKEND_VALUE_DEFAULT_WSL ? null : value;
+      const resolvedNext = nextDistro ?? defaultDistroName;
+      if (!desktopWslState.enabled) {
+        // Was off, user picked a distro: ask whether to run both
+        // backends or only WSL. We always ask here so the user picks
+        // the mode upfront instead of having to discover the wsl-only
+        // switch afterwards.
+        setPendingWslChange({ kind: "enable", nextDistro });
+        return;
+      }
+      // Already enabled — treat as a distro switch. Skip the change if
+      // the user re-picked the row that's already selected.
+      const resolvedCurrent = desktopWslState.distro ?? defaultDistroName;
+      if (resolvedCurrent === resolvedNext) return;
+      if (hasWslRegistrationToLose) {
+        setPendingWslChange({ kind: "distro", nextDistro });
+        return;
+      }
+      void applyWslSettingChange(() => desktopBridge.setWslDistro(nextDistro));
+    },
+    [applyWslSettingChange, desktopBridge, desktopWslState, hasWslRegistrationToLose],
+  );
+
+  // Dispatched from the enable modal's two action buttons.
+  const handleConfirmEnableWsl = useCallback(
+    (mode: "both" | "wsl-only") => {
+      if (!desktopBridge || !pendingWslChange || pendingWslChange.kind !== "enable") return;
+      const nextDistro = pendingWslChange.nextDistro;
+      setPendingWslChange(null);
+      const persistedDistro = desktopWslState?.distro ?? null;
+      const distroChanged = persistedDistro !== nextDistro;
+      void applyWslSettingChange(async () => {
+        if (distroChanged) {
+          await desktopBridge.setWslDistro(nextDistro);
+        }
+        const enabled = await desktopBridge.setWslBackendEnabled(true);
+        if (mode === "wsl-only") {
+          // Relaunches.
+          return await desktopBridge.setWslOnly(true);
+        }
+        return enabled;
+      });
+    },
+    [applyWslSettingChange, desktopBridge, desktopWslState, pendingWslChange],
+  );
+
+  const handleToggleWslOnly = useCallback(
+    (enabled: boolean) => {
+      if (!desktopBridge || !desktopWslState || desktopWslState.wslOnly === enabled) return;
+      // wsl-only changes which backend the pool uses as "primary",
+      // which is decided once at app launch. The desktop side persists
+      // the setting immediately but doesn't tear down or restart
+      // anything itself; the renderer warns the user to expect a
+      // restart and (in a follow-up) can trigger it automatically.
+      // Always prompt — even enabling is consequential here.
+      setPendingWslChange({ kind: "wsl-only", nextValue: enabled });
+    },
+    [desktopBridge, desktopWslState],
+  );
+
+  const handleConfirmWslChange = useCallback(() => {
+    if (!desktopBridge || !pendingWslChange) return;
+    const change = pendingWslChange;
+    // The enable kind resolves through handleConfirmEnableWsl, not
+    // this single Confirm path.
+    if (change.kind === "enable") return;
+    setPendingWslChange(null);
+    if (change.kind === "disable") {
+      void applyWslSettingChange(async () => {
+        const next = await desktopBridge.setWslBackendEnabled(false);
+        if (change.wasWslOnly) {
+          // Clearing wsl-only relaunches onto the Windows backend.
+          return await desktopBridge.setWslOnly(false);
+        }
+        return next;
+      });
+      return;
+    }
+    if (change.kind === "distro") {
+      void applyWslSettingChange(() => desktopBridge.setWslDistro(change.nextDistro));
+      return;
+    }
+    void applyWslSettingChange(() => desktopBridge.setWslOnly(change.nextValue));
+  }, [applyWslSettingChange, desktopBridge, pendingWslChange]);
+
+  const renderWslRow = () => {
+    if (!desktopWslState || !desktopWslState.available) return null;
+    // Distro is null when the user wants the WSL default. Map it to the
+    // real default's name so the Select highlights a real option; fall
+    // back to the sentinel only when no distros are listed yet (the
+    // dropdown then renders a single placeholder that matches).
+    const defaultDistroName =
+      desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
+    const selectValue = !desktopWslState.enabled
+      ? BACKEND_VALUE_WSL_OFF
+      : (desktopWslState.distro ?? defaultDistroName ?? BACKEND_VALUE_DEFAULT_WSL);
+    const selectLabel =
+      selectValue === BACKEND_VALUE_WSL_OFF
+        ? "Off"
+        : selectValue === BACKEND_VALUE_DEFAULT_WSL
+          ? "Default distro"
+          : selectValue;
+    return (
+      <>
+        <SettingsRow
+          title="WSL backend"
+          description="Run a second backend inside a WSL distro alongside the Windows one. Pick a distro to start it; pick Off to stop it. Projects opened against the WSL backend live on the Linux side; Windows projects stay where they are."
+          status={
+            desktopWslError ? (
+              <span className="block text-destructive">{desktopWslError}</span>
+            ) : null
+          }
+          control={
+            <Select
+              value={selectValue}
+              onValueChange={(value) => {
+                if (typeof value !== "string") return;
+                handleSelectWslMode(value);
+              }}
+            >
+              <SelectTrigger
+                className="w-full sm:w-56"
+                aria-label="WSL backend"
+                disabled={isUpdatingWslBackend}
+              >
+                <SelectValue>{selectLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
+                  Off
+                </SelectItem>
+                {desktopWslState.distros.length === 0 ? (
+                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                    Default distro
+                  </SelectItem>
+                ) : (
+                  desktopWslState.distros.map((distro) => (
+                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                      {distro.name}
+                      {distro.isDefault ? " (default)" : ""}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        {desktopWslState.enabled ? (
+          <SettingsRow
+            title="Run WSL only"
+            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. T3 Code restarts when you change this."
+            control={
+              <Switch
+                checked={desktopWslState.wslOnly}
+                disabled={isUpdatingWslBackend}
+                onCheckedChange={(checked) => handleToggleWslOnly(checked)}
+                aria-label="Run WSL only"
+              />
+            }
+          />
+        ) : null}
+      </>
+    );
+  };
+
   const renderTailscaleRow = () => (
     <SettingsRow
       title="Tailscale HTTPS"
@@ -2463,6 +2766,7 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderWslRow()}
               </>
             ) : (
               renderDisabledNetworkAccessRow()
@@ -2533,6 +2837,114 @@ export function ConnectionsSettings() {
                     "Restart and disable"
                   )}
                 </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+          <AlertDialog
+            open={isWslConfirmDialogOpen}
+            onOpenChange={(open) => {
+              if (isUpdatingWslBackend) return;
+              if (!open) setPendingWslChange(null);
+            }}
+          >
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {pendingWslChange?.kind === "disable"
+                    ? pendingWslChange.wasWslOnly
+                      ? "Turn off WSL and switch back to Windows?"
+                      : "Disable WSL backend?"
+                    : pendingWslChange?.kind === "distro"
+                      ? "Switch WSL distro?"
+                      : pendingWslChange?.kind === "enable"
+                        ? "Start the WSL backend"
+                        : pendingWslChange?.nextValue
+                          ? "Run only the WSL backend?"
+                          : "Re-enable the Windows backend?"}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {pendingWslChange?.kind === "disable"
+                    ? pendingWslChange.wasWslOnly
+                      ? "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
+                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
+                    : pendingWslChange?.kind === "distro"
+                      ? "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                      : pendingWslChange?.kind === "enable"
+                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
+                        : pendingWslChange?.nextValue
+                          ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
+                          : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose
+                  disabled={isUpdatingWslBackend}
+                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
+                >
+                  Cancel
+                </AlertDialogClose>
+                {pendingWslChange?.kind === "enable" ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleConfirmEnableWsl("wsl-only")}
+                      disabled={isUpdatingWslBackend}
+                    >
+                      {isUpdatingWslBackend ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Applying…
+                        </>
+                      ) : (
+                        "Use only WSL"
+                      )}
+                    </Button>
+                    <Button
+                      variant="default"
+                      onClick={() => handleConfirmEnableWsl("both")}
+                      disabled={isUpdatingWslBackend}
+                    >
+                      {isUpdatingWslBackend ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Applying…
+                        </>
+                      ) : (
+                        "Run both backends"
+                      )}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant={
+                      pendingWslChange?.kind === "disable" ||
+                      (pendingWslChange?.kind === "wsl-only" && pendingWslChange.nextValue)
+                        ? "destructive"
+                        : "default"
+                    }
+                    onClick={handleConfirmWslChange}
+                    disabled={isUpdatingWslBackend}
+                  >
+                    {isUpdatingWslBackend ? (
+                      <>
+                        <Spinner className="size-3.5" />
+                        Applying…
+                      </>
+                    ) : pendingWslChange?.kind === "disable" ? (
+                      pendingWslChange.wasWslOnly ? (
+                        "Switch to Windows"
+                      ) : (
+                        "Disable WSL"
+                      )
+                    ) : pendingWslChange?.kind === "distro" ? (
+                      "Switch distro"
+                    ) : pendingWslChange?.nextValue ? (
+                      "Restart and enable"
+                    ) : (
+                      "Restart and disable"
+                    )}
+                  </Button>
+                )}
               </AlertDialogFooter>
             </AlertDialogPopup>
           </AlertDialog>

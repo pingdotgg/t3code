@@ -4,7 +4,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 export interface DesktopStateShape {
-  readonly backendReady: Ref.Ref<boolean>;
   readonly quitting: Ref.Ref<boolean>;
 }
 
@@ -15,7 +14,6 @@ export class DesktopState extends Context.Service<DesktopState, DesktopStateShap
 export const layer = Layer.effect(
   DesktopState,
   Effect.all({
-    backendReady: Ref.make(false),
     quitting: Ref.make(false),
   }),
 );

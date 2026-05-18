@@ -1577,19 +1577,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+  it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
+      // The desktop-bootstrap grant is delivered over trusted IPC at
+      // backend launch and needs to stay claimable after a renderer
+      // refresh, so it's intentionally reusable (unlike user-facing
+      // one-time pairing credentials).
       yield* buildAppUnderTest();
 
       const first = yield* bootstrapBrowserSession();
       const second = yield* bootstrapBrowserSession();
 
       assert.equal(first.response.status, 200);
-      assert.equal(second.response.status, 401);
-      assert.equal(
-        (second.body as { readonly error?: string }).error,
-        "Invalid bootstrap credential.",
-      );
+      assert.equal(second.response.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -11,7 +11,6 @@ import { vi } from "vitest";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -143,7 +142,6 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopServerExposureLayer,
-        DesktopState.layer,
         electronMenuLayer,
         electronShellLayer,
         electronThemeLayer,
@@ -170,7 +168,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.activate;
         assert.equal(yield* Ref.get(createCount), 0);
 
-        yield* desktopWindow.handleBackendReady;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
         assert.equal(yield* Ref.get(createCount), 1);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["http://127.0.0.1:5733/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);

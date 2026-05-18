@@ -75,6 +75,10 @@ export function getServerConfig(): ServerConfig | null {
   return appAtomRegistry.get(serverConfigAtom);
 }
 
+export function getWelcomePayload(): ServerLifecycleWelcomePayload | null {
+  return appAtomRegistry.get(welcomeAtom);
+}
+
 export function getServerKeybindings(): ServerConfig["keybindings"] {
   return selectKeybindings(getServerConfig());
 }

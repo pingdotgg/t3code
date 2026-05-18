@@ -21,6 +21,7 @@ function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionSt
     reconnectMaxAttempts: 8,
     reconnectPhase: "idle",
     socketUrl: null,
+    suppressed: false,
     ...overrides,
   };
 }

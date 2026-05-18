@@ -12,7 +12,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
-import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
@@ -21,6 +21,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -130,11 +131,13 @@ const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
 const bootstrap = Effect.gen(function* () {
-  const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const primaryBackend = yield* pool.primary;
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   yield* logBootstrapInfo("bootstrap start");
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
@@ -178,8 +181,13 @@ const bootstrap = Effect.gen(function* () {
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
   if (!(yield* Ref.get(state.quitting))) {
-    yield* backendManager.start;
+    yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    // Bring up the WSL backend if the user previously enabled it. The
+    // primary is already starting; reconcile fires off the WSL register
+    // in parallel rather than blocking primary readiness on a possibly
+    // slow first wsl.exe spawn.
+    yield* Effect.forkScoped(wslBackend.reconcile);
   }
 }).pipe(Effect.withSpan("desktop.bootstrap"));
 
@@ -226,10 +234,20 @@ const scopedProgram = Effect.scoped(
     yield* Effect.annotateCurrentSpan({ scope: "desktop", runId });
 
     const shutdown = yield* DesktopLifecycle.DesktopShutdown;
-    const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
 
     yield* Effect.addFinalizer(() =>
-      backendManager.stop().pipe(Effect.ensuring(shutdown.markComplete)),
+      Effect.gen(function* () {
+        // Stop every backend in the pool, not just the primary. The
+        // electronApp.quit() path can race ahead of the layer-scope
+        // cascade, so leaving the WSL instance for its parent scope
+        // finalizer means it gets hard-killed by the OS instead of
+        // receiving SIGTERM + grace. Stops run concurrently.
+        const instances = yield* pool.list;
+        yield* Effect.forEach(instances, (instance) => instance.stop(), {
+          concurrency: "unbounded",
+        });
+      }).pipe(Effect.ensuring(shutdown.markComplete)),
     );
 
     yield* startup;

@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
@@ -101,7 +101,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindowShape);
 
-  const backendLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
+  const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
+    id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+    label: "Windows",
     start: Effect.void,
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none()),
@@ -112,7 +114,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     }),
-  });
+    waitForReady: () => Effect.succeed(true),
+  };
+  const backendLayer = DesktopBackendPool.layerTest([stubBackendInstance]);
 
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",

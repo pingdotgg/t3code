@@ -10,7 +10,6 @@ import type * as Electron from "electron";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -32,7 +31,6 @@ type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
   | DesktopServerExposure.DesktopServerExposure
-  | DesktopState.DesktopState
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -56,7 +54,19 @@ export interface DesktopWindowShape {
   readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly activate: Effect.Effect<void, DesktopWindowError>;
   readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
-  readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
+  // The pool tells us not just "primary backend is ready" but also
+  // *where* the renderer should load from. In wsl-only mode that's the
+  // WSL distro IP (e.g. http://172.27.152.141:3773), not the local
+  // exposure URL — wslhost localhost forwarding is unreliable enough
+  // that pointing loadURL at 127.0.0.1 breaks the renderer on hosts
+  // where the forward isn't set up. The Windows-primary path passes
+  // the same URL serverExposure would have given us.
+  readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
+  // Called when the backend transitions back to "not ready" (clean stop,
+  // restart, crash). Clears the latch that lets `activate` auto-create a
+  // window so a "macOS dock click" while the backend is down doesn't
+  // produce a stranded window pointing at nothing.
+  readonly handleBackendNotReady: Effect.Effect<void>;
   readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
   readonly syncAppearance: Effect.Effect<void>;
 }
@@ -152,7 +162,17 @@ const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-  const state = yield* DesktopState.DesktopState;
+  // Window-side latch for the primary backend's readiness. Set by
+  // handleBackendReady (driven by the pool's onReady callback), cleared
+  // by handleBackendNotReady (driven by onShutdown). Only consumed by
+  // createMainIfBackendReady, which gates the post-readiness window
+  // open in development and the macOS "activate without windows" path.
+  const backendReadyRef = yield* Ref.make(false);
+  // Renderer URL the primary backend told us to load. Populated by
+  // handleBackendReady. createMain prefers this over serverExposure's
+  // backendConfig because in wsl-only mode the primary doesn't bind on
+  // the local exposure URL — the WSL backend listens on the distro IP.
+  const backendHttpUrlRef = yield* Ref.make<Option.Option<URL>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
@@ -291,8 +311,11 @@ const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    const reportedHttpUrl = yield* Ref.get(backendHttpUrlRef);
+    const httpUrl = Option.isSome(reportedHttpUrl)
+      ? reportedHttpUrl.value
+      : (yield* serverExposure.backendConfig).httpBaseUrl;
+    const window = yield* createWindow(httpUrl);
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -313,7 +336,7 @@ const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
   const createMainIfBackendReady = Effect.gen(function* () {
-    const backendReady = yield* Ref.get(state.backendReady);
+    const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
@@ -333,11 +356,16 @@ const make = Effect.gen(function* () {
       }
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
-    handleBackendReady: Effect.gen(function* () {
-      yield* Ref.set(state.backendReady, true);
-      yield* logWindowInfo("backend ready", { source: "http" });
+    handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
+      yield* Ref.set(backendHttpUrlRef, Option.some(httpBaseUrl));
+      yield* Ref.set(backendReadyRef, true);
+      yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
-    }).pipe(Effect.withSpan("desktop.window.handleBackendReady")),
+    }),
+    handleBackendNotReady: Effect.gen(function* () {
+      yield* Ref.set(backendReadyRef, false);
+      yield* Ref.set(backendHttpUrlRef, Option.none());
+    }).pipe(Effect.withSpan("desktop.window.handleBackendNotReady")),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* electronWindow.focusedMainOrFirst;

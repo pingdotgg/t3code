@@ -11,6 +11,20 @@ import { create } from "zustand";
 import { ensureLocalApi } from "../../localApi";
 import { getPrimaryKnownEnvironment } from "../primary";
 
+// Marker for a SavedEnvironmentRecord that came from the desktop's
+// local backend pool (currently just the WSL backend when the user
+// enables it). It mirrors the desktopSsh pattern: the saved-env
+// runtime treats these like any other entry for connection lifecycle
+// and UI display, but the persistence layer skips them — they're
+// rederived on each renderer boot from the bootstrap IPC instead of
+// living on disk.
+export interface DesktopLocalEnvironmentMarker {
+  // Backend instance id from the desktop pool (e.g. "wsl:default",
+  // "wsl:ubuntu"). The reconciler keys off this to add/remove records
+  // when the user toggles the WSL backend or switches distros.
+  readonly instanceId: string;
+}
+
 export interface SavedEnvironmentRecord {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -19,6 +33,7 @@ export interface SavedEnvironmentRecord {
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
   readonly desktopSsh?: PersistedSavedEnvironmentRecord["desktopSsh"];
+  readonly desktopLocal?: DesktopLocalEnvironmentMarker;
 }
 
 interface SavedEnvironmentRegistryState {
@@ -56,13 +71,22 @@ function valuesOfSavedEnvironmentRegistry(
   return Object.values(byId) as ReadonlyArray<SavedEnvironmentRecord>;
 }
 
+// Records with the desktopLocal marker are derived from the bootstrap
+// IPC at boot, so persisting them would shadow whatever the desktop
+// currently reports. Filter them out so they stay in-memory only.
+function persistableSavedEnvironmentRecords(
+  byId: Record<EnvironmentId, SavedEnvironmentRecord>,
+): ReadonlyArray<SavedEnvironmentRecord> {
+  return valuesOfSavedEnvironmentRegistry(byId).filter((record) => !record.desktopLocal);
+}
+
 function persistSavedEnvironmentRegistryState(
   byId: Record<EnvironmentId, SavedEnvironmentRecord>,
 ): void {
   try {
     void ensureLocalApi()
       .persistence.setSavedEnvironmentRegistry(
-        valuesOfSavedEnvironmentRegistry(byId).map((record) =>
+        persistableSavedEnvironmentRecords(byId).map((record) =>
           toPersistedSavedEnvironmentRecord(record),
         ),
       )
@@ -240,7 +264,9 @@ export async function persistSavedEnvironmentRecord(record: SavedEnvironmentReco
   };
 
   await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
-    valuesOfSavedEnvironmentRegistry(byId).map((entry) => toPersistedSavedEnvironmentRecord(entry)),
+    persistableSavedEnvironmentRecords(byId).map((entry) =>
+      toPersistedSavedEnvironmentRecord(entry),
+    ),
   );
 }
 

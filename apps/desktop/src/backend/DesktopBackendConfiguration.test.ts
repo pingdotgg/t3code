@@ -3,12 +3,15 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const PersistedServerObservabilitySettingsDocument = Schema.Struct({
   observability: Schema.Struct({
@@ -41,12 +44,13 @@ function makeEnvironmentLayer(
   options?: {
     readonly isPackaged?: boolean;
     readonly devServerUrl?: string;
+    readonly platform?: NodeJS.Platform;
   },
 ) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
-    platform: "darwin",
+    platform: options?.platform ?? "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -69,6 +73,14 @@ function makeEnvironmentLayer(
   );
 }
 
+const restoreEnv = (name: string, value: string | undefined) => {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+};
+
 const withHarness = <A, E, R>(
   effect: Effect.Effect<
     A,
@@ -89,6 +101,8 @@ const withHarness = <A, E, R>(
       Effect.provide(
         DesktopBackendConfiguration.layer.pipe(
           Layer.provideMerge(serverExposureLayer),
+          Layer.provideMerge(DesktopAppSettings.layerTest()),
+          Layer.provideMerge(DesktopWslEnvironment.layerTest()),
           Layer.provideMerge(makeEnvironmentLayer(baseDir)),
         ),
       ),
@@ -96,14 +110,14 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
-  it.effect("resolves backend start config with a stable scoped bootstrap token", () =>
+  it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
 
-        const first = yield* configuration.resolve;
-        const second = yield* configuration.resolve;
+        const first = yield* configuration.resolvePrimary;
+        const second = yield* configuration.resolvePrimary;
 
         assert.equal(first.executablePath, process.execPath);
         assert.equal(first.entryPath, environment.backendEntryPath);
@@ -127,7 +141,20 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("includes persisted backend observability endpoints when present", () =>
+  it.effect("resolveWsl reuses the primary's bootstrap token", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+        assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
+      }),
+    ),
+  );
+
+  it.effect("resolvePrimary surfaces persisted backend observability endpoints", () =>
     withHarness(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -147,18 +174,18 @@ describe("DesktopBackendConfiguration", () => {
           }),
         );
 
-        const config = yield* configuration.resolve;
+        const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.otlpTracesUrl, "http://127.0.0.1:4318/v1/traces");
         assert.equal(config.bootstrap.otlpMetricsUrl, "http://127.0.0.1:4318/v1/metrics");
       }),
     ),
   );
 
-  it.effect("omits backend observability endpoints when settings are missing", () =>
+  it.effect("resolvePrimary omits backend observability endpoints when settings are missing", () =>
     withHarness(
       Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolve;
+        const config = yield* configuration.resolvePrimary;
 
         assert.isUndefined(config.bootstrap.otlpTracesUrl);
         assert.isUndefined(config.bootstrap.otlpMetricsUrl);
@@ -166,7 +193,7 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("captures backend output in development so child process logs can be persisted", () =>
+  it.effect("resolvePrimary captures backend output in dev so child logs can be persisted", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -175,12 +202,14 @@ describe("DesktopBackendConfiguration", () => {
 
       yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolve;
+        const config = yield* configuration.resolvePrimary;
         assert.equal(config.captureOutput, true);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
             Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
             Layer.provideMerge(
               makeEnvironmentLayer(baseDir, {
                 isPackaged: false,
@@ -190,6 +219,65 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+
+      const previousWslEnv = process.env.WSLENV;
+      const previousOpenAiKey = process.env.OPENAI_API_KEY;
+      const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      try {
+        process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
+        process.env.OPENAI_API_KEY = "openai-key";
+        process.env.ANTHROPIC_API_KEY = "anthropic-key";
+
+        yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
+
+          assert.equal(config.executablePath, "wsl.exe");
+          assert.equal(config.bootstrap.port, 5050);
+          // Binds to 0.0.0.0 inside WSL so the backend is reachable via
+          // both wslhost-forwarded localhost and the distro's eth0 IP.
+          assert.equal(config.bootstrap.host, "0.0.0.0");
+          assert.equal(config.bootstrap.tailscaleServeEnabled, false);
+          // httpBaseUrl uses the resolved distro IP from the test stub,
+          // not localhost — the renderer reaches the backend directly to
+          // avoid relying on wslhost forwarding.
+          assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
+          assert.equal(config.env.OPENAI_API_KEY, "openai-key");
+          assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+          assert.equal(
+            config.env.WSLENV,
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY:AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
+          );
+        }).pipe(
+          Effect.provide(
+            DesktopBackendConfiguration.layer.pipe(
+              Layer.provideMerge(serverExposureLayer),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: () => Option.some("172.27.0.99"),
+                }),
+              ),
+              Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),
+            ),
+          ),
+        );
+      } finally {
+        restoreEnv("WSLENV", previousWslEnv);
+        restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
+        restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

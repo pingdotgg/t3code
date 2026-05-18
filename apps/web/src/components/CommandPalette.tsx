@@ -1404,11 +1404,18 @@ function OpenCommandPaletteDialog() {
     query.trim().length > 0 &&
     !isRemoteProjectPending;
   const fileManagerName = getLocalFileManagerName(navigator.platform);
+  // The file-manager picker comes from the desktop. We allow it for
+  // the primary backend (its native fs) and for any desktop-local
+  // secondary (today: the WSL backend — pickFolder dispatches to the
+  // WSL distro's home when routed by env id). Remote saved envs
+  // stay browse-only.
+  const browseSavedEnvironmentRecord =
+    browseEnvironmentId !== null ? (savedEnvironmentRegistry[browseEnvironmentId] ?? null) : null;
+  const browseEnvironmentIsDesktopLocal = browseSavedEnvironmentRecord?.desktopLocal !== undefined;
   const canOpenProjectFromFileManager =
     isBrowsing &&
     browseEnvironmentId !== null &&
-    primaryEnvironmentId !== null &&
-    browseEnvironmentId === primaryEnvironmentId &&
+    (browseEnvironmentId === primaryEnvironmentId || browseEnvironmentIsDesktopLocal) &&
     typeof window !== "undefined" &&
     window.desktopBridge !== undefined;
   const fileManagerInitialPath = useMemo(() => {
@@ -1504,8 +1511,17 @@ function OpenCommandPaletteDialog() {
     setIsPickingProjectFolder(true);
     let pickedPath: string | null = null;
     try {
+      // Route the picker to the env id the user is browsing in so the
+      // dialog opens against the right backend's filesystem (desktop
+      // side resolves wsl:* ids to their distro's home dir).
+      const pickerOptions = {
+        ...(fileManagerInitialPath ? { initialPath: fileManagerInitialPath } : {}),
+        ...(browseEnvironmentId && browseEnvironmentId !== primaryEnvironmentId
+          ? { targetEnvironmentId: browseEnvironmentId }
+          : {}),
+      };
       pickedPath = await api.dialogs.pickFolder(
-        fileManagerInitialPath ? { initialPath: fileManagerInitialPath } : undefined,
+        Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,
       );
     } catch {
       // Ignore picker failures and leave the palette open.
@@ -1518,10 +1534,12 @@ function OpenCommandPaletteDialog() {
     }
     await handleAddProject(pickedPath);
   }, [
+    browseEnvironmentId,
     canOpenProjectFromFileManager,
     fileManagerInitialPath,
     handleAddProject,
     isPickingProjectFolder,
+    primaryEnvironmentId,
   ]);
 
   return (

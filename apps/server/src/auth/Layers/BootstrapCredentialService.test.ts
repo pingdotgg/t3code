@@ -87,17 +87,18 @@ it.layer(NodeServices.layer)("BootstrapCredentialServiceLive", (it) => {
     }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
   );
 
-  it.effect("seeds the desktop bootstrap credential as a one-time grant", () =>
+  it.effect("seeds the desktop bootstrap credential as a reusable grant", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const first = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-      const second = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
+      const second = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      const third = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
 
       expect(first.method).toBe("desktop-bootstrap");
       expect(first.role).toBe("owner");
       expect(first.subject).toBe("desktop-bootstrap");
-      expect(second._tag).toBe("BootstrapCredentialError");
-      expect(second.status).toBe(401);
+      expect(second.method).toBe("desktop-bootstrap");
+      expect(third.method).toBe("desktop-bootstrap");
     }).pipe(
       Effect.provide(
         makeBootstrapCredentialLayer({
@@ -111,7 +112,13 @@ it.layer(NodeServices.layer)("BootstrapCredentialServiceLive", (it) => {
     Effect.gen(function* () {
       const bootstrapCredentials = yield* BootstrapCredentialService;
 
-      yield* TestClock.adjust(Duration.minutes(6));
+      // The desktop-bootstrap grant lives for 24h. Within that window
+      // it stays reusable.
+      yield* TestClock.adjust(Duration.hours(12));
+      const stillValid = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      expect(stillValid.method).toBe("desktop-bootstrap");
+
+      yield* TestClock.adjust(Duration.hours(13));
       const expired = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
 
       expect(expired._tag).toBe("BootstrapCredentialError");

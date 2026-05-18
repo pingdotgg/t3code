@@ -4,13 +4,17 @@ import {
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
   PickFolderOptionsSchema,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type DesktopEnvironmentBootstrap,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
+import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -18,6 +22,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
+import { resolveWslPickFolderDefaultPath } from "../../wsl/wslPathParsing.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -44,25 +49,54 @@ export const getAppBranding = makeSyncIpcMethod({
   }),
 });
 
-export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
-  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL,
-  result: Schema.NullOr(DesktopEnvironmentBootstrapSchema),
-  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstrap")(function* () {
-    const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
-    const config = yield* backendManager.currentConfig;
-    return Option.match(config, {
-      onNone: () => null,
-      onSome: ({ bootstrap, httpBaseUrl }) => ({
-        label: "Local environment",
+export const getLocalEnvironmentBootstraps = makeSyncIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
+  result: Schema.Array(DesktopEnvironmentBootstrapSchema),
+  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const instances = yield* pool.list;
+    const bootstraps: DesktopEnvironmentBootstrap[] = [];
+    for (const instance of instances) {
+      const config = yield* instance.currentConfig;
+      // Skip instances that haven't produced a config yet (e.g. WSL
+      // backend mid-registration, before its first start cycle). They'll
+      // appear on the next IPC call once they've started.
+      if (Option.isNone(config)) continue;
+      // Skip instances whose preflight failed (e.g. WSL distro
+      // missing node, the linux server entry was never built). The
+      // backend manager schedules a restart instead of actually
+      // listening, so exposing the bootstrap would point the renderer
+      // at a port nothing is bound to and trigger needless
+      // /api/auth/bootstrap/bearer error cycles.
+      if (Option.isSome(config.value.preflightFailure)) continue;
+      const { bootstrap, httpBaseUrl } = config.value;
+      bootstraps.push({
+        id: instance.id,
+        label: instance.label,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
         ...(bootstrap.desktopBootstrapToken
           ? { bootstrapToken: bootstrap.desktopBootstrapToken }
           : {}),
-      }),
-    });
+      });
+    }
+    return bootstraps;
   }),
 });
+
+const WSL_INSTANCE_ID_PREFIX = "wsl:";
+
+// Pull the distro selection out of a backend instance id like
+// "wsl:ubuntu". Returns null for "wsl:default", which is the sentinel
+// for "track the user's WSL default distro" and maps to the
+// wslEnv-derived default at picker time.
+function extractWslDistroFromEnvironmentId(envId: string): string | null {
+  if (!envId.startsWith(WSL_INSTANCE_ID_PREFIX)) {
+    return null;
+  }
+  const suffix = envId.slice(WSL_INSTANCE_ID_PREFIX.length);
+  return suffix === "default" || suffix.length === 0 ? null : suffix;
+}
 
 export const pickFolder = makeIpcMethod({
   channel: IpcChannels.PICK_FOLDER_CHANNEL,
@@ -72,9 +106,44 @@ export const pickFolder = makeIpcMethod({
     const dialog = yield* ElectronDialog.ElectronDialog;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    // Three picker modes:
+    //   - targetEnvironmentId omitted: default to the primary picker. Keeps
+    //     the historical behavior unchanged for users who never enabled the
+    //     WSL backend, and is what unfamiliar callers should get out of the
+    //     box.
+    //   - targetEnvironmentId starts with "wsl:": route to the WSL picker
+    //     using the distro encoded in the id (or the user's selected
+    //     wslDistro when the id is the "wsl:default" sentinel).
+    //   - anything else (incl. PRIMARY_LOCAL_ENVIRONMENT_ID): primary picker.
+    const targetId = options?.targetEnvironmentId;
+    const wslDistroFromTarget =
+      targetId !== undefined && targetId.startsWith(WSL_INSTANCE_ID_PREFIX)
+        ? extractWslDistroFromEnvironmentId(targetId)
+        : null;
+    const useWsl =
+      targetId !== undefined &&
+      targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
+      targetId.startsWith(WSL_INSTANCE_ID_PREFIX);
+    const settings = yield* appSettings.get;
+    // Fall back to the persisted wslDistro when the id is the
+    // "wsl:default" sentinel; the orchestrator uses the same fallback
+    // for the actual backend.
+    const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
+    const defaultPath = useWsl
+      ? Option.fromNullishOr(
+          resolveWslPickFolderDefaultPath(
+            options,
+            { distro: wslDistro },
+            yield* wslEnvironment.listDistros,
+            Option.getOrNull(yield* wslEnvironment.getUserHome(wslDistro)),
+          ),
+        )
+      : environment.resolvePickFolderDefaultPath(options);
     const selectedPath = yield* dialog.pickFolder({
       owner: yield* electronWindow.focusedMainOrFirst,
-      defaultPath: environment.resolvePickFolderDefaultPath(options),
+      defaultPath,
     });
     return Option.getOrNull(selectedPath);
   }),

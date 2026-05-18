@@ -1,12 +1,36 @@
+// Per-instance backend factory. Replaces the legacy singleton
+// `DesktopBackendManager` Context.Service: each call to
+// `makeBackendInstance(spec)` constructs an isolated backend lifecycle —
+// its own state Ref, mutex, restart loop, and active child process. The
+// returned `DesktopBackendInstance` exposes start/stop/snapshot/wait
+// methods that operate on that single backend.
+//
+// The pool layer (`DesktopBackendPool.ts`) calls this factory once per
+// backend it wants to run. Today that's the Windows primary; follow-up
+// commits add a second call for the WSL instance.
+//
+// Singleton couplings that the legacy service held inline are now
+// parameterized via the spec:
+//   - configResolve replaces the legacy `DesktopBackendConfiguration.resolve`
+//     so each instance can resolve its own start config — the primary wires
+//     `configuration.resolvePrimary`, the WSL orchestrator wires a
+//     `configuration.resolveWsl({ port, distro })` closure.
+//   - onReady / onShutdown drive UI side effects (window auto-open,
+//     readiness latch) only for instances that want them — the primary's
+//     spec passes the window's handleBackendReady/handleBackendNotReady,
+//     other pool instances pass nothing.
+//   - log writes go through a per-instance writer that the factory
+//     pulls from `DesktopBackendOutputLogFactory.forInstance(spec.id)`,
+//     so each instance lands in its own rotating file.
+
+import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -22,12 +46,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 
-import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import * as DesktopState from "../app/DesktopState.ts";
-import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -43,14 +65,23 @@ type BackendProcessRunRequirements = BackendProcessLayerServices | Scope.Scope;
 
 export type BackendProcessOutputStream = "stdout" | "stderr";
 
+export type DesktopBackendBootstrapDelivery = "fd3" | "stdin";
+
 export interface DesktopBackendStartConfig {
   readonly executablePath: string;
+  readonly args: ReadonlyArray<string>;
   readonly entryPath: string;
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
+  // When true the spawner merges the desktop process.env on top of `env`;
+  // when false `env` is passed verbatim. WSL mode opts out so a leaking
+  // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
+  readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
+  readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
+  readonly preflightFailure: Option.Option<string>;
 }
 
 interface BackendProcessExit {
@@ -106,20 +137,53 @@ export interface DesktopBackendSnapshot {
   readonly restartScheduled: boolean;
 }
 
-export interface DesktopBackendManagerShape {
+// Opaque identifier for one backend process inside the pool. Today only
+// PRIMARY_INSTANCE_ID is registered. Follow-up commits add WSL distros
+// under ids derived from the distro name (e.g. "wsl:ubuntu"). Eventually
+// these map 1:1 with environment ids on the frontend; keeping them
+// desktop-local for now avoids leaking the contracts dependency.
+export type BackendInstanceId = string & Brand.Brand<"BackendInstanceId">;
+export const BackendInstanceId = Brand.nominal<BackendInstanceId>();
+
+export const PRIMARY_INSTANCE_ID: BackendInstanceId = BackendInstanceId(
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+);
+
+// One pooled backend instance. Same lifecycle surface as the legacy
+// `DesktopBackendManagerShape`; the id and label give the pool registry
+// + UI something to route on.
+export interface DesktopBackendInstance {
+  readonly id: BackendInstanceId;
+  readonly label: string;
   readonly start: Effect.Effect<void>;
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
+  // Polls desiredRunning + the instance's own ready flag until the
+  // backend reports ready, or the timeout elapses. Returns true on
+  // ready, false on timeout. Used by the WSL backend swap to drive its
+  // rollback path.
+  readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
 }
 
-export class DesktopBackendManager extends Context.Service<
-  DesktopBackendManager,
-  DesktopBackendManagerShape
->()("t3/desktop/BackendManager") {}
-
-const { logWarning: logBackendManagerWarning, logError: logBackendManagerError } =
-  DesktopObservability.makeComponentLogger("desktop-backend-manager");
+// Spec describing one backend instance to spawn. The configResolve
+// effect is awaited each time the instance is (re)started so live
+// settings changes are picked up on the next start cycle. onReady and
+// onShutdown let the primary instance trigger UI side effects (window
+// open, global readiness flag) without coupling the factory to those
+// concerns; other instances pass them as undefined.
+export interface BackendInstanceSpec {
+  readonly id: BackendInstanceId;
+  readonly label: string;
+  readonly configResolve: Effect.Effect<DesktopBackendStartConfig>;
+  // Receives the *resolved* httpBaseUrl of the run that just became
+  // ready. The window service uses this to decide what URL to load
+  // (the WSL backend reports its distro IP, the Windows backend reports
+  // 127.0.0.1). Splitting this off from configResolve avoids races
+  // between "fired onReady" and "currentConfig already advanced".
+  readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
+  readonly onShutdown?: () => Effect.Effect<void>;
+}
 
 interface ActiveBackendRun {
   readonly id: number;
@@ -233,28 +297,25 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.mapError((cause) => new BackendProcessBootstrapEncodeError({ cause })),
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
-  const command = ChildProcess.make(
-    options.executablePath,
-    [options.entryPath, "--bootstrap-fd", "3"],
-    {
-      cwd: options.cwd,
-      env: options.env,
-      extendEnv: true,
-      // In Electron main, process.execPath points to the Electron binary.
-      // Run the child in Node mode so this backend process does not become a GUI app instance.
-      stdin: "ignore",
-      stdout: options.captureOutput ? "pipe" : "inherit",
-      stderr: options.captureOutput ? "pipe" : "inherit",
-      killSignal: "SIGTERM",
-      forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
-      additionalFds: {
-        fd3: {
-          type: "input",
-          stream: Stream.encodeText(Stream.make(`${bootstrapJson}\n`)),
-        },
-      },
-    },
-  );
+  const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const command = ChildProcess.make(options.executablePath, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+    extendEnv: options.extendEnv,
+    // In Electron main, process.execPath points to the Electron binary.
+    // Run the child in Node mode so this backend process does not become a GUI app instance.
+    stdin: options.bootstrapDelivery === "stdin" ? bootstrapStream : "ignore",
+    stdout: options.captureOutput ? "pipe" : "inherit",
+    stderr: options.captureOutput ? "pipe" : "inherit",
+    killSignal: "SIGTERM",
+    forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
+    // wsl.exe drops additional file descriptors when forwarding to the Linux
+    // side, so the WSL spawn path delivers the bootstrap envelope via stdin
+    // (`--bootstrap-fd 0`) instead.
+    ...(options.bootstrapDelivery === "fd3"
+      ? { additionalFds: { fd3: { type: "input" as const, stream: bootstrapStream } } }
+      : {}),
+  });
 
   const handle = yield* spawner
     .spawn(command)
@@ -277,17 +338,33 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   return describeProcessExit(yield* Effect.result(handle.exitCode));
 });
 
-const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(function* () {
+// Factory for one pooled backend instance. The returned instance owns
+// its own state Ref, mutex, restart loop, and active child process;
+// nothing is shared between instances created from separate
+// makeBackendInstance calls. The instance shuts down automatically when
+// the calling scope closes (typically the application scope).
+export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
+  spec: BackendInstanceSpec,
+): Effect.fn.Return<
+  DesktopBackendInstance,
+  never,
+  | FileSystem.FileSystem
+  | ChildProcessSpawner.ChildProcessSpawner
+  | HttpClient.HttpClient
+  | DesktopObservability.DesktopBackendOutputLogFactory
+  | Scope.Scope
+> {
   const parentScope = yield* Scope.Scope;
   const fileSystem = yield* FileSystem.FileSystem;
-  const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-  const backendOutputLog = yield* DesktopObservability.DesktopBackendOutputLog;
-  const desktopState = yield* DesktopState.DesktopState;
-  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const backendOutputLogFactory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+  const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
+
+  const { logWarning: logInstanceWarning, logError: logInstanceError } =
+    DesktopObservability.makeComponentLogger(`desktop-backend-instance:${spec.id}`);
 
   const updateActiveRun = (runId: number, f: (run: ActiveBackendRun) => ActiveBackendRun) =>
     Ref.update(state, withActiveRun(runId, f));
@@ -328,8 +405,8 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           return;
         }
 
-        yield* Ref.set(desktopState.backendReady, false);
-        const config = yield* configuration.resolve;
+        yield* spec.onShutdown?.() ?? Effect.void;
+        const config = yield* spec.configResolve;
         const entryExists = yield* fileSystem
           .exists(config.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
@@ -341,6 +418,11 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           ready: false,
           config: Option.some(config),
         }));
+
+        if (Option.isSome(config.preflightFailure)) {
+          yield* scheduleRestart(config.preflightFailure.value);
+          return;
+        }
 
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.entryPath}`);
@@ -362,7 +444,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           },
         ]);
 
-        const finalizeRun = Effect.fn("desktop.backendManager.finalizeRun")(function* (
+        const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
         ) {
           yield* mutex.withPermits(1)(
@@ -414,7 +496,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
                     details: `pid=${pid.value} ${reason}`,
                   });
                 }
-                yield* Ref.set(desktopState.backendReady, false);
+                yield* spec.onShutdown?.() ?? Effect.void;
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
@@ -426,7 +508,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
 
         const program = runBackendProcess({
           ...config,
-          onStarted: Effect.fn("desktop.backendManager.onStarted")(function* (pid) {
+          onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
               pid: Option.some(pid),
@@ -436,7 +518,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
               details: `pid=${pid} port=${config.bootstrap.port} cwd=${config.cwd}`,
             });
           }),
-          onReady: Effect.fn("desktop.backendManager.onReady")(function* () {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -456,17 +538,10 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
               return;
             }
 
-            yield* Ref.set(desktopState.backendReady, true);
-            yield* desktopWindow.handleBackendReady.pipe(
-              Effect.catch((error) =>
-                logBackendManagerError("failed to open main window after backend readiness", {
-                  message: error.message,
-                }),
-              ),
-            );
+            yield* spec.onReady?.(config.httpBaseUrl) ?? Effect.void;
           }),
           onReadinessFailure: (error) =>
-            logBackendManagerWarning("backend readiness check failed during bootstrap", {
+            logInstanceWarning("backend readiness check failed during bootstrap", {
               error: error.message,
             }),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
@@ -488,9 +563,9 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
         }));
       }),
     ),
-  ).pipe(Effect.withSpan("desktop.backendManager.start"));
+  ).pipe(Effect.withSpan("desktop.backendInstance.start", { attributes: { id: spec.id } }));
 
-  const scheduleRestart = Effect.fn("desktop.backendManager.scheduleRestart")(function* (
+  const scheduleRestart = Effect.fn("desktop.backendInstance.scheduleRestart")(function* (
     reason: string,
   ) {
     const scheduled = yield* Ref.modify(state, (latest) => {
@@ -510,8 +585,8 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
 
     yield* Option.match(scheduled, {
       onNone: () => Effect.void,
-      onSome: Effect.fn("desktop.backendManager.scheduleRestartFiber")(function* (delay) {
-        yield* logBackendManagerError("backend exited unexpectedly; restart scheduled", {
+      onSome: Effect.fn("desktop.backendInstance.scheduleRestartFiber")(function* (delay) {
+        yield* logInstanceError("backend exited unexpectedly; restart scheduled", {
           reason,
           delayMs: Duration.toMillis(delay),
         });
@@ -531,7 +606,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
             ),
             Effect.flatMap((shouldRestart) => (shouldRestart ? start : Effect.void)),
             Effect.catchCause((cause) =>
-              logBackendManagerError("desktop backend restart fiber failed", {
+              logInstanceError("desktop backend restart fiber failed", {
                 cause: Cause.pretty(cause),
               }),
             ),
@@ -550,7 +625,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
     });
   });
 
-  const stop = Effect.fn("desktop.backendManager.stop")(function* (options?: {
+  const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
   }) {
     const { active, restartFiber } = yield* mutex.withPermits(1)(
@@ -568,7 +643,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
             restartFiber: Option.none<Fiber.Fiber<void, never>>(),
           },
         ]);
-        yield* Ref.set(desktopState.backendReady, false);
+        yield* spec.onShutdown?.() ?? Effect.void;
         return result;
       }),
     );
@@ -583,14 +658,32 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
     });
   });
 
+  const waitForReady = (timeout: Duration.Duration): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const current = yield* Ref.get(state);
+      // Return false early if an external `stop()` flipped desiredRunning off
+      // — no point polling for a backend that is being torn down.
+      if (!current.desiredRunning) return { done: true, ready: false };
+      return current.ready ? { done: true, ready: true } : { done: false, ready: false };
+    }).pipe(
+      Effect.repeat({
+        until: (status) => status.done,
+        schedule: Schedule.spaced(Duration.millis(100)),
+      }),
+      Effect.map((status) => status.ready),
+      Effect.timeoutOption(timeout),
+      Effect.map(Option.getOrElse(() => false)),
+    );
+
   yield* Effect.addFinalizer(() => stop());
 
-  return DesktopBackendManager.of({
+  return {
+    id: spec.id,
+    label: spec.label,
     start,
     stop,
     currentConfig,
     snapshot,
-  });
+    waitForReady,
+  } satisfies DesktopBackendInstance;
 });
-
-export const layer = Layer.effect(DesktopBackendManager, makeDesktopBackendManager());

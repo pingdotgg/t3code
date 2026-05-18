@@ -171,7 +171,7 @@ function createLocalStorageStub(): Storage {
 function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
     getAppBranding: () => null,
-    getLocalEnvironmentBootstrap: () => null,
+    getLocalEnvironmentBootstraps: () => [],
     getClientSettings: async () => null,
     setClientSettings: async () => undefined,
     getSavedEnvironmentRegistry: async () => [],
@@ -220,6 +220,34 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       tailscaleServePort: input.port ?? 443,
     }),
     getAdvertisedEndpoints: async () => [],
+    getWslState: async () => ({
+      enabled: false,
+      distro: null,
+      available: false,
+      wslOnly: false,
+      distros: [],
+    }),
+    setWslBackendEnabled: async () => ({
+      enabled: false,
+      distro: null,
+      available: false,
+      wslOnly: false,
+      distros: [],
+    }),
+    setWslDistro: async () => ({
+      enabled: false,
+      distro: null,
+      available: false,
+      wslOnly: false,
+      distros: [],
+    }),
+    setWslOnly: async () => ({
+      enabled: false,
+      distro: null,
+      available: false,
+      wslOnly: false,
+      distros: [],
+    }),
     pickFolder: async () => null,
     confirm: async () => true,
     setTheme: async () => undefined,
