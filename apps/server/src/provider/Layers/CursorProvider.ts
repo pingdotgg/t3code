@@ -3,10 +3,12 @@ import type {
   CursorSettings,
   ModelCapabilities,
   ProviderOptionSelection,
+  ProviderInstanceId,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -37,10 +39,12 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { type ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -611,6 +615,15 @@ export const discoverCursorModelCapabilitiesViaAcp = (
           );
         }
 
+        type CursorAcpProbeResult =
+          | { readonly _tag: "skipped" }
+          | {
+              readonly _tag: "success";
+              readonly slug: string;
+              readonly capabilities: ModelCapabilities;
+            }
+          | { readonly _tag: "failed"; readonly slug: string };
+
         const probedCapabilities = yield* Effect.forEach(
           modelChoices,
           (modelChoice) => {
@@ -620,9 +633,7 @@ export const discoverCursorModelCapabilitiesViaAcp = (
               !targetModelSlugs.has(modelSlug) ||
               capabilitiesBySlug.has(modelSlug)
             ) {
-              return Effect.void.pipe(
-                Effect.as<readonly [string, ModelCapabilities] | undefined>(undefined),
-              );
+              return Effect.succeed<CursorAcpProbeResult>({ _tag: "skipped" });
             }
 
             return withCursorAcpProbeRuntime(
@@ -649,10 +660,11 @@ export const discoverCursorModelCapabilitiesViaAcp = (
                           .pipe(
                             Effect.map((response) => response.configOptions ?? probeConfigOptions),
                           );
-                  return [
-                    modelSlug,
-                    buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
-                  ] as const;
+                  return {
+                    _tag: "success",
+                    slug: modelSlug,
+                    capabilities: buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
+                  } as CursorAcpProbeResult;
                 }),
               environment,
             ).pipe(
@@ -660,21 +672,29 @@ export const discoverCursorModelCapabilitiesViaAcp = (
               Effect.retry({ times: 3 }),
               Effect.withSpan("cursor-acp-model-capability-probe"),
               Effect.catchCause((cause) =>
-                Effect.logWarning("Cursor ACP capability probe failed", {
+                Effect.logDebug("Cursor ACP capability probe failed", {
                   modelSlug,
                   cause: Cause.pretty(cause),
-                }),
+                }).pipe(Effect.as<CursorAcpProbeResult>({ _tag: "failed", slug: modelSlug })),
               ),
             );
           },
           { concurrency: CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY },
         );
 
+        const failedModels: Array<string> = [];
         for (const entry of probedCapabilities) {
-          if (!entry) {
-            continue;
+          if (entry._tag === "failed") {
+            failedModels.push(entry.slug);
+          } else if (entry._tag === "success") {
+            capabilitiesBySlug.set(entry.slug, entry.capabilities);
           }
-          capabilitiesBySlug.set(entry[0], entry[1]);
+        }
+
+        if (failedModels.length > 0) {
+          yield* Effect.logWarning(
+            `Cursor ACP capability probe failed for ${failedModels.length} model(s) — Cursor Agent may be unresponsive`,
+          );
         }
 
         return buildCursorDiscoveredModels(
@@ -733,6 +753,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly usageLimits?: ServerProviderUsageLimits;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -752,6 +773,7 @@ export function buildCursorProviderSnapshot(input: {
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
       ...(message ? { message } : {}),
+      ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
     },
   });
 }
@@ -1089,6 +1111,8 @@ const runCursorAboutCommand = (
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  instanceId?: ProviderInstanceId,
+  providerUsageState?: ProviderUsageStateShape,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1200,6 +1224,23 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+
+  const runtimeUsageLimits = providerUsageState
+    ? yield* providerUsageState
+        .get(PROVIDER, instanceId)
+        .pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
+
+  const usageLimits =
+    runtimeUsageLimits ??
+    (parsed.auth.status !== "unauthenticated"
+      ? makeUnavailableUsageLimits({
+          source: "cursorAcp",
+          checkedAt,
+          reason: "Cursor does not expose subscription usage",
+        })
+      : undefined);
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1209,6 +1250,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       () => [] as const,
     ),
     ...(discoveryWarning ? { discoveryWarning } : {}),
+    ...(usageLimits ? { usageLimits } : {}),
   });
 });
 

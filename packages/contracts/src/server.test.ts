@@ -71,4 +71,143 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
+
+  it("accepts provider snapshots with usage limits", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "codexAppServer",
+        available: true,
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          {
+            kind: "session",
+            label: "Session",
+            usedPercent: 42,
+            windowDurationMins: 300,
+            resetsAt: "2026-04-10T05:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.available).toBe(true);
+    expect(parsed.usageLimits?.windows).toHaveLength(1);
+  });
+
+  it("accepts unavailable usage limit snapshots", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "claudeStatusProbe",
+        available: false,
+        reason: "Usage limits unavailable for this account.",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(parsed.usageLimits).toEqual({
+      source: "claudeStatusProbe",
+      available: false,
+      reason: "Usage limits unavailable for this account.",
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      windows: [],
+    });
+  });
+
+  it("accepts cursor and opencode usage limit sources", () => {
+    const cursorParsed = decodeServerProvider({
+      instanceId: "cursor",
+      driver: "cursor",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "cursorAcp",
+        available: true,
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [{ kind: "session", label: "Context window", usedPercent: 12 }],
+      },
+    });
+    const openCodeParsed = decodeServerProvider({
+      instanceId: "opencode",
+      driver: "opencode",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "opencodeManaged",
+        available: false,
+        reason: "Unable to fetch usage",
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+      },
+    });
+
+    expect(cursorParsed.usageLimits?.source).toBe("cursorAcp");
+    expect(openCodeParsed.usageLimits?.source).toBe("opencodeManaged");
+  });
+
+  it("rejects invalid usage percentages", () => {
+    expect(() =>
+      decodeServerProvider({
+        instanceId: "codex",
+        driver: "codex",
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: {
+          status: "authenticated",
+        },
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        models: [],
+        usageLimits: {
+          source: "codexAppServer",
+          available: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          windows: [
+            {
+              kind: "session",
+              label: "Session",
+              usedPercent: 101,
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+  });
 });

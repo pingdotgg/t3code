@@ -52,6 +52,10 @@ describe("formatRelativeTimeUntilLabel", () => {
     expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:45.000Z")).toBe("45s left");
   });
 
+  it("formats near-future instants as Soon", () => {
+    expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:03.000Z")).toBe("Soon");
+  });
+
   it("formats minutes remaining", () => {
     expect(formatRelativeTimeUntilLabel("2026-04-07T12:15:00.000Z")).toBe("15m left");
   });

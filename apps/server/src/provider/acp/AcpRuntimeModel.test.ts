@@ -245,6 +245,46 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("parses ACP usage updates and ignores malformed values", () => {
+    const validResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 200_000,
+        used: 50_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(validResult.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        payload: {
+          size: 200_000,
+          used: 50_000,
+          rawPayload: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "usage_update",
+              size: 200_000,
+              used: 50_000,
+            },
+          },
+        },
+      },
+    ]);
+
+    const invalidResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 0,
+        used: 50_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(invalidResult.events).toEqual([]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

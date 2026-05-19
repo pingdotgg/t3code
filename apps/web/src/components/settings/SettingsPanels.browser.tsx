@@ -237,10 +237,7 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
-function createOutdatedProvider(
-  driver: string,
-  updateCommand = "npm install -g openai/codex@latest",
-): ServerProvider {
+function makeProvider(driver: string, overrides?: Partial<ServerProvider>): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(driver),
     driver: ProviderDriverKind.make(driver),
@@ -248,11 +245,23 @@ function createOutdatedProvider(
     installed: true,
     version: "1.0.0",
     status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-05-04T10:00:00.000Z",
+    auth: {
+      status: "authenticated",
+      label: driver === "codex" ? "ChatGPT Pro Subscription" : "Claude Max Subscription",
+    },
+    checkedAt: "2036-04-07T00:00:00.000Z",
     models: [],
     slashCommands: [],
     skills: [],
+    ...overrides,
+  };
+}
+
+function createOutdatedProvider(
+  driver: string,
+  updateCommand = "npm install -g openai/codex@latest",
+): ServerProvider {
+  return makeProvider(driver, {
     versionAdvisory: {
       status: "behind_latest",
       currentVersion: "1.0.0",
@@ -262,7 +271,7 @@ function createOutdatedProvider(
       updateCommand,
       canUpdate: true,
     },
-  };
+  });
 }
 
 function makeUtc(value: string) {
@@ -759,6 +768,198 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
+  });
+
+  it("renders two provider usage bars when usage is available", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("codex", {
+          usageLimits: {
+            source: "codexAppServer",
+            available: true,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "Session",
+                usedPercent: 42,
+                resetsAt: "2036-04-07T02:00:00.000Z",
+              },
+              {
+                kind: "weekly",
+                label: "Weekly",
+                usedPercent: 65,
+                resetsAt: "2036-04-10T00:00:00.000Z",
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByLabelText("Session usage 42%")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Weekly usage 65%")).toBeInTheDocument();
+  });
+
+  it("renders unavailable usage text when quota data is unavailable", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("claudeAgent", {
+          usageLimits: {
+            source: "claudeStatusProbe",
+            available: false,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            reason: "Unable to fetch usage",
+            windows: [],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Unable to fetch usage")).toBeInTheDocument();
+  });
+
+  it("renders multiple OpenCode managed usage windows when both subscriptions exist", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("opencode", {
+          usageLimits: {
+            source: "opencodeManaged",
+            available: true,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "OpenCode Go",
+                usedPercent: 20,
+              },
+              {
+                kind: "session",
+                label: "OpenCode Zen",
+                usedPercent: 40,
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByLabelText("OpenCode Go usage 20%")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("OpenCode Zen usage 40%")).toBeInTheDocument();
+  });
+
+  it("hides provider usage UI for disabled or missing providers", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("codex", {
+          enabled: false,
+          installed: false,
+          status: "disabled",
+          auth: { status: "unknown" },
+          usageLimits: {
+            source: "codexAppServer",
+            available: true,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "Session",
+                usedPercent: 50,
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByLabelText("Enable Codex")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Session usage 50%")).not.toBeInTheDocument();
+  });
+
+  it("updates provider usage bars when provider snapshots refresh", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("codex", {
+          usageLimits: {
+            source: "codexAppServer",
+            available: true,
+            checkedAt: "2036-04-07T00:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "Session",
+                usedPercent: 88,
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const warningBar = page.getByLabelText("Session usage 88%");
+    await expect.element(warningBar).toBeInTheDocument();
+    const warningInnerBar = warningBar.element().querySelector("div");
+    expect(warningInnerBar).toHaveClass(/bg-warning/);
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        makeProvider("codex", {
+          usageLimits: {
+            source: "codexAppServer",
+            available: true,
+            checkedAt: "2036-04-07T01:00:00.000Z",
+            windows: [
+              {
+                kind: "session",
+                label: "Session",
+                usedPercent: 93,
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    const dangerBar = page.getByLabelText("Session usage 93%");
+    await expect.element(dangerBar).toBeInTheDocument();
+    const dangerInnerBar = dangerBar.element().querySelector("div");
+    expect(dangerInnerBar).toHaveClass(/bg-destructive/);
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {
