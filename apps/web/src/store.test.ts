@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  ApprovalRequestId,
   CheckpointRef,
   DEFAULT_MODEL,
   EnvironmentId,
@@ -26,6 +27,7 @@ import {
   type AppState,
   type EnvironmentState,
 } from "./store";
+import { derivePendingApprovals, derivePendingUserInputs } from "./session-logic";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -399,6 +401,174 @@ describe("thread selection memoization", () => {
       ),
     ).toBe(false);
     expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+});
+
+describe("optimistic request responses", () => {
+  it("clears pending approvals as soon as an approval response is requested", () => {
+    const state = makeState(
+      makeThread({
+        activities: [
+          {
+            id: EventId.make("activity-approval-requested"),
+            createdAt: "2026-02-27T00:00:01.000Z",
+            kind: "approval.requested",
+            summary: "Command approval requested",
+            tone: "approval",
+            payload: {
+              requestId: "req-approval-1",
+              requestKind: "command",
+            },
+            turnId: null,
+          },
+        ],
+      }),
+    );
+
+    const nextState = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.approval-response-requested", {
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("req-approval-1"),
+        decision: "accept",
+        createdAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const nextThread = selectThreadByRef(
+      nextState,
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-1")),
+    );
+    expect(nextThread).not.toBeNull();
+    expect(derivePendingApprovals(nextThread?.activities ?? [])).toEqual([]);
+    expect(
+      nextThread?.activities.filter((activity) => activity.kind === "approval.resolved"),
+    ).toHaveLength(1);
+  });
+
+  it("replaces optimistic approval resolutions once the provider emits the real activity", () => {
+    const state = makeState(
+      makeThread({
+        activities: [
+          {
+            id: EventId.make("activity-approval-requested"),
+            createdAt: "2026-02-27T00:00:01.000Z",
+            kind: "approval.requested",
+            summary: "Command approval requested",
+            tone: "approval",
+            payload: {
+              requestId: "req-approval-2",
+              requestKind: "command",
+            },
+            turnId: null,
+          },
+        ],
+      }),
+    );
+
+    const afterResponseRequested = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.approval-response-requested", {
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("req-approval-2"),
+        decision: "accept",
+        createdAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const afterProviderResolution = applyOrchestrationEvent(
+      afterResponseRequested,
+      makeEvent("thread.activity-appended", {
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("activity-approval-resolved"),
+          createdAt: "2026-02-27T00:00:02.100Z",
+          kind: "approval.resolved",
+          summary: "Approval resolved",
+          tone: "approval",
+          payload: {
+            requestId: "req-approval-2",
+            requestKind: "command",
+            decision: "accept",
+          },
+          turnId: null,
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    const nextThread = selectThreadByRef(
+      afterProviderResolution,
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-1")),
+    );
+    expect(nextThread).not.toBeNull();
+    expect(derivePendingApprovals(nextThread?.activities ?? [])).toEqual([]);
+    expect(
+      nextThread?.activities.filter(
+        (activity) =>
+          activity.kind === "approval.resolved" &&
+          (activity.payload as { requestId?: string }).requestId === "req-approval-2",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("clears pending user input as soon as a response is requested", () => {
+    const state = makeState(
+      makeThread({
+        activities: [
+          {
+            id: EventId.make("activity-user-input-requested"),
+            createdAt: "2026-02-27T00:00:01.000Z",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-user-input-1",
+              questions: [
+                {
+                  id: "sandbox",
+                  header: "Sandbox",
+                  question: "Choose a mode",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow writes inside the workspace",
+                    },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+            turnId: null,
+          },
+        ],
+      }),
+    );
+
+    const nextState = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.user-input-response-requested", {
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("req-user-input-1"),
+        answers: {
+          sandbox: "workspace-write",
+        },
+        createdAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const nextThread = selectThreadByRef(
+      nextState,
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-1")),
+    );
+    expect(nextThread).not.toBeNull();
+    expect(derivePendingUserInputs(nextThread?.activities ?? [])).toEqual([]);
+    expect(
+      nextThread?.activities.filter((activity) => activity.kind === "user-input.resolved"),
+    ).toHaveLength(1);
   });
 });
 

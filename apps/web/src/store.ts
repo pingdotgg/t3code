@@ -467,6 +467,58 @@ function buildActivitySlice(thread: Thread): {
   };
 }
 
+function getActivityPayloadRecord(
+  activity: OrchestrationThreadActivity,
+): Record<string, unknown> | null {
+  return activity.payload && typeof activity.payload === "object"
+    ? (activity.payload as Record<string, unknown>)
+    : null;
+}
+
+function getActivityRequestId(activity: OrchestrationThreadActivity): string | null {
+  const payload = getActivityPayloadRecord(activity);
+  return typeof payload?.requestId === "string" ? payload.requestId : null;
+}
+
+function isOptimisticResponseActivity(activity: OrchestrationThreadActivity): boolean {
+  return getActivityPayloadRecord(activity)?.optimistic === true;
+}
+
+function appendThreadActivity(
+  thread: Thread,
+  activity: OrchestrationThreadActivity,
+  updatedAt: string,
+): Thread {
+  const requestId = getActivityRequestId(activity);
+  const existingActivities = [...thread.activities].filter((entry) => {
+    if (entry.id === activity.id) {
+      return false;
+    }
+
+    if (
+      requestId !== null &&
+      (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") &&
+      entry.kind === activity.kind &&
+      isOptimisticResponseActivity(entry) &&
+      getActivityRequestId(entry) === requestId
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  const activities = [...existingActivities, activity]
+    .toSorted(compareActivities)
+    .slice(-MAX_THREAD_ACTIVITIES);
+
+  return {
+    ...thread,
+    activities,
+    updatedAt,
+  };
+}
+
 function buildProposedPlanSlice(thread: Thread): {
   ids: string[];
   byId: Record<string, ProposedPlan>;
@@ -1613,23 +1665,51 @@ function applyEnvironmentOrchestrationEvent(
       });
 
     case "thread.activity-appended":
-      return updateThreadState(state, event.payload.threadId, (thread) => {
-        const activities = [
-          ...thread.activities.filter((activity) => activity.id !== event.payload.activity.id),
-          { ...event.payload.activity },
-        ]
-          .toSorted(compareActivities)
-          .slice(-MAX_THREAD_ACTIVITIES);
-        return {
-          ...thread,
-          activities,
-          updatedAt: event.occurredAt,
-        };
-      });
+      return updateThreadState(state, event.payload.threadId, (thread) =>
+        appendThreadActivity(thread, { ...event.payload.activity }, event.occurredAt),
+      );
 
     case "thread.approval-response-requested":
+      return updateThreadState(state, event.payload.threadId, (thread) =>
+        appendThreadActivity(
+          thread,
+          {
+            id: event.eventId,
+            createdAt: event.payload.createdAt,
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            tone: "approval",
+            payload: {
+              requestId: event.payload.requestId,
+              decision: event.payload.decision,
+              optimistic: true,
+            },
+            turnId: null,
+          },
+          event.occurredAt,
+        ),
+      );
+
     case "thread.user-input-response-requested":
-      return state;
+      return updateThreadState(state, event.payload.threadId, (thread) =>
+        appendThreadActivity(
+          thread,
+          {
+            id: event.eventId,
+            createdAt: event.payload.createdAt,
+            kind: "user-input.resolved",
+            summary: "User input submitted",
+            tone: "info",
+            payload: {
+              requestId: event.payload.requestId,
+              answers: event.payload.answers,
+              optimistic: true,
+            },
+            turnId: null,
+          },
+          event.occurredAt,
+        ),
+      );
   }
 
   return state;

@@ -207,6 +207,9 @@ function isStalePendingRequestFailureDetail(detail: string | undefined): boolean
 
 export function derivePendingApprovals(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: {
+    readonly hasPendingApprovals?: boolean;
+  },
 ): PendingApproval[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
@@ -256,9 +259,13 @@ export function derivePendingApprovals(
     }
   }
 
-  return [...openByRequestId.values()].toSorted((left, right) =>
+  const pendingApprovals = [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+  if (options?.hasPendingApprovals === false) {
+    return [];
+  }
+  return pendingApprovals;
 }
 
 function parseUserInputQuestions(
@@ -313,6 +320,9 @@ function parseUserInputQuestions(
 
 export function derivePendingUserInputs(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: {
+    readonly hasPendingUserInput?: boolean;
+  },
 ): PendingUserInput[] {
   const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
@@ -355,9 +365,13 @@ export function derivePendingUserInputs(
     }
   }
 
-  return [...openByRequestId.values()].toSorted((left, right) =>
+  const pendingUserInputs = [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+  if (options?.hasPendingUserInput === false) {
+    return [];
+  }
+  return pendingUserInputs;
 }
 
 export function deriveActivePlanState(

@@ -74,6 +74,7 @@ import {
 } from "../pendingUserInput";
 import {
   selectProjectsAcrossEnvironments,
+  selectSidebarThreadSummaryByRef,
   selectThreadsAcrossEnvironments,
   useStore,
 } from "../store";
@@ -818,6 +819,12 @@ export default function ChatView(props: ChatViewProps) {
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
     [activeThread],
   );
+  const activeThreadSummary = useStore(
+    useMemo(
+      () => (state) => selectSidebarThreadSummaryByRef(state, activeThreadRef) ?? null,
+      [activeThreadRef],
+    ),
+  );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
@@ -1273,12 +1280,22 @@ export default function ChatView(props: ChatViewProps) {
     [activeLatestTurn?.turnId, threadActivities],
   );
   const pendingApprovals = useMemo(
-    () => derivePendingApprovals(threadActivities),
-    [threadActivities],
+    () =>
+      derivePendingApprovals(threadActivities, {
+        ...(activeThreadSummary?.hasPendingApprovals !== undefined
+          ? { hasPendingApprovals: activeThreadSummary.hasPendingApprovals }
+          : {}),
+      }),
+    [activeThreadSummary?.hasPendingApprovals, threadActivities],
   );
   const pendingUserInputs = useMemo(
-    () => derivePendingUserInputs(threadActivities),
-    [threadActivities],
+    () =>
+      derivePendingUserInputs(threadActivities, {
+        ...(activeThreadSummary?.hasPendingUserInput !== undefined
+          ? { hasPendingUserInput: activeThreadSummary.hasPendingUserInput }
+          : {}),
+      }),
+    [activeThreadSummary?.hasPendingUserInput, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(

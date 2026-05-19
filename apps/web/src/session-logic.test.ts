@@ -172,6 +172,24 @@ describe("derivePendingApprovals", () => {
 
     expect(derivePendingApprovals(activities)).toEqual([]);
   });
+
+  it("suppresses stale pending approvals when the authoritative shell summary says none remain", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-shell-reconciled",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-shell-reconciled-1",
+          requestKind: "command",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities, { hasPendingApprovals: false })).toEqual([]);
+  });
 });
 
 describe("derivePendingUserInputs", () => {
@@ -303,6 +321,37 @@ describe("derivePendingUserInputs", () => {
     ];
 
     expect(derivePendingUserInputs(activities)).toEqual([]);
+  });
+
+  it("suppresses stale pending user-input prompts when the authoritative shell summary says none remain", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-shell-reconciled",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-shell-reconciled-1",
+          questions: [
+            {
+              id: "approval",
+              header: "Approval",
+              question: "Continue?",
+              options: [
+                {
+                  label: "yes",
+                  description: "Continue execution",
+                },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities, { hasPendingUserInput: false })).toEqual([]);
   });
 });
 
