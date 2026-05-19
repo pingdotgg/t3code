@@ -355,6 +355,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                   account: null,
                   requiresOpenaiAuth: true,
                 },
+                models: [],
               }),
             ),
           );
@@ -365,6 +366,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             status.message,
             "Codex CLI is not authenticated. Run `codex login` and try again.",
           );
+        }),
+      );
+
+      it.effect("keeps profiled Codex providers ready when models are available", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(
+            { ...defaultCodexSettings, profileName: "work" },
+            () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  account: {
+                    account: null,
+                    requiresOpenaiAuth: true,
+                  },
+                }),
+              ),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "unknown");
+        }),
+      );
+
+      it.effect("keeps OpenAI auth required when only custom models are available", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: {
+                  account: null,
+                  requiresOpenaiAuth: true,
+                },
+                models: [
+                  {
+                    slug: "custom-model",
+                    name: "custom-model",
+                    isCustom: true,
+                    capabilities: null,
+                  },
+                ],
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
         }),
       );
 
@@ -386,6 +433,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             assert.strictEqual(status.status, "ready");
             assert.strictEqual(status.auth.status, "unknown");
           }),
+      );
+
+      it.effect("passes the configured Codex profile to the app-server probe", () =>
+        Effect.gen(function* () {
+          let profileName: string | undefined;
+          yield* checkCodexProviderStatus(
+            { ...defaultCodexSettings, profileName: "work" },
+            (input) => {
+              profileName = input.profileName;
+              return Effect.succeed(makeCodexProbeSnapshot());
+            },
+          );
+
+          assert.strictEqual(profileName, "work");
+        }),
       );
 
       it.effect("returns an api key label for codex api key auth", () =>

@@ -34,6 +34,7 @@ function makeFakeCodexBinary(
     requireImage?: boolean;
     requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
+    requireProfileName?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
@@ -54,7 +55,14 @@ function makeFakeCodexBinary(
         'seen_image="0"',
         'seen_fast_service_tier="0"',
         'seen_reasoning_effort=""',
+        'seen_profile_name=""',
         "while [ $# -gt 0 ]; do",
+        '  if [ "$1" = "-p" ]; then',
+        "    shift",
+        '    seen_profile_name="$1"',
+        "    shift",
+        "    continue",
+        "  fi",
         '  if [ "$1" = "--image" ]; then',
         "    shift",
         '    if [ -n "$1" ]; then',
@@ -106,6 +114,14 @@ function makeFakeCodexBinary(
               `if [ "$seen_reasoning_effort" != "model_reasoning_effort=\\"${input.requireReasoningEffort}\\"" ]; then`,
               '  printf "%s\\n" "unexpected reasoning effort config: $seen_reasoning_effort" >&2',
               `  exit 6`,
+              "fi",
+            ]
+          : []),
+        ...(input.requireProfileName !== undefined
+          ? [
+              `if [ "$seen_profile_name" != "${input.requireProfileName}" ]; then`,
+              '  printf "%s\\n" "unexpected profile name: $seen_profile_name" >&2',
+              `  exit 8`,
               "fi",
             ]
           : []),
@@ -163,6 +179,7 @@ function withFakeCodexEnv<A, E, R>(
     requireImage?: boolean;
     requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
+    requireProfileName?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
@@ -173,7 +190,10 @@ function withFakeCodexEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
-    const config = decodeCodexSettings({ binaryPath: codexPath });
+    const config = decodeCodexSettings({
+      binaryPath: codexPath,
+      ...(input.requireProfileName ? { profileName: input.requireProfileName } : {}),
+    });
     const textGeneration = yield* makeCodexTextGeneration(config);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -219,6 +239,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           }),
           requireFastServiceTier: true,
           requireReasoningEffort: "xhigh",
+          requireProfileName: "work",
           stdinMustNotContain: "branch must be a short semantic git branch fragment",
         },
         (textGeneration) =>

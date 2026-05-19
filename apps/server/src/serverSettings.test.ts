@@ -35,6 +35,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(decodePatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }), {
         providers: { codex: { binaryPath: "/tmp/codex" } },
       });
+      assert.deepEqual(decodePatch({ providers: { codex: { profileName: "work" } } }), {
+        providers: { codex: { profileName: "work" } },
+      });
 
       assert.deepEqual(
         decodePatch({
@@ -118,6 +121,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/opt/homebrew/bin/codex",
         homePath: "/Users/julius/.codex",
         shadowHomePath: "",
+        profileName: "",
         customModels: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {
@@ -359,6 +363,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/opt/homebrew/bin/codex",
         homePath: "",
         shadowHomePath: "",
+        profileName: "",
         customModels: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {

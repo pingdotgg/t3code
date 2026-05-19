@@ -190,6 +190,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const command = ChildProcess.make(
         codexConfig.binaryPath || "codex",
         [
+          ...(codexConfig.profileName ? ["-p", codexConfig.profileName] : []),
           "exec",
           "--ephemeral",
           "--skip-git-repo-check",

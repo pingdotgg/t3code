@@ -58,6 +58,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   binaryPath: "codex",
   homePath: "",
   shadowHomePath: "",
+  profileName: "",
   customModels: [],
   ...overrides,
 });
