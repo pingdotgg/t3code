@@ -225,6 +225,7 @@ describe("openCodexThread", () => {
         runtimeMode: "full-access",
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
+        modelProvider: "codex-lb",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
       }),
@@ -235,6 +236,7 @@ describe("openCodexThread", () => {
       calls.map((call) => call.method),
       ["thread/resume", "thread/start"],
     );
+    assert.equal((calls[0]!.payload as { modelProvider?: string }).modelProvider, "codex-lb");
   });
 
   it("propagates non-recoverable resume failures", async () => {
@@ -265,6 +267,7 @@ describe("openCodexThread", () => {
           runtimeMode: "full-access",
           cwd: "/tmp/project",
           requestedModel: "gpt-5.3-codex",
+          modelProvider: undefined,
           serviceTier: undefined,
           resumeThreadId: "stale-thread",
         }),

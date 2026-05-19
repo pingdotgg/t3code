@@ -287,6 +287,32 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+
+  it.effect("passes configured profile names to Codex app-server sessions", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({ profileName: "work" }), {
+        makeRuntime: runtimeFactory.factory,
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-profile"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(runtimeFactory.factory.mock.calls[0]?.[0].profileName, "work");
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();

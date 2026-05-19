@@ -251,6 +251,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly profileName?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
@@ -263,7 +264,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const clientContext = yield* Layer.build(
     CodexClient.layerCommand({
       command: input.binaryPath,
-      args: ["app-server"],
+      args: [...(input.profileName ? ["-p", input.profileName] : []), "app-server"],
       cwd: input.cwd,
       env: {
         ...(input.environment ?? process.env),
@@ -292,7 +293,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const version = versionMatch ? versionMatch[1] : undefined;
 
   const accountResponse = yield* client.request("account/read", {});
-  if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+  if (!input.profileName && !accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,
       version,
@@ -404,6 +405,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
+    readonly profileName?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
@@ -441,6 +443,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
+    profileName: codexSettings.profileName,
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
     environment,
@@ -489,7 +492,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
-  const accountStatus = accountProbeStatus(snapshot.account);
+  const hasProviderModels = snapshot.models.some((model) => !model.isCustom);
+  const account = hasProviderModels
+    ? { ...snapshot.account, requiresOpenaiAuth: false }
+    : snapshot.account;
+  const accountStatus = accountProbeStatus(account);
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
