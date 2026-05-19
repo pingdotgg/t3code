@@ -3847,6 +3847,91 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("offers archive in the thread context menu and dispatches archive when selected", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("archive");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-thread-context-archive-test" as MessageId,
+        targetText: "thread context archive target",
+      }),
+    });
+
+    try {
+      window.desktopBridge = {
+        showContextMenu,
+        setTheme: vi.fn().mockResolvedValue(undefined),
+      } as unknown as NonNullable<typeof window.desktopBridge>;
+
+      const threadRow = await waitForElement(
+        () => document.querySelector<HTMLElement>(`[data-testid="thread-row-${THREAD_ID}"]`),
+        "Unable to find thread row.",
+      );
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 120,
+          clientY: 180,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(showContextMenu).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const [items, menuPosition] = showContextMenu.mock.calls[0]! as [
+        Array<{
+          id: string;
+          label: string;
+          destructive?: boolean;
+          disabled?: boolean;
+        }>,
+        { x: number; y: number },
+      ];
+      expect(menuPosition).toEqual({ x: 120, y: 180 });
+      expect(items.map((item) => item.id)).toEqual([
+        "rename",
+        "mark-unread",
+        "copy-path",
+        "copy-thread-id",
+        "archive",
+        "delete",
+      ]);
+      expect(items[4]).toMatchObject({
+        id: "archive",
+        label: "Archive",
+        destructive: true,
+        disabled: false,
+      });
+      expect(items[5]).toMatchObject({
+        id: "delete",
+        label: "Delete",
+        destructive: true,
+      });
+
+      await vi.waitFor(
+        () => {
+          const archiveRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.archive" &&
+              request.threadId === THREAD_ID,
+          );
+          expect(archiveRequest).toBeDefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("canonicalizes promoted draft threads to the server thread route", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
