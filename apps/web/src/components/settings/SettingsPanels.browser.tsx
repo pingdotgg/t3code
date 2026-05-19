@@ -9,13 +9,17 @@ import {
   type DesktopBridge,
   type DesktopUpdateChannel,
   type DesktopUpdateState,
+  type EnvironmentApi,
   type LocalApi,
+  type OrchestrationShellSnapshot,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerConfig,
   type ServerProcessResourceHistoryResult,
   type ServerProvider,
   type SourceControlDiscoveryResult,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -30,14 +34,24 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { __resetLocalApiForTests } from "../../localApi";
+import {
+  __resetEnvironmentApiOverridesForTests,
+  __setEnvironmentApiOverrideForTests,
+} from "../../environmentApi";
 import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import { useStore } from "../../store";
 import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { DiagnosticsSettingsPanel } from "./DiagnosticsSettings";
-import { GeneralSettingsPanel, ProviderSettingsPanel } from "./SettingsPanels";
+import {
+  ArchivedThreadsPanel,
+  GeneralSettingsPanel,
+  ProviderSettingsPanel,
+} from "./SettingsPanels";
 import { SourceControlSettingsPanel } from "./SourceControlSettings";
 
 function renderWithTestRouter(children: ReactNode) {
@@ -281,6 +295,71 @@ function createEmptyProcessResourceHistoryResult(): ServerProcessResourceHistory
     topProcesses: [],
     error: Option.none(),
   };
+}
+
+const archivedPanelEnvironmentId = EnvironmentId.make("environment-archive-test");
+const archivedPanelProjectId = ProjectId.make("project-docs");
+const archivedPanelModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5",
+};
+
+function createArchivedPanelSnapshot(
+  threads: OrchestrationShellSnapshot["threads"],
+): OrchestrationShellSnapshot {
+  return {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: archivedPanelProjectId,
+        title: "Docs Portal",
+        workspaceRoot: "/work/clients/docs",
+        defaultModelSelection: archivedPanelModelSelection,
+        scripts: [],
+        createdAt: "2036-04-07T00:00:00.000Z",
+        updatedAt: "2036-04-07T00:00:00.000Z",
+      },
+    ],
+    threads,
+    updatedAt: "2036-04-07T00:03:00.000Z",
+  };
+}
+
+function createArchivedPanelThread(input: {
+  readonly id: string;
+  readonly title: string;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly createdAt: string;
+  readonly archivedAt: string;
+}): OrchestrationShellSnapshot["threads"][number] {
+  return {
+    id: ThreadId.make(input.id),
+    projectId: archivedPanelProjectId,
+    title: input.title,
+    modelSelection: archivedPanelModelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: input.branch,
+    worktreePath: input.worktreePath,
+    latestTurn: null,
+    createdAt: input.createdAt,
+    updatedAt: input.archivedAt,
+    archivedAt: input.archivedAt,
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  };
+}
+
+function createArchivedPanelEnvironmentApi(snapshot: OrchestrationShellSnapshot): EnvironmentApi {
+  return {
+    orchestration: {
+      getArchivedShellSnapshot: vi.fn().mockResolvedValue(snapshot),
+    },
+  } as unknown as EnvironmentApi;
 }
 
 function makePairingLink(input: {
@@ -1216,6 +1295,106 @@ describe("GeneralSettingsPanel observability", () => {
       expect(viewportRect.right).toBeLessThanOrEqual(popupRect.right + 0.5);
       expect(scrollViewport!.scrollWidth).toBeGreaterThan(scrollViewport!.clientWidth);
     });
+  });
+});
+
+describe("ArchivedThreadsPanel", () => {
+  let mounted:
+    | (Awaited<ReturnType<typeof render>> & {
+        cleanup?: () => Promise<void>;
+        unmount?: () => Promise<void>;
+      })
+    | null = null;
+
+  beforeEach(() => {
+    resetAppAtomRegistryForTests();
+    __resetEnvironmentApiOverridesForTests();
+    document.body.innerHTML = "";
+    useStore.setState({
+      activeEnvironmentId: null,
+      environmentStateById: {},
+    });
+  });
+
+  afterEach(async () => {
+    if (mounted) {
+      const teardown = mounted.cleanup ?? mounted.unmount;
+      await teardown?.call(mounted).catch(() => {});
+    }
+    mounted = null;
+    document.body.innerHTML = "";
+    __resetEnvironmentApiOverridesForTests();
+    resetAppAtomRegistryForTests();
+    useStore.setState({
+      activeEnvironmentId: null,
+      environmentStateById: {},
+    });
+  });
+
+  it("searches archived threads and collapses archived projects", async () => {
+    useStore
+      .getState()
+      .syncServerShellSnapshot(createArchivedPanelSnapshot([]), archivedPanelEnvironmentId);
+
+    __setEnvironmentApiOverrideForTests(
+      archivedPanelEnvironmentId,
+      createArchivedPanelEnvironmentApi(
+        createArchivedPanelSnapshot([
+          createArchivedPanelThread({
+            id: "thread-docs-bug",
+            title: "Fix publishing bug",
+            branch: "docs-fix",
+            worktreePath: "/work/clients/docs/.worktrees/docs-fix",
+            createdAt: "2036-04-07T00:01:00.000Z",
+            archivedAt: "2036-04-07T00:04:00.000Z",
+          }),
+          createArchivedPanelThread({
+            id: "thread-docs-homepage",
+            title: "Rewrite homepage copy",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2036-04-07T00:02:00.000Z",
+            archivedAt: "2036-04-07T00:03:00.000Z",
+          }),
+        ]),
+      ),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    mounted = await renderWithTestRouter(
+      <QueryClientProvider client={queryClient}>
+        <AppAtomRegistryProvider>
+          <ArchivedThreadsPanel />
+        </AppAtomRegistryProvider>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Fix publishing bug")).toBeInTheDocument();
+    await expect.element(page.getByText("Rewrite homepage copy")).toBeInTheDocument();
+
+    await page.getByLabelText("Search archived threads").fill("homepage");
+
+    await expect.element(page.getByText("Rewrite homepage copy")).toBeInTheDocument();
+    await expect.element(page.getByText("Fix publishing bug")).not.toBeInTheDocument();
+
+    await page.getByLabelText("Search archived threads").fill("");
+    await expect.element(page.getByText("Fix publishing bug")).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Collapse Docs Portal", exact: true }).click();
+
+    await expect.element(page.getByText("Fix publishing bug")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Rewrite homepage copy")).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Expand Docs Portal", exact: true }).click();
+
+    await expect.element(page.getByText("Fix publishing bug")).toBeInTheDocument();
+    await expect.element(page.getByText("Rewrite homepage copy")).toBeInTheDocument();
   });
 });
 

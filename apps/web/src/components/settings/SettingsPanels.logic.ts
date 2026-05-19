@@ -7,6 +7,74 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
+type ArchivedSearchProject = {
+  readonly name: string;
+  readonly cwd: string;
+};
+
+type ArchivedSearchThread = {
+  readonly title: string;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+};
+
+type ArchivedThreadSearchGroup<
+  TProject extends ArchivedSearchProject = ArchivedSearchProject,
+  TThread extends ArchivedSearchThread = ArchivedSearchThread,
+> = {
+  readonly project: TProject;
+  readonly threads: ReadonlyArray<TThread>;
+};
+
+function normalizeArchivedSearchQuery(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function searchableTextMatchesAllTokens(
+  fields: ReadonlyArray<string | null | undefined>,
+  tokens: ReadonlyArray<string>,
+): boolean {
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const searchableText = fields
+    .filter((field): field is string => typeof field === "string" && field.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  return tokens.every((token) => searchableText.includes(token));
+}
+
+export function filterArchivedThreadGroups<
+  TProject extends ArchivedSearchProject,
+  TThread extends ArchivedSearchThread,
+>(
+  groups: ReadonlyArray<ArchivedThreadSearchGroup<TProject, TThread>>,
+  query: string,
+): Array<ArchivedThreadSearchGroup<TProject, TThread>> {
+  const tokens = normalizeArchivedSearchQuery(query);
+  if (tokens.length === 0) {
+    return [...groups];
+  }
+
+  return groups.flatMap((group) => {
+    const projectFields = [group.project.name, group.project.cwd];
+    if (searchableTextMatchesAllTokens(projectFields, tokens)) {
+      return [group];
+    }
+
+    const threads = group.threads.filter((thread) =>
+      searchableTextMatchesAllTokens(
+        [...projectFields, thread.title, thread.branch, thread.worktreePath],
+        tokens,
+      ),
+    );
+
+    return threads.length > 0 ? [{ ...group, threads }] : [];
+  });
+}
+
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;
   readonly metricsUrl: string;

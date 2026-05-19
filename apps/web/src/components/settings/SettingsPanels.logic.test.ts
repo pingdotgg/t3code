@@ -7,8 +7,99 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   buildProviderInstanceUpdatePatch,
+  filterArchivedThreadGroups,
   formatDiagnosticsDescription,
 } from "./SettingsPanels.logic";
+
+const archivedGroups = [
+  {
+    project: {
+      id: "project-docs",
+      name: "Docs Portal",
+      cwd: "/work/clients/docs",
+    },
+    threads: [
+      {
+        id: "thread-docs-bug",
+        title: "Fix publishing bug",
+        branch: "docs-fix",
+        worktreePath: "/work/clients/docs/.worktrees/docs-fix",
+      },
+      {
+        id: "thread-docs-copy",
+        title: "Rewrite homepage copy",
+        branch: null,
+        worktreePath: null,
+      },
+    ],
+  },
+  {
+    project: {
+      id: "project-api",
+      name: "API Service",
+      cwd: "/work/services/api",
+    },
+    threads: [
+      {
+        id: "thread-api-cache",
+        title: "Tune cache invalidation",
+        branch: "cache-tuning",
+        worktreePath: "/work/services/api/.worktrees/cache-tuning",
+      },
+    ],
+  },
+];
+
+describe("archive thread search helpers", () => {
+  it("returns all groups for an empty query", () => {
+    expect(filterArchivedThreadGroups(archivedGroups, "  ")).toEqual(archivedGroups);
+  });
+
+  it("keeps all project threads when the project name matches", () => {
+    const filtered = filterArchivedThreadGroups(archivedGroups, "docs portal");
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.project.id).toBe("project-docs");
+    expect(filtered[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-docs-bug",
+      "thread-docs-copy",
+    ]);
+  });
+
+  it("keeps all project threads when the project cwd matches", () => {
+    const filtered = filterArchivedThreadGroups(archivedGroups, "services api");
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.project.id).toBe("project-api");
+    expect(filtered[0]?.threads.map((thread) => thread.id)).toEqual(["thread-api-cache"]);
+  });
+
+  it("keeps only matching threads when the thread title matches", () => {
+    const filtered = filterArchivedThreadGroups(archivedGroups, "  HOMEpage  ");
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.project.id).toBe("project-docs");
+    expect(filtered[0]?.threads.map((thread) => thread.id)).toEqual(["thread-docs-copy"]);
+  });
+
+  it("matches thread branch and worktree path", () => {
+    expect(
+      filterArchivedThreadGroups(archivedGroups, "cache-tuning")[0]?.threads.map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["thread-api-cache"]);
+
+    expect(
+      filterArchivedThreadGroups(archivedGroups, "worktrees docs-fix")[0]?.threads.map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["thread-docs-bug"]);
+  });
+
+  it("drops groups with no matches", () => {
+    expect(filterArchivedThreadGroups(archivedGroups, "not-here")).toEqual([]);
+  });
+});
 
 describe("formatDiagnosticsDescription", () => {
   it("collapses trace and metric URLs that share the same OTEL base path", () => {
