@@ -2,16 +2,29 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  Sidebar,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
+  SidebarRail,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
   return renderToStaticMarkup(
     <SidebarProvider>
       <SidebarMenuButton className={className}>Projects</SidebarMenuButton>
+    </SidebarProvider>,
+  );
+}
+
+function renderSidebarRail(props?: { defaultOpen?: boolean; side?: "left" | "right" }) {
+  return renderToStaticMarkup(
+    <SidebarProvider defaultOpen={props?.defaultOpen ?? true}>
+      <Sidebar side={props?.side ?? "left"} collapsible="offcanvas" resizable>
+        <div>Sidebar content</div>
+        <SidebarRail />
+      </Sidebar>
     </SidebarProvider>,
   );
 }
@@ -49,5 +62,26 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-sub-button"');
     expect(html).toContain("cursor-pointer");
+  });
+
+  it("pins resize rails inside expanded sidebar edges", () => {
+    const leftHtml = renderSidebarRail({ side: "left" }).replaceAll("&amp;", "&");
+    const rightHtml = renderSidebarRail({ side: "right" }).replaceAll("&amp;", "&");
+
+    expect(leftHtml).toContain("[[data-side=left][data-state=expanded]_&]:right-0");
+    expect(leftHtml).toContain("[[data-side=left][data-state=expanded]_&]:after:right-0");
+    expect(rightHtml).toContain("[[data-side=right][data-state=expanded]_&]:left-0");
+    expect(rightHtml).toContain("[[data-side=right][data-state=expanded]_&]:after:left-0");
+  });
+
+  it("keeps collapsed offcanvas rails non-interactive", () => {
+    const html = renderSidebarRail({ defaultOpen: false, side: "right" }).replaceAll("&amp;", "&");
+
+    expect(html).toContain(
+      "[[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+    );
+    expect(html).toContain(
+      "[[data-side=right][data-collapsible=offcanvas][data-state=collapsed]_&]:-left-2",
+    );
   });
 });

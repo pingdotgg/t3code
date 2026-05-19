@@ -75,6 +75,24 @@ type SidebarInstanceContextProps = {
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
 const SidebarInstanceContext = React.createContext<SidebarInstanceContextProps | null>(null);
+const SIDEBAR_RAIL_POSITION_CLASS_NAME = [
+  "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear sm:flex",
+  "[[data-side=left][data-state=expanded]_&]:right-0",
+  "[[data-side=right][data-state=expanded]_&]:left-0",
+  "[[data-side=left][data-collapsible=icon][data-state=collapsed]_&]:right-0",
+  "[[data-side=right][data-collapsible=icon][data-state=collapsed]_&]:left-0",
+  "[[data-side=left][data-collapsible=offcanvas][data-state=collapsed]_&]:-right-2",
+  "[[data-side=right][data-collapsible=offcanvas][data-state=collapsed]_&]:-left-2",
+  "[[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+].join(" ");
+const SIDEBAR_RAIL_DIVIDER_CLASS_NAME = [
+  "after:absolute after:inset-y-0 after:w-[2px] hover:after:bg-sidebar-border",
+  "[[data-side=left][data-state=expanded]_&]:after:right-0",
+  "[[data-side=right][data-state=expanded]_&]:after:left-0",
+  "[[data-side=left][data-collapsible=icon][data-state=collapsed]_&]:after:right-0",
+  "[[data-side=right][data-collapsible=icon][data-state=collapsed]_&]:after:left-0",
+  "[[data-collapsible=offcanvas][data-state=collapsed]_&]:after:left-full",
+].join(" ");
 
 function useSidebar() {
   const context = React.use(SidebarContext);
@@ -575,13 +593,11 @@ function SidebarRail({
     <button
       aria-label={railLabel}
       className={cn(
-        /* disable pointer events only when offcanvas sidebar is collapsed, that's when the rail sits over the native scrollbar on windows and linux. icon mode stays fully clickable. */
-        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+        /* Keep the expanded rail fully inside the sidebar edge so it never steals the main pane's scrollbar hit target. */
+        SIDEBAR_RAIL_POSITION_CLASS_NAME,
+        SIDEBAR_RAIL_DIVIDER_CLASS_NAME,
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
         "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-        "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
         className,
       )}
       data-sidebar="rail"
