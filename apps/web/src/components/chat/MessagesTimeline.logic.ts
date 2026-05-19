@@ -143,10 +143,8 @@ export function deriveMessagesTimelineRows(input: {
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: BaseMessagesTimelineRow[] = [];
-  const durationStartByMessageId = computeMessageDurationStart(
-    input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
-  );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  let lastDurationBoundary: string | null = null;
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -189,31 +187,34 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    const message = timelineEntry.message;
+    if (message.role === "user") {
+      lastDurationBoundary = message.createdAt;
+    }
+    const durationStart = lastDurationBoundary ?? message.createdAt;
+    const isTerminalAssistant =
+      message.role === "assistant" && terminalAssistantMessageIds.has(message.id);
+
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
       createdAt: timelineEntry.createdAt,
-      message: timelineEntry.message,
-      durationStart:
-        durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
+      message,
+      durationStart,
       showCompletionDivider:
-        timelineEntry.message.role === "assistant" &&
-        input.completionDividerBeforeEntryId === timelineEntry.id,
-      showAssistantCopyButton:
-        timelineEntry.message.role === "assistant" &&
-        terminalAssistantMessageIds.has(timelineEntry.message.id),
-      showAssistantTerminalMetadata:
-        timelineEntry.message.role === "assistant" &&
-        terminalAssistantMessageIds.has(timelineEntry.message.id),
+        message.role === "assistant" && input.completionDividerBeforeEntryId === timelineEntry.id,
+      showAssistantCopyButton: isTerminalAssistant,
+      showAssistantTerminalMetadata: isTerminalAssistant,
       assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
-          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+        message.role === "assistant"
+          ? input.turnDiffSummaryByAssistantMessageId.get(message.id)
           : undefined,
       revertTurnCount:
-        timelineEntry.message.role === "user"
-          ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
-          : undefined,
+        message.role === "user" ? input.revertTurnCountByUserMessageId.get(message.id) : undefined,
     });
+    if (message.role === "assistant" && message.completedAt) {
+      lastDurationBoundary = message.completedAt;
+    }
   }
 
   if (input.isWorking) {
