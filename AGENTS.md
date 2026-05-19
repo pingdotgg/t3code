@@ -25,21 +25,39 @@ Long term maintainability is a core priority. If you add new functionality, firs
 
 ## Package Roles
 
-- `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
+- `apps/server`: Node.js WebSocket server. Wraps Codex app-server and Claude Agent SDK (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
+- `apps/desktop`: Electron shell. Spawns a desktop-scoped `t3` backend process and loads the shared web app.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
 - `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
 
-## Codex App Server (Important)
+## Provider Architecture
 
-T3 Code is currently Codex-first. The server starts `codex app-server` (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
+T3 Code supports multiple coding agents through a unified provider interface:
 
-How we use it in this codebase:
+### Codex (`provider: "codex"`)
 
-- Session startup/resume and turn lifecycle are brokered in `apps/server/src/codexAppServerManager.ts`.
-- Provider dispatch and thread event logging are coordinated in `apps/server/src/providerManager.ts`.
-- WebSocket server routes NativeApi methods in `apps/server/src/wsServer.ts`.
-- Web app consumes orchestration domain events via WebSocket push on channel `orchestration.domainEvent` (provider runtime activity is projected into orchestration events server-side).
+The primary provider. The server starts `codex app-server` (JSON-RPC over stdio) per session, then streams structured events to the browser through WebSocket push messages.
+
+- **Low-level manager**: `apps/server/src/codexAppServerManager.ts` handles direct communication with `codex app-server`.
+- **High-level adapter**: `apps/server/src/provider/Layers/CodexAdapter.ts` wraps the manager behind the `CodexAdapter` service contract.
+- **Session lifecycle**: Managed by `ProviderService` in `apps/server/src/provider/Services/ProviderService.ts`.
+
+### Claude (`provider: "claudeAgent"`)
+
+Fully implemented provider using the Claude Agent SDK.
+
+- **Adapter**: `apps/server/src/provider/Layers/ClaudeAdapter.ts` wraps `@anthropic-ai/claude-agent-sdk` query sessions.
+- **Session lifecycle**: Also managed by `ProviderService`.
+
+### How Providers Work
+
+1. WebSocket requests route to `ProviderService` in `wsServer.ts`.
+2. `ProviderService` delegates to the appropriate adapter (`CodexAdapter` or `ClaudeAdapter`).
+3. Adapters talk to their respective agent runtimes and emit canonical runtime events.
+4. Events flow through queue-backed workers (`ProviderRuntimeIngestion`, `ProviderCommandReactor`, `CheckpointReactor`).
+5. Domain events are persisted and projected into the read model.
+6. Updates are pushed to the browser via `ServerPushBus`.
 
 Docs:
 
