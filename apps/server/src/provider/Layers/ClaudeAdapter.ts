@@ -701,7 +701,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
   if (result.subtype === "success") {
-    return "completed";
+    return result.is_error === true ? "failed" : "completed";
   }
 
   const errors = resultErrorsText(result);
@@ -712,6 +712,17 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
     return "cancelled";
   }
   return "failed";
+}
+
+function errorMessageFromResult(result: SDKResultMessage): string | undefined {
+  if (result.subtype === "success") {
+    if (result.is_error !== true) {
+      return undefined;
+    }
+    const trimmed = result.result.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return result.errors[0];
 }
 
 function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
@@ -2050,7 +2061,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage = errorMessageFromResult(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
