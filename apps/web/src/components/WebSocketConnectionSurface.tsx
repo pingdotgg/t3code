@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useEffectEvent, useRef } from "react";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import {
@@ -53,6 +53,8 @@ function describeExhaustedToast(): string {
   return "Retries exhausted trying to reconnect";
 }
 
+type ThreadToastId = ReturnType<typeof toastManager.add>;
+
 function getConnectionDisplayName(status: WsConnectionStatus): string {
   return status.connectionLabel?.trim() || "T3 Server";
 }
@@ -88,6 +90,70 @@ function describeSlowRpcAckToast(requests: ReadonlyArray<SlowRpcAckRequest>): st
   const thresholdSeconds = Math.round((requests[0]?.thresholdMs ?? 0) / 1000);
 
   return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+}
+
+function buildReconnectToast(
+  status: WsConnectionStatus,
+  nowMs: number,
+  triggerManualReconnect: () => void,
+) {
+  return stackedThreadToast({
+    actionProps: {
+      children: "Retry now",
+      onClick: triggerManualReconnect,
+    },
+    data: {
+      hideCopyButton: true,
+    },
+    description:
+      status.nextRetryAt === null
+        ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
+        : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
+    timeout: 0,
+    title: buildReconnectTitle(status),
+    type: "loading",
+  });
+}
+
+function useReconnectToastCountdown(
+  status: WsConnectionStatus,
+  toastIdRef: RefObject<ThreadToastId | null>,
+  triggerManualReconnect: () => void,
+) {
+  const nowMsRef = useRef(Date.now());
+
+  useEffect(() => {
+    if (status.reconnectPhase !== "waiting" || status.nextRetryAt === null) {
+      return;
+    }
+
+    const refreshReconnectToast = () => {
+      nowMsRef.current = Date.now();
+      const toastId = toastIdRef.current;
+      if (!toastId) {
+        return;
+      }
+
+      const currentStatus = getWsConnectionStatus();
+      if (getWsConnectionUiState(currentStatus) !== "reconnecting") {
+        return;
+      }
+
+      toastManager.update(
+        toastId,
+        buildReconnectToast(currentStatus, nowMsRef.current, triggerManualReconnect),
+      );
+    };
+
+    refreshReconnectToast();
+    const intervalId = window.setInterval(refreshReconnectToast, 1_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [status.nextRetryAt, status.reconnectPhase, toastIdRef, triggerManualReconnect]);
+
+  return nowMsRef;
 }
 
 function SlowRpcAckRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
@@ -147,9 +213,8 @@ export function shouldRestartStalledReconnect(
 
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const lastForcedReconnectAtRef = useRef(0);
-  const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  const toastIdRef = useRef<ThreadToastId | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
   const previousDisconnectedAtRef = useRef<string | null>(status.disconnectedAt);
@@ -200,6 +265,11 @@ export function WebSocketConnectionCoordinator() {
 
     runReconnect(false);
   });
+  const reconnectToastNowMsRef = useReconnectToastCountdown(
+    status,
+    toastIdRef,
+    triggerManualReconnect,
+  );
 
   useEffect(() => {
     const handleOnline = () => {
@@ -219,21 +289,6 @@ export function WebSocketConnectionCoordinator() {
       window.removeEventListener("focus", handleFocus);
     };
   }, []);
-
-  useEffect(() => {
-    if (status.reconnectPhase !== "waiting" || status.nextRetryAt === null) {
-      return;
-    }
-
-    setNowMs(Date.now());
-    const intervalId = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 1_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [status.nextRetryAt, status.reconnectPhase]);
 
   useEffect(() => {
     if (
@@ -308,22 +363,7 @@ export function WebSocketConnectionCoordinator() {
               title: buildReconnectTitle(status),
               type: "error",
             })
-          : stackedThreadToast({
-              actionProps: {
-                children: "Retry now",
-                onClick: triggerManualReconnect,
-              },
-              data: {
-                hideCopyButton: true,
-              },
-              description:
-                status.nextRetryAt === null
-                  ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
-                  : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
-              timeout: 0,
-              title: buildReconnectTitle(status),
-              type: "loading",
-            });
+          : buildReconnectToast(status, reconnectToastNowMsRef.current, triggerManualReconnect);
 
       if (toastIdRef.current) {
         toastManager.update(toastIdRef.current, toastPayload);
@@ -365,7 +405,7 @@ export function WebSocketConnectionCoordinator() {
 
     previousUiStateRef.current = uiState;
     previousDisconnectedAtRef.current = status.disconnectedAt;
-  }, [nowMs, status]);
+  }, [reconnectToastNowMsRef, status]);
 
   useEffect(() => {
     return () => {
