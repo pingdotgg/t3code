@@ -26,7 +26,7 @@ export interface ProcessRow {
   readonly command: string;
 }
 
-const PROCESS_QUERY_TIMEOUT_MS = 1_000;
+const PROCESS_QUERY_TIMEOUT = Duration.seconds(1);
 const POSIX_PROCESS_QUERY_COMMAND = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
 const PROCESS_QUERY_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
@@ -43,17 +43,73 @@ export class ProcessDiagnostics extends Context.Service<
   ProcessDiagnosticsShape
 >()("t3/diagnostics/ProcessDiagnostics") {}
 
-class ProcessDiagnosticsError extends Schema.TaggedErrorClass<ProcessDiagnosticsError>()(
-  "ProcessDiagnosticsError",
+class ProcessQueryError extends Schema.TaggedErrorClass<ProcessQueryError>()("ProcessQueryError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {}
+
+class ProcessQueryTimeoutError extends Schema.TaggedErrorClass<ProcessQueryTimeoutError>()(
+  "ProcessQueryTimeoutError",
   {
     message: Schema.String,
+    timeoutMillis: Schema.Number,
+  },
+) {}
+
+class ProcessCommandExitError extends Schema.TaggedErrorClass<ProcessCommandExitError>()(
+  "ProcessCommandExitError",
+  {
+    message: Schema.String,
+    command: Schema.String,
+    exitCode: Schema.Number,
+    stderr: Schema.String,
+  },
+) {}
+
+class ProcessSignalRejectedError extends Schema.TaggedErrorClass<ProcessSignalRejectedError>()(
+  "ProcessSignalRejectedError",
+  {
+    message: Schema.String,
+    pid: Schema.Number,
+    reason: Schema.String,
+  },
+) {}
+
+class ProcessSignalFailedError extends Schema.TaggedErrorClass<ProcessSignalFailedError>()(
+  "ProcessSignalFailedError",
+  {
+    message: Schema.String,
+    pid: Schema.Number,
+    signal: Schema.Literals(["SIGINT", "SIGKILL"]),
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
-const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
 
-function toProcessDiagnosticsError(message: string, cause?: unknown): ProcessDiagnosticsError {
-  return new ProcessDiagnosticsError({
+type ProcessDiagnosticsError =
+  | ProcessQueryError
+  | ProcessQueryTimeoutError
+  | ProcessCommandExitError
+  | ProcessSignalRejectedError
+  | ProcessSignalFailedError;
+
+const isProcessQueryError = Schema.is(ProcessQueryError);
+const isProcessQueryTimeoutError = Schema.is(ProcessQueryTimeoutError);
+const isProcessCommandExitError = Schema.is(ProcessCommandExitError);
+const isProcessSignalRejectedError = Schema.is(ProcessSignalRejectedError);
+const isProcessSignalFailedError = Schema.is(ProcessSignalFailedError);
+
+function isProcessDiagnosticsError(error: unknown): error is ProcessDiagnosticsError {
+  return (
+    isProcessQueryError(error) ||
+    isProcessQueryTimeoutError(error) ||
+    isProcessCommandExitError(error) ||
+    isProcessSignalRejectedError(error) ||
+    isProcessSignalFailedError(error)
+  );
+}
+
+function makeProcessQueryError(message: string, cause?: unknown): ProcessQueryError {
+  return new ProcessQueryError({
     message,
     ...(cause === undefined ? {} : { cause }),
   });
@@ -73,6 +129,22 @@ function parseNumber(value: string): number | null {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
+
+const WindowsProcessRowSchema = Schema.Struct({
+  ProcessId: Schema.optional(Schema.Number),
+  ParentProcessId: Schema.optional(Schema.Number),
+  CommandLine: Schema.optional(Schema.NullOr(Schema.String)),
+  Name: Schema.optional(Schema.NullOr(Schema.String)),
+  Status: Schema.optional(Schema.NullOr(Schema.String)),
+  WorkingSetSize: Schema.optional(Schema.Number),
+  PercentProcessorTime: Schema.optional(Schema.Number),
+});
+type WindowsProcessRow = typeof WindowsProcessRowSchema.Type;
+
+const WindowsProcessRowsJsonSchema = Schema.fromJsonString(
+  Schema.Union([Schema.Array(WindowsProcessRowSchema), WindowsProcessRowSchema]),
+);
+const decodeWindowsProcessRowsJsonOption = Schema.decodeUnknownOption(WindowsProcessRowsJsonSchema);
 
 export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow> {
   const rows: ProcessRow[] = [];
@@ -139,9 +211,7 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
   return rows;
 }
 
-function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
+function normalizeWindowsProcessRow(record: WindowsProcessRow): ProcessRow | null {
   const pid = typeof record.ProcessId === "number" ? record.ProcessId : null;
   const ppid = typeof record.ParentProcessId === "number" ? record.ParentProcessId : null;
   const commandLine =
@@ -174,16 +244,15 @@ function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
 
 function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
   if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
-    return [];
-  }
+
+  const decoded = decodeWindowsProcessRowsJsonOption(output);
+  if (Option.isNone(decoded)) return [];
+
+  const records = Array.isArray(decoded.value) ? decoded.value : [decoded.value];
+  return records.flatMap((record) => {
+    const row = normalizeWindowsProcessRow(record);
+    return row ? [row] : [];
+  });
 }
 
 export function buildDescendantEntries(
@@ -309,17 +378,21 @@ const runProcess = Effect.fn("runProcess")(
   (effect, input) =>
     effect.pipe(
       Effect.scoped,
-      Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
+      Effect.timeoutOption(PROCESS_QUERY_TIMEOUT),
       Effect.flatMap((result) =>
         Option.match(result, {
-          onNone: () => Effect.fail(toProcessDiagnosticsError(`${input.errorMessage} timed out.`)),
+          onNone: () =>
+            Effect.fail(
+              new ProcessQueryTimeoutError({
+                message: `${input.errorMessage} timed out.`,
+                timeoutMillis: Duration.toMillis(PROCESS_QUERY_TIMEOUT),
+              }),
+            ),
           onSome: Effect.succeed,
         }),
       ),
       Effect.mapError((cause) =>
-        isProcessDiagnosticsError(cause)
-          ? cause
-          : toProcessDiagnosticsError(input.errorMessage, cause),
+        isProcessDiagnosticsError(cause) ? cause : makeProcessQueryError(input.errorMessage, cause),
       ),
     ),
 );
@@ -336,7 +409,14 @@ function readPosixProcessRows(): Effect.Effect<
   }).pipe(
     Effect.flatMap((result) =>
       result.exitCode !== 0
-        ? Effect.fail(toProcessDiagnosticsError(result.stderr.trim() || "ps failed."))
+        ? Effect.fail(
+            new ProcessCommandExitError({
+              message: result.stderr.trim() || "ps failed.",
+              command: "ps",
+              exitCode: result.exitCode,
+              stderr: result.stderr,
+            }),
+          )
         : Effect.succeed(parsePosixProcessRows(result.stdout)),
     ),
   );
@@ -363,7 +443,12 @@ function readWindowsProcessRows(): Effect.Effect<
     Effect.flatMap((result) =>
       result.exitCode !== 0
         ? Effect.fail(
-            toProcessDiagnosticsError(result.stderr.trim() || "PowerShell process query failed."),
+            new ProcessCommandExitError({
+              message: result.stderr.trim() || "PowerShell process query failed.",
+              command: "powershell.exe",
+              exitCode: result.exitCode,
+              stderr: result.stderr,
+            }),
           )
         : Effect.succeed(parseWindowsProcessRows(result.stdout)),
     ),
@@ -385,7 +470,13 @@ function assertDescendantPid(
   pid: number,
 ): Effect.Effect<void, ProcessDiagnosticsError, ChildProcessSpawner.ChildProcessSpawner> {
   if (pid === process.pid) {
-    return Effect.fail(toProcessDiagnosticsError("Refusing to signal the T3 server process."));
+    return Effect.fail(
+      new ProcessSignalRejectedError({
+        message: "Refusing to signal the T3 server process.",
+        pid,
+        reason: "self",
+      }),
+    );
   }
 
   return readProcessRows().pipe(
@@ -397,7 +488,11 @@ function assertDescendantPid(
       return descendant
         ? Effect.void
         : Effect.fail(
-            toProcessDiagnosticsError(`Process ${pid} is not a live descendant of the T3 server.`),
+            new ProcessSignalRejectedError({
+              message: `Process ${pid} is not a live descendant of the T3 server.`,
+              pid,
+              reason: "not-descendant",
+            }),
           );
     }),
   );
@@ -438,10 +533,12 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
               };
             },
             catch: (cause) =>
-              toProcessDiagnosticsError(
-                `Failed to signal process ${input.pid} with ${input.signal}.`,
+              new ProcessSignalFailedError({
+                message: `Failed to signal process ${input.pid} with ${input.signal}.`,
+                pid: input.pid,
+                signal: input.signal,
                 cause,
-              ),
+              }),
           }),
         ),
         Effect.catch((error: ProcessDiagnosticsError) =>

@@ -1,8 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -10,6 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
 const encoder = new TextEncoder();
+const encodeJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function mockHandle(result: {
   readonly stdout?: string;
@@ -41,7 +43,7 @@ describe("ProcessDiagnostics", () => {
         ].join("\n"),
       );
 
-      expect(rows).toEqual([
+      assert.deepEqual(rows, [
         {
           pid: 10,
           ppid: 1,
@@ -125,15 +127,21 @@ describe("ProcessDiagnostics", () => {
         ],
       });
 
-      expect(diagnostics.serverPid).toBe(100);
-      expect(DateTime.formatIso(diagnostics.readAt)).toBe("2026-05-05T10:00:00.000Z");
-      expect(diagnostics.processCount).toBe(2);
-      expect(diagnostics.totalRssBytes).toBe(6_000);
-      expect(diagnostics.totalCpuPercent).toBe(4.75);
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([101, 102]);
-      expect(diagnostics.processes.map((process) => process.depth)).toEqual([0, 1]);
-      expect(Option.getOrNull(diagnostics.processes[0]!.pgid)).toBe(100);
-      expect(diagnostics.processes[0]?.childPids).toEqual([102]);
+      assert.equal(diagnostics.serverPid, 100);
+      assert.equal(DateTime.formatIso(diagnostics.readAt), "2026-05-05T10:00:00.000Z");
+      assert.equal(diagnostics.processCount, 2);
+      assert.equal(diagnostics.totalRssBytes, 6_000);
+      assert.equal(diagnostics.totalCpuPercent, 4.75);
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [101, 102],
+      );
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.depth),
+        [0, 1],
+      );
+      assert.equal(Option.getOrNull(diagnostics.processes[0]!.pgid), 100);
+      assert.deepEqual(diagnostics.processes[0]?.childPids, [102]);
     }),
   );
 
@@ -176,7 +184,10 @@ describe("ProcessDiagnostics", () => {
         ],
       });
 
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([101, 102, 103]);
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [101, 102, 103],
+      );
     }),
   );
 
@@ -184,9 +195,8 @@ describe("ProcessDiagnostics", () => {
     Effect.gen(function* () {
       const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
         [];
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
+      const spawnerLayer = Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {
+        spawn: (command) => {
           const childProcess = command as unknown as {
             readonly command: string;
             readonly args: ReadonlyArray<string>;
@@ -200,8 +210,8 @@ describe("ProcessDiagnostics", () => {
               ].join("\n"),
             }),
           );
-        }),
-      );
+        },
+      });
       const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
 
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
@@ -209,8 +219,11 @@ describe("ProcessDiagnostics", () => {
         Effect.provide(layer),
       );
 
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([4242]);
-      expect(commands).toEqual([
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [4242],
+      );
+      assert.deepEqual(commands, [
         {
           command: "ps",
           args: ["-axo", "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command="],
@@ -219,11 +232,64 @@ describe("ProcessDiagnostics", () => {
     }),
   );
 
+  it.effect("decodes Windows process rows through Schema JSON parsing", () =>
+    Effect.gen(function* () {
+      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+        [];
+      const spawnerLayer = Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {
+        spawn: (command) => {
+          const childProcess = command as unknown as {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+          };
+          commands.push({ command: childProcess.command, args: childProcess.args });
+          return Effect.succeed(
+            mockHandle({
+              stdout: encodeJsonString([
+                {
+                  ProcessId: 4242,
+                  ParentProcessId: 100,
+                  Name: "node.exe",
+                  CommandLine: "node server.js",
+                  Status: "Running",
+                  WorkingSetSize: 2048,
+                  PercentProcessorTime: 12.5,
+                },
+                {
+                  ProcessId: 0,
+                  ParentProcessId: 100,
+                  Name: "invalid.exe",
+                },
+              ]),
+            }),
+          );
+        },
+      });
+
+      const rows = yield* ProcessDiagnostics.readProcessRows("win32").pipe(
+        Effect.provide(spawnerLayer),
+      );
+
+      assert.deepEqual(rows, [
+        {
+          pid: 4242,
+          ppid: 100,
+          pgid: null,
+          status: "Running",
+          cpuPercent: 12.5,
+          rssBytes: 2048,
+          elapsed: "",
+          command: "node server.js",
+        },
+      ]);
+      assert.equal(commands[0]?.command, "powershell.exe");
+    }),
+  );
+
   it.effect("does not allow signaling the diagnostics query process", () =>
     Effect.gen(function* () {
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() =>
+      const spawnerLayer = Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {
+        spawn: () =>
           Effect.succeed(
             mockHandle({
               stdout: [
@@ -232,8 +298,7 @@ describe("ProcessDiagnostics", () => {
               ].join("\n"),
             }),
           ),
-        ),
-      );
+      });
       const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
@@ -241,7 +306,7 @@ describe("ProcessDiagnostics", () => {
         Effect.provide(layer),
       );
 
-      expect(result).toEqual({
+      assert.deepEqual(result, {
         pid: 4242,
         signal: "SIGINT",
         signaled: false,

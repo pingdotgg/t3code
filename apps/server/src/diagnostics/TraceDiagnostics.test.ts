@@ -5,8 +5,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import * as TraceDiagnostics from "./TraceDiagnostics.ts";
+
+const encodeTraceRecordJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function ns(ms: number): string {
   return String(BigInt(ms) * 1_000_000n);
@@ -21,7 +24,7 @@ function record(input: {
   readonly exit?: { readonly _tag: "Success" | "Failure" | "Interrupted"; readonly cause?: string };
   readonly events?: ReadonlyArray<unknown>;
 }) {
-  return JSON.stringify({
+  return encodeTraceRecordJson({
     type: "effect-span",
     name: input.name,
     traceId: input.traceId,
