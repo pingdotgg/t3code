@@ -21,7 +21,7 @@ import {
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { TooltipProvider } from "../ui/tooltip";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { isSelectableProviderInstance, type ProviderInstanceEntry } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
@@ -166,15 +166,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [props.lockedContinuationGroupKey, props.lockedProvider],
   );
 
-  const readyInstanceSet = useMemo(() => {
-    const ready = new Set<ProviderInstanceId>();
+  const selectableInstanceSet = useMemo(() => {
+    const selectable = new Set<ProviderInstanceId>();
     for (const entry of instanceEntries) {
-      if (entry.status === "ready") {
-        ready.add(entry.instanceId);
+      const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
+      if (isSelectableProviderInstance(entry) && models.length > 0) {
+        selectable.add(entry.instanceId);
       }
     }
-    return ready;
-  }, [instanceEntries]);
+    return selectable;
+  }, [instanceEntries, modelOptionsByInstance]);
+  const visibleRailInstanceSet = useMemo(() => {
+    const visible = new Set<ProviderInstanceId>();
+    for (const entry of instanceEntries) {
+      const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
+      if (entry.enabled && entry.isAvailable && models.length > 0) {
+        visible.add(entry.instanceId);
+      }
+    }
+    return visible;
+  }, [instanceEntries, modelOptionsByInstance]);
 
   // Flatten models into a searchable array. One pass over the
   // instance-keyed map; each model carries its instance id + driver kind
@@ -189,7 +200,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // its models — stale options shouldn't appear in the picker.
         continue;
       }
-      if (!readyInstanceSet.has(instanceId)) {
+      if (!selectableInstanceSet.has(instanceId)) {
         continue;
       }
       for (const model of models) {
@@ -209,20 +220,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+  }, [modelOptionsByInstance, entryByInstanceId, selectableInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
   const lockedInstanceEntries = useMemo(
     () =>
-      props.lockedProvider ? instanceEntries.filter((entry) => matchesLockedProvider(entry)) : [],
-    [instanceEntries, matchesLockedProvider, props.lockedProvider],
+      props.lockedProvider
+        ? instanceEntries.filter(
+            (entry) => selectableInstanceSet.has(entry.instanceId) && matchesLockedProvider(entry),
+          )
+        : [],
+    [instanceEntries, matchesLockedProvider, props.lockedProvider, selectableInstanceSet],
   );
   const showLockedInstanceSidebar = isLocked && lockedInstanceEntries.length > 1;
   const showSidebar = !isSearching && (!isLocked || showLockedInstanceSidebar);
   const sidebarInstanceEntries = showLockedInstanceSidebar
     ? lockedInstanceEntries
-    : instanceEntries;
+    : instanceEntries.filter((entry) => visibleRailInstanceSet.has(entry.instanceId));
+  const selectedEntry =
+    selectedInstanceId === "favorites" ? null : (entryByInstanceId.get(selectedInstanceId) ?? null);
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -408,6 +425,27 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     (): string[] => filteredModels.map((model) => `${model.instanceId}:${model.slug}`),
     [filteredModels],
   );
+  const emptyMessage = useMemo(() => {
+    if (searchQuery.trim().length > 0) {
+      return "No models match that search";
+    }
+    if (selectedInstanceId === "favorites") {
+      return "No favorite models yet";
+    }
+    if (selectedEntry && !selectedEntry.enabled) {
+      return `${selectedEntry.displayName} is disabled in Settings`;
+    }
+    if (selectedEntry && selectedEntry.status !== "ready") {
+      const detail = selectedEntry.snapshot.message?.trim();
+      return detail
+        ? `${selectedEntry.displayName} needs setup: ${detail}`
+        : `${selectedEntry.displayName} needs setup in Settings`;
+    }
+    if (selectedEntry) {
+      return `${selectedEntry.displayName} has no models yet. Finish setup, refresh provider status, then try again.`;
+    }
+    return "No models found";
+  }, [searchQuery, selectedEntry, selectedInstanceId]);
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
       new Map(filteredModels.map((model) => [`${model.instanceId}:${model.slug}`, model] as const)),
@@ -639,7 +677,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </ComboboxList>
             </div>
             <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
-              No models found
+              {emptyMessage}
             </ComboboxEmpty>
           </div>
         </Combobox>

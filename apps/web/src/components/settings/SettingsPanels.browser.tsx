@@ -265,6 +265,21 @@ function createOutdatedProvider(
   };
 }
 
+function createCurrentUpdatableProvider(driver: string, updateCommand: string): ServerProvider {
+  return {
+    ...createOutdatedProvider(driver, updateCommand),
+    versionAdvisory: {
+      status: "unknown",
+      currentVersion: "1.0.0",
+      latestVersion: null,
+      message: null,
+      checkedAt: "2026-05-04T10:00:00.000Z",
+      updateCommand,
+      canUpdate: true,
+    },
+  };
+}
+
 function makeUtc(value: string) {
   return DateTime.makeUnsafe(value);
 }
@@ -1142,6 +1157,74 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
   });
 
+  it("expands Hermes provider settings when the Hermes row is clicked", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        {
+          instanceId: ProviderInstanceId.make("hermes"),
+          driver: ProviderDriverKind.make("hermes"),
+          displayName: "Hermes",
+          enabled: true,
+          installed: true,
+          version: "0.11.0",
+          status: "ready",
+          auth: { status: "unknown" },
+          checkedAt: new Date().toISOString(),
+          suggestedBinaryPath: "/opt/homebrew/bin/hermes",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("hermes")]: {
+            driver: ProviderDriverKind.make("hermes"),
+            enabled: true,
+            config: {
+              enabled: true,
+              binaryPath: "/Users/me/.local/bin/hermes",
+              customModels: [],
+            },
+          },
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Expand Hermes provider details" }).click();
+
+    await expect
+      .element(
+        page.getByText(
+          "Installed and ready. Hermes manages authentication through its own CLI and local config.",
+        ),
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Hermes setup", { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText("hermes model")).toBeInTheDocument();
+    await expect.element(page.getByText("hermes acp")).toBeInTheDocument();
+    await expect.element(page.getByText("Hermes setup docs")).toBeInTheDocument();
+    await expect.element(page.getByText(/Detected Hermes at/)).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Use detected Hermes path" }))
+      .toBeInTheDocument();
+
+    await vi.waitFor(() => {
+      const input = Array.from(document.querySelectorAll<HTMLInputElement>("input")).find(
+        (element) => element.value === "/Users/me/.local/bin/hermes",
+      );
+      expect(input).toBeTruthy();
+    });
+  });
+
   it("runs one-click provider updates from the provider card", async () => {
     const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
       providers: [createOutdatedProvider("codex")],
@@ -1174,6 +1257,52 @@ describe("GeneralSettingsPanel observability", () => {
     expect(updateProvider).toHaveBeenCalledWith({
       provider: ProviderDriverKind.make("codex"),
       instanceId: ProviderInstanceId.make("codex"),
+    });
+  });
+
+  it("offers provider updates in expanded settings even without an outdated advisory", async () => {
+    let resolveUpdateProvider:
+      | ((value: Awaited<ReturnType<LocalApi["server"]["updateProvider"]>>) => void)
+      | undefined;
+    const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdateProvider = resolve;
+        }),
+    );
+    window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
+      server: {
+        updateProvider,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [createCurrentUpdatableProvider("pi", "pi update")],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Expand Pi provider details" }).click();
+    await expect.element(page.getByText("Provider update")).toBeInTheDocument();
+    await expect.element(page.getByText("pi update")).toBeInTheDocument();
+    await page.getByRole("button", { name: "Update provider" }).click();
+    await expect.element(page.getByRole("button", { name: "Updating" })).toBeDisabled();
+
+    expect(updateProvider).toHaveBeenCalledWith({
+      provider: ProviderDriverKind.make("pi"),
+      instanceId: ProviderInstanceId.make("pi"),
+    });
+    resolveUpdateProvider?.({
+      providers: [createCurrentUpdatableProvider("pi", "pi update")],
     });
   });
 

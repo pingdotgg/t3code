@@ -1738,6 +1738,83 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
   });
 
+  it("applies the Hermes chat background only when Hermes is selected", async () => {
+    const hermesSelection = {
+      instanceId: ProviderInstanceId.make("hermes"),
+      model: "hermes-default",
+    };
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-hermes-surface" as MessageId,
+      targetText: "hermes surface",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        projects: snapshot.projects.map((project) =>
+          project.id === PROJECT_ID
+            ? { ...project, defaultModelSelection: hermesSelection }
+            : project,
+        ),
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                modelSelection: hermesSelection,
+                session: thread.session
+                  ? {
+                      ...thread.session,
+                      providerName: "hermes",
+                      providerInstanceId: ProviderInstanceId.make("hermes"),
+                    }
+                  : thread.session,
+              }
+            : thread,
+        ),
+      },
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            ...nextFixture.serverConfig.providers,
+            {
+              driver: ProviderDriverKind.make("hermes"),
+              instanceId: ProviderInstanceId.make("hermes"),
+              displayName: "Hermes",
+              enabled: true,
+              installed: true,
+              version: "0.11.0",
+              status: "ready",
+              auth: { status: "unknown" },
+              checkedAt: NOW_ISO,
+              models: [
+                {
+                  slug: "hermes-default",
+                  name: "Hermes Default",
+                  isCustom: false,
+                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const surface = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-provider-surface='hermes']"),
+        "Hermes chat provider surface was not applied.",
+      );
+
+      expect(surface.classList.contains("chat-surface-hermes")).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("renders locked single-environment mobile run context as a static workspace label", async () => {
     const mounted = await mountChatView({
       viewport: COMPACT_FOOTER_VIEWPORT,

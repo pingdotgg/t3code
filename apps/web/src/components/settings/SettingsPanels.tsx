@@ -10,6 +10,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -967,15 +968,15 @@ export function ProviderSettingsPanel() {
       });
   }, []);
 
-  const runProviderUpdate = useCallback(async (candidate: ProviderUpdateCandidate) => {
+  const runProviderUpdate = useCallback(async (provider: ServerProvider) => {
     let started = false;
     setUpdatingProviderDrivers((previous) => {
-      if (previous.has(candidate.driver)) {
+      if (previous.has(provider.driver)) {
         return previous;
       }
       started = true;
       const next = new Set(previous);
-      next.add(candidate.driver);
+      next.add(provider.driver);
       return next;
     });
     if (!started) {
@@ -984,14 +985,14 @@ export function ProviderSettingsPanel() {
 
     try {
       await ensureLocalApi().server.updateProvider({
-        provider: candidate.driver,
-        instanceId: candidate.instanceId,
+        provider: provider.driver,
+        instanceId: provider.instanceId,
       });
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
+          title: `Could not update ${PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver}`,
           description:
             error instanceof Error
               ? error.message
@@ -1000,11 +1001,11 @@ export function ProviderSettingsPanel() {
       );
     } finally {
       setUpdatingProviderDrivers((previous) => {
-        if (!previous.has(candidate.driver)) {
+        if (!previous.has(provider.driver)) {
           return previous;
         }
         const next = new Set(previous);
-        next.delete(candidate.driver);
+        next.delete(provider.driver);
         return next;
       });
     }
@@ -1232,19 +1233,25 @@ export function ProviderSettingsPanel() {
             ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
             : undefined;
           const isDriverUpdateRunning =
-            updateCandidate !== undefined &&
-            (updatingProviderDrivers.has(updateCandidate.driver) ||
+            liveProvider !== undefined &&
+            (updatingProviderDrivers.has(liveProvider.driver) ||
+              (updateCandidate !== undefined &&
+                updatingProviderDrivers.has(updateCandidate.driver)) ||
               serverProviders.some(
                 (provider) =>
-                  provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
+                  provider.driver === liveProvider.driver && isProviderUpdateActive(provider),
               ));
           const showInlineUpdateButton =
-            updateCandidate !== undefined &&
-            hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
+            liveProvider !== undefined &&
+            liveProvider.versionAdvisory?.canUpdate === true &&
+            liveProvider.versionAdvisory.updateCommand !== null;
           const canRunInlineUpdate =
-            updateCandidate !== undefined &&
-            canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
-            !updatingProviderDrivers.has(updateCandidate.driver);
+            liveProvider !== undefined &&
+            liveProvider.versionAdvisory?.canUpdate === true &&
+            liveProvider.versionAdvisory.updateCommand !== null &&
+            !updatingProviderDrivers.has(liveProvider.driver) &&
+            (updateCandidate === undefined ||
+              canOneClickUpdateProviderCandidate(updateCandidate, serverProviders));
           const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
             hiddenModels: [],
             modelOrder: [],
@@ -1308,12 +1315,12 @@ export function ProviderSettingsPanel() {
                 })
               }
               onRunUpdate={
-                showInlineUpdateButton && updateCandidate
+                showInlineUpdateButton && liveProvider
                   ? () => {
                       if (!canRunInlineUpdate) {
                         return;
                       }
-                      void runProviderUpdate(updateCandidate);
+                      void runProviderUpdate(liveProvider);
                     }
                   : undefined
               }
