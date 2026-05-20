@@ -454,6 +454,41 @@ http.route({
 });
 
 http.route({
+  path: "/t3/task-runtime-assistant-message-observations",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const auth = requireBridgeAuthorization(request);
+    if (!auth.ok) {
+      await logHttpEvent(ctx, {
+        kind: "http.t3-assistant-message-observation.auth-failed",
+        source: "t3",
+        severity: auth.status >= 500 ? "error" : "warn",
+        summary: auth.message,
+        payload: { status: auth.status },
+      });
+      return Response.json({ error: auth.message }, { status: auth.status });
+    }
+
+    const payload = decodeTaskRuntimeAssistantMessageEvent(await request.json());
+    const result = await ctx.runMutation(
+      internal.t3Runtime.recordTaskPullRequestsFromAssistantMessage,
+      {
+        taskId: payload.taskId as Id<"tasks">,
+        workSessionId: payload.workSessionId as Id<"workSessions">,
+        sourceEventId: payload.eventId,
+        assistantMessage: payload.assistantMessage,
+        observedAt: Date.now(),
+      },
+    );
+
+    return Response.json({
+      accepted: true,
+      ...result,
+    });
+  }),
+});
+
+http.route({
   path: "/t3/task-runtime-user-input-requests",
   method: "POST",
   handler: httpAction(async (ctx, request) => {

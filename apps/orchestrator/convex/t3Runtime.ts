@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { ModelSelection, ThreadId, type TaskRuntimeMaterializeResponse } from "@t3tools/contracts";
 
+import { extractGitHubPullRequests } from "../src/github/prDiscovery.ts";
 import { createT3ExecutionBridgeClient } from "../src/t3/client.ts";
 import { internal, api } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
@@ -32,37 +33,6 @@ const uploadImageAttachmentArg = v.object({
 
 function errorSummary(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function extractGitHubPullRequests(text: string) {
-  const results = new Map<
-    string,
-    {
-      readonly owner: string;
-      readonly repo: string;
-      readonly number: number;
-      readonly url: string;
-      readonly externalId: string;
-    }
-  >();
-  const matcher = /https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/gi;
-  for (const match of text.matchAll(matcher)) {
-    const owner = match[1];
-    const repo = match[2];
-    const numberText = match[3];
-    if (owner === undefined || repo === undefined || numberText === undefined) continue;
-    const number = Number(numberText);
-    if (!Number.isSafeInteger(number) || number <= 0) continue;
-    const externalId = `${owner}/${repo}#${number}`;
-    results.set(externalId, {
-      owner,
-      repo,
-      number,
-      url: `https://github.com/${owner}/${repo}/pull/${number}`,
-      externalId,
-    });
-  }
-  return [...results.values()];
 }
 
 function logOrchestratorEvent(
@@ -614,237 +584,6 @@ export const respondTaskRuntimeUserInput = action({
   },
 });
 
-export const getTaskPullRequestSeed = internalQuery({
-  args: {
-    taskId: v.id("tasks"),
-    workSessionId: v.id("workSessions"),
-  },
-  returns: v.union(
-    v.null(),
-    v.object({
-      title: v.string(),
-      t3ThreadId: v.string(),
-      branch: v.string(),
-      worktreePath: v.string(),
-      runtimeId: v.optional(v.string()),
-      runtimeProviderKind: v.optional(v.literal("local")),
-      environmentId: v.optional(v.string()),
-      runtimeEndpointUrl: v.optional(v.string()),
-      project: v.object({
-        githubOwner: v.string(),
-        githubRepo: v.string(),
-        defaultBranch: v.string(),
-      }),
-    }),
-  ),
-  handler: async (ctx, args) => {
-    const task = await ctx.db.get(args.taskId);
-    if (task === null) {
-      return null;
-    }
-    const workSession = await ctx.db.get(args.workSessionId);
-    if (workSession === null || String(workSession.taskId) !== String(args.taskId)) {
-      return null;
-    }
-    const taskThread = await ctx.db.get(workSession.taskThreadId);
-    const project = await ctx.db.get(task.projectId);
-    if (
-      taskThread?.branch === undefined ||
-      taskThread.worktreePath === undefined ||
-      project === null
-    ) {
-      return null;
-    }
-
-    return {
-      title: task.title,
-      t3ThreadId: workSession.t3ThreadId,
-      branch: taskThread.branch,
-      worktreePath: taskThread.worktreePath,
-      ...(workSession.runtimeId !== undefined ? { runtimeId: workSession.runtimeId } : {}),
-      ...(workSession.runtimeProviderKind !== undefined
-        ? { runtimeProviderKind: workSession.runtimeProviderKind }
-        : {}),
-      ...(workSession.environmentId !== undefined
-        ? { environmentId: workSession.environmentId }
-        : {}),
-      ...(workSession.runtimeEndpointUrl !== undefined
-        ? { runtimeEndpointUrl: workSession.runtimeEndpointUrl }
-        : {}),
-      project: {
-        githubOwner: project.githubOwner,
-        githubRepo: project.githubRepo,
-        defaultBranch: project.defaultBranch,
-      },
-    };
-  },
-});
-
-export const recordTaskPullRequestRequested = internalMutation({
-  args: {
-    taskId: v.id("tasks"),
-    workSessionId: v.id("workSessions"),
-    eventKey: v.string(),
-    reason: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const existingEvent = await ctx.db
-      .query("taskEvents")
-      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
-      .unique();
-    if (existingEvent !== null) {
-      return null;
-    }
-
-    await ctx.db.insert("taskEvents", {
-      taskId: args.taskId,
-      eventKey: args.eventKey,
-      kind: "task-pr.requested",
-      summary: "Task pull request ensure was requested.",
-      payloadJson: JSON.stringify({
-        workSessionId: args.workSessionId,
-        reason: args.reason,
-      }),
-      createdAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
-    });
-    return null;
-  },
-});
-
-export const recordTaskPullRequestEnsureResult = internalMutation({
-  args: {
-    taskId: v.id("tasks"),
-    workSessionId: v.id("workSessions"),
-    eventKey: v.string(),
-    status: v.union(
-      v.literal("waiting_for_changes"),
-      v.literal("created"),
-      v.literal("existing"),
-      v.literal("failed"),
-    ),
-    checkedAt: v.number(),
-    summary: v.optional(v.string()),
-    owner: v.optional(v.string()),
-    repo: v.optional(v.string()),
-    number: v.optional(v.number()),
-    url: v.optional(v.string()),
-    headBranch: v.optional(v.string()),
-    baseBranch: v.optional(v.string()),
-    title: v.optional(v.string()),
-    draft: v.optional(v.boolean()),
-    headSha: v.optional(v.string()),
-    previewUrl: v.optional(v.string()),
-    deploymentPreviewsJson: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const existingEvent = await ctx.db
-      .query("taskEvents")
-      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
-      .unique();
-    if (existingEvent !== null) {
-      return null;
-    }
-
-    if (
-      (args.status === "created" || args.status === "existing") &&
-      args.owner !== undefined &&
-      args.repo !== undefined &&
-      args.number !== undefined &&
-      args.url !== undefined
-    ) {
-      const externalId = `${args.owner}/${args.repo}#${args.number}`;
-      const existingLink = await ctx.db
-        .query("taskExternalLinks")
-        .withIndex("by_kind_external_id", (q: any) =>
-          q.eq("kind", "github_pr").eq("externalId", externalId),
-        )
-        .unique();
-      if (existingLink !== null) {
-        await ctx.db.patch(existingLink._id, {
-          taskId: args.taskId,
-          url: args.url,
-          updatedAt: args.checkedAt,
-        });
-      } else {
-        await ctx.db.insert("taskExternalLinks", {
-          taskId: args.taskId,
-          kind: "github_pr",
-          externalId,
-          url: args.url,
-          muted: false,
-          createdAt: args.checkedAt,
-          updatedAt: args.checkedAt,
-        });
-      }
-
-      const existingPullRequest = await ctx.db
-        .query("githubPullRequests")
-        .withIndex("by_external_id", (q: any) => q.eq("externalId", externalId))
-        .unique();
-      const pullRequestPatch = {
-        taskId: args.taskId,
-        owner: args.owner,
-        repo: args.repo,
-        number: args.number,
-        url: args.url,
-        state: args.status,
-        updatedAt: args.checkedAt,
-        ...(args.headSha !== undefined ? { headSha: args.headSha } : {}),
-        ...(args.headBranch !== undefined ? { headBranch: args.headBranch } : {}),
-        ...(args.title !== undefined ? { title: args.title } : {}),
-      };
-      if (existingPullRequest !== null) {
-        await ctx.db.patch(existingPullRequest._id, pullRequestPatch);
-      } else {
-        await ctx.db.insert("githubPullRequests", {
-          externalId,
-          createdAt: args.checkedAt,
-          ...pullRequestPatch,
-        });
-      }
-    }
-
-    const eventKind =
-      args.status === "waiting_for_changes"
-        ? "task-pr.waiting-for-changes"
-        : args.status === "failed"
-          ? "task-pr.failed"
-          : "task-pr.created";
-    await ctx.db.insert("taskEvents", {
-      taskId: args.taskId,
-      eventKey: args.eventKey,
-      kind: eventKind,
-      summary:
-        args.summary ??
-        (args.status === "waiting_for_changes"
-          ? "Task pull request is waiting for changes."
-          : args.status === "failed"
-            ? "Task pull request ensure failed."
-            : "Task pull request is available."),
-      payloadJson: JSON.stringify({
-        workSessionId: args.workSessionId,
-        status: args.status,
-        ...(args.url !== undefined ? { url: args.url } : {}),
-        ...(args.number !== undefined ? { number: args.number } : {}),
-        ...(args.headBranch !== undefined ? { headBranch: args.headBranch } : {}),
-        ...(args.baseBranch !== undefined ? { baseBranch: args.baseBranch } : {}),
-        ...(args.title !== undefined ? { title: args.title } : {}),
-        ...(args.draft !== undefined ? { draft: args.draft } : {}),
-        ...(args.headSha !== undefined ? { headSha: args.headSha } : {}),
-        ...(args.previewUrl !== undefined ? { previewUrl: args.previewUrl } : {}),
-        ...(args.deploymentPreviewsJson !== undefined
-          ? { deploymentPreviews: JSON.parse(args.deploymentPreviewsJson) }
-          : {}),
-      }),
-      createdAt: args.checkedAt,
-    });
-
-    return null;
-  },
-});
-
 export const recordTaskPullRequestsFromAssistantMessage = internalMutation({
   args: {
     taskId: v.id("tasks"),
@@ -912,7 +651,7 @@ export const recordTaskPullRequestsFromAssistantMessage = internalMutation({
         });
       }
 
-      const eventKey = `${args.sourceEventId}:github-pr-discovered:${pullRequest.externalId}`;
+      const eventKey = `task-pr-discovered:${String(args.taskId)}:${pullRequest.externalId}`;
       const existingEvent = await ctx.db
         .query("taskEvents")
         .withIndex("by_event_key", (q: any) => q.eq("eventKey", eventKey))

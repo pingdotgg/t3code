@@ -100,6 +100,9 @@ const postTaskRuntimeLifecycleEvent = (event: ReturnType<typeof buildTaskRuntime
 const postTaskRuntimeAssistantMessageEvent = (event: TaskRuntimeAssistantMessageEvent) =>
   postToOrchestrator("/t3/task-runtime-assistant-messages", event);
 
+const postTaskRuntimeAssistantMessageObservationEvent = (event: TaskRuntimeAssistantMessageEvent) =>
+  postToOrchestrator("/t3/task-runtime-assistant-message-observations", event);
+
 const postTaskRuntimeUserInputRequestEvent = (event: TaskRuntimeUserInputRequestEvent) =>
   postToOrchestrator("/t3/task-runtime-user-input-requests", event);
 
@@ -240,6 +243,45 @@ function firstAssistantMessageTurnKey(input: {
   readonly turnId: TurnId;
 }) {
   return `${String(input.threadId)}:${String(input.turnId)}`;
+}
+
+function postTaskRuntimeAssistantMessageObservation(input: {
+  readonly event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+  readonly trackedRun: TrackedExecutionRun;
+}) {
+  const { event, trackedRun } = input;
+  if (
+    trackedRun.kind !== "task" ||
+    trackedRun.taskId === null ||
+    trackedRun.workSessionId === null ||
+    event.payload.role !== "assistant"
+  ) {
+    return Effect.void;
+  }
+
+  const assistantMessage = event.payload.text.trim();
+  if (!assistantMessage) {
+    return Effect.void;
+  }
+
+  return postTaskRuntimeAssistantMessageObservationEvent({
+    eventId: `${String(event.eventId)}:assistant-observed`,
+    taskId: trackedRun.taskId,
+    workSessionId: trackedRun.workSessionId,
+    occurredAt: event.occurredAt,
+    t3ThreadId: trackedRun.threadId,
+    t3MessageId: event.payload.messageId,
+    ...(event.payload.turnId !== null ? { t3TurnId: event.payload.turnId } : {}),
+    assistantMessage,
+  }).pipe(
+    Effect.catch((error: Error) =>
+      Effect.logWarning("execution bridge failed to forward assistant message observation", {
+        eventId: String(event.eventId),
+        threadId: String(trackedRun.threadId),
+        message: error.message,
+      }),
+    ),
+  );
 }
 
 function postFirstTaskRuntimeAssistantMessage(input: {
@@ -647,6 +689,10 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
             if (trackedRun === null) {
               return;
             }
+            yield* postTaskRuntimeAssistantMessageObservation({
+              event,
+              trackedRun,
+            });
             yield* postFirstTaskRuntimeAssistantMessage({
               event,
               trackedRun,
