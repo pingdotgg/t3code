@@ -53,6 +53,7 @@ import { vi } from "vitest";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
@@ -707,6 +708,36 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          reportClientActivity: () => Effect.void,
+          removeRpcClient: () => Effect.void,
+          reportHostPowerState: () => Effect.void,
+          snapshot: Effect.succeed({
+            hostPower: {
+              source: "unknown",
+              idle: "unknown",
+              idleSeconds: null,
+              locked: "unknown",
+              suspended: false,
+              onBattery: "unknown",
+              lowPowerMode: "unknown",
+              thermalState: "unknown",
+              stale: true,
+              updatedAt: TEST_EPOCH,
+            },
+            leases: [],
+            activeForegroundLeaseCount: 0,
+            activeScopeKeys: [],
+            shouldRunOpportunisticWork: false,
+            updatedAt: TEST_EPOCH,
+          }),
+          streamChanges: Stream.empty,
+          hasDemand: () => Effect.succeed(false),
+          shouldRunScopeWork: () => Effect.succeed(false),
+          shouldRunOpportunisticWork: Effect.succeed(false),
         }),
       ),
       Layer.provide(

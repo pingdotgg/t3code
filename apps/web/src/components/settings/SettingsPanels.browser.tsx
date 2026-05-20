@@ -18,6 +18,7 @@ import {
   type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -759,6 +760,41 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
+  });
+
+  it("shows advanced background activity controls when background intervals are customized", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        backgroundActivity: {
+          schemaVersion: 1,
+          profile: "custom",
+          baseProfile: "balanced",
+          overrides: {
+            automaticGitFetchInterval: Duration.seconds(15),
+          },
+        },
+      },
+    });
+
+    mounted = await renderWithTestRouter(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Advanced", { exact: true })).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Configure advanced background activity" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Background Activity" });
+    await expect.element(dialog).toBeInTheDocument();
+    await expect.element(dialog.getByText("Shared policy")).toBeInTheDocument();
+    await expect.element(dialog.getByText("Git fetch interval")).toBeInTheDocument();
+    await expect.element(dialog.getByText("Provider health interval")).toBeInTheDocument();
+    await expect.element(dialog.getByText("Host power monitor")).toBeInTheDocument();
+    await expect.element(dialog.getByText("Idle host monitor")).toBeInTheDocument();
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {

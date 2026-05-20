@@ -28,11 +28,13 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  RpcClientId,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -65,6 +67,7 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -181,9 +184,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
+      const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.automaticGitFetchInterval),
+        Effect.map(
+          (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("Failed to read automatic Git fetch interval setting", {
             detail: cause.message,
@@ -923,6 +929,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
+          observeRpcEffect(
+            WS_METHODS.serverReportClientActivity,
+            backgroundPolicy.reportClientActivity(
+              currentSessionId,
+              RpcClientId.make(metadata.client.id),
+              input,
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverReportHostPowerState]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverReportHostPowerState,
+            backgroundPolicy.reportHostPowerState(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetBackgroundPolicy]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetBackgroundPolicy, backgroundPolicy.snapshot, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -1234,6 +1260,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
             }),
             { "rpc.aggregate": "auth" },
+          ),
+        [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeBackgroundPolicy,
+            Stream.concat(
+              Stream.unwrap(Effect.map(backgroundPolicy.snapshot, Stream.make)),
+              backgroundPolicy.streamChanges,
+            ),
+            { "rpc.aggregate": "server" },
           ),
       });
     }),

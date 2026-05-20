@@ -139,9 +139,15 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverGetProcessResourceHistory
     >;
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
+    readonly reportClientActivity: RpcUnaryMethod<typeof WS_METHODS.serverReportClientActivity>;
+    readonly reportHostPowerState: RpcUnaryMethod<typeof WS_METHODS.serverReportHostPowerState>;
+    readonly getBackgroundPolicy: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetBackgroundPolicy>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
+    readonly subscribeBackgroundPolicy: RpcStreamMethod<
+      typeof WS_METHODS.subscribeBackgroundPolicy
+    >;
   };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
@@ -279,6 +285,12 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) =>
           client[WS_METHODS.serverSignalProcess](input).pipe(Effect.withTracerEnabled(false)),
         ),
+      reportClientActivity: (input) =>
+        transport.request((client) => client[WS_METHODS.serverReportClientActivity](input)),
+      reportHostPowerState: (input) =>
+        transport.request((client) => client[WS_METHODS.serverReportHostPowerState](input)),
+      getBackgroundPolicy: () =>
+        transport.request((client) => client[WS_METHODS.serverGetBackgroundPolicy]({})),
       subscribeConfig: (listener, options) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener, {
           ...options,
@@ -294,6 +306,15 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           ...options,
           tag: WS_METHODS.subscribeAuthAccess,
         }),
+      subscribeBackgroundPolicy: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeBackgroundPolicy]({}),
+          listener,
+          {
+            ...options,
+            tag: WS_METHODS.subscribeBackgroundPolicy,
+          },
+        ),
     },
     orchestration: {
       dispatchCommand: (input) =>

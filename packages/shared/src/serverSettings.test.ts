@@ -3,7 +3,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vitest";
+import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
 import { createModelSelection } from "./model.ts";
 import {
   applyServerSettingsPatch,
@@ -192,6 +194,82 @@ describe("serverSettings helpers", () => {
       displayName: "Codex Work",
       enabled: true,
       config: { homePath: "~/.codex" },
+    });
+  });
+
+  it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "battery-saver",
+        overrides: {},
+      },
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "battery-saver",
+      overrides: {},
+    });
+    expect(next.backgroundActivityProfile).toBe("battery-saver");
+    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(0);
+    expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(
+      Duration.toMillis(Duration.minutes(15)),
+    );
+  });
+
+  it("turns legacy interval patches into custom background activity overrides", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      automaticGitFetchInterval: Duration.seconds(15),
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "balanced",
+      overrides: {
+        automaticGitFetchInterval: Duration.seconds(15),
+      },
+    });
+    expect(resolveServerBackgroundActivitySettings(next).profile).toBe("balanced");
+    expect(
+      Duration.toMillis(resolveServerBackgroundActivitySettings(next).automaticGitFetchInterval),
+    ).toBe(15_000);
+  });
+
+  it("reconciles custom background activity back to a preset when overrides match the preset", () => {
+    const custom = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      automaticGitFetchInterval: Duration.seconds(15),
+    });
+    const next = applyServerSettingsPatch(custom, {
+      automaticGitFetchInterval: Duration.seconds(30),
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
+    });
+    expect(next.backgroundActivityProfile).toBe("balanced");
+    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(30_000);
+  });
+
+  it("drops custom overrides that duplicate the base profile", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "custom",
+        baseProfile: "balanced",
+        overrides: {
+          automaticGitFetchInterval: Duration.seconds(30),
+        },
+      },
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
     });
   });
 });

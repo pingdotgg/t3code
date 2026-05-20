@@ -14,6 +14,7 @@ import {
   subscribeEnvironmentConnections,
 } from "../environments/runtime";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import { retainBackgroundScope } from "./backgroundActivityReporter";
 
 interface GitStatusState {
   readonly data: VcsStatusResult | null;
@@ -202,6 +203,7 @@ function subscribeToGitStatusTarget(
   const cwd = target.cwd;
   let currentClientIdentity: string | null = null;
   let currentUnsubscribe = NOOP;
+  const releaseScope = retainBackgroundScope({ type: "vcs-status", cwd });
 
   const syncClientSubscription = () => {
     const resolved = providedClient
@@ -236,6 +238,7 @@ function subscribeToGitStatusTarget(
   syncClientSubscription();
 
   return () => {
+    releaseScope();
     unsubscribeRegistry();
     currentUnsubscribe();
   };

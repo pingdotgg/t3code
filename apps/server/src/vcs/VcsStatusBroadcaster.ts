@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
@@ -98,6 +99,7 @@ export const layer = Layer.effect(
   VcsStatusBroadcaster,
   Effect.gen(function* () {
     const workflow = yield* GitWorkflowService.GitWorkflowService;
+    const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const fs = yield* FileSystem.FileSystem;
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<VcsStatusChange>(),
@@ -266,6 +268,14 @@ export const layer = Layer.effect(
             ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
             : configuredInterval;
           if (Duration.isZero(configuredInterval)) {
+            return activeInterval;
+          }
+
+          const shouldRun = yield* backgroundPolicy.shouldRunScopeWork({
+            type: "vcs-status",
+            cwd,
+          });
+          if (!shouldRun) {
             return activeInterval;
           }
 

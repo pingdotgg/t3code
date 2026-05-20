@@ -22,6 +22,7 @@ import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
+import { createServerSettingsWriteQueue } from "./serverSettingsWriteQueue";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -30,6 +31,13 @@ const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
+const serverSettingsWriteQueue = createServerSettingsWriteQueue({
+  updateSettings: (patch) => ensureLocalApi().server.updateSettings(patch),
+  applySettings: applySettingsUpdated,
+  onError: (error) => {
+    console.error("[SERVER_SETTINGS] update failed", error);
+  },
+});
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -143,6 +151,10 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
   };
 }
 
+function enqueueServerSettingsUpdate(serverPatch: ServerSettingsPatch): void {
+  serverSettingsWriteQueue.enqueue(serverPatch);
+}
+
 // ── Hooks ────────────────────────────────────────────────────────────
 
 /**
@@ -201,8 +213,7 @@ export function useUpdateSettings() {
       if (currentServerConfig) {
         applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
       }
-      // Fire-and-forget RPC — push will reconcile on success
-      void ensureLocalApi().server.updateSettings(serverPatch);
+      enqueueServerSettingsUpdate(serverPatch);
     }
 
     if (Object.keys(clientPatch).length > 0) {
@@ -227,6 +238,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
+  serverSettingsWriteQueue.reset();
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }
