@@ -96,7 +96,19 @@ export const materializeTaskRuntime = action({
     worktreePath: v.union(v.null(), v.string()),
     acceptedAt: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    taskId: string;
+    workSessionId: string;
+    t3ProjectId: string;
+    t3ThreadId: string;
+    environmentId?: string;
+    branch: string | null;
+    worktreePath: string | null;
+    acceptedAt: string;
+  }> => {
     const tree = await ctx.runQuery(api.tasks.getTaskRuntimeSeed, {
       taskId: args.taskId,
     });
@@ -241,7 +253,15 @@ export const startMaterializedTaskRuntimeAgent = action({
     acceptedAt: v.optional(v.string()),
     skippedReason: v.optional(v.string()),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    readonly started: boolean;
+    readonly t3ThreadId?: string;
+    readonly acceptedAt?: string;
+    readonly skippedReason?: string;
+  }> => {
     const seed = await ctx.runQuery(internal.t3Runtime.getTaskRuntimeAgentStartSeed, {
       taskId: args.taskId,
       workSessionId: args.workSessionId,
@@ -351,7 +371,13 @@ export const claimTaskRuntimeContinuation = internalMutation({
     claimed: v.boolean(),
     claimedAt: v.number(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    claimed: boolean;
+    claimedAt: number;
+  }> => {
     const existingEvent = await ctx.db
       .query("taskEvents")
       .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
@@ -499,7 +525,16 @@ export const respondTaskRuntimeUserInput = action({
     requestId: v.string(),
     acceptedAt: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    taskId: string;
+    workSessionId: string;
+    t3ThreadId: string;
+    requestId: string;
+    acceptedAt: string;
+  }> => {
     await ctx.runQuery(internal.t3Runtime.getTaskRuntimeContinuationRoute, {
       taskId: args.taskId,
       workSessionId: args.workSessionId,
@@ -570,7 +605,19 @@ export const ensureTaskPullRequest = action({
     deploymentPreviewsJson: v.optional(v.string()),
     summary: v.optional(v.string()),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    readonly status: "waiting_for_changes" | "created" | "existing" | "failed" | "skipped";
+    readonly url?: string;
+    readonly title?: string;
+    readonly repo?: string;
+    readonly headBranch?: string;
+    readonly previewUrl?: string;
+    readonly deploymentPreviewsJson?: string;
+    readonly summary?: string;
+  }> => {
     const seed = await ctx.runQuery(internal.t3Runtime.getTaskPullRequestSeed, {
       taskId: args.taskId,
       workSessionId: args.workSessionId,
@@ -630,6 +677,7 @@ export const ensureTaskPullRequest = action({
     const response = await client.ensureTaskPullRequest({
       taskId: String(args.taskId),
       workSessionId: String(args.workSessionId),
+      t3ThreadId: decodeThreadId(seed.t3ThreadId),
       ...(seed.environmentId !== undefined ? { environmentId: seed.environmentId } : {}),
       branch: seed.branch,
       worktreePath: seed.worktreePath,
@@ -671,6 +719,16 @@ export const ensureTaskPullRequest = action({
           }
         : {}),
     });
+    const observedBranch = response.pullRequest?.headBranch;
+    if (observedBranch !== undefined && observedBranch !== seed.branch) {
+      await ctx.runMutation(internal.t3Runtime.recordTaskRuntimeBranchObserved, {
+        taskId: args.taskId,
+        workSessionId: args.workSessionId,
+        branch: observedBranch,
+        observedAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+        eventKey: `${idempotencyKey}:branch-observed:${observedBranch}`,
+      });
+    }
     await logOrchestratorEvent(ctx, {
       kind: "t3.pr.ensure-completed",
       summary: "Local T3 bridge completed pull request ensure.",
@@ -736,7 +794,17 @@ export const commitPushTaskRuntime = action({
     upstreamBranch: v.optional(v.string()),
     summary: v.optional(v.string()),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    readonly status: "waiting_for_changes" | "pushed" | "failed" | "skipped";
+    readonly commitSha?: string;
+    readonly commitSubject?: string;
+    readonly branch?: string;
+    readonly upstreamBranch?: string;
+    readonly summary?: string;
+  }> => {
     const seed = await ctx.runQuery(internal.t3Runtime.getTaskPullRequestSeed, {
       taskId: args.taskId,
       workSessionId: args.workSessionId,
@@ -763,6 +831,7 @@ export const commitPushTaskRuntime = action({
     const response = await client.commitPushTaskRuntime({
       taskId: String(args.taskId),
       workSessionId: String(args.workSessionId),
+      t3ThreadId: decodeThreadId(seed.t3ThreadId),
       ...(seed.environmentId !== undefined ? { environmentId: seed.environmentId } : {}),
       branch: seed.branch,
       worktreePath: seed.worktreePath,
@@ -784,6 +853,15 @@ export const commitPushTaskRuntime = action({
         upstreamBranch: response.upstreamBranch,
       },
     });
+    if (response.branch !== undefined && response.branch !== seed.branch) {
+      await ctx.runMutation(internal.t3Runtime.recordTaskRuntimeBranchObserved, {
+        taskId: args.taskId,
+        workSessionId: args.workSessionId,
+        branch: response.branch,
+        observedAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+        eventKey: `${idempotencyKey}:branch-observed:${response.branch}`,
+      });
+    }
 
     return {
       status: response.status,
@@ -805,6 +883,7 @@ export const getTaskPullRequestSeed = internalQuery({
     v.null(),
     v.object({
       title: v.string(),
+      t3ThreadId: v.string(),
       branch: v.string(),
       worktreePath: v.string(),
       runtimeId: v.optional(v.string()),
@@ -839,6 +918,7 @@ export const getTaskPullRequestSeed = internalQuery({
 
     return {
       title: task.title,
+      t3ThreadId: workSession.t3ThreadId,
       branch: taskThread.branch,
       worktreePath: taskThread.worktreePath,
       ...(workSession.runtimeId !== undefined ? { runtimeId: workSession.runtimeId } : {}),
@@ -1184,6 +1264,55 @@ export const recordTaskRuntimeAgentStartFailed = internalMutation({
           failureSummary: args.failureSummary,
         }),
         createdAt: args.failedAt,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const recordTaskRuntimeBranchObserved = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    branch: v.string(),
+    eventKey: v.string(),
+    observedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const workSession = await ctx.db.get(args.workSessionId);
+    if (workSession === null || String(workSession.taskId) !== String(args.taskId)) {
+      return null;
+    }
+
+    const taskThread = await ctx.db.get(workSession.taskThreadId);
+    if (taskThread === null || String(taskThread.taskId) !== String(args.taskId)) {
+      return null;
+    }
+
+    await ctx.db.patch(workSession.taskThreadId, {
+      branch: args.branch,
+      updatedAt: args.observedAt,
+    });
+
+    const existingEvent = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
+      .unique();
+    if (existingEvent === null) {
+      await ctx.db.insert("taskEvents", {
+        taskId: args.taskId,
+        eventKey: args.eventKey,
+        kind: "runtime.branch-observed",
+        summary: "Observed current T3 runtime branch.",
+        payloadJson: JSON.stringify({
+          workSessionId: args.workSessionId,
+          taskThreadId: workSession.taskThreadId,
+          previousBranch: taskThread.branch,
+          branch: args.branch,
+        }),
+        createdAt: args.observedAt,
       });
     }
 

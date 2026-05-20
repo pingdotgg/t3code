@@ -304,6 +304,14 @@ function ensureTaskPullRequestRequest() {
   };
 }
 
+function makeNoopOrchestrationEngineLayer() {
+  return Layer.mock(OrchestrationEngineService)({
+    dispatch: () => Effect.succeed({ sequence: 1 }),
+    readEvents: () => Stream.empty,
+    streamDomainEvents: Stream.empty,
+  });
+}
+
 describe("task pull request ensure", () => {
   function makeExecuteMock(aheadCount: number) {
     return vi.fn((input: { readonly args: readonly string[] }) => {
@@ -358,6 +366,7 @@ describe("task pull request ensure", () => {
       Layer.mock(GitManager)({
         runStackedAction: input.runStackedAction as any,
       }),
+      makeNoopOrchestrationEngineLayer(),
     );
   }
 
@@ -470,6 +479,7 @@ describe("task runtime commit and push", () => {
       Layer.mock(GitWorkflowService)({
         runStackedAction: runStackedAction as any,
       }),
+      makeNoopOrchestrationEngineLayer(),
     );
 
     const response = await Effect.runPromise(

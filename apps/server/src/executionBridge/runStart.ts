@@ -1009,6 +1009,29 @@ const detachTaskPullRequestBaseUpstream = Effect.fn(
     .pipe(Effect.catch(() => Effect.void));
 });
 
+const syncTaskRuntimeThreadBranch = Effect.fn("executionBridge.syncTaskRuntimeThreadBranch")(
+  function* (input: {
+    readonly t3ThreadId?: ThreadId;
+    readonly worktreePath: string;
+    readonly requestedBranch: string;
+    readonly observedBranch: string;
+    readonly commandIdSuffix: string;
+  }) {
+    if (input.t3ThreadId === undefined || input.observedBranch === input.requestedBranch) {
+      return;
+    }
+
+    const orchestrationEngine = yield* OrchestrationEngineService;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make(`execution-bridge:task:branch-sync:${input.commandIdSuffix}`),
+      threadId: input.t3ThreadId,
+      branch: input.observedBranch,
+      worktreePath: input.worktreePath,
+    });
+  },
+);
+
 export const ensureTaskPullRequest = (request: TaskPullRequestEnsureRequest) =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver;
@@ -1021,6 +1044,13 @@ export const ensureTaskPullRequest = (request: TaskPullRequestEnsureRequest) =>
         requestedBranch: request.branch,
         currentBranch: branch,
         worktreePath: request.worktreePath,
+      });
+      yield* syncTaskRuntimeThreadBranch({
+        ...(request.t3ThreadId !== undefined ? { t3ThreadId: request.t3ThreadId } : {}),
+        worktreePath: request.worktreePath,
+        requestedBranch: request.branch,
+        observedBranch: branch,
+        commandIdSuffix: `pr:${request.workSessionId}`,
       });
     }
 
@@ -1134,6 +1164,20 @@ export const commitPushTaskRuntime = (request: TaskRuntimeCommitPushRequest) =>
     const checkedAt = yield* currentIsoTimestamp;
     const details = yield* git.statusDetails(request.worktreePath);
     const branch = details.branch ?? request.branch;
+    if (branch !== request.branch) {
+      yield* Effect.logInfo("execution bridge using current worktree branch for commit/push", {
+        requestedBranch: request.branch,
+        currentBranch: branch,
+        worktreePath: request.worktreePath,
+      });
+      yield* syncTaskRuntimeThreadBranch({
+        ...(request.t3ThreadId !== undefined ? { t3ThreadId: request.t3ThreadId } : {}),
+        worktreePath: request.worktreePath,
+        requestedBranch: request.branch,
+        observedBranch: branch,
+        commandIdSuffix: `commit:${request.workSessionId}`,
+      });
+    }
 
     const result = yield* gitWorkflow.runStackedAction({
       actionId: request.idempotencyKey,

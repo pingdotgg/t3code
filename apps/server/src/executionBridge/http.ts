@@ -181,7 +181,7 @@ function readCachedAssistantResponseEntry(input: {
       return byTurn;
     }
   }
-  return entries.at(-1);
+  return undefined;
 }
 
 function resolveAssistantResponseEntry(input: {
@@ -235,15 +235,7 @@ function resolveAssistantResponseEntry(input: {
       }
     }
 
-    const latest = thread.value.messages.findLast((message) => message.role === "assistant");
-    const text = normalizeAssistantResponse(latest?.text ?? "");
-    return text === undefined || latest === undefined
-      ? undefined
-      : {
-          messageId: String(latest.id),
-          turnId: latest.turnId === null ? null : String(latest.turnId),
-          text,
-        };
+    return undefined;
   }).pipe(Effect.catch(() => Effect.sync(() => undefined)));
 }
 
@@ -694,6 +686,18 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
               trackedRun,
               forwardedTurnKeys: firstAssistantMessageTurnKeys,
             });
+            if (
+              trackedRun.kind === "task" &&
+              event.payload.role === "assistant" &&
+              event.payload.turnId !== null
+            ) {
+              yield* runRegistry.markLifecycleDelivered({
+                threadId: trackedRun.threadId,
+                type: "started",
+                eventId: `${String(event.eventId)}:assistant-turn-observed`,
+                turnId: event.payload.turnId,
+              });
+            }
           });
         }
 

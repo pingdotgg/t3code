@@ -113,4 +113,26 @@ describe("execution bridge assistant response cache", () => {
       }),
     ).toBe("Final answer");
   });
+
+  it("does not guess a final response without a turn or message id", () => {
+    const cache = new Map();
+
+    cacheAssistantMessageForLifecycle({
+      cache,
+      event: assistantMessageEvent({
+        eventId: "event-1",
+        messageId: "message-previous",
+        text: "Previous turn final",
+        streaming: true,
+        turnId: "turn-previous",
+      }),
+    });
+
+    expect(
+      readCachedAssistantResponse({
+        cache,
+        threadId: ThreadId.make("thread-1"),
+      }),
+    ).toBeUndefined();
+  });
 });
