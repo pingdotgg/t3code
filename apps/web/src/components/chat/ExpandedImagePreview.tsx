@@ -8,6 +8,14 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
+export function getExpandedImagePreviewIdentityKey(preview: ExpandedImagePreview): string {
+  const selectedImage = preview.images[preview.index];
+  const selectedImageKey = selectedImage
+    ? `${selectedImage.name.length}:${selectedImage.name}:${selectedImage.src.length}:${selectedImage.src}`
+    : "missing";
+  return `${preview.images.length}:${preview.index}:${selectedImageKey}`;
+}
+
 export function buildExpandedImagePreview(
   images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
   selectedImageId: string,
