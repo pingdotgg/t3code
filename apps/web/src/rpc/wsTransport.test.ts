@@ -242,15 +242,10 @@ describe("WsTransport (web instrumentation)", () => {
     socket.close(1012, "service restart");
 
     await waitFor(() => {
-      expect(onClose).toHaveBeenCalledWith(
-        {
-          code: 1012,
-          reason: "service restart",
-        },
-        {
-          intentional: false,
-        },
-      );
+      expect(onClose).toHaveBeenCalledWith({
+        code: 1012,
+        reason: "service restart",
+      });
       expect(getWsConnectionStatus()).toMatchObject({
         attemptCount: 2,
         closeReason: "service restart",

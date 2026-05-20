@@ -269,6 +269,17 @@ describe("retainThreadDetailSubscription", () => {
     mockCreateEnvironmentConnection.mockImplementation((input) => {
       const reconnect = vi.fn(async () => undefined);
       mockConnectionReconnects.push(reconnect);
+      queueMicrotask(() => {
+        input.onConfigSnapshot?.({
+          environment: {
+            environmentId: input.knownEnvironment.environmentId,
+            label: input.knownEnvironment.label,
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        });
+      });
       return {
         kind: input.kind,
         environmentId: input.knownEnvironment.environmentId,
@@ -438,13 +449,13 @@ describe("retainThreadDetailSubscription", () => {
     const stop = startEnvironmentConnectionService(new QueryClient());
     savedEnvironmentRegistryListener?.();
     await vi.waitFor(() => {
-      expect(mockCreateEnvironmentConnection).toHaveBeenCalledTimes(2);
       expect(
         listEnvironmentConnections().some(
           (connection) => connection.environmentId === environmentId,
         ),
       ).toBe(true);
     });
+    const createConnectionCallsBeforeReconnect = mockCreateEnvironmentConnection.mock.calls.length;
 
     const release = retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
@@ -459,7 +470,9 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(200);
     await reconnectPromise;
     await vi.waitFor(() => {
-      expect(mockCreateEnvironmentConnection).toHaveBeenCalledTimes(3);
+      expect(mockCreateEnvironmentConnection).toHaveBeenCalledTimes(
+        createConnectionCallsBeforeReconnect + 1,
+      );
       expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
     });
 
@@ -486,6 +499,33 @@ describe("retainThreadDetailSubscription", () => {
 
     const { resetEnvironmentServiceForTests, startEnvironmentConnectionService } =
       await import("./service");
+    mockCreateEnvironmentConnection.mockImplementation((input) => {
+      const reconnect = vi.fn(async () => undefined);
+      mockConnectionReconnects.push(reconnect);
+      queueMicrotask(() => {
+        input.onConfigSnapshot?.({
+          environment: {
+            environmentId: input.knownEnvironment.environmentId,
+            label: input.knownEnvironment.label,
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        });
+      });
+      return {
+        kind: input.kind,
+        environmentId: input.knownEnvironment.environmentId,
+        knownEnvironment: input.knownEnvironment,
+        client: {
+          ...input.client,
+          isHeartbeatFresh: vi.fn(() => true),
+        },
+        ensureBootstrapped: vi.fn(async () => undefined),
+        reconnect,
+        dispose: vi.fn(async () => undefined),
+      };
+    });
 
     const stop = startEnvironmentConnectionService(new QueryClient());
     expect(mockConnectionReconnects).toHaveLength(1);

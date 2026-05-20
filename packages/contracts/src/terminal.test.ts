@@ -44,6 +44,7 @@ describe("TerminalOpenInput", () => {
     expect(
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         cwd: "/tmp/project",
         cols: 423,
         rows: 40,

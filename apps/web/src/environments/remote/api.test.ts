@@ -239,7 +239,28 @@ describe("remote environment api", () => {
         httpBaseUrl: "https://remote.example.com/",
         bearerToken: "bearer-token",
       }),
-    ).resolves.toBe("wss://remote.example.com/ws?wsToken=ws-token");
+    ).resolves.toBe("wss://remote.example.com/?wsToken=ws-token");
+  });
+
+  it("preserves the caller-provided websocket path when minting a token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          token: "ws-token",
+          expiresAt: "2026-05-01T12:05:00.000Z",
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    await expect(
+      resolveRemoteWebSocketConnectionUrl({
+        wsBaseUrl: "wss://remote.example.com/custom/socket?existing=1",
+        httpBaseUrl: "https://remote.example.com/",
+        bearerToken: "bearer-token",
+      }),
+    ).resolves.toBe("wss://remote.example.com/custom/socket?existing=1&wsToken=ws-token");
   });
 });
 

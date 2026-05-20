@@ -31,6 +31,7 @@ export interface WsTransportOptions {
     url: WsRpcProtocolSocketUrlProvider,
     lifecycleHandlers?: WsProtocolLifecycleHandlers,
   ) => Layer.Layer<RpcClient.Protocol, never, never>;
+  readonly logWarning?: (message: string, metadata: { readonly error: string }) => void;
   /**
    * Invoked at the start of {@link WsTransport.reconnect} before the session is replaced.
    */
@@ -172,18 +173,14 @@ export class WsTransport {
 
           const formattedError = formatErrorMessage(error);
           if (!isTransportConnectionErrorMessage(formattedError)) {
-            Effect.runSync(
-              Effect.logWarning("WebSocket RPC subscription failed", { error: formattedError }),
-            );
+            this.logWarning("WebSocket RPC subscription failed", { error: formattedError });
             return;
           }
 
           if (!this.hasReportedTransportDisconnect) {
-            Effect.runSync(
-              Effect.logWarning("WebSocket RPC subscription disconnected", {
-                error: formattedError,
-              }),
-            );
+            this.logWarning("WebSocket RPC subscription disconnected", {
+              error: formattedError,
+            });
           }
           this.hasReportedTransportDisconnect = true;
           await sleep(retryDelayMs);
@@ -250,6 +247,15 @@ export class WsTransport {
       clientScope,
       clientPromise: runtime.runPromise(Scope.provide(clientScope)(makeWsRpcProtocolClient)),
     };
+  }
+
+  private logWarning(message: string, metadata: { readonly error: string }) {
+    const logWarning = this.options?.logWarning;
+    if (logWarning) {
+      logWarning(message, metadata);
+    } else {
+      Effect.runSync(Effect.logWarning(message, metadata));
+    }
   }
 
   private runStreamOnSession<TValue>(

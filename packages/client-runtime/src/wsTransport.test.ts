@@ -645,8 +645,8 @@ describe("WsTransport", () => {
   });
 
   it("does not retry stream subscriptions after application-level failures", async () => {
-    const transport = createTransport("ws://localhost:3020");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi.fn();
+    const transport = createTransport("ws://localhost:3020", undefined, { logWarning: warnSpy });
     let attempts = 0;
 
     const unsubscribe = transport.subscribe(
@@ -684,8 +684,8 @@ describe("WsTransport", () => {
   });
 
   it("keeps retrying stream subscriptions after transport failures", async () => {
-    const transport = createTransport("ws://localhost:3020");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi.fn();
+    const transport = createTransport("ws://localhost:3020", undefined, { logWarning: warnSpy });
     let attempts = 0;
 
     const unsubscribe = transport.subscribe(
@@ -717,8 +717,8 @@ describe("WsTransport", () => {
   });
 
   it("logs a transport disconnect once even when multiple subscriptions fail together", async () => {
-    const transport = createTransport("ws://localhost:3020");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi.fn();
+    const transport = createTransport("ws://localhost:3020", undefined, { logWarning: warnSpy });
 
     const unsubscribeA = transport.subscribe(
       () => Stream.fail(new Error("SocketCloseError: 1006")),
