@@ -428,6 +428,13 @@ http.route({
         t3TurnId: payload.t3TurnId === undefined ? undefined : String(payload.t3TurnId),
       },
     });
+    await ctx.runMutation(internal.t3Runtime.recordTaskPullRequestsFromAssistantMessage, {
+      taskId: payload.taskId as Id<"tasks">,
+      workSessionId: payload.workSessionId as Id<"workSessions">,
+      sourceEventId: payload.eventId,
+      assistantMessage: payload.assistantMessage,
+      observedAt: Date.now(),
+    });
     const result = await ctx.runAction(internal.taskIntake.postTaskRuntimeAssistantMessage, {
       eventId: payload.eventId,
       taskId: payload.taskId as Id<"tasks">,
@@ -540,6 +547,15 @@ http.route({
         ? { assistantResponse: payload.assistantResponse }
         : {}),
     });
+    if (payload.assistantResponse !== undefined) {
+      await ctx.runMutation(internal.t3Runtime.recordTaskPullRequestsFromAssistantMessage, {
+        taskId: payload.taskId as Id<"tasks">,
+        workSessionId: payload.workSessionId as Id<"workSessions">,
+        sourceEventId: payload.eventId,
+        assistantMessage: payload.assistantResponse,
+        observedAt: Date.now(),
+      });
+    }
 
     let intakeReply:
       | {

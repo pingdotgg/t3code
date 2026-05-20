@@ -34,6 +34,37 @@ function errorSummary(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function extractGitHubPullRequests(text: string) {
+  const results = new Map<
+    string,
+    {
+      readonly owner: string;
+      readonly repo: string;
+      readonly number: number;
+      readonly url: string;
+      readonly externalId: string;
+    }
+  >();
+  const matcher = /https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/gi;
+  for (const match of text.matchAll(matcher)) {
+    const owner = match[1];
+    const repo = match[2];
+    const numberText = match[3];
+    if (owner === undefined || repo === undefined || numberText === undefined) continue;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || number <= 0) continue;
+    const externalId = `${owner}/${repo}#${number}`;
+    results.set(externalId, {
+      owner,
+      repo,
+      number,
+      url: `https://github.com/${owner}/${repo}/pull/${number}`,
+      externalId,
+    });
+  }
+  return [...results.values()];
+}
+
 function logOrchestratorEvent(
   ctx: any,
   input: {
@@ -811,6 +842,99 @@ export const recordTaskPullRequestEnsureResult = internalMutation({
     });
 
     return null;
+  },
+});
+
+export const recordTaskPullRequestsFromAssistantMessage = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    sourceEventId: v.string(),
+    assistantMessage: v.string(),
+    observedAt: v.number(),
+  },
+  returns: v.object({
+    recorded: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const workSession = await ctx.db.get(args.workSessionId);
+    if (workSession === null || String(workSession.taskId) !== String(args.taskId)) {
+      return { recorded: 0 };
+    }
+
+    const pullRequests = extractGitHubPullRequests(args.assistantMessage);
+    let recorded = 0;
+    for (const pullRequest of pullRequests) {
+      const existingLink = await ctx.db
+        .query("taskExternalLinks")
+        .withIndex("by_kind_external_id", (q: any) =>
+          q.eq("kind", "github_pr").eq("externalId", pullRequest.externalId),
+        )
+        .unique();
+      if (existingLink !== null) {
+        await ctx.db.patch(existingLink._id, {
+          taskId: args.taskId,
+          url: pullRequest.url,
+          updatedAt: args.observedAt,
+        });
+      } else {
+        await ctx.db.insert("taskExternalLinks", {
+          taskId: args.taskId,
+          kind: "github_pr",
+          externalId: pullRequest.externalId,
+          url: pullRequest.url,
+          muted: false,
+          createdAt: args.observedAt,
+          updatedAt: args.observedAt,
+        });
+      }
+
+      const existingPullRequest = await ctx.db
+        .query("githubPullRequests")
+        .withIndex("by_external_id", (q: any) => q.eq("externalId", pullRequest.externalId))
+        .unique();
+      const pullRequestPatch = {
+        taskId: args.taskId,
+        owner: pullRequest.owner,
+        repo: pullRequest.repo,
+        number: pullRequest.number,
+        url: pullRequest.url,
+        state: "discovered",
+        updatedAt: args.observedAt,
+      };
+      if (existingPullRequest !== null) {
+        await ctx.db.patch(existingPullRequest._id, pullRequestPatch);
+      } else {
+        await ctx.db.insert("githubPullRequests", {
+          externalId: pullRequest.externalId,
+          createdAt: args.observedAt,
+          ...pullRequestPatch,
+        });
+      }
+
+      const eventKey = `${args.sourceEventId}:github-pr-discovered:${pullRequest.externalId}`;
+      const existingEvent = await ctx.db
+        .query("taskEvents")
+        .withIndex("by_event_key", (q: any) => q.eq("eventKey", eventKey))
+        .unique();
+      if (existingEvent === null) {
+        await ctx.db.insert("taskEvents", {
+          taskId: args.taskId,
+          eventKey,
+          kind: "task-pr.discovered",
+          summary: "Discovered task pull request from assistant response.",
+          payloadJson: JSON.stringify({
+            workSessionId: args.workSessionId,
+            externalId: pullRequest.externalId,
+            url: pullRequest.url,
+          }),
+          createdAt: args.observedAt,
+        });
+      }
+      recorded += 1;
+    }
+
+    return { recorded };
   },
 });
 
