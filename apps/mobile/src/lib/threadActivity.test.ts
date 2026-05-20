@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EventId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationThread,
@@ -27,7 +28,7 @@ function makeThread(
   input: Partial<OrchestrationThread> & Pick<OrchestrationThread, "id" | "projectId" | "title">,
 ): OrchestrationThread {
   return {
-    modelSelection: { provider: "codex", model: "gpt-5.4" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,

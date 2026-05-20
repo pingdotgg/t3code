@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
 import { applyShellStreamEvent } from "./shellSnapshotReducer.ts";
@@ -27,7 +27,7 @@ const stubThread = {
   id: ThreadId.make("thread-1"),
   projectId: ProjectId.make("project-1"),
   title: "Test Thread",
-  modelSelection: { provider: "codex", model: "gpt-5.4" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
   branch: null,

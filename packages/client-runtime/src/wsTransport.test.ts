@@ -1,5 +1,7 @@
 import { WS_METHODS } from "@t3tools/contracts";
-import { Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WsTransport } from "./wsTransport.ts";
@@ -80,16 +82,16 @@ function getSocket(): MockWebSocket {
 }
 
 async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   for (;;) {
     try {
       assertion();
       return;
     } catch (error) {
-      if (Date.now() - startedAt >= timeoutMs) {
+      if (performance.now() - startedAt >= timeoutMs) {
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await Effect.runPromise(Effect.sleep(Duration.millis(10)));
     }
   }
 }
@@ -666,7 +668,7 @@ describe("WsTransport", () => {
     await waitFor(() => {
       expect(attempts).toBe(1);
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await Effect.runPromise(Effect.sleep(Duration.millis(50)));
 
     expect(attempts).toBe(1);
     expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription failed", {

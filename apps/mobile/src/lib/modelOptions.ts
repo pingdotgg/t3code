@@ -6,6 +6,7 @@ export type ModelOption = {
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
+  readonly providerDriver: string;
   readonly selection: ModelSelection;
 };
 
@@ -15,10 +16,15 @@ export type ProviderGroup = {
   readonly models: ReadonlyArray<ModelOption>;
 };
 
-function providerDisplayLabel(provider: string): string {
-  if (provider === "codex") return "Codex";
-  if (provider === "claudeAgent") return "Claude";
-  return provider;
+function providerDisplayLabel(provider: {
+  readonly displayName?: string | undefined;
+  readonly driver: string;
+  readonly instanceId: string;
+}): string {
+  if (provider.displayName) return provider.displayName;
+  if (provider.driver === "codex") return "Codex";
+  if (provider.driver === "claudeAgent") return "Claude";
+  return provider.instanceId;
 }
 
 export function buildModelOptions(
@@ -32,17 +38,18 @@ export function buildModelOptions(
       continue;
     }
 
-    const providerLabel = providerDisplayLabel(provider.provider);
+    const providerLabel = providerDisplayLabel(provider);
     for (const model of provider.models) {
-      const key = `${provider.provider}:${model.slug}`;
+      const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
         label: model.name,
         subtitle: providerLabel,
-        providerKey: provider.provider,
+        providerKey: provider.instanceId,
         providerLabel,
+        providerDriver: provider.driver,
         selection: {
-          provider: provider.provider,
+          instanceId: provider.instanceId,
           model: model.slug,
         },
       });
@@ -50,15 +57,16 @@ export function buildModelOptions(
   }
 
   if (fallbackModelSelection) {
-    const key = `${fallbackModelSelection.provider}:${fallbackModelSelection.model}`;
+    const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     if (!options.has(key)) {
-      const providerLabel = providerDisplayLabel(fallbackModelSelection.provider);
+      const providerLabel = fallbackModelSelection.instanceId;
       options.set(key, {
         key,
         label: fallbackModelSelection.model,
         subtitle: providerLabel,
-        providerKey: fallbackModelSelection.provider,
+        providerKey: fallbackModelSelection.instanceId,
         providerLabel,
+        providerDriver: fallbackModelSelection.instanceId,
         selection: fallbackModelSelection,
       });
     }

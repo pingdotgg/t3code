@@ -2,7 +2,7 @@ import type {
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
-  GitStatusResult,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
@@ -83,13 +83,13 @@ export function buildGitActionProgressStages(input: {
 }
 
 export function buildMenuItems(
-  gitStatus: GitStatusResult | null,
+  gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasOriginRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
-  const hasBranch = gitStatus.branch !== null;
+  const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
@@ -149,7 +149,7 @@ export function buildMenuItems(
 }
 
 export function resolveQuickAction(
-  gitStatus: GitStatusResult | null,
+  gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
@@ -167,7 +167,7 @@ export function resolveQuickAction(
     };
   }
 
-  const hasBranch = gitStatus.branch !== null;
+  const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
@@ -285,7 +285,7 @@ export function resolveQuickAction(
 
 export function getGitActionDisabledReason(input: {
   item: GitActionMenuItem;
-  gitStatus: GitStatusResult | null;
+  gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
 }): string | null {
@@ -294,7 +294,7 @@ export function getGitActionDisabledReason(input: {
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
 
-  const hasBranch = gitStatus.branch !== null;
+  const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
@@ -411,30 +411,30 @@ export function resolveThreadBranchUpdate(
 
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
-  gitStatus: GitStatusResult | null;
+  gitStatus: VcsStatusResult | null;
 }): { branch: string | null } | null {
   if (!input.gitStatus) {
     return null;
   }
 
-  if (input.gitStatus.branch === null && input.threadBranch !== null) {
+  if (input.gitStatus.refName === null && input.threadBranch !== null) {
     return null;
   }
 
-  if (input.threadBranch === input.gitStatus.branch) {
+  if (input.threadBranch === input.gitStatus.refName) {
     return null;
   }
 
   if (
     input.threadBranch !== null &&
-    input.gitStatus.branch !== null &&
+    input.gitStatus.refName !== null &&
     !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.branch)
+    isTemporaryWorktreeBranch(input.gitStatus.refName)
   ) {
     return null;
   }
 
   return {
-    branch: input.gitStatus.branch,
+    branch: input.gitStatus.refName,
   };
 }

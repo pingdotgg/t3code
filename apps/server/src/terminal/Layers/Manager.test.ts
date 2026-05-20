@@ -586,6 +586,7 @@ it.layer(
   it.effect("restarts a running session when open is called with a different cwd", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir, baseDir } = yield* createManager();
+      const path = yield* Path.Path;
       const originalCwd = path.join(baseDir, "original");
       const differentCwd = path.join(baseDir, "different");
       yield* makeDirectory(originalCwd);
@@ -597,7 +598,8 @@ it.layer(
       if (!firstProcess) return;
 
       firstProcess.emitData("before reopen\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir)));
+      const logPath = yield* historyLogPath(logsDir);
+      yield* waitFor(pathExists(logPath));
 
       const reopened = yield* manager.open(openInput({ cwd: differentCwd }));
 
@@ -605,7 +607,7 @@ it.layer(
       assert.equal(firstProcess.killed, true);
       assert.equal(reopened.cwd, differentCwd);
       assert.equal(reopened.history, "");
-      yield* waitFor(Effect.map(readFileString(historyLogPath(logsDir)), (text) => text === ""));
+      yield* waitFor(Effect.map(readFileString(logPath), (text) => text === ""));
     }),
   );
 

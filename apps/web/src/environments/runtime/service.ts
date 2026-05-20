@@ -9,7 +9,10 @@ import {
   type ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import { createWsRpcClient as createBaseWsRpcClient, type WsRpcClient } from "@t3tools/client-runtime";
+import {
+  createWsRpcClient as createBaseWsRpcClient,
+  type WsRpcClient,
+} from "@t3tools/client-runtime";
 
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";

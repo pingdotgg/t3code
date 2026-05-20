@@ -33,10 +33,10 @@ export function useSelectedThreadGitState() {
   const selectedThreadBranchState = useVcsRefs(selectedThreadBranchTarget);
   const selectedThreadBranches = useMemo(
     () =>
-      dedupeRemoteBranchesWithLocalMatches(selectedThreadBranchState.data?.branches ?? []).filter(
+      dedupeRemoteBranchesWithLocalMatches(selectedThreadBranchState.data?.refs ?? []).filter(
         (branch) => !branch.isRemote,
       ),
-    [selectedThreadBranchState.data?.branches],
+    [selectedThreadBranchState.data?.refs],
   );
 
   return {

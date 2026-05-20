@@ -1,9 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { Effect, Layer } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -36,9 +35,10 @@ function makeLayer(input: {
 describe("ReviewService", () => {
   it.effect("rejects diff preview cwd outside the configured workspace roots", () =>
     Effect.gen(function* () {
-      const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3-review-workspace-"));
-      const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3-review-outside-"));
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-review-base-"));
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const detectCalls: Array<{ readonly cwd: string }> = [];
 
       const error = yield* Effect.gen(function* () {
@@ -53,13 +53,14 @@ describe("ReviewService", () => {
         /must stay within the configured workspace root/,
       );
       assert.deepStrictEqual(detectCalls, []);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("allows diff preview cwd inside the configured workspace root", () =>
     Effect.gen(function* () {
-      const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3-review-workspace-"));
-      const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-review-base-"));
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const detectCalls: Array<{ readonly cwd: string }> = [];
 
       const result = yield* Effect.gen(function* () {
@@ -70,6 +71,6 @@ describe("ReviewService", () => {
       assert.strictEqual(result.cwd, workspaceRoot);
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

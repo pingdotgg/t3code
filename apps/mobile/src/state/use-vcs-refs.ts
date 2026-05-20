@@ -23,7 +23,7 @@ export const vcsRefManager = createVcsRefManager({
   getRegistry: () => appAtomRegistry,
   getClient: (environmentId) => {
     const client = getEnvironmentClient(environmentId);
-    return client ? client.git : null;
+    return client ? client.vcs : null;
   },
   subscribeClientChanges: subscribeEnvironmentConnections,
   watchLimit: VCS_REF_LIST_LIMIT,

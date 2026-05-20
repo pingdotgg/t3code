@@ -1669,7 +1669,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["ls-files", "--others", "--exclude-standard", "-z"],
       {
         maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-        truncateOutputAtMaxBytes: true,
+        appendTruncationMarker: true,
       },
     );
     const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult);
@@ -1687,7 +1687,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           {
             allowNonZeroExit: true,
             maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
-            truncateOutputAtMaxBytes: true,
+            appendTruncationMarker: true,
           },
         ),
       { concurrency: 4 },
@@ -1728,7 +1728,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["diff", "--patch", "--minimal", "HEAD", "--"],
       {
         maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-        truncateOutputAtMaxBytes: true,
+        appendTruncationMarker: true,
       },
     ).pipe(
       Effect.catch(() =>
@@ -1756,7 +1756,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ["diff", "--patch", "--minimal", `${baseRef}...HEAD`],
             {
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-              truncateOutputAtMaxBytes: true,
+              appendTruncationMarker: true,
             },
           ).pipe(
             Effect.catch(() =>

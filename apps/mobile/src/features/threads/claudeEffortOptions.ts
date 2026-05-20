@@ -1,5 +1,3 @@
-import type { ClaudeAgentEffort } from "@t3tools/contracts";
-
 export const CLAUDE_AGENT_EFFORT_OPTIONS = [
   "low",
   "medium",
@@ -7,4 +5,6 @@ export const CLAUDE_AGENT_EFFORT_OPTIONS = [
   "xhigh",
   "max",
   "ultrathink",
-] as const satisfies readonly ClaudeAgentEffort[];
+] as const;
+
+export type ClaudeAgentEffort = (typeof CLAUDE_AGENT_EFFORT_OPTIONS)[number];

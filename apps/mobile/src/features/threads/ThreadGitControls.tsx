@@ -84,23 +84,23 @@ export function ThreadGitControls(props: {
   }>();
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
-  const currentBranchLabel = gitStatus?.branch ?? props.currentBranch ?? "Detached HEAD";
+  const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus?.isRepo ?? true;
-  const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
-  const isDefaultBranch = gitStatus?.isDefaultBranch ?? false;
+  const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
+  const isDefaultRef = gitStatus?.isDefaultRef ?? false;
 
   const quickAction = useMemo(
     () =>
       isRepo
-        ? resolveQuickAction(gitStatus, busy, isDefaultBranch, hasOriginRemote)
+        ? resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote)
         : {
             label: "Git unavailable",
             disabled: true,
             kind: "show_hint" as const,
             hint: "This workspace is not a git repository.",
           },
-    [busy, gitStatus, hasOriginRemote, isDefaultBranch, isRepo],
+    [busy, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo],
   );
 
   const quickActionHint = quickAction.disabled
@@ -143,12 +143,12 @@ export function ThreadGitControls(props: {
         input.action === "commit_push_pr"
           ? input.action
           : null;
-      const branchName = gitStatus?.branch;
+      const branchName = gitStatus?.refName;
       if (
         branchName &&
         confirmableAction &&
         !input.featureBranch &&
-        requiresDefaultBranchConfirmation(input.action, isDefaultBranch)
+        requiresDefaultBranchConfirmation(input.action, isDefaultRef)
       ) {
         router.push({
           pathname: "/threads/[environmentId]/[threadId]/git-confirm",
@@ -167,7 +167,7 @@ export function ThreadGitControls(props: {
 
       await onRunAction(input);
     },
-    [environmentId, gitStatus, isDefaultBranch, onRunAction, router, threadId],
+    [environmentId, gitStatus, isDefaultRef, onRunAction, router, threadId],
   );
 
   const runQuickAction = useCallback(async () => {

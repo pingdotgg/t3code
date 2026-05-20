@@ -1,5 +1,8 @@
 import { WsRpcGroup } from "@t3tools/contracts";
-import { Duration, Effect, Layer, Schedule } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -10,6 +13,8 @@ import {
 } from "./reconnectBackoff.ts";
 
 export interface WsProtocolLifecycleHandlers {
+  readonly getConnectionLabel?: () => string | null;
+  readonly getVersionMismatchHint?: () => string | null;
   readonly onAttempt?: (socketUrl: string) => void;
   readonly onOpen?: () => void;
   readonly onError?: (message: string) => void;
@@ -64,6 +69,8 @@ function defaultLifecycleHandlers(): Required<WsProtocolLifecycleHandlers> {
     onOpen: () => undefined,
     onError: () => undefined,
     onClose: () => undefined,
+    getConnectionLabel: () => null,
+    getVersionMismatchHint: () => null,
   };
 }
 
@@ -79,6 +86,10 @@ function resolveLifecycleHandlers(
   }
 
   return {
+    getConnectionLabel: () =>
+      handlers?.getConnectionLabel?.() ?? telemetryLifecycle.getConnectionLabel?.() ?? null,
+    getVersionMismatchHint: () =>
+      handlers?.getVersionMismatchHint?.() ?? telemetryLifecycle.getVersionMismatchHint?.() ?? null,
     onAttempt: (socketUrl) => {
       telemetryLifecycle.onAttempt?.(socketUrl);
       handlers?.onAttempt?.(socketUrl);

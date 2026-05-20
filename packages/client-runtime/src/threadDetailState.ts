@@ -1,6 +1,10 @@
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import type {
   OrchestrationThread,
   OrchestrationThreadStreamItem,
@@ -48,15 +52,16 @@ interface ThreadDetailEntry {
   retainCount: number;
   teardown: () => void;
   lastAccessedAt: number;
-  evictionTimeoutId: ReturnType<typeof setTimeout> | null;
+  evictionFiber: Fiber.Fiber<void, never> | null;
 }
 
 const NOOP: () => void = () => undefined;
+const nowMs = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
 
 function clearEntryEviction(entry: ThreadDetailEntry): void {
-  if (entry.evictionTimeoutId !== null) {
-    clearTimeout(entry.evictionTimeoutId);
-    entry.evictionTimeoutId = null;
+  if (entry.evictionFiber !== null) {
+    Effect.runFork(Fiber.interrupt(entry.evictionFiber));
+    entry.evictionFiber = null;
   }
 }
 
@@ -202,19 +207,25 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
       return;
     }
 
-    entry.evictionTimeoutId = setTimeout(() => {
-      const current = entries.get(targetKey);
-      if (!current) {
-        return;
-      }
+    entry.evictionFiber = Effect.runFork(
+      Effect.sleep(Duration.millis(retention.idleTtlMs)).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const current = entries.get(targetKey);
+            if (!current) {
+              return;
+            }
 
-      current.evictionTimeoutId = null;
-      if (current.watcherCount > 0 || current.retainCount > 0 || shouldKeepWarm(current)) {
-        return;
-      }
+            current.evictionFiber = null;
+            if (current.watcherCount > 0 || current.retainCount > 0 || shouldKeepWarm(current)) {
+              return;
+            }
 
-      disposeEntry(targetKey);
-    }, retention.idleTtlMs);
+            disposeEntry(targetKey);
+          }),
+        ),
+      ),
+    );
   }
 
   function reconcileRetention(targetKey: string): void {
@@ -339,7 +350,7 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     const existing = entries.get(targetKey);
     if (existing) {
       clearEntryEviction(existing);
-      existing.lastAccessedAt = Date.now();
+      existing.lastAccessedAt = nowMs();
       if (kind === "watcher") {
         existing.watcherCount += 1;
       } else {
@@ -371,8 +382,8 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
       watcherCount: kind === "watcher" ? 1 : 0,
       retainCount: kind === "retain" ? 1 : 0,
       teardown,
-      lastAccessedAt: Date.now(),
-      evictionTimeoutId: null,
+      lastAccessedAt: nowMs(),
+      evictionFiber: null,
     });
     evictIdleEntriesToCapacity();
     return () => release(targetKey, kind);
@@ -389,7 +400,7 @@ export function createThreadDetailManager(config: ThreadDetailManagerConfig) {
     } else {
       entry.retainCount = Math.max(0, entry.retainCount - 1);
     }
-    entry.lastAccessedAt = Date.now();
+    entry.lastAccessedAt = nowMs();
     reconcileRetention(targetKey);
   }
 

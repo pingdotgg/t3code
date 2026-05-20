@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   CheckpointRef,
-  CommandId,
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import type { OrchestrationEvent, OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadDetailReducer.ts";
 
@@ -25,7 +25,7 @@ const baseThread: OrchestrationThread = {
   id: ThreadId.make("thread-1"),
   projectId: ProjectId.make("project-1"),
   title: "Test Thread",
-  modelSelection: { provider: "codex", model: "gpt-5.4" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
   interactionMode: "default",
   branch: null,
@@ -81,7 +81,7 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-2"),
           projectId: ProjectId.make("project-1"),
           title: "New Thread",
-          modelSelection: { provider: "codex", model: "gpt-5.4" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: "main",

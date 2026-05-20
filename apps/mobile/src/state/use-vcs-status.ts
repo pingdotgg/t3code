@@ -32,7 +32,7 @@ export const vcsStatusManager = createVcsStatusManager({
   getRegistry: () => appAtomRegistry,
   getClient: (environmentId) => {
     const client = getEnvironmentClient(environmentId);
-    return client ? client.git : null;
+    return client ? client.vcs : null;
   },
   getClientIdentity: (environmentId) => {
     return getEnvironmentClient(environmentId) ? environmentId : null;

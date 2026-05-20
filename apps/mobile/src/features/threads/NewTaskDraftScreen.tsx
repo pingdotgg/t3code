@@ -23,6 +23,18 @@ import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useProjectActions } from "./use-project-actions";
 
+function withModelSelectionOption(
+  selection: ModelSelection,
+  id: string,
+  value: string | boolean | undefined,
+): ModelSelection {
+  const options = (selection.options ?? []).filter((option) => option.id !== id);
+  return {
+    ...selection,
+    options: value === undefined ? options : [...options, { id, value }],
+  };
+}
+
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -102,7 +114,7 @@ export function NewTaskDraftScreen(props: {
         subtitle: group.models.find(
           (model) =>
             flow.selectedModel &&
-            model.selection.provider === flow.selectedModel.provider &&
+            model.selection.instanceId === flow.selectedModel.instanceId &&
             model.selection.model === flow.selectedModel.model,
         )?.label,
         subactions: group.models.map((option) => ({
@@ -110,7 +122,7 @@ export function NewTaskDraftScreen(props: {
           title: option.label,
           state:
             flow.selectedModel &&
-            option.selection.provider === flow.selectedModel.provider &&
+            option.selection.instanceId === flow.selectedModel.instanceId &&
             option.selection.model === flow.selectedModel.model
               ? ("on" as const)
               : undefined,
@@ -345,17 +357,18 @@ export function NewTaskDraftScreen(props: {
     flow.setSubmitting(true);
     try {
       const modelWithOptions: ModelSelection =
-        flow.selectedModel.provider === "claudeAgent"
-          ? {
-              ...flow.selectedModel,
-              options: {
-                effort: flow.effort,
-                fastMode: flow.fastMode || undefined,
-                contextWindow: flow.contextWindow,
-              },
-            }
-          : flow.selectedModel.provider === "codex"
-            ? { ...flow.selectedModel, options: { fastMode: flow.fastMode || undefined } }
+        flow.selectedModelOption?.providerDriver === "claudeAgent"
+          ? withModelSelectionOption(
+              withModelSelectionOption(
+                withModelSelectionOption(flow.selectedModel, "effort", flow.effort),
+                "fastMode",
+                flow.fastMode || undefined,
+              ),
+              "contextWindow",
+              flow.contextWindow,
+            )
+          : flow.selectedModelOption?.providerDriver === "codex"
+            ? withModelSelectionOption(flow.selectedModel, "fastMode", flow.fastMode || undefined)
             : flow.selectedModel;
 
       const createdThread = await onCreateThreadWithOptions({

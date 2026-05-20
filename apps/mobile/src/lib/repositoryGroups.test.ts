@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import { groupProjectsByRepository } from "./repositoryGroups";
 import {
@@ -84,7 +84,7 @@ describe("groupProjectsByRepository", () => {
         id: ThreadId.make("thread-2"),
         projectId: ProjectId.make("project-staging"),
         title: "Fix reconnect flow",
-        modelSelection: { provider: "codex", model: "gpt-5.4" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         updatedAt: "2026-04-02T12:00:00.000Z",
       }),
       makeThread({
@@ -92,7 +92,7 @@ describe("groupProjectsByRepository", () => {
         id: ThreadId.make("thread-1"),
         projectId: ProjectId.make("project-local"),
         title: "Polish mobile shell",
-        modelSelection: { provider: "codex", model: "gpt-5.4" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         updatedAt: "2026-04-03T12:00:00.000Z",
       }),
     ];

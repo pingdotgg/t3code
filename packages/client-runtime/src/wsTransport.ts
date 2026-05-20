@@ -1,4 +1,11 @@
-import { Cause, Duration, Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { RpcClient } from "effect/unstable/rpc";
 
 import { isTransportConnectionErrorMessage } from "./transportError.ts";
@@ -165,16 +172,18 @@ export class WsTransport {
 
           const formattedError = formatErrorMessage(error);
           if (!isTransportConnectionErrorMessage(formattedError)) {
-            console.warn("WebSocket RPC subscription failed", {
-              error: formattedError,
-            });
+            Effect.runSync(
+              Effect.logWarning("WebSocket RPC subscription failed", { error: formattedError }),
+            );
             return;
           }
 
           if (!this.hasReportedTransportDisconnect) {
-            console.warn("WebSocket RPC subscription disconnected", {
-              error: formattedError,
-            });
+            Effect.runSync(
+              Effect.logWarning("WebSocket RPC subscription disconnected", {
+                error: formattedError,
+              }),
+            );
           }
           this.hasReportedTransportDisconnect = true;
           await sleep(retryDelayMs);
@@ -298,7 +307,5 @@ export class WsTransport {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  return Effect.runPromise(Effect.sleep(Duration.millis(ms)));
 }

@@ -11,7 +11,6 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import NodePath from "node:path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -181,8 +180,8 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
   }
   const firstToken = (trimmed.split(/\s+/)[0] ?? trimmed).trim();
   if (firstToken.length === 0) return null;
-  const base =
-    platform === "win32" ? NodePath.win32.basename(firstToken) : NodePath.basename(firstToken);
+  const separators = platform === "win32" ? /[\\/]/ : /\//;
+  const base = firstToken.split(separators).at(-1) ?? firstToken;
   const withoutExe =
     platform === "win32" && base.toLowerCase().endsWith(".exe") ? base.slice(0, -4) : base;
   return withoutExe.length > 0 ? withoutExe : null;
@@ -280,7 +279,7 @@ function advanceEventSequence(session: TerminalSessionState): {
   readonly updatedAt: string;
   readonly sequence: number;
 } {
-  const updatedAt = new Date().toISOString();
+  const updatedAt = DateTime.formatIso(DateTime.nowUnsafe());
   session.eventSequence += 1;
   session.updatedAt = updatedAt;
   return { updatedAt, sequence: session.eventSequence };
@@ -671,9 +670,7 @@ const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(func
   };
 });
 
-function defaultSubprocessInspectorForPlatform(
-  platform: NodeJS.Platform,
-): TerminalSubprocessInspector {
+function defaultSubprocessInspectorForPlatform(platform: NodeJS.Platform) {
   return Effect.fn("terminal.defaultSubprocessInspector")(function* (terminalPid: number) {
     if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
       return { hasRunningSubprocess: false, childCommand: null };
@@ -1403,7 +1400,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       expectedPid: number,
     ) {
       while (true) {
-        const updatedAt = yield* nowIso;
         const action: DrainProcessEventAction = yield* Effect.sync(() => {
           if (session.pid !== expectedPid || !session.process || session.status !== "running") {
             session.pendingProcessEvents = [];
@@ -1489,7 +1485,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             yield* queuePersist(action.threadId, action.terminalId, action.history);
           }
 
-          const createdAt = yield* nowIso;
           yield* publishEvent({
             type: "output",
             threadId: action.threadId,
@@ -1501,7 +1496,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         }
 
         yield* clearKillFiber(action.process);
-        const createdAt = yield* nowIso;
         yield* publishEvent({
           type: "exited",
           threadId: action.threadId,
@@ -1671,7 +1665,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 return [undefined, state] as const;
               });
 
-              const createdAt = yield* nowIso;
               yield* publishEvent({
                 type: eventType,
                 threadId: session.threadId,
@@ -1693,7 +1686,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         if (ptyProcess) {
           yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
         }
-        const erroredAt = yield* nowIso;
 
         yield* modifyManagerState((state) => {
           session.status = "error";
@@ -1713,7 +1705,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         yield* evictInactiveSessionsIfNeeded();
 
         const message = error.message;
-        const createdAt = yield* nowIso;
         yield* publishEvent({
           type: "error",
           threadId: session.threadId,
@@ -1916,7 +1907,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           processEventDrainRunning: false,
           exitCode: null,
           exitSignal: null,
-          updatedAt: new Date().toISOString(),
+          updatedAt: yield* nowIso,
           eventSequence: 0,
           cols,
           rows,
@@ -2007,7 +1998,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
         liveSession.cols = targetCols;
         liveSession.rows = targetRows;
-        liveSession.updatedAt = new Date().toISOString();
+        liveSession.updatedAt = yield* nowIso;
         liveSession.process.resize(targetCols, targetRows);
       }
 
@@ -2058,7 +2049,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           ) {
             session.cols = targetCols;
             session.rows = targetRows;
-            session.updatedAt = new Date().toISOString();
+            session.updatedAt = yield* nowIso;
             yield* Effect.sync(() => session.process?.resize(targetCols, targetRows));
           }
 
@@ -2272,7 +2263,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         Effect.gen(function* () {
           const terminalId = input.terminalId;
           const session = yield* requireSession(input.threadId, terminalId);
-          const updatedAt = yield* nowIso;
           session.history = "";
           session.pendingHistoryControlSequence = "";
           session.pendingProcessEvents = [];
@@ -2280,7 +2270,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           session.processEventDrainRunning = false;
           const eventStamp = advanceEventSequence(session);
           yield* persistHistory(input.threadId, terminalId, session.history);
-          const createdAt = yield* nowIso;
           yield* publishEvent({
             type: "cleared",
             threadId: input.threadId,
@@ -2304,7 +2293,6 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           if (Option.isNone(existingSession)) {
             const cols = input.cols ?? DEFAULT_OPEN_COLS;
             const rows = input.rows ?? DEFAULT_OPEN_ROWS;
-            const createdAt = yield* nowIso;
             session = {
               threadId: input.threadId,
               terminalId,
@@ -2319,7 +2307,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               processEventDrainRunning: false,
               exitCode: null,
               exitSignal: null,
-              updatedAt: new Date().toISOString(),
+              updatedAt: yield* nowIso,
               eventSequence: 0,
               cols,
               rows,

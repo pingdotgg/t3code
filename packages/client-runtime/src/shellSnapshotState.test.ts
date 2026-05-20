@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
@@ -37,7 +38,7 @@ const BASE_SNAPSHOT: OrchestrationShellSnapshot = {
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-1"),
       title: "Thread",
-      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,

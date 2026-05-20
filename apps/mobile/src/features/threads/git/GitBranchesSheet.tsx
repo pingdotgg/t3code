@@ -32,7 +32,7 @@ export function GitBranchesSheet() {
     cwd: selectedThreadCwd,
   });
 
-  const currentBranchLabel = gitStatus.data?.branch ?? selectedThread?.branch ?? "Detached HEAD";
+  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentWorktreePath = selectedThreadWorktreePath;
   const availableBranches = gitState.selectedThreadBranches;
   const branchesLoading = gitState.selectedThreadBranchesLoading;

@@ -81,10 +81,12 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
   const stubWsClient: WsRpcClient = {
     dispose: async () => undefined,
     reconnect: async () => undefined,
+    isHeartbeatFresh: () => false,
     orchestration: {
       dispatchCommand: vi.fn(),
       getTurnDiff: vi.fn(),
       getFullThreadDiff: vi.fn(),
+      getArchivedShellSnapshot: vi.fn(),
       subscribeShell: vi.fn(() => () => undefined),
       subscribeThread: mockSubscribeThread,
     },
@@ -96,6 +98,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       clear: vi.fn(),
       restart: vi.fn(),
       close: vi.fn(),
+      onEvent: vi.fn(() => () => undefined),
       onMetadata: vi.fn(() => () => undefined),
     },
     projects: {
@@ -105,20 +108,27 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     filesystem: {
       browse: vi.fn(),
     },
+    sourceControl: {
+      lookupRepository: vi.fn(),
+      cloneRepository: vi.fn(),
+      publishRepository: vi.fn(),
+    },
     shell: {
       openInEditor: vi.fn(),
     },
-    git: {
+    vcs: {
       pull: vi.fn(),
       refreshStatus: vi.fn(),
       onStatus: vi.fn(() => () => undefined),
-      runStackedAction: vi.fn(),
-      listBranches: vi.fn(),
+      listRefs: vi.fn(),
       createWorktree: vi.fn(),
       removeWorktree: vi.fn(),
-      createBranch: vi.fn(),
-      checkout: vi.fn(),
+      createRef: vi.fn(),
+      switchRef: vi.fn(),
       init: vi.fn(),
+    },
+    git: {
+      runStackedAction: vi.fn(),
       resolvePullRequest: vi.fn(),
       preparePullRequestThread: vi.fn(),
     },
@@ -128,12 +138,19 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     server: {
       getConfig: vi.fn(),
       refreshProviders: vi.fn(),
+      discoverSourceControl: vi.fn(),
+      updateProvider: vi.fn(),
       upsertKeybinding: vi.fn(),
+      removeKeybinding: vi.fn(),
       getSettings: vi.fn(),
       updateSettings: vi.fn(),
       subscribeConfig: vi.fn(() => () => undefined),
       subscribeLifecycle: vi.fn(() => () => undefined),
       subscribeAuthAccess: vi.fn(() => () => undefined),
+      getTraceDiagnostics: vi.fn(),
+      getProcessDiagnostics: vi.fn(),
+      getProcessResourceHistory: vi.fn(),
+      signalProcess: vi.fn(),
     },
   };
   return {

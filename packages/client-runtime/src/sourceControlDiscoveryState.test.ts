@@ -29,7 +29,6 @@ const GITHUB_RESULT: SourceControlDiscoveryResult = {
     {
       kind: "github",
       label: "GitHub",
-      implemented: true,
       status: "available",
       version: Option.some("2.85.0"),
       installHint: "Install GitHub CLI.",
