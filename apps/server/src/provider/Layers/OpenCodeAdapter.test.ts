@@ -63,6 +63,9 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventDirectory: process.cwd(),
+    globalEventCalls: 0,
+    keepSubscriptionOpen: false,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -76,8 +79,20 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventDirectory = process.cwd();
+    this.state.globalEventCalls = 0;
+    this.state.keepSubscriptionOpen = false;
   },
 };
+
+function toGlobalEvent(event: unknown, directory: string): unknown {
+  return event && typeof event === "object" && "payload" in event
+    ? event
+    : {
+        directory,
+        payload: event,
+      };
+}
 
 const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
@@ -158,14 +173,33 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               : runtimeMock.state.messages;
         },
       },
+      global: {
+        event: async (options?: { signal?: AbortSignal }) => {
+          runtimeMock.state.globalEventCalls += 1;
+          return {
+            stream: (async function* () {
+              let index = 0;
+              while (!options?.signal?.aborted) {
+                if (index < runtimeMock.state.subscribedEvents.length) {
+                  yield toGlobalEvent(
+                    runtimeMock.state.subscribedEvents[index++],
+                    runtimeMock.state.subscribedEventDirectory,
+                  );
+                  continue;
+                }
+                if (!runtimeMock.state.keepSubscriptionOpen) {
+                  break;
+                }
+                await Effect.runPromise(Effect.sleep("5 millis"));
+              }
+            })(),
+          };
+        },
+      },
       event: {
-        subscribe: async () => ({
-          stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
-            }
-          })(),
-        }),
+        subscribe: async () => {
+          throw new Error("OpenCodeAdapter should use global.event for runtime events");
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -650,6 +684,78 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const completed = events.at(-1);
       if (completed?.type === "item.completed") {
         assert.equal(completed.payload.detail, "A BBonus");
+      }
+    }),
+  );
+
+  it.effect("streams current OpenCode global event payloads for the session directory", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-current-event-shape");
+      runtimeMock.state.keepSubscriptionOpen = true;
+      runtimeMock.state.subscribedEventDirectory = "/repo/current-event-shape";
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.filter((event) => event.type === "content.delta"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        cwd: "/repo/current-event-shape",
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Fix it",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-assistant-current-shape",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "prt-assistant-current-shape",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-assistant-current-shape",
+              type: "text",
+              text: "Hello",
+              time: {
+                start: 1_778_000_000_000,
+              },
+            },
+          },
+        },
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["content.delta"],
+      );
+      assert.equal(runtimeMock.state.globalEventCalls, 1);
+      const delta = events.find((event) => event.type === "content.delta");
+      assert.equal(delta?.turnId, turn.turnId);
+      if (delta?.type === "content.delta") {
+        assert.equal(delta.payload.delta, "Hello");
       }
     }),
   );
