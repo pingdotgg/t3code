@@ -1,11 +1,9 @@
 "use client";
 
 import {
+  AlertTriangleIcon,
   ArrowUpCircleIcon,
   ChevronDownIcon,
-  CopyIcon,
-  DownloadIcon,
-  LoaderIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -28,19 +26,20 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ProviderUpdateActionPopover } from "../ProviderUpdateActionPopover";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
+  getProviderCompatibilityUpdateCommand,
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
+  getProviderCompatibilityAdvisoryPresentation,
   getProviderSummary,
   getProviderVersionLabel,
   type ProviderStatusKey,
@@ -56,6 +55,8 @@ const PROVIDER_ACCENT_SWATCHES = [
 ] as const;
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const ADVISORY_ICON_CLUSTER_CLASS = "-my-0.5 inline-flex h-5 shrink-0 items-center gap-2";
+const ADVISORY_ICON_SLOT_CLASS = "inline-flex size-5 shrink-0 items-center justify-center";
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -421,6 +422,8 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onRunCompatibilityUpdate?: (() => void) | undefined;
+  readonly isCompatibilityUpdating?: boolean | undefined;
 }
 
 /**
@@ -465,6 +468,8 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onRunCompatibilityUpdate,
+  isCompatibilityUpdating = false,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -482,8 +487,13 @@ export function ProviderInstanceCard({
     : null;
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  const compatibilityAdvisory = getProviderCompatibilityAdvisoryPresentation(
+    liveProvider?.compatibilityAdvisory,
+  );
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const hasProviderAdvisoryIcons = compatibilityAdvisory !== null || versionAdvisory !== null;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const compatibilityUpdateCommand = getProviderCompatibilityUpdateCommand(liveProvider);
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -677,101 +687,97 @@ export function ProviderInstanceCard({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               {titleHeadNode}
-              {versionCodeNode}
-              {versionAdvisory ? (
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        className={cn(
-                          "size-5 rounded-sm p-0",
-                          versionAdvisory.emphasis === "strong"
-                            ? "text-warning hover:text-warning"
-                            : "text-primary hover:text-primary",
-                        )}
-                        aria-label="Update available — view details"
-                      >
-                        <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
-                      </Button>
-                    }
-                  />
-                  <PopoverPopup
-                    side="bottom"
-                    align="start"
-                    className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
-                  >
-                    <div className="grid min-w-0 gap-3">
-                      <div className="grid gap-0.5">
-                        <p className="text-[13px] font-semibold leading-tight text-foreground">
-                          Update available
-                        </p>
-                        <p
-                          className={cn(
-                            "text-xs leading-snug",
-                            versionAdvisory.emphasis === "strong"
-                              ? "text-warning"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {versionAdvisory.detail}
-                        </p>
-                      </div>
-                      {onRunUpdate ? (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="default"
-                          className="w-full"
-                          disabled={isUpdating}
-                          onClick={onRunUpdate}
-                        >
-                          {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
-                          {isUpdating ? "Updating" : "Update now"}
-                        </Button>
-                      ) : null}
-                      {onRunUpdate && updateCommand ? (
-                        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          <span aria-hidden className="h-px flex-1 bg-border" />
-                          or, update manually using
-                          <span aria-hidden className="h-px flex-1 bg-border" />
-                        </div>
-                      ) : null}
-                      {updateCommand ? (
-                        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
-                            <code className="flex h-full w-max items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
-                              {updateCommand}
-                            </code>
-                          </ScrollArea>
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                                  onClick={() =>
-                                    copyToClipboard(updateCommand, {
-                                      providerName: displayName,
-                                    })
-                                  }
-                                  aria-label="Copy update command"
-                                >
-                                  <CopyIcon className="size-3" />
-                                </Button>
-                              }
-                            />
-                            <TooltipPopup side="top">Copy command</TooltipPopup>
-                          </Tooltip>
-                        </div>
-                      ) : null}
-                    </div>
-                  </PopoverPopup>
-                </Popover>
+              {versionCodeNode || hasProviderAdvisoryIcons ? (
+                <span className={ADVISORY_ICON_CLUSTER_CLASS}>
+                  {versionCodeNode}
+                  {compatibilityAdvisory ? (
+                    <span className={ADVISORY_ICON_SLOT_CLASS}>
+                      <ProviderUpdateActionPopover
+                        trigger={
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="ghost"
+                            className={cn(
+                              "size-5 rounded-sm p-0",
+                              compatibilityAdvisory.emphasis === "strong"
+                                ? "text-destructive hover:text-destructive"
+                                : "text-warning hover:text-warning",
+                            )}
+                            aria-label={`${compatibilityAdvisory.title} — view details`}
+                          >
+                            <AlertTriangleIcon className="size-3.5" />
+                          </Button>
+                        }
+                        title={compatibilityAdvisory.title}
+                        detail={
+                          <span
+                            className={
+                              compatibilityAdvisory.emphasis === "strong"
+                                ? "text-destructive"
+                                : "text-warning"
+                            }
+                          >
+                            {compatibilityAdvisory.detail}
+                          </span>
+                        }
+                        updateCommand={compatibilityUpdateCommand}
+                        canRunUpdate={onRunCompatibilityUpdate !== undefined}
+                        isUpdating={isCompatibilityUpdating}
+                        onRunUpdate={onRunCompatibilityUpdate}
+                        copyLabel="Copy compatibility update command"
+                        onCopyCommand={(command) =>
+                          copyToClipboard(command, {
+                            providerName: displayName,
+                          })
+                        }
+                      />
+                    </span>
+                  ) : null}
+                  {versionAdvisory ? (
+                    <span className={ADVISORY_ICON_SLOT_CLASS}>
+                      <ProviderUpdateActionPopover
+                        trigger={
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="ghost"
+                            className={cn(
+                              "size-5 rounded-sm p-0",
+                              versionAdvisory.emphasis === "strong"
+                                ? "text-warning hover:text-warning"
+                                : "text-primary hover:text-primary",
+                            )}
+                            aria-label="Update available — view details"
+                          >
+                            <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
+                          </Button>
+                        }
+                        title="Update available"
+                        detail={
+                          <span
+                            className={
+                              versionAdvisory.emphasis === "strong"
+                                ? "text-warning"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {versionAdvisory.detail}
+                          </span>
+                        }
+                        updateCommand={updateCommand}
+                        canRunUpdate={onRunUpdate !== undefined}
+                        isUpdating={isUpdating}
+                        onRunUpdate={onRunUpdate}
+                        onCopyCommand={(command) =>
+                          copyToClipboard(command, {
+                            providerName: displayName,
+                          })
+                        }
+                      />
+                    </span>
+                  ) : null}
+                </span>
               ) : null}
               {titleTailNode}
             </div>

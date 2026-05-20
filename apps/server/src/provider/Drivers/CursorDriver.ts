@@ -45,6 +45,7 @@ import {
   makeStaticProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
+import * as ProviderCompatibility from "../ProviderCompatibility.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -64,6 +65,7 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
+  | ProviderCompatibility.ProviderCompatibilityService
   | ProviderEventLoggers
   | ServerConfig;
 
@@ -97,6 +99,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const providerCompatibility = yield* ProviderCompatibility.ProviderCompatibilityService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -150,7 +153,13 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             publishSnapshot,
             stampIdentity,
             httpClient,
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(
+              ProviderCompatibility.ProviderCompatibilityService,
+              providerCompatibility,
+            ),
+          ),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

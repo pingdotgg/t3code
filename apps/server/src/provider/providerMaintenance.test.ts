@@ -13,6 +13,7 @@ import {
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
+  makeTargetedProviderUpdateAction,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "./providerMaintenance.ts";
@@ -129,6 +130,24 @@ describe("providerMaintenance", () => {
 
         lockKey: "static-tool",
       },
+    });
+  });
+
+  it("targets package install commands that omit an explicit latest suffix", () => {
+    expect(
+      makeTargetedProviderUpdateAction(
+        makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "vp",
+          updateArgs: ["i", "-g", "@example/package-tool"],
+          updateLockKey: "vite-plus-global",
+        }),
+        "1.2.3",
+      ),
+    ).toMatchObject({
+      command: "vp i -g @example/package-tool@1.2.3",
+      args: ["i", "-g", "@example/package-tool@1.2.3"],
     });
   });
 

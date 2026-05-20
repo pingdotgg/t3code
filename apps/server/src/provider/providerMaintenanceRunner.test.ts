@@ -288,6 +288,36 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("runs a targeted package update when a target version is supplied", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      yield* updater.updateProvider({
+        provider: CODEX_DRIVER,
+        targetVersion: "0.129.0",
+      });
+
+      assert.deepStrictEqual(calls, [
+        {
+          command: "npm",
+          args: ["install", "-g", "@openai/codex@0.129.0"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "runs update commands through Effect ChildProcess when no test runner is injected",
     () => {

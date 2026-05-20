@@ -71,4 +71,39 @@ describe("ServerProvider", () => {
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
   });
+
+  it("decodes provider compatibility advisories", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "0.128.0",
+      status: "error",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      compatibilityAdvisory: {
+        status: "broken",
+        severity: "error",
+        currentVersion: "0.128.0",
+        message: "Known incompatible.",
+        recommendedRange: ">=0.129.0",
+        recommendedVersion: "0.129.0",
+        ranges: [
+          {
+            status: "supported",
+            range: ">=0.129.0",
+            label: "Known working",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.compatibilityAdvisory?.status).toBe("broken");
+    expect(parsed.compatibilityAdvisory?.recommendedVersion).toBe("0.129.0");
+    expect(parsed.compatibilityAdvisory?.ranges).toHaveLength(1);
+  });
 });

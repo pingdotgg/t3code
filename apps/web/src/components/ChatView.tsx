@@ -22,10 +22,18 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
+  beginProviderCompatibilityUpdate,
+  canRunProviderCompatibilityUpdate,
+  createProviderCompatibilityUpdateTracker,
+  endProviderCompatibilityUpdate,
+  getProviderCompatibilityUpdateCommand,
+  getProviderCompatibilityUpdateRequest,
+  isProviderCompatibilityUpdateRunning,
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
+  stripProviderCompatibilityInstallHint,
 } from "@t3tools/client-runtime";
 import {
   applyClaudePromptEffortPrefix,
@@ -42,7 +50,7 @@ import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
-import { readLocalApi } from "../localApi";
+import { ensureLocalApi, readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
@@ -104,7 +112,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -150,7 +158,6 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
-import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
@@ -186,6 +193,7 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { Button } from "./ui/button";
+import { ProviderUpdateActionPopover } from "./ProviderUpdateActionPopover";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
@@ -200,6 +208,43 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
+function ProviderCompatibilityBannerAction({
+  providerLabel,
+  recommendedVersion,
+  updateCommand,
+  canRunUpdate,
+  updating,
+  onRunUpdate,
+}: {
+  readonly providerLabel: string;
+  readonly recommendedVersion: string;
+  readonly updateCommand: string | null;
+  readonly canRunUpdate: boolean;
+  readonly updating: boolean;
+  readonly onRunUpdate: () => void;
+}) {
+  return (
+    <ProviderUpdateActionPopover
+      trigger={
+        <Button type="button" size="xs" variant="outline">
+          Install {recommendedVersion}
+        </Button>
+      }
+      title={`Install compatible ${providerLabel}`}
+      detail={`Install provider harness version ${recommendedVersion}.`}
+      updateCommand={updateCommand}
+      canRunUpdate={canRunUpdate}
+      isUpdating={updating}
+      runLabel="Install now"
+      runningLabel="Installing"
+      onRunUpdate={onRunUpdate}
+      side="top"
+      align="end"
+    />
+  );
+}
+
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -1150,6 +1195,9 @@ export default function ChatView(props: ChatViewProps) {
   const [dismissedVersionMismatchKey, setDismissedVersionMismatchKey] = useState<string | null>(
     null,
   );
+  const [compatibilityUpdateTracker, setCompatibilityUpdateTracker] = useState(() =>
+    createProviderCompatibilityUpdateTracker(),
+  );
   const versionMismatchDismissed =
     versionMismatchDismissKey === dismissedVersionMismatchKey ||
     isVersionMismatchDismissed(versionMismatchDismissKey);
@@ -1178,8 +1226,117 @@ export default function ChatView(props: ChatViewProps) {
     savedEnvironmentRuntimeById,
     serverConfig?.environment.label,
   ]);
+  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const unlockedSelectedProvider = resolveSelectableProvider(
+    providerStatuses,
+    selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
+  );
+  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  // Prefer an instance-id match so a custom Codex instance (e.g.
+  // `codex_personal`) surfaces its own status/message in the banner rather
+  // than the default Codex's. Falls back to first-match-by-kind when no
+  // saved instance id is available or the instance no longer exists.
+  const activeProviderInstanceId =
+    composerActiveProvider ??
+    activeThread?.session?.providerInstanceId ??
+    activeThread?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
+  const activeProviderStatus = useMemo(() => {
+    if (activeProviderInstanceId) {
+      return (
+        providerStatuses.find((status) => status.instanceId === activeProviderInstanceId) ?? null
+      );
+    }
+    const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
+    return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
+  }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const runActiveProviderCompatibilityUpdate = useCallback(async () => {
+    const provider = activeProviderStatus;
+    const request = getProviderCompatibilityUpdateRequest(provider);
+    if (!provider || !request) {
+      return;
+    }
+
+    let started = false;
+    setCompatibilityUpdateTracker((previous) => {
+      const result = beginProviderCompatibilityUpdate(previous, provider);
+      started = result.started;
+      return result.tracker;
+    });
+    if (!started) {
+      return;
+    }
+
+    try {
+      await ensureLocalApi().server.updateProvider(request);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not update ${provider.displayName ?? provider.driver}`,
+          description:
+            error instanceof Error
+              ? error.message
+              : "The provider update command could not be started.",
+        }),
+      );
+    } finally {
+      setCompatibilityUpdateTracker((current) => endProviderCompatibilityUpdate(current, provider));
+    }
+  }, [activeProviderStatus]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
+    if (
+      activeProviderStatus &&
+      activeProviderStatus.status !== "ready" &&
+      activeProviderStatus.status !== "disabled"
+    ) {
+      const defaultMessage =
+        activeProviderStatus.status === "error"
+          ? "Provider is unavailable."
+          : "Provider needs attention.";
+      const recommendedVersion =
+        activeProviderStatus.compatibilityAdvisory?.recommendedVersion ?? null;
+      const compatibilityUpdateCommand =
+        getProviderCompatibilityUpdateCommand(activeProviderStatus);
+      const canRunCompatibilityUpdate = canRunProviderCompatibilityUpdate(activeProviderStatus);
+      const compatibilityUpdating = isProviderCompatibilityUpdateRunning(
+        compatibilityUpdateTracker,
+        activeProviderStatus,
+      );
+      const hasCompatibilityInstallAction =
+        activeProviderStatus.compatibilityAdvisory?.status !== "supported" &&
+        recommendedVersion !== null &&
+        (canRunCompatibilityUpdate || compatibilityUpdateCommand !== null);
+      const rawMessage = activeProviderStatus.message ?? defaultMessage;
+      const message = hasCompatibilityInstallAction
+        ? stripProviderCompatibilityInstallHint(rawMessage, recommendedVersion)
+        : rawMessage;
+      const providerLabel = activeProviderStatus.displayName ?? activeProviderStatus.driver;
+      items.push({
+        id: `provider-status:${activeProviderStatus.instanceId}:${activeProviderStatus.status}`,
+        variant: activeProviderStatus.status === "error" ? "error" : "warning",
+        icon: <CircleAlertIcon />,
+        title: `${providerLabel} provider status`,
+        description: (
+          <span className="line-clamp-3" title={message}>
+            {message}
+          </span>
+        ),
+        actions:
+          hasCompatibilityInstallAction && recommendedVersion ? (
+            <ProviderCompatibilityBannerAction
+              providerLabel={providerLabel}
+              recommendedVersion={recommendedVersion}
+              updateCommand={compatibilityUpdateCommand}
+              canRunUpdate={canRunCompatibilityUpdate}
+              updating={compatibilityUpdating}
+              onRunUpdate={() => void runActiveProviderCompatibilityUpdate()}
+            />
+          ) : undefined,
+      });
+    }
     if (activeEnvironmentUnavailableState) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
@@ -1248,20 +1405,17 @@ export default function ChatView(props: ChatViewProps) {
     return items;
   }, [
     activeEnvironmentUnavailableState,
+    activeProviderStatus,
+    compatibilityUpdateTracker,
     handleReconnectActiveEnvironment,
     navigate,
     reconnectingEnvironmentId,
+    runActiveProviderCompatibilityUpdate,
     showVersionMismatchBanner,
     versionMismatch,
     versionMismatchDismissKey,
     versionMismatchServerLabel,
   ]);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const unlockedSelectedProvider = resolveSelectableProvider(
-    providerStatuses,
-    selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
-  );
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -1633,24 +1787,6 @@ export default function ChatView(props: ChatViewProps) {
   const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
-  // Prefer an instance-id match so a custom Codex instance (e.g.
-  // `codex_personal`) surfaces its own status/message in the banner rather
-  // than the default Codex's. Falls back to first-match-by-kind when no
-  // saved instance id is available or the instance no longer exists.
-  const activeProviderInstanceId =
-    activeThread?.session?.providerInstanceId ??
-    activeThread?.modelSelection.instanceId ??
-    activeProject?.defaultModelSelection?.instanceId ??
-    null;
-  const activeProviderStatus = useMemo(() => {
-    if (activeProviderInstanceId) {
-      return (
-        providerStatuses.find((status) => status.instanceId === activeProviderInstanceId) ?? null
-      );
-    }
-    const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
-    return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
-  }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3540,8 +3676,6 @@ export default function ChatView(props: ChatViewProps) {
         />
       </header>
 
-      {/* Error banner */}
-      <ProviderStatusBanner status={activeProviderStatus} />
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}

@@ -134,6 +134,42 @@ export const ServerProviderVersionAdvisory = Schema.Struct({
 });
 export type ServerProviderVersionAdvisory = typeof ServerProviderVersionAdvisory.Type;
 
+export const ServerProviderCompatibilityStatus = Schema.Literals([
+  "unknown",
+  "supported",
+  "graceful",
+  "unsupported",
+  "broken",
+]);
+export type ServerProviderCompatibilityStatus = typeof ServerProviderCompatibilityStatus.Type;
+
+export const ServerProviderCompatibilitySeverity = Schema.Literals(["info", "warning", "error"]);
+export type ServerProviderCompatibilitySeverity = typeof ServerProviderCompatibilitySeverity.Type;
+
+export const ServerProviderCompatibilityRange = Schema.Struct({
+  status: ServerProviderCompatibilityStatus,
+  range: TrimmedNonEmptyString,
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderCompatibilityRange = typeof ServerProviderCompatibilityRange.Type;
+
+export const ServerProviderCompatibilityAdvisory = Schema.Struct({
+  status: ServerProviderCompatibilityStatus,
+  severity: ServerProviderCompatibilitySeverity,
+  currentVersion: Schema.NullOr(TrimmedNonEmptyString),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedRange: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  updateCommand: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  canUpdate: Schema.optionalKey(Schema.Boolean),
+  ranges: Schema.Array(ServerProviderCompatibilityRange).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  preAdvisoryStatus: Schema.optionalKey(ServerProviderState),
+  preAdvisoryMessage: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
+
 export const ServerProviderUpdateStatus = Schema.Literals([
   "idle",
   "queued",
@@ -187,6 +223,7 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
+  compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
 export type ServerProvider = typeof ServerProvider.Type;
@@ -542,6 +579,7 @@ export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.T
 export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
   instanceId: Schema.optionalKey(ProviderInstanceId),
+  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 

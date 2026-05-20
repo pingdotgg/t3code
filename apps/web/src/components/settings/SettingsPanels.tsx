@@ -10,8 +10,16 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import {
+  beginProviderCompatibilityUpdate,
+  createProviderCompatibilityUpdateTracker,
+  endProviderCompatibilityUpdate,
+  getProviderCompatibilityUpdateRequest,
+  isProviderCompatibilityUpdateRunning,
+  scopeThreadRef,
+} from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
@@ -63,6 +71,10 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import {
+  canRunProviderCompatibilityUpdate,
+  getProviderCompatibilityUpdateCommand,
+} from "./providerStatus";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
@@ -923,6 +935,9 @@ export function ProviderSettingsPanel() {
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
+  const [compatibilityUpdateTracker, setCompatibilityUpdateTracker] = useState(() =>
+    createProviderCompatibilityUpdateTracker(),
+  );
   const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
   const refreshingRef = useRef(false);
 
@@ -1007,6 +1022,42 @@ export function ProviderSettingsPanel() {
         next.delete(candidate.driver);
         return next;
       });
+    }
+  }, []);
+
+  const runProviderCompatibilityUpdate = useCallback(async (provider: ServerProvider) => {
+    const request = getProviderCompatibilityUpdateRequest(provider);
+    if (!request) {
+      return;
+    }
+
+    let started = false;
+    setCompatibilityUpdateTracker((previous) => {
+      const result = beginProviderCompatibilityUpdate(previous, provider);
+      started = result.started;
+      return result.tracker;
+    });
+    if (!started) {
+      return;
+    }
+
+    try {
+      await ensureLocalApi().server.updateProvider(request);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not update ${PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver}`,
+          description:
+            error instanceof Error
+              ? error.message
+              : "The provider update command could not be started.",
+        }),
+      );
+    } finally {
+      setCompatibilityUpdateTracker((previous) =>
+        endProviderCompatibilityUpdate(previous, provider),
+      );
     }
   }, []);
 
@@ -1245,6 +1296,19 @@ export function ProviderSettingsPanel() {
             updateCandidate !== undefined &&
             canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
             !updatingProviderDrivers.has(updateCandidate.driver);
+          const compatibilityUpdateCommand = getProviderCompatibilityUpdateCommand(liveProvider);
+          const showInlineCompatibilityUpdateButton =
+            canRunProviderCompatibilityUpdate(liveProvider) &&
+            compatibilityUpdateCommand !== null &&
+            Boolean(liveProvider?.compatibilityAdvisory?.recommendedVersion);
+          const isCompatibilityUpdateRunning =
+            liveProvider !== undefined &&
+            (isProviderCompatibilityUpdateRunning(compatibilityUpdateTracker, liveProvider) ||
+              isProviderUpdateActive(liveProvider));
+          const canRunInlineCompatibilityUpdate =
+            showInlineCompatibilityUpdateButton &&
+            liveProvider !== undefined &&
+            !isCompatibilityUpdateRunning;
           const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
             hiddenModels: [],
             modelOrder: [],
@@ -1318,6 +1382,19 @@ export function ProviderSettingsPanel() {
                   : undefined
               }
               isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+              onRunCompatibilityUpdate={
+                showInlineCompatibilityUpdateButton && liveProvider
+                  ? () => {
+                      if (!canRunInlineCompatibilityUpdate) {
+                        return;
+                      }
+                      void runProviderCompatibilityUpdate(liveProvider);
+                    }
+                  : undefined
+              }
+              isCompatibilityUpdating={
+                showInlineCompatibilityUpdateButton ? isCompatibilityUpdateRunning : undefined
+              }
             />
           );
         })}

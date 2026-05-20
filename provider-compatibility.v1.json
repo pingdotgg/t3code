@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "policies": [
+    {
+      "t3CodeRange": ">=0.0.24",
+      "driver": "codex",
+      "recommendedRange": ">=0.129.0",
+      "recommendedVersion": "0.129.0",
+      "ranges": [
+        {
+          "status": "supported",
+          "range": ">=0.129.0",
+          "label": "Known working Codex app-server harness"
+        },
+        {
+          "status": "broken",
+          "range": "<0.129.0",
+          "label": "Known incompatible Codex app-server harness"
+        }
+      ]
+    },
+    {
+      "t3CodeRange": ">=0.0.24",
+      "driver": "claudeAgent",
+      "recommendedRange": ">=0.2.111",
+      "recommendedVersion": "0.2.111",
+      "ranges": [
+        {
+          "status": "supported",
+          "range": ">=0.2.111",
+          "label": "Known working Claude harness"
+        }
+      ]
+    },
+    {
+      "t3CodeRange": ">=0.0.24",
+      "driver": "opencode",
+      "recommendedRange": ">=1.14.19 <1.14.41",
+      "recommendedVersion": "1.14.40",
+      "ranges": [
+        {
+          "status": "broken",
+          "range": ">1.14.40",
+          "label": "Known incompatible OpenCode harness"
+        },
+        {
+          "status": "supported",
+          "range": ">=1.14.19 <=1.14.40",
+          "label": "Known working OpenCode harness"
+        },
+        {
+          "status": "broken",
+          "range": "<1.14.19",
+          "label": "Known incompatible OpenCode harness"
+        }
+      ]
+    },
+    {
+      "t3CodeRange": ">=0.0.24",
+      "driver": "cursor",
+      "recommendedRange": ">=2026.05.09",
+      "recommendedVersion": "2026.05.09",
+      "ranges": [
+        {
+          "status": "supported",
+          "range": ">=2026.05.09",
+          "label": "Known working Cursor harness"
+        },
+        {
+          "status": "unknown",
+          "range": "<2026.05.09",
+          "label": "Untested Cursor harness"
+        }
+      ]
+    }
+  ]
+}

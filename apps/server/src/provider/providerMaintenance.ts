@@ -108,6 +108,32 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   });
 }
 
+export function makeTargetedProviderUpdateAction(
+  capabilities: ProviderMaintenanceCapabilities,
+  targetVersion: string | null,
+): ProviderMaintenanceCommandAction | null {
+  if (!capabilities.update || !capabilities.packageName || !targetVersion) {
+    return null;
+  }
+
+  const versionedPackageArg = `${capabilities.packageName}@latest`;
+  const targetPackageArg = `${capabilities.packageName}@${targetVersion}`;
+  const packageArgIndex = capabilities.update.args.findIndex(
+    (arg) => arg === versionedPackageArg || arg === capabilities.packageName,
+  );
+  if (packageArgIndex < 0) {
+    return null;
+  }
+
+  const args = [...capabilities.update.args];
+  args[packageArgIndex] = targetPackageArg;
+  return {
+    ...capabilities.update,
+    args,
+    command: [capabilities.update.executable, ...args].join(" "),
+  };
+}
+
 function makeNpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {

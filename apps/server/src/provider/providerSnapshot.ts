@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import * as ProviderCompatibility from "./ProviderCompatibility.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
@@ -208,7 +209,7 @@ export function buildServerProvider(input: {
         checkedAt: input.checkedAt,
       })
     : undefined;
-  return {
+  const snapshot: ServerProviderDraft = {
     displayName: input.presentation.displayName,
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
@@ -226,6 +227,13 @@ export function buildServerProvider(input: {
     skills: [...(input.skills ?? [])],
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
+  return input.driver
+    ? ProviderCompatibility.applyBundledProviderCompatibilityAdvisory({
+        snapshot,
+        driver: input.driver,
+        currentVersion: input.probe.version,
+      })
+    : snapshot;
 }
 
 export const collectStreamAsString = <E>(
