@@ -1,7 +1,7 @@
 import { EventId, MessageId, ThreadId, TurnId, type OrchestrationEvent } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { collectCompletedAssistantMessage } from "./http.ts";
+import { cacheAssistantMessageForLifecycle, readCachedAssistantResponse } from "./http.ts";
 
 function assistantMessageEvent(input: {
   readonly eventId: string;
@@ -35,41 +35,35 @@ function assistantMessageEvent(input: {
   };
 }
 
-describe("execution bridge assistant message relay", () => {
-  it("waits for the provider-agnostic non-streaming completion event before relaying", () => {
+describe("execution bridge assistant response cache", () => {
+  it("caches streaming assistant text for the lifecycle completion callback", () => {
     const cache = new Map();
 
-    expect(
-      collectCompletedAssistantMessage({
-        cache,
-        event: assistantMessageEvent({
-          eventId: "event-1",
-          messageId: "message-1",
-          text: "Let me explore the repository",
-          streaming: true,
-          turnId: "turn-1",
-        }),
+    cacheAssistantMessageForLifecycle({
+      cache,
+      event: assistantMessageEvent({
+        eventId: "event-1",
+        messageId: "message-1",
+        text: "Let me explore the repository",
+        streaming: true,
+        turnId: "turn-1",
       }),
-    ).toBeUndefined();
+    });
 
     expect(
-      collectCompletedAssistantMessage({
+      readCachedAssistantResponse({
         cache,
-        event: assistantMessageEvent({
-          eventId: "event-2",
-          messageId: "message-1",
-          text: "",
-          streaming: false,
-          turnId: "turn-1",
-        }),
+        threadId: ThreadId.make("thread-1"),
+        assistantMessageId: "message-1",
+        turnId: TurnId.make("turn-1"),
       }),
     ).toBe("Let me explore the repository");
   });
 
-  it("relays multiple completed assistant messages from the same turn independently", () => {
+  it("keeps only the latest assistant response for a completed turn", () => {
     const cache = new Map();
 
-    collectCompletedAssistantMessage({
+    cacheAssistantMessageForLifecycle({
       cache,
       event: assistantMessageEvent({
         eventId: "event-1",
@@ -79,7 +73,7 @@ describe("execution bridge assistant message relay", () => {
         turnId: "turn-1",
       }),
     });
-    const first = collectCompletedAssistantMessage({
+    cacheAssistantMessageForLifecycle({
       cache,
       event: assistantMessageEvent({
         eventId: "event-2",
@@ -90,7 +84,7 @@ describe("execution bridge assistant message relay", () => {
       }),
     });
 
-    collectCompletedAssistantMessage({
+    cacheAssistantMessageForLifecycle({
       cache,
       event: assistantMessageEvent({
         eventId: "event-3",
@@ -100,7 +94,7 @@ describe("execution bridge assistant message relay", () => {
         turnId: "turn-1",
       }),
     });
-    const second = collectCompletedAssistantMessage({
+    cacheAssistantMessageForLifecycle({
       cache,
       event: assistantMessageEvent({
         eventId: "event-4",
@@ -111,7 +105,12 @@ describe("execution bridge assistant message relay", () => {
       }),
     });
 
-    expect(first).toBe("First message");
-    expect(second).toBe("Final answer");
+    expect(
+      readCachedAssistantResponse({
+        cache,
+        threadId: ThreadId.make("thread-1"),
+        turnId: TurnId.make("turn-1"),
+      }),
+    ).toBe("Final answer");
   });
 });

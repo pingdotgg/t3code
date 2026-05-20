@@ -1,13 +1,19 @@
 # Orchestrator Operations Runbook
 
-This runbook is for the current Vevin pilot topology:
+This runbook is for the current Vevin production topology:
 
-- Convex dev is the canonical live orchestrator deployment until production cutover.
+- Convex production is the canonical live orchestrator deployment.
 - Slack and GitHub webhooks point at the active Convex site URL.
 - Local T3 runs on this Windows machine and is exposed through Cloudflare at `https://t3.olumbe.com`.
 - `t3code-server` and `cloudflared-t3code` should both run as Windows services.
 
 Use this with `apps/orchestrator/AGENTS.md` and `docs/orchestrator-deployment.md`.
+
+Current production Convex site:
+
+```text
+https://basic-porcupine-321.convex.site
+```
 
 ## Fast Triage
 
@@ -15,7 +21,7 @@ Run the local production health check first:
 
 ```powershell
 cd C:\Users\Vivek\Affil\t3code
-$env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://scrupulous-fly-947.convex.site"
+$env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://basic-porcupine-321.convex.site"
 bun run health:orchestrator
 ```
 
@@ -142,7 +148,7 @@ bunx convex run taskEvents:listTaskEvents -- '{ "taskId": "<convex task id>", "l
 3. If no HTTP event exists, inspect local T3 logs and bridge callback env:
 
    ```text
-   ORCHESTRATOR_BASE_URL=https://scrupulous-fly-947.convex.site
+   ORCHESTRATOR_BASE_URL=https://basic-porcupine-321.convex.site
    T3_EXECUTION_BRIDGE_SHARED_SECRET=<same secret configured in Convex>
    ```
 
@@ -409,17 +415,17 @@ GitHub redelivery is safe for supported events because Slack delivery is guarded
 
 Use GitHub's webhook redelivery UI for a real replay. The orchestrator should record the redelivery in `orchestratorEvents` while suppressing duplicate Slack posts if the claim was already delivered.
 
-## Production Cutover Checklist
+## Production Configuration Checklist
 
-Use this checklist before moving Slack or GitHub webhooks away from the current Convex dev deployment.
+Use this checklist when verifying Slack, GitHub, and local T3 are all pointed at
+the production Convex deployment.
 
-### Before Cutover
+### Verify Production
 
-1. Confirm the target Convex deployment URL:
+1. Confirm the production Convex deployment URL:
 
    ```text
-   Current dev: https://scrupulous-fly-947.convex.site
-   Target prod: https://<production-convex-site>
+   Production: https://basic-porcupine-321.convex.site
    ```
 
 2. Set production Convex env vars:
@@ -436,73 +442,78 @@ Use this checklist before moving Slack or GitHub webhooks away from the current 
 
 4. Deploy the target Convex deployment.
 
-5. Configure local T3 to call the target Convex URL:
+5. Configure local T3 to call the production Convex URL:
 
    ```text
-   ORCHESTRATOR_BASE_URL=https://<production-convex-site>
+   ORCHESTRATOR_BASE_URL=https://basic-porcupine-321.convex.site
    T3_EXECUTION_BRIDGE_SHARED_SECRET=<same rotated bridge secret>
    ```
 
-6. Run health checks against the target deployment:
+6. Run health checks against production:
 
    ```powershell
    cd C:\Users\Vivek\Affil\t3code
-   $env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://<production-convex-site>"
+   $env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://basic-porcupine-321.convex.site"
    bun run health:orchestrator
    ```
 
-7. Save rollback values before editing any external app:
+7. Confirm Slack event/webhook URL:
 
    ```text
-   Slack rollback URL: https://scrupulous-fly-947.convex.site/slack/webhook
-   GitHub rollback URL: https://scrupulous-fly-947.convex.site/github/webhook
-   Local T3 rollback ORCHESTRATOR_BASE_URL: https://scrupulous-fly-947.convex.site
+   https://basic-porcupine-321.convex.site/slack/webhook
    ```
 
-### Cutover
-
-1. Update Slack event/webhook URL:
+8. Confirm the GitHub webhook URL on every coding target repo that Vevin creates
+   PRs against. The current required repo is:
 
    ```text
-   https://<production-convex-site>/slack/webhook
+   https://github.com/affil-ai/nextcard/settings/hooks
    ```
 
-2. Update GitHub webhook URL:
+   The webhook URL should be:
 
    ```text
-   https://<production-convex-site>/github/webhook
+   https://basic-porcupine-321.convex.site/github/webhook
    ```
 
-3. Confirm GitHub webhook events include:
+   Do not expect this webhook to exist on `affil-ai/t3code` unless Vevin is also
+   creating PRs against the orchestrator repo itself.
+
+9. Confirm each target-repo GitHub webhook uses content type `application/json`,
+   uses the same secret as Convex `GITHUB_WEBHOOK_SECRET`, and includes:
 
    ```text
    pull_request
    deployment_status
    ```
 
-4. Restart or reload local T3 if `ORCHESTRATOR_BASE_URL` or bridge secret changed.
+10. Restart or reload local T3 if `ORCHESTRATOR_BASE_URL` or bridge secret changed.
 
-5. Run the full smoke:
-   - initial Slack mention gets eyes reaction
-   - `Talk to Vevin in this thread` card appears with `Open T3`
-   - assistant replies relay
-   - mention-free follow-up works
-   - `aside - ...` is ignored
-   - `@Vevin mute` and `@Vevin unmute` get acknowledgement reactions
-   - harmless file change creates commit, push, and PR
-   - PR card has `View PR` and deployment buttons only
-   - deployment-ready message posts a branch preview URL
-   - merging the PR reacts to the original Slack message and posts merged status
+11. Run the full smoke:
 
-6. Inspect the trace:
+- initial Slack mention gets eyes reaction
+- `Talk to Vevin in this thread` card appears with `Open T3`
+- assistant replies relay
+- mention-free follow-up works
+- `aside - ...` is ignored
+- `@Vevin mute` and `@Vevin unmute` get acknowledgement reactions
+- harmless file change creates commit, push, and PR
+- PR card has `View PR` and deployment buttons only
+- deployment-ready message posts a branch preview URL
+- merging the PR reacts to the original Slack message and posts merged status
 
-   ```powershell
-   cd C:\Users\Vivek\Affil\t3code\apps\orchestrator
-   bunx convex run observability:listRecent -- '{ "limit": 100 }'
-   bunx convex run observability:listRecent -- '{ "severity": "error", "limit": 50 }'
-   ```
+12. Inspect the trace:
 
-### Rollback
+```powershell
+cd C:\Users\Vivek\Affil\t3code\apps\orchestrator
+bunx convex run observability:listRecent -- '{ "limit": 100 }'
+bunx convex run observability:listRecent -- '{ "severity": "error", "limit": 50 }'
+```
+
+### Emergency Dev Rollback
+
+Use only if production is intentionally being rolled back to the old dev pilot
+deployment.
 
 1. Repoint Slack to:
 

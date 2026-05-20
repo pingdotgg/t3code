@@ -38,6 +38,7 @@ type ConsumeResult =
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
+const ENV_OWNER_BOOTSTRAP_PAIRING_ID = "env-owner-bootstrap";
 
 const generatePairingToken = (): string => {
   const randomBytes = crypto.getRandomValues(new Uint8Array(PAIRING_TOKEN_LENGTH));
@@ -240,6 +241,25 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
+      const matching = yield* pairingLinks.getByCredential({ credential });
+      if (
+        Option.isSome(matching) &&
+        matching.value.id === ENV_OWNER_BOOTSTRAP_PAIRING_ID &&
+        matching.value.revokedAt === null
+      ) {
+        if (DateTime.isGreaterThanOrEqualTo(now, matching.value.expiresAt)) {
+          return yield* invalidBootstrapCredentialError("Bootstrap credential expired.");
+        }
+
+        return {
+          method: matching.value.method,
+          role: matching.value.role,
+          subject: matching.value.subject,
+          ...(matching.value.label ? { label: matching.value.label } : {}),
+          expiresAt: matching.value.expiresAt,
+        } satisfies BootstrapGrant;
+      }
+
       const consumed = yield* pairingLinks.consumeAvailable({
         credential,
         consumedAt: now,
@@ -257,7 +277,6 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         } satisfies BootstrapGrant;
       }
 
-      const matching = yield* pairingLinks.getByCredential({ credential });
       if (Option.isNone(matching)) {
         return yield* invalidBootstrapCredentialError("Unknown bootstrap credential.");
       }

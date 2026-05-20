@@ -62,11 +62,10 @@ export function taskUserInputAnswerEventKey(input: {
 }
 
 export function taskPullRequestStatusReplyEventKey(input: {
-  readonly workSessionId: string;
   readonly pullRequestExternalId: string;
   readonly linkId: string;
 }) {
-  return `task-pr-status-reply:${input.workSessionId}:${input.pullRequestExternalId}:${input.linkId}`;
+  return `task-pr-status-reply:${input.pullRequestExternalId}:${input.linkId}`;
 }
 
 export function taskStartedStatusReplyEventKey(input: {
@@ -227,6 +226,29 @@ function isExplicitVevinInvocation(payloadJson: string | undefined) {
       textPreview.includes(`<@${botUserId.toLowerCase()}`)) ||
     textPreview.includes(`@${botUserName}`)
   );
+}
+
+function isPullRequestStatusReplyForLink(input: {
+  readonly event: { readonly kind: string; readonly payloadJson?: string };
+  readonly pullRequestExternalId: string;
+  readonly linkId: string;
+}) {
+  if (input.event.kind !== "pr-status-reply.claimed" || input.event.payloadJson === undefined) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(input.event.payloadJson) as {
+      readonly pullRequestExternalId?: unknown;
+      readonly linkId?: unknown;
+    };
+    return (
+      String(payload.pullRequestExternalId) === input.pullRequestExternalId &&
+      String(payload.linkId) === input.linkId
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function canDeliverToExternalLink(
@@ -524,6 +546,10 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
     });
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const claimed = [];
+    const previousEvents = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_task_created", (q: any) => q.eq("taskId", args.taskId))
+      .collect();
 
     for (const link of links) {
       if (link.kind !== "linear_issue" && link.kind !== "slack_thread") {
@@ -533,7 +559,6 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
         link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
 
       const claimEventKey = taskPullRequestStatusReplyEventKey({
-        workSessionId: String(args.workSessionId),
         pullRequestExternalId: args.pullRequestExternalId,
         linkId: String(link._id),
       });
@@ -542,6 +567,17 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
         .withIndex("by_event_key", (q: any) => q.eq("eventKey", claimEventKey))
         .unique();
       if (existingClaim !== null) {
+        continue;
+      }
+      if (
+        previousEvents.some((event) =>
+          isPullRequestStatusReplyForLink({
+            event,
+            pullRequestExternalId: args.pullRequestExternalId,
+            linkId: String(link._id),
+          }),
+        )
+      ) {
         continue;
       }
 

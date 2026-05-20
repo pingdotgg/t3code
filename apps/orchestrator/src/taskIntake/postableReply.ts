@@ -31,6 +31,12 @@ export interface DeploymentReadyMessage {
   readonly url: string;
 }
 
+export interface PullRequestMergedMessage {
+  readonly kind: ReplyLinkKind;
+  readonly pullRequestUrl: string;
+  readonly title?: string | undefined;
+}
+
 export interface OpsHealthAlertMessage {
   readonly title: string;
   readonly summary: string;
@@ -261,6 +267,32 @@ export function postableDeploymentReady(input: DeploymentReadyMessage): Postable
           LinkButton({
             label: "Open deployment",
             url: input.url,
+            style: "primary",
+          }),
+        ]),
+      ],
+    }),
+    fallbackText: body,
+  };
+}
+
+export function postablePullRequestMerged(input: PullRequestMergedMessage): PostableMessage {
+  const body = `PR was merged: ${input.pullRequestUrl}`;
+  if (input.kind !== "slack_thread") {
+    return body;
+  }
+
+  const number = pullRequestNumberFromUrl(input.pullRequestUrl);
+  const title = input.title?.trim();
+
+  return {
+    card: Card({
+      title: `PR was merged${number !== null ? ` #${number}` : ""}${title ? ` - ${title}` : ""}`,
+      children: [
+        Actions([
+          LinkButton({
+            label: "View PR",
+            url: input.pullRequestUrl,
             style: "primary",
           }),
         ]),

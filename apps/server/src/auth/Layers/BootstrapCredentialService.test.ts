@@ -3,11 +3,13 @@ import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { ServerConfigShape } from "../../config.ts";
 import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { AuthPairingLinkRepository } from "../../persistence/Services/AuthPairingLinks.ts";
 import { BootstrapCredentialService } from "../Services/BootstrapCredentialService.ts";
 import { BootstrapCredentialServiceLive } from "./BootstrapCredentialService.ts";
 
@@ -105,6 +107,36 @@ it.layer(NodeServices.layer)("BootstrapCredentialServiceLive", (it) => {
         }),
       ),
     ),
+  );
+
+  it.effect("allows the env-seeded owner bootstrap pairing token to be reused", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* BootstrapCredentialService;
+      const pairingLinks = yield* AuthPairingLinkRepository;
+      const now = yield* DateTime.now;
+      const expiresAt = DateTime.add(now, { days: 1 });
+
+      yield* pairingLinks.create({
+        id: "env-owner-bootstrap",
+        credential: "stable-owner-token",
+        method: "one-time-token",
+        role: "owner",
+        subject: "owner-bootstrap",
+        label: "Stable owner bootstrap",
+        createdAt: now,
+        expiresAt,
+      });
+
+      const first = yield* bootstrapCredentials.consume("stable-owner-token");
+      const second = yield* bootstrapCredentials.consume("stable-owner-token");
+
+      expect(first.method).toBe("one-time-token");
+      expect(first.role).toBe("owner");
+      expect(first.subject).toBe("owner-bootstrap");
+      expect(first.label).toBe("Stable owner bootstrap");
+      expect(second.method).toBe("one-time-token");
+      expect(second.role).toBe("owner");
+    }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
   );
 
   it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>

@@ -575,7 +575,18 @@ http.route({
       }
 
       try {
-        if (
+        const assistantResponse = payload.assistantResponse?.trim();
+        if (payload.type === "completed" && assistantResponse !== undefined && assistantResponse) {
+          intakeReply = await ctx.runAction(internal.taskIntake.postTaskRuntimeLifecycleReply, {
+            taskId: payload.taskId as Id<"tasks">,
+            workSessionId: payload.workSessionId as Id<"workSessions">,
+            status: payload.type,
+            occurredAt: payload.occurredAt,
+            ...(payload.t3ThreadId !== undefined ? { t3ThreadId: String(payload.t3ThreadId) } : {}),
+            ...(payload.t3TurnId !== undefined ? { t3TurnId: String(payload.t3TurnId) } : {}),
+            assistantResponse,
+          });
+        } else if (
           payload.type === "completed" &&
           pullRequest?.status !== "failed" &&
           pullRequest?.status !== "waiting_for_changes" &&

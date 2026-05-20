@@ -36,6 +36,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { normalizeUploadChatAttachments } from "../orchestration/Normalizer.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import { ProjectSetupScriptRunner } from "../project/Services/ProjectSetupScriptRunner.ts";
 import { GitVcsDriver, type GitVcsDriverShape } from "../vcs/GitVcsDriver.ts";
 import { resolveExecutionBridgeModelSelection } from "./requestDefaults.ts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -488,6 +489,7 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
     const runRegistry = yield* ExecutionBridgeRunRegistry;
     const git = yield* GitVcsDriver;
     const serverEnvironment = yield* ServerEnvironment;
+    const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
     const now = yield* currentIsoTimestamp;
     const idempotencyKey =
       request.idempotencyKey ?? `task-runtime:${request.taskId}:${request.workSessionId}`;
@@ -554,10 +556,6 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
     const branch = buildTemporaryWorktreeBranchName();
     const worktree = yield* git.createWorktree(taskRuntimeWorktreeCreateInput(request, branch));
     const threadId = ThreadId.make(crypto.randomUUID());
-    const attachments = yield* normalizeUploadChatAttachments({
-      threadId,
-      attachments: request.attachments ?? [],
-    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.create",
@@ -573,7 +571,32 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
       createdAt: now,
     });
 
+    yield* projectSetupScriptRunner
+      .runForThread({
+        threadId,
+        projectId,
+        projectCwd: request.project.workspaceRoot,
+        worktreePath: worktree.worktree.path,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("execution bridge failed to launch task worktree setup script", {
+            taskId: request.taskId,
+            workSessionId: request.workSessionId,
+            threadId: String(threadId),
+            projectId: String(projectId),
+            worktreePath: worktree.worktree.path,
+            message: error.message,
+          }),
+        ),
+      );
+
     if (request.startCodingAgent) {
+      const attachments = yield* normalizeUploadChatAttachments({
+        threadId,
+        attachments: request.attachments ?? [],
+      });
+
       yield* runRegistry.trackAcceptedTaskRuntime({
         taskId: request.taskId,
         workSessionId: request.workSessionId,

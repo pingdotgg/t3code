@@ -131,11 +131,10 @@ describe("chatSdkThreadIdForLifecycleReply", () => {
   it("keys pull request status replies by PR and destination link, not turn", () => {
     expect(
       taskPullRequestStatusReplyEventKey({
-        workSessionId: "work-session-123",
         pullRequestExternalId: "acme/app#42",
         linkId: "link-123",
       }),
-    ).toBe("task-pr-status-reply:work-session-123:acme/app#42:link-123");
+    ).toBe("task-pr-status-reply:acme/app#42:link-123");
   });
 
   it("keys task started status cards by task and destination link", () => {

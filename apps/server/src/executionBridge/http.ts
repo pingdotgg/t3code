@@ -1,7 +1,6 @@
 import {
   type ExecutionRunActivityEvent,
   type ExecutionRunLifecycleEvent,
-  type TaskRuntimeAssistantMessageEvent,
   type TaskRuntimeUserInputRequestEvent,
   ExecutionRunContinueRequest,
   ExecutionRunCreateRequest,
@@ -98,9 +97,6 @@ const postActivityEvent = (event: ExecutionRunActivityEvent) =>
 const postTaskRuntimeLifecycleEvent = (event: ReturnType<typeof buildTaskRuntimeLifecycleEvent>) =>
   postToOrchestrator("/t3/task-runtime-events", event);
 
-const postTaskRuntimeAssistantMessageEvent = (event: TaskRuntimeAssistantMessageEvent) =>
-  postToOrchestrator("/t3/task-runtime-assistant-messages", event);
-
 const postTaskRuntimeUserInputRequestEvent = (event: TaskRuntimeUserInputRequestEvent) =>
   postToOrchestrator("/t3/task-runtime-user-input-requests", event);
 
@@ -123,10 +119,11 @@ function normalizeAssistantResponse(text: string) {
   return `${trimmed.slice(0, MAX_LIFECYCLE_ASSISTANT_RESPONSE_CHARS).trimEnd()}\n\n[Response truncated for intake reply.]`;
 }
 
-function cacheAssistantMessage(
-  cache: Map<string, AssistantResponseCacheEntry[]>,
-  event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
-) {
+export function cacheAssistantMessageForLifecycle(input: {
+  readonly cache: Map<string, AssistantResponseCacheEntry[]>;
+  readonly event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+}) {
+  const { cache, event } = input;
   if (event.payload.role !== "assistant") {
     return;
   }
@@ -149,28 +146,7 @@ function cacheAssistantMessage(
   cache.set(threadKey, next.slice(-20));
 }
 
-export function collectCompletedAssistantMessage(input: {
-  readonly cache: Map<string, AssistantResponseCacheEntry[]>;
-  readonly event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
-}) {
-  const { cache, event } = input;
-  cacheAssistantMessage(cache, event);
-  if (event.payload.role !== "assistant" || event.payload.streaming) {
-    return undefined;
-  }
-
-  return (
-    normalizeAssistantResponse(event.payload.text) ??
-    readCachedAssistantResponse({
-      cache,
-      threadId: event.payload.threadId,
-      assistantMessageId: String(event.payload.messageId),
-      ...(event.payload.turnId !== null ? { turnId: event.payload.turnId } : {}),
-    })
-  );
-}
-
-function readCachedAssistantResponse(input: {
+export function readCachedAssistantResponse(input: {
   readonly cache: Map<string, AssistantResponseCacheEntry[]>;
   readonly threadId: ThreadId;
   readonly turnId?: TurnId;
@@ -556,39 +532,11 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (event.type === "thread.message-sent") {
-          const assistantMessage = collectCompletedAssistantMessage({
+          cacheAssistantMessageForLifecycle({
             cache: assistantResponseCache,
             event,
           });
-          if (assistantMessage === undefined) {
-            return Effect.void;
-          }
-
-          return Effect.gen(function* () {
-            const trackedRun = yield* runRegistry.getTrackedRun(event.payload.threadId);
-            if (trackedRun === null || trackedRun.kind !== "task") {
-              return;
-            }
-
-            yield* postTaskRuntimeAssistantMessageEvent({
-              eventId: event.eventId,
-              taskId: trackedRun.taskId!,
-              workSessionId: trackedRun.workSessionId!,
-              occurredAt: event.occurredAt,
-              t3ThreadId: trackedRun.threadId,
-              t3MessageId: event.payload.messageId,
-              ...(event.payload.turnId !== null ? { t3TurnId: event.payload.turnId } : {}),
-              assistantMessage,
-            });
-          }).pipe(
-            Effect.catch((error: Error) =>
-              Effect.logWarning("execution bridge failed to forward assistant message event", {
-                eventId: event.eventId,
-                threadId: String(event.payload.threadId),
-                message: error.message,
-              }),
-            ),
-          );
+          return Effect.void;
         }
 
         if (event.type === "thread.activity-appended") {

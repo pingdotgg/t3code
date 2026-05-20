@@ -5,6 +5,7 @@ import {
   flattenMarkdownTablesForSlack,
   postableDeploymentReady,
   postableOpsHealthAlert,
+  postablePullRequestMerged,
   postablePullRequestStatus,
   postableReplyBody,
   postableTaskStartedStatus,
@@ -172,6 +173,23 @@ describe("postableReplyBody", () => {
         pullRequestUrl: "https://github.com/acme/app/pull/42",
       }),
     ).toBe("Pull request: https://github.com/acme/app/pull/42");
+  });
+
+  it("builds a Slack PR merged card with a View PR button", () => {
+    const message = postablePullRequestMerged({
+      kind: "slack_thread",
+      pullRequestUrl: "https://github.com/acme/app/pull/42",
+      title: "Add checkout filter",
+    });
+
+    expect(message).toMatchObject({
+      fallbackText: "PR was merged: https://github.com/acme/app/pull/42",
+      card: {
+        title: "PR was merged #42 - Add checkout filter",
+      },
+    });
+    expect(JSON.stringify(message)).toContain("View PR");
+    expect(JSON.stringify(message)).not.toContain("New PR");
   });
 
   it("builds a Slack deployment-ready card with a deployment button", () => {

@@ -32,6 +32,48 @@ C:\Users\Vivek\Affil\t3code\scripts\install-t3code-server-service.ps1
 If another dev/server process already owns port `3773`, stop it first or rerun
 with `-StopExistingPortOwner`.
 
+The service runs under `LocalSystem`, so `scripts\start-t3code-server.cmd`
+hydrates the interactive user profile before launching T3. By default it infers
+the profile from this checkout path (`C:\Users\Vivek\Affil\t3code` ->
+`C:\Users\Vivek`) and sets:
+
+```text
+USERPROFILE=C:\Users\Vivek
+HOME=C:\Users\Vivek
+APPDATA=C:\Users\Vivek\AppData\Roaming
+LOCALAPPDATA=C:\Users\Vivek\AppData\Local
+CODEX_HOME=C:\Users\Vivek\.codex
+GH_CONFIG_DIR=C:\Users\Vivek\AppData\Roaming\GitHub CLI
+```
+
+This is required so service-launched Codex/GitHub CLI processes can see the same
+auth files as interactive PowerShell. Override `T3CODE_SERVICE_USERPROFILE` in
+`.env.local` if this checkout moves to a different Windows profile.
+
+GitHub CLI is a special case: an interactive `gh auth login` stores credentials
+in the user's Windows Credential Manager, which `LocalSystem` cannot read. Set a
+local ignored env var for the service:
+
+```text
+GH_TOKEN=<token from gh auth token>
+```
+
+`gh` uses `GH_TOKEN` automatically, so PR creation works from the service without
+requiring `gh auth login` under `LocalSystem`.
+
+Git also treats repos owned by another Windows account as unsafe by default. The
+service startup sets:
+
+```text
+GIT_CONFIG_COUNT=1
+GIT_CONFIG_KEY_0=safe.directory
+GIT_CONFIG_VALUE_0=*
+```
+
+That lets service-launched T3 detect and checkpoint local target repos owned by
+the interactive user, such as `C:\Users\Vivek\Affil\nextcard`, instead of
+reporting unsupported VCS operations.
+
 The old `t3code-server` scheduled task should remain disabled after the service
 is healthy. On 2026-05-15 the old scheduled tunnel/server tasks were found with
 a 72-hour execution limit, which caused the Cloudflare tunnel to stop after
@@ -97,8 +139,12 @@ https://t3.olumbe.com/pair#token=<long random local-only token>
 runs, so hot-reload server restarts do not force you to chase the transient
 startup token in the logs. Running `bun run dev:server` directly can serve the
 public URL from the dev auth database without the pairing-token refresh loop.
-The production service also seeds the same token before startup. To seed
-manually, run:
+The production service also seeds the same token before startup. The startup logs
+may still show a separate short-lived pairing URL because T3 always issues one
+for headless startup, but the stable URL above is the intended operator URL.
+Normal generated pairing links remain one-time; the env-seeded
+`env-owner-bootstrap` pairing link is reusable for this local owner workflow. To
+seed manually, run:
 
 ```cmd
 bun run auth:seed-owner-pairing
@@ -122,10 +168,25 @@ https://<your-convex-site>/slack/webhook
 https://<your-convex-site>/github/webhook
 ```
 
-Configure the GitHub webhook for `deployment_status` and `pull_request` events.
-The orchestrator verifies `X-Hub-Signature-256` with `GITHUB_WEBHOOK_SECRET`,
-posts public preview URLs when deployments become ready, and reacts to the
-original Slack task with a checkmark when the linked PR is merged.
+Configure the GitHub webhook on each coding target repository that Vevin creates
+PRs against. This is not necessarily this `t3code` repo. The current required
+target repo is:
+
+```text
+https://github.com/affil-ai/nextcard/settings/hooks
+```
+
+That webhook should point at:
+
+```text
+https://<your-convex-site>/github/webhook
+```
+
+Use content type `application/json`, set the secret to the same value as
+`GITHUB_WEBHOOK_SECRET`, and enable `deployment_status` and `pull_request`
+events. The orchestrator verifies `X-Hub-Signature-256`, posts public preview
+URLs when deployments become ready, and reacts to the original Slack task with a
+checkmark when the linked PR is merged.
 
 Operational debugging lives in `docs/orchestrator-operations.md`. Start there
 when Slack receives a message but Vevin does not reply, when PR/deployment cards
@@ -152,7 +213,7 @@ Run the combined local/Cloudflare/Convex check:
 
 ```powershell
 cd C:\Users\Vivek\Affil\t3code
-$env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://scrupulous-fly-947.convex.site"
+$env:T3CODE_HEALTH_CONVEX_SITE_URL = "https://basic-porcupine-321.convex.site"
 bun run health:orchestrator
 ```
 
@@ -280,17 +341,17 @@ server.
 
 ## Slack E2E Matrix
 
-Use Convex dev until the orchestrator is production-ready:
+Use Convex production for the live Slack E2E matrix:
 
 ```bash
 cd apps/orchestrator
-bun run dev
+bunx convex logs --prod
 ```
 
-Watch the dev logs while testing:
+Watch the local production T3 logs while testing:
 
 ```powershell
-Get-Content $env:TEMP\t3-orchestrator-convex-dev.err.log -Wait
+Get-Content C:\Users\Vivek\Affil\t3code\logs\t3code-server.log -Wait
 ```
 
 Test these Slack behaviors in `#testing`:

@@ -13,7 +13,7 @@ import { createConvexChatSdkState } from "../src/taskIntake/convexChatSdkState.t
 import { chatSdkThreadIdForLifecycleReply } from "../src/taskIntake/lifecycleReplies.ts";
 import {
   postableDeploymentReady,
-  postablePullRequestStatus,
+  postablePullRequestMerged,
 } from "../src/taskIntake/postableReply.ts";
 import { internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
@@ -506,14 +506,10 @@ export const handleWebhook = internalAction({
               });
             }
             const posted: { readonly id: string } = await thread.post(
-              postablePullRequestStatus({
+              postablePullRequestMerged({
                 kind: claim.kind,
-                body: `Pull request merged: ${claim.pullRequestUrl}`,
                 pullRequestUrl: claim.pullRequestUrl,
-                pullRequestStatus: "existing",
                 ...(event.title !== undefined ? { title: event.title } : {}),
-                repo: `${event.owner}/${event.repo}`,
-                ...(event.headBranch !== undefined ? { branch: event.headBranch } : {}),
               }),
             );
             externalMessageId = reactionDelivered
