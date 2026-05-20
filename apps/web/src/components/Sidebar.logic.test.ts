@@ -556,7 +556,11 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Completed", pulse: false });
   });
 
-  it("keeps working while the running session still owns a completed latest turn", () => {
+  it("shows completed once a running session still names a turn the latest projected turn has finished", () => {
+    // Safety net contract — see hasActiveSessionWork. Running session +
+    // activeTurnId matching a latestTurn with completedAt set is treated as
+    // observably finished so the sidebar pill matches what the user sees
+    // in the chat view.
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -565,7 +569,7 @@ describe("resolveThreadStatusPill", () => {
           latestTurn: makeLatestTurn(),
         },
       }),
-    ).toMatchObject({ label: "Working", pulse: true });
+    ).toMatchObject({ label: "Completed", pulse: false });
   });
 
   it("keeps working when a different active turn is running after the latest projected turn completed", () => {

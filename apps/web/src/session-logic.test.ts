@@ -1425,13 +1425,16 @@ describe("isLatestTurnSettled", () => {
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
 
-  it("returns false while a running session still owns the completed latest turn", () => {
+  it("returns true when a stale running session still points at the completed turn", () => {
+    // Safety net: a running session pointing at a turn that latestTurn already
+    // shows as completed is observably settled; without this the iOS PWA stuck
+    // "Working" indicator returns. See hasActiveSessionWork comment.
     expect(
       isLatestTurnSettled(latestTurn, {
         orchestrationStatus: "running",
         activeTurnId: TurnId.make("turn-1"),
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("returns false while the same turn is still active before completion", () => {
@@ -1529,7 +1532,10 @@ describe("derivePhase", () => {
     ).toBe("ready");
   });
 
-  it("keeps running while the session still owns the completed latest turn", () => {
+  it("treats a running session pointing at the completed latest turn as ready", () => {
+    // Safety net: see hasActiveSessionWork. The clearing thread.session-set
+    // can be lost during iOS PWA backgrounding or skipped by the strict
+    // provider lifecycle guard; this keeps the phase honest in that gap.
     expect(
       derivePhase(
         {
@@ -1542,7 +1548,7 @@ describe("derivePhase", () => {
         },
         completedLatestTurn,
       ),
-    ).toBe("running");
+    ).toBe("ready");
   });
 
   it("keeps running when the provider has an active incomplete turn", () => {
@@ -1588,7 +1594,10 @@ describe("deriveActiveWorkStartedAt", () => {
     ).toBe("2026-02-27T21:10:00.000Z");
   });
 
-  it("keeps the active turn start while a running session still owns a completed latest turn", () => {
+  it("uses sendStartedAt when a stale active session points at the completed latest turn", () => {
+    // Safety net: see hasActiveSessionWork — once the named active turn has
+    // observably completed, fall back to the next send start instead of
+    // anchoring forever to the original startedAt.
     expect(
       deriveActiveWorkStartedAt(
         latestTurn,
@@ -1598,7 +1607,7 @@ describe("deriveActiveWorkStartedAt", () => {
         },
         "2026-02-27T21:11:00.000Z",
       ),
-    ).toBe("2026-02-27T21:10:00.000Z");
+    ).toBe("2026-02-27T21:11:00.000Z");
   });
 
   it("uses the new send start while the session is running a different turn", () => {
@@ -1649,13 +1658,17 @@ describe("hasActiveSessionWork", () => {
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
 
-  it("treats an active turn as work until the session leaves running status", () => {
+  it("treats an active turn as settled when latestTurn already shows it completed", () => {
+    // Safety net: this is the core contract. If the running session still
+    // owns the same turn that latestTurn has marked completedAt, we have
+    // observably finished and must not show the "Working" indicator.
+    // Removing this guard reintroduces the iOS PWA backgrounding regression.
     expect(
       hasActiveSessionWork(completedLatestTurn, {
         orchestrationStatus: "running",
         activeTurnId: TurnId.make("turn-1"),
       }),
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       hasActiveSessionWork(completedLatestTurn, {
@@ -1663,6 +1676,18 @@ describe("hasActiveSessionWork", () => {
         activeTurnId: TurnId.make("turn-1"),
       }),
     ).toBe(false);
+  });
+
+  it("treats an active turn as work while latestTurn shows it still in flight", () => {
+    expect(
+      hasActiveSessionWork(
+        { ...completedLatestTurn, completedAt: null },
+        {
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-1"),
+        },
+      ),
+    ).toBe(true);
   });
 
   it("treats a different active turn as work even when the latest projected turn completed", () => {

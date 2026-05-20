@@ -153,6 +153,17 @@ export function hasActiveSessionWork(
     return false;
   }
   if (session.activeTurnId !== undefined && session.activeTurnId !== null) {
+    // Safety net: if the session still names an active turn but the matching
+    // latestTurn already has a completedAt, the turn is observably finished.
+    // The clearing `thread.session-set` event can be missed during iOS PWA
+    // backgrounding (paused WebSocket) or dropped server-side by the strict
+    // provider lifecycle guard when a turn.completed arrives without/with a
+    // mismatched turnId. Without this guard the "Working for …" indicator
+    // sticks until a manual refresh. Do NOT remove without also fixing the
+    // upstream causes — see hasActiveSessionWork tests for the contract.
+    if (latestTurn?.turnId === session.activeTurnId && latestTurn.completedAt) {
+      return false;
+    }
     return true;
   }
   return latestTurn !== null && !latestTurn.completedAt;

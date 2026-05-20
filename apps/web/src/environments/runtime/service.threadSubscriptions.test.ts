@@ -156,6 +156,53 @@ function makeThreadShellSnapshot(params: {
   };
 }
 
+function makeStuckRunningThreadShellSnapshot(params: {
+  readonly snapshotSequence: number;
+  readonly threadId: ThreadId;
+}): OrchestrationShellSnapshot {
+  // Simulates the iOS PWA gap state: the server's `thread.turn-diff-completed`
+  // event reached the client (so latestTurn has a completedAt for T1) but the
+  // matching `thread.session-set` that clears activeTurnId did not. The
+  // session still claims it owns the same completed turn — the exact state
+  // the safety net in hasActiveSessionWork is designed to mask. Recovery
+  // (re-fetching the thread detail) is what removes the underlying staleness.
+  const turnId = TurnId.make("turn-1");
+  const snapshot = makeThreadShellSnapshot({
+    threadId: params.threadId,
+    sessionStatus: "running",
+  });
+  const thread = snapshot.threads[0];
+  if (!thread) {
+    throw new Error("Expected test shell snapshot to include one thread.");
+  }
+  return {
+    ...snapshot,
+    snapshotSequence: params.snapshotSequence,
+    threads: [
+      {
+        ...thread,
+        latestTurn: {
+          turnId,
+          state: "completed",
+          requestedAt: "2026-04-13T00:00:00.000Z",
+          startedAt: "2026-04-13T00:00:01.000Z",
+          completedAt: "2026-04-13T00:00:02.000Z",
+          assistantMessageId: null,
+        },
+        updatedAt: "2026-04-13T00:00:02.000Z",
+        session: thread.session
+          ? {
+              ...thread.session,
+              status: "running",
+              activeTurnId: turnId,
+              updatedAt: "2026-04-13T00:00:00.000Z",
+            }
+          : null,
+      },
+    ],
+  };
+}
+
 function makeCompletedThreadShellSnapshot(params: {
   readonly snapshotSequence: number;
   readonly threadId: ThreadId;
@@ -1328,6 +1375,80 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockReplayEvents).not.toHaveBeenCalled();
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("force-refreshes a retained thread detail when browser resume finds it stuck in a completed-but-running turn", async () => {
+    // Regression guard for the iOS PWA "Working for …" indicator that
+    // refused to clear after foregrounding. Backgrounding silently drops
+    // the `thread.session-set` event that closes a turn while still
+    // delivering `thread.turn-diff-completed`, leaving the projection
+    // with activeTurnId pointing at the same turnId latestTurn already
+    // marks completedAt for. Even when the post-resume probe says "not
+    // behind", the runtime must re-fetch the thread detail so the stuck
+    // session reconciles to the server's real state.
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-stuck-running-resume");
+
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    // Push the projection into the gap state: latestTurn shows turn-1
+    // completedAt, but the session still claims activeTurnId = turn-1
+    // with orchestrationStatus running.
+    connectionInput.syncShellSnapshot(
+      makeStuckRunningThreadShellSnapshot({
+        snapshotSequence: 2,
+        threadId,
+      }),
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+
+    // Probe says we're caught up (the gap is invisible at the sequence
+    // level). The runtime must still observe the stuck-running shape and
+    // force a re-subscription so the new snapshot can converge state.
+    await vi.waitFor(() => {
+      expect(mockProbeSync).toHaveBeenCalledWith({ clientSequence: 2 });
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    release();
     stop();
     await resetEnvironmentServiceForTests();
   });

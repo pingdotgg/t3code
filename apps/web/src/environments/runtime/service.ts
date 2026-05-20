@@ -643,6 +643,68 @@ function shouldEvictThreadDetailSubscription(entry: ThreadDetailSubscriptionEntr
   return entry.refCount === 0 && !isNonIdleThreadDetailSubscription(entry);
 }
 
+// Detects the iOS PWA "stuck running" gap: the session still claims the
+// active turn id while the same latestTurn already reports a completedAt.
+// In normal operation this state is transient (the closing
+// `thread.session-set` event arrives moments after `thread.turn-diff-completed`),
+// but iOS Safari can drop the closing event when the tab is backgrounded.
+// hasActiveSessionWork has a UI-level safety net for the same shape; this
+// function exists so we can additionally re-fetch the snapshot and converge
+// the underlying store to the server's real state.
+function isThreadDetailSubscriptionStuckOnCompletedRunningTurn(
+  entry: ThreadDetailSubscriptionEntry,
+): boolean {
+  const thread = selectThreadByRef(
+    useStore.getState(),
+    scopeThreadRef(entry.environmentId, entry.threadId),
+  );
+  const session = thread?.session;
+  const latestTurn = thread?.latestTurn;
+  if (!session || !latestTurn) {
+    return false;
+  }
+  return (
+    session.orchestrationStatus === "running" &&
+    session.activeTurnId !== undefined &&
+    session.activeTurnId !== null &&
+    latestTurn.turnId === session.activeTurnId &&
+    latestTurn.completedAt !== undefined &&
+    latestTurn.completedAt !== null
+  );
+}
+
+function refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(
+  environmentId: EnvironmentId,
+): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId !== environmentId) {
+      continue;
+    }
+    if (!isThreadDetailSubscriptionStuckOnCompletedRunningTurn(entry)) {
+      continue;
+    }
+    scheduleThreadDetailGapRefresh(entry);
+  }
+}
+
+function scheduleThreadDetailGapRefresh(entry: ThreadDetailSubscriptionEntry): void {
+  // Use the same short debounce as scheduleThreadDetailRefreshIfBehind so
+  // multiple resume signals coalesce into one refresh.
+  if (entry.refreshTimeoutId !== null) {
+    return;
+  }
+  entry.refreshTimeoutId = setTimeout(() => {
+    entry.refreshTimeoutId = null;
+    const current = threadDetailSubscriptions.get(
+      getThreadDetailSubscriptionKey(entry.environmentId, entry.threadId),
+    );
+    if (!current) {
+      return;
+    }
+    refreshThreadDetailSubscription(current);
+  }, THREAD_DETAIL_REFRESH_AFTER_SHELL_ADVANCE_MS);
+}
+
 function shouldRefreshRetainedThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry) {
   return entry.refCount > 0 || isNonIdleThreadDetailSubscription(entry);
 }
@@ -2016,6 +2078,12 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
     const latestSequenceAfterProbe =
       readLastAppliedProjectionVersion(environmentId)?.sequence ?? currentSequence;
     if (!syncProbe.behind || syncProbe.serverSequence <= latestSequenceAfterProbe) {
+      // Even when sequences align, a thread may be parked in the gap state
+      // where session.activeTurnId still names a turn that latestTurn marks
+      // completed — typically because the closing thread.session-set was
+      // dropped while iOS backgrounded the tab. Re-fetch the affected thread
+      // detail subscription(s) so the store converges to the server snapshot.
+      refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
       return;
     }
 
@@ -2044,6 +2112,7 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
     if (highestReplayedSequence > recoveredSequence) {
       queueProjectionRecovery(environmentId, highestReplayedSequence);
     }
+    refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
   } catch (error) {
     if (readEnvironmentConnection(environmentId) !== connection) {
       return;
