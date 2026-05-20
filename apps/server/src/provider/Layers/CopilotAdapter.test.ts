@@ -16,6 +16,7 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterRequestError } from "../Errors.ts";
 import { COPILOT_PLAN_MODE_ID } from "../acp/CopilotAcpSupport.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
@@ -224,6 +225,93 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
 
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  it.effect("forks a Copilot ACP session and binds the forked session id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const sourceThreadId = ThreadId.make("copilot-fork-source");
+      const targetThreadId = ThreadId.make("copilot-fork-target");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() => makeMockCopilotWrapper());
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId: sourceThreadId,
+        provider: COPILOT_DRIVER,
+        providerInstanceId: COPILOT_INSTANCE_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+      });
+
+      const forked = yield* adapter.forkSession({
+        sourceThreadId,
+        threadId: targetThreadId,
+        provider: COPILOT_DRIVER,
+        providerInstanceId: COPILOT_INSTANCE_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+      });
+
+      assert.deepStrictEqual(forked.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-fork",
+      });
+      assert.isTrue(yield* adapter.hasSession(targetThreadId));
+
+      yield* adapter.stopSession(sourceThreadId);
+      yield* adapter.stopSession(targetThreadId);
+    }),
+  );
+
+  it.effect(
+    "reports unsupported native fork when Copilot ACP does not advertise session/fork",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CopilotAdapter;
+        const settings = yield* ServerSettingsService;
+        const sourceThreadId = ThreadId.make("copilot-fork-unsupported-source");
+        const targetThreadId = ThreadId.make("copilot-fork-unsupported-target");
+
+        yield* isolateCopilotHome();
+
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockCopilotWrapper({ T3_ACP_DISABLE_FORK: "1" }),
+        );
+        yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+        yield* adapter.startSession({
+          threadId: sourceThreadId,
+          provider: COPILOT_DRIVER,
+          providerInstanceId: COPILOT_INSTANCE_ID,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+        });
+
+        const error = yield* adapter
+          .forkSession({
+            sourceThreadId,
+            threadId: targetThreadId,
+            provider: COPILOT_DRIVER,
+            providerInstanceId: COPILOT_INSTANCE_ID,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+            modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+          })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, ProviderAdapterRequestError);
+        assert.include(error.detail, "does not support native chat forking");
+        assert.isFalse(yield* adapter.hasSession(targetThreadId));
+
+        yield* adapter.stopSession(sourceThreadId);
+      }),
   );
 
   it.effect("reports running status while a Copilot prompt is in flight", () =>

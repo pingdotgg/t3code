@@ -814,6 +814,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
+  "thread.provider-fork-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
@@ -942,6 +943,15 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadProviderForkRequestedPayload = Schema.Struct({
+  sourceThreadId: ThreadId,
+  threadId: ThreadId,
+  targetMessageId: MessageId,
+  targetTurnId: Schema.NullOr(TurnId),
+  targetTurnCount: NonNegativeInt,
   createdAt: IsoDateTime,
 });
 
@@ -1097,6 +1107,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-start-requested"),
     payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.provider-fork-requested"),
+    payload: ThreadProviderForkRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

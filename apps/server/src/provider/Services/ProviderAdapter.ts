@@ -14,6 +14,7 @@ import type {
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
+  ProviderSessionForkInput,
   ProviderSession,
   ProviderSessionStartInput,
   ThreadId,
@@ -55,6 +56,11 @@ export interface ProviderAdapterShape<TError> {
   readonly startSession: (
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
+
+  /**
+   * Fork provider-native conversation state into a target thread.
+   */
+  readonly forkSession: (input: ProviderSessionForkInput) => Effect.Effect<ProviderSession, TError>;
 
   /**
    * Send a turn to an active provider session.

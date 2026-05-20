@@ -541,6 +541,7 @@ describe("resolveThreadStatusPill", () => {
     session: {
       provider: ProviderDriverKind.make("codex"),
       status: "running" as const,
+      activeTurnId: TurnId.make("turn-running"),
       createdAt: "2026-03-09T10:00:00.000Z",
       updatedAt: "2026-03-09T10:00:00.000Z",
       orchestrationStatus: "running" as const,
@@ -576,6 +577,20 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("does not show working for a running session that has no active turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            activeTurnId: undefined,
+          },
+        },
+      }),
+    ).toBeNull();
   });
 
   it("does not show working when only the provider session status is stale", () => {

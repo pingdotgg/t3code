@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "./Diffs.ts";
+import { parseTurnDiffFilesFromNumstat, parseTurnDiffFilesFromUnifiedDiff } from "./Diffs.ts";
 
 describe("parseTurnDiffFilesFromUnifiedDiff", () => {
   it("returns empty list for empty diff", () => {
@@ -63,6 +63,31 @@ describe("parseTurnDiffFilesFromUnifiedDiff", () => {
 
     expect(parseTurnDiffFilesFromUnifiedDiff(diff)).toEqual([
       { path: "a.txt", additions: 2, deletions: 1 },
+    ]);
+  });
+});
+
+describe("parseTurnDiffFilesFromNumstat", () => {
+  it("parses nul-delimited numstat entries", () => {
+    const numstat = ["2\t1\tsrc/a.ts", "0\t3\tREADME.md", ""].join("\0");
+
+    expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
+      { path: "README.md", additions: 0, deletions: 3 },
+      { path: "src/a.ts", additions: 2, deletions: 1 },
+    ]);
+  });
+
+  it("uses the destination path for rename entries", () => {
+    const numstat = ["1\t0\t", "src/old.ts", "src/new.ts", ""].join("\0");
+
+    expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
+      { path: "src/new.ts", additions: 1, deletions: 0 },
+    ]);
+  });
+
+  it("reports binary file counts as zero", () => {
+    expect(parseTurnDiffFilesFromNumstat("-\t-\timage.png\0")).toEqual([
+      { path: "image.png", additions: 0, deletions: 0 },
     ]);
   });
 });

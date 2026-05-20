@@ -17,6 +17,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { setPairingTokenOnUrl } from "../../pairingUrl";
 import { Input } from "../ui/input";
 import {
   Dialog,
@@ -45,7 +46,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
-import { setPairingTokenOnUrl } from "../../pairingUrl";
 import {
   createServerPairingCredential,
   fetchSessionState,
@@ -67,6 +67,8 @@ import {
   reconnectSavedEnvironment,
   removeSavedEnvironment,
 } from "~/environments/runtime";
+import { MobilePairingDialog } from "./MobilePairingDialog";
+import { resolveCurrentOriginPairingUrl, useMobilePairing } from "./useMobilePairing";
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -246,11 +248,6 @@ function removeDesktopClientSession(
 function resolveDesktopPairingUrl(endpointUrl: string, credential: string): string {
   const url = new URL(endpointUrl);
   url.pathname = "/pair";
-  return setPairingTokenOnUrl(url, credential).toString();
-}
-
-function resolveCurrentOriginPairingUrl(credential: string): string {
-  const url = new URL("/pair", window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
 }
 
@@ -518,12 +515,16 @@ type AuthorizedClientsHeaderActionProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
+  isCreatingMobilePairing: boolean;
+  onCreateMobilePairing: () => void;
 };
 
 const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
   clientSessions,
   isRevokingOtherClients,
   onRevokeOtherClients,
+  isCreatingMobilePairing,
+  onCreateMobilePairing,
 }: AuthorizedClientsHeaderActionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
@@ -560,6 +561,24 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
         onClick={() => void onRevokeOtherClients()}
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
+      </Button>
+      <Button
+        size="xs"
+        variant="default"
+        disabled={isCreatingMobilePairing}
+        onClick={onCreateMobilePairing}
+      >
+        {isCreatingMobilePairing ? (
+          <>
+            <Spinner className="size-3" />
+            Creating…
+          </>
+        ) : (
+          <>
+            <QrCodeIcon className="size-3" />
+            Connect new device
+          </>
+        )}
       </Button>
       <Dialog
         open={dialogOpen}
@@ -814,6 +833,25 @@ export function ConnectionsSettings() {
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
+  const canShowAuthorizedClients = Boolean(desktopBridge) || isLocalBackendNetworkAccessible;
+  const localBackendEndpointUrl = desktopBridge
+    ? desktopServerExposureState?.endpointUrl
+    : currentAuthPolicy === "remote-reachable"
+      ? window.location.origin
+      : null;
+  const {
+    createMobilePairing,
+    dialogOpen: mobilePairingDialogOpen,
+    dialogState: mobilePairingDialogState,
+    isCreating: isCreatingMobilePairing,
+    setDialogOpen: setMobilePairingDialogOpen,
+  } = useMobilePairing({
+    canManageLocalBackend,
+    desktopBridge,
+    desktopServerExposureMode: desktopServerExposureState?.mode,
+    localBackendEndpointUrl,
+    onDesktopServerExposureState: setDesktopServerExposureState,
+  });
 
   const handleDesktopServerExposureChange = useCallback(
     async (checked: boolean) => {
@@ -850,6 +888,24 @@ export function ConnectionsSettings() {
     const checked = pendingDesktopServerExposureMode === "network-accessible";
     void handleDesktopServerExposureChange(checked);
   }, [handleDesktopServerExposureChange, pendingDesktopServerExposureMode]);
+
+  const handleCreateMobilePairing = useCallback(async () => {
+    setDesktopAccessManagementError(null);
+    try {
+      await createMobilePairing();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to create mobile pairing QR code.";
+      setDesktopAccessManagementError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create mobile pairing QR",
+          description: message,
+        }),
+      );
+    }
+  }, [createMobilePairing]);
 
   const handleRevokeDesktopPairingLink = useCallback(async (id: string) => {
     setRevokingDesktopPairingLinkId(id);
@@ -1247,7 +1303,7 @@ export function ConnectionsSettings() {
             )}
           </SettingsSection>
 
-          {isLocalBackendNetworkAccessible ? (
+          {canShowAuthorizedClients ? (
             <SettingsSection
               title="Authorized clients"
               headerAction={
@@ -1255,6 +1311,8 @@ export function ConnectionsSettings() {
                   clientSessions={desktopClientSessions}
                   isRevokingOtherClients={isRevokingOtherDesktopClients}
                   onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                  isCreatingMobilePairing={isCreatingMobilePairing}
+                  onCreateMobilePairing={() => void handleCreateMobilePairing()}
                 />
               }
             >
@@ -1263,8 +1321,15 @@ export function ConnectionsSettings() {
                   <p className="text-xs text-destructive">{desktopAccessManagementError}</p>
                 </div>
               ) : null}
+              {!isLocalBackendNetworkAccessible ? (
+                <div className={ITEM_ROW_CLASSNAME}>
+                  <p className="text-xs text-muted-foreground">
+                    Connect new device will enable network access before creating the QR code.
+                  </p>
+                </div>
+              ) : null}
               <PairingClientsList
-                endpointUrl={desktopServerExposureState?.endpointUrl}
+                endpointUrl={localBackendEndpointUrl}
                 isLoading={isLoadingDesktopAccessManagement}
                 pairingLinks={visibleDesktopPairingLinks}
                 clientSessions={desktopClientSessions}
@@ -1272,6 +1337,11 @@ export function ConnectionsSettings() {
                 revokingClientSessionId={revokingDesktopClientSessionId}
                 onRevokePairingLink={handleRevokeDesktopPairingLink}
                 onRevokeClientSession={handleRevokeDesktopClientSession}
+              />
+              <MobilePairingDialog
+                state={mobilePairingDialogState}
+                open={mobilePairingDialogOpen}
+                onOpenChange={setMobilePairingDialogOpen}
               />
             </SettingsSection>
           ) : null}

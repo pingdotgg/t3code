@@ -1042,6 +1042,15 @@ export function makeCursorAdapter(
         return c !== undefined && !c.stopped;
       });
 
+    const forkSession: CursorAdapterShape["forkSession"] = (input) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "session/fork",
+          detail: `Provider '${PROVIDER}' native forking is not wired yet for thread '${input.sourceThreadId}'.`,
+        }),
+      );
+
     const stopAll: CursorAdapterShape["stopAll"] = () =>
       Effect.forEach(sessions.values(), stopSessionInternal, { discard: true });
 
@@ -1058,6 +1067,7 @@ export function makeCursorAdapter(
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
       startSession,
+      forkSession,
       sendTurn,
       interruptTurn,
       readThread,

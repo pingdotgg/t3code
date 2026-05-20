@@ -475,12 +475,16 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessions.clear();
       });
 
+    const forkSession: ProviderAdapterShape<ProviderAdapterError>["forkSession"] = () =>
+      Effect.die(new Error("Unsupported provider fork in test adapter"));
+
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
       capabilities: {
         sessionModelSwitch: "in-session",
       },
       startSession,
+      forkSession,
       sendTurn,
       interruptTurn,
       respondToRequest,

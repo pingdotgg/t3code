@@ -124,6 +124,7 @@ describe("decider thread.fork", () => {
 
     expect(events.map((event) => event.type)).toEqual([
       "thread.created",
+      "thread.provider-fork-requested",
       "thread.message-sent",
       "thread.message-sent",
     ]);

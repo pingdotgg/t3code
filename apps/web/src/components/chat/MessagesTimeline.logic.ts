@@ -255,6 +255,7 @@ function collapseReasoningRows(
 
   for (const row of rows) {
     if (row.kind === "message" && row.message.role === "user") {
+      collapsedRows.push(...reasoningRows);
       collapsedRows.push(row);
       userIndex = collapsedRows.length - 1;
       reasoningRows = [];

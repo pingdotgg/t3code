@@ -1,6 +1,11 @@
 import { Encoding } from "effect";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
 
+export interface CheckpointTurnCountSummary {
+  readonly checkpointTurnCount: number;
+  readonly status: "ready" | "missing" | "error";
+}
+
 export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
@@ -25,4 +30,16 @@ export function resolveThreadWorkspaceCwd(input: {
   }
 
   return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
+}
+
+export function latestCapturedCheckpointTurnCount(
+  checkpoints: ReadonlyArray<CheckpointTurnCountSummary>,
+): number {
+  return checkpoints.reduce(
+    (maxTurnCount, checkpoint) =>
+      checkpoint.status === "missing"
+        ? maxTurnCount
+        : Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+    0,
+  );
 }

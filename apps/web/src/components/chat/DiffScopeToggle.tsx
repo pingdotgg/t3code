@@ -1,5 +1,6 @@
 import type { TurnDiffScope } from "@t3tools/contracts";
 import { GitCommitVerticalIcon, LayersIcon } from "lucide-react";
+import { cn } from "~/lib/utils";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 interface DiffScopeToggleProps {
@@ -12,7 +13,10 @@ interface DiffScopeToggleProps {
 export function DiffScopeToggle({ value, onChange, className }: DiffScopeToggleProps) {
   return (
     <ToggleGroup
-      className={className}
+      className={cn(
+        "[&_button]:!h-[1.5em] [&_button]:!min-w-[1.5em] [&_button]:!px-[0.2em]",
+        className,
+      )}
       variant="outline"
       size="xs"
       value={[value]}
@@ -24,14 +28,14 @@ export function DiffScopeToggle({ value, onChange, className }: DiffScopeToggleP
       }}
     >
       <Toggle aria-label="Show changes from this turn only" title="Turn" value="turn">
-        <GitCommitVerticalIcon className="size-3" />
+        <GitCommitVerticalIcon className="!size-[0.85em]" />
       </Toggle>
       <Toggle
         aria-label="Show all changes since the prior snapshot"
         title="Snapshot"
         value="snapshot"
       >
-        <LayersIcon className="size-3" />
+        <LayersIcon className="!size-[0.85em]" />
       </Toggle>
     </ToggleGroup>
   );

@@ -13,13 +13,16 @@ import {
 import { Cause, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { deriveTurnScopedCheckpointFiles } from "../../checkpointing/TurnScopedFiles.ts";
 import {
   checkpointRefForThreadTurn,
+  latestCapturedCheckpointTurnCount,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
-import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
+import {
+  CheckpointStore,
+  type CheckpointDiffFileSummary,
+} from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -66,6 +69,14 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+
+const toCheckpointFiles = (files: ReadonlyArray<CheckpointDiffFileSummary>) =>
+  files.map((file) => ({
+    path: file.path,
+    kind: "modified" as const,
+    additions: file.additions,
+    deletions: file.deletions,
+  }));
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -237,21 +248,14 @@ const make = Effect.gen(function* () {
     yield* workspaceEntries.invalidate(input.cwd);
 
     const transitionFiles = yield* checkpointStore
-      .diffCheckpoints({
+      .diffCheckpointFiles({
         cwd: input.cwd,
         fromCheckpointRef,
         toCheckpointRef: targetCheckpointRef,
         fallbackFromToHead: false,
       })
       .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
+        Effect.map(toCheckpointFiles),
         Effect.tapError((error) =>
           appendCaptureFailureActivity({
             threadId: input.threadId,
@@ -275,21 +279,14 @@ const make = Effect.gen(function* () {
       input.turnCount === 0
         ? []
         : yield* checkpointStore
-            .diffCheckpoints({
+            .diffCheckpointFiles({
               cwd: input.cwd,
               fromCheckpointRef: baselineCheckpointRef,
               toCheckpointRef: targetCheckpointRef,
               fallbackFromToHead: false,
             })
             .pipe(
-              Effect.map((diff) =>
-                parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-                  path: file.path,
-                  kind: "modified" as const,
-                  additions: file.additions,
-                  deletions: file.deletions,
-                })),
-              ),
+              Effect.map(toCheckpointFiles),
               Effect.tapError((error) =>
                 appendCaptureFailureActivity({
                   threadId: input.threadId,
@@ -428,10 +425,7 @@ const make = Effect.gen(function* () {
       const existingPlaceholder = thread.checkpoints.find(
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
       );
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
+      const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
       const nextTurnCount = existingPlaceholder
         ? existingPlaceholder.checkpointTurnCount
         : currentTurnCount + 1;
@@ -534,10 +528,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const currentTurnCount = thread.checkpoints.reduce(
-        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-        0,
-      );
+      const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
       const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
       const baselineExists = yield* checkpointStore.hasCheckpointRef({
         cwd: checkpointCwd,
@@ -616,10 +607,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
       cwd: checkpointCwd,
@@ -679,10 +667,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
-      (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
-      0,
-    );
+    const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
 
     if (event.payload.turnCount > currentTurnCount) {
       yield* appendRevertFailureActivity({

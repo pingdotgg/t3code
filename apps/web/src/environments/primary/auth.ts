@@ -3,7 +3,6 @@ import type {
   AuthBootstrapResult,
   AuthClientMetadata,
   AuthCreatePairingCredentialInput,
-  AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
   AuthSessionId,
@@ -32,6 +31,13 @@ export interface ServerPairingLinkRecord {
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
+export interface ServerPairingCredentialRecord {
+  readonly id: string;
+  readonly credential: string;
+  readonly label?: string;
   readonly expiresAt: string;
 }
 
@@ -267,7 +273,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
 export async function createServerPairingCredential(
   label?: string,
-): Promise<AuthPairingCredentialResult> {
+): Promise<ServerPairingCredentialRecord> {
   const trimmedLabel = label?.trim();
   const payload: AuthCreatePairingCredentialInput = trimmedLabel ? { label: trimmedLabel } : {};
   const response = await fetch(resolvePrimaryEnvironmentHttpUrl("/api/auth/pairing-token"), {
@@ -285,7 +291,7 @@ export async function createServerPairingCredential(
     );
   }
 
-  return (await response.json()) as AuthPairingCredentialResult;
+  return (await response.json()) as ServerPairingCredentialRecord;
 }
 
 export async function listServerPairingLinks(): Promise<ReadonlyArray<ServerPairingLinkRecord>> {

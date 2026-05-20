@@ -569,6 +569,83 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
 
+  it("creates and shows a mobile pairing QR code", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.1.44:3773",
+        advertisedHost: "192.168.1.44",
+      },
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [
+        makeClientSession({
+          sessionId: "session-owner",
+          subject: "desktop-bootstrap",
+          role: "owner",
+          method: "browser-session-cookie",
+          client: {
+            label: "This Mac",
+            deviceType: "desktop",
+            os: "macOS",
+            browser: "Electron",
+          },
+          issuedAt: "2036-04-07T00:00:00.000Z",
+          expiresAt: "2036-05-07T00:00:00.000Z",
+          connected: true,
+          current: true,
+        }),
+      ],
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/auth/pairing-token") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "mobile-pairing-link-1",
+            credential: "mobile-pairing-token",
+            label: "T3 Mobile",
+            expiresAt: "2036-04-10T00:05:00.000Z",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+
+      throw new Error(`Unhandled fetch ${method} ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Connect new device", exact: true }).click();
+
+    await expect
+      .element(page.getByRole("heading", { name: "Connect new device", exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText("http://192.168.1.44:3773", { exact: true }))
+      .toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(
+        [...document.querySelectorAll("textarea")].some((textarea) =>
+          textarea.value.startsWith("t3code://mobile/pair"),
+        ),
+      ).toBe(true);
+    });
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
   it("revokes all other paired clients from settings", async () => {
     window.desktopBridge = createDesktopBridgeStub({
       serverExposureState: {

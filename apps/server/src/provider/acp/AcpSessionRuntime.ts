@@ -28,6 +28,7 @@ export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
   readonly resumeSessionId?: string;
+  readonly resumeFallback?: "create" | "fail";
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
@@ -96,6 +97,9 @@ export interface AcpSessionRuntimeShape {
   readonly prompt: (
     payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
   ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+  readonly forkSession: (
+    payload: Omit<EffectAcpSchema.ForkSessionRequest, "sessionId">,
+  ) => Effect.Effect<EffectAcpSchema.ForkSessionResponse, EffectAcpErrors.AcpError>;
   readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly setMode: (
     modeId: string,
@@ -451,6 +455,8 @@ const makeAcpSessionRuntime = (
         if (Exit.isSuccess(resumed)) {
           sessionId = options.resumeSessionId;
           sessionSetupResult = resumed.value;
+        } else if (options.resumeFallback === "fail") {
+          return yield* Effect.failCause(resumed.cause);
         } else {
           const createPayload = {
             cwd: options.cwd,
@@ -570,6 +576,20 @@ const makeAcpSessionRuntime = (
                   assistantSegmentRef,
                 }),
               ),
+            );
+          }),
+        ),
+      forkSession: (payload) =>
+        getStartedState.pipe(
+          Effect.flatMap((started) => {
+            const requestPayload = {
+              sessionId: started.sessionId,
+              ...payload,
+            } satisfies EffectAcpSchema.ForkSessionRequest;
+            return runLoggedRequest(
+              "session/fork",
+              requestPayload,
+              acp.agent.forkSession(requestPayload),
             );
           }),
         ),

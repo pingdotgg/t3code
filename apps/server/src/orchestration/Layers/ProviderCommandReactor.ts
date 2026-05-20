@@ -6,6 +6,7 @@ import {
   type OrchestrationEvent,
   ProviderDriverKind,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -15,7 +16,12 @@ import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shar
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  checkpointRefForThreadTurn,
+  latestCapturedCheckpointTurnCount,
+  resolveThreadWorkspaceCwd,
+} from "../../checkpointing/Utils.ts";
+import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { GitStatusBroadcaster } from "../../git/Services/GitStatusBroadcaster.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -24,6 +30,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { assistantTurnCount } from "../Utils.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -35,6 +42,7 @@ type ProviderIntentEvent = Extract<
   {
     type:
       | "thread.runtime-mode-set"
+      | "thread.provider-fork-requested"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
@@ -168,6 +176,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const checkpointStore = yield* CheckpointStore;
   const git = yield* GitCore;
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -194,6 +203,7 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
+      | "provider.session.fork.failed"
       | "provider.session.stop.failed";
     readonly summary: string;
     readonly detail: string;
@@ -272,6 +282,44 @@ const make = Effect.gen(function* () {
     return readModel.threads.find((entry) => entry.id === threadId);
   });
 
+  const ensurePreTurnBaselineForThread = Effect.fn("ensurePreTurnBaselineForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    if (!thread) {
+      return;
+    }
+
+    const cwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: readModel.projects,
+    });
+    if (!cwd) {
+      return;
+    }
+
+    const isRepo = yield* checkpointStore.isGitRepository(cwd);
+    if (!isRepo) {
+      return;
+    }
+
+    const checkpointTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
+    const checkpointRef = checkpointRefForThreadTurn(thread.id, checkpointTurnCount);
+    const baselineExists = yield* checkpointStore.hasCheckpointRef({
+      cwd,
+      checkpointRef,
+    });
+    if (baselineExists) {
+      return;
+    }
+
+    yield* checkpointStore.captureCheckpoint({
+      cwd,
+      checkpointRef,
+    });
+  });
+
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
@@ -293,6 +341,22 @@ const make = Effect.gen(function* () {
         .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
 
     const activeSession = yield* resolveActiveSession(threadId);
+    if (thread.session?.status === "starting" && !activeSession) {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabel(thread.session.providerName ?? undefined),
+        method: "thread.turn.start",
+        detail: `Thread '${threadId}' is still preparing its forked provider session. Try again once the fork finishes.`,
+      });
+    }
+    if (thread.session?.status === "error" && !activeSession) {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabel(thread.session.providerName ?? undefined),
+        method: "thread.turn.start",
+        detail:
+          thread.session.lastError ??
+          `Thread '${threadId}' has no recoverable provider session. Stop the session before starting a new provider context.`,
+      });
+    }
     const activeThreadSession =
       thread.session !== null && thread.session.status !== "stopped" && activeSession
         ? thread.session
@@ -654,6 +718,167 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const processProviderForkRequested = Effect.fn("processProviderForkRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.provider-fork-requested" }>,
+  ) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const sourceThread = readModel.threads.find(
+      (entry) => entry.id === event.payload.sourceThreadId,
+    );
+    const targetThread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
+    if (!sourceThread || !targetThread) {
+      return;
+    }
+
+    const sourceSession = sourceThread.session;
+    if (!sourceSession || sourceSession.status === "stopped") {
+      const detail = `Source thread '${event.payload.sourceThreadId}' has no active provider session to fork.`;
+      yield* setThreadSession({
+        threadId: event.payload.threadId,
+        session: {
+          threadId: event.payload.threadId,
+          status: "error",
+          providerName: sourceSession?.providerName ?? null,
+          ...(sourceSession?.providerInstanceId !== undefined
+            ? { providerInstanceId: sourceSession.providerInstanceId }
+            : {}),
+          runtimeMode: targetThread.runtimeMode,
+          activeTurnId: null,
+          lastError: detail,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.session.fork.failed",
+        summary: "Provider fork failed",
+        detail,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
+    const sourceAssistantTurnCount = assistantTurnCount(sourceThread.messages);
+    if (event.payload.targetTurnCount !== sourceAssistantTurnCount) {
+      const detail =
+        "Copilot native forking currently supports only the latest completed assistant response. Mid-conversation forks keep visible T3 history but cannot safely reuse provider context.";
+      yield* setThreadSession({
+        threadId: event.payload.threadId,
+        session: {
+          threadId: event.payload.threadId,
+          status: "error",
+          providerName: sourceSession.providerName,
+          ...(sourceSession.providerInstanceId !== undefined
+            ? { providerInstanceId: sourceSession.providerInstanceId }
+            : {}),
+          runtimeMode: targetThread.runtimeMode,
+          activeTurnId: null,
+          lastError: detail,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.session.fork.failed",
+        summary: "Provider fork unavailable",
+        detail,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
+    yield* setThreadSession({
+      threadId: event.payload.threadId,
+      session: {
+        threadId: event.payload.threadId,
+        status: "starting",
+        providerName: sourceSession.providerName,
+        ...(sourceSession.providerInstanceId !== undefined
+          ? { providerInstanceId: sourceSession.providerInstanceId }
+          : {}),
+        runtimeMode: targetThread.runtimeMode,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: event.payload.createdAt,
+      },
+      createdAt: event.payload.createdAt,
+    });
+
+    const cwd = resolveThreadWorkspaceCwd({
+      thread: targetThread,
+      projects: readModel.projects,
+    });
+
+    yield* providerService
+      .forkSession({
+        sourceThreadId: event.payload.sourceThreadId,
+        threadId: event.payload.threadId,
+        ...(sourceSession.providerName !== null
+          ? { provider: ProviderDriverKind.make(sourceSession.providerName) }
+          : {}),
+        ...(sourceSession.providerInstanceId !== undefined
+          ? { providerInstanceId: sourceSession.providerInstanceId }
+          : {}),
+        ...(cwd !== undefined ? { cwd } : {}),
+        modelSelection: targetThread.modelSelection,
+        interactionMode: targetThread.interactionMode,
+        runtimeMode: targetThread.runtimeMode,
+      })
+      .pipe(
+        Effect.flatMap((session) =>
+          setThreadSession({
+            threadId: event.payload.threadId,
+            session: {
+              threadId: event.payload.threadId,
+              status: mapProviderSessionStatusToOrchestrationStatus(session.status),
+              providerName: session.provider,
+              ...(session.providerInstanceId !== undefined
+                ? { providerInstanceId: session.providerInstanceId }
+                : {}),
+              runtimeMode: session.runtimeMode,
+              activeTurnId: null,
+              ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
+              lastError: session.lastError ?? null,
+              updatedAt: session.updatedAt,
+            },
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+        Effect.catchCause((cause) => {
+          const detail = formatFailureDetail(cause);
+          return setThreadSession({
+            threadId: event.payload.threadId,
+            session: {
+              threadId: event.payload.threadId,
+              status: "error",
+              providerName: sourceSession.providerName,
+              ...(sourceSession.providerInstanceId !== undefined
+                ? { providerInstanceId: sourceSession.providerInstanceId }
+                : {}),
+              runtimeMode: targetThread.runtimeMode,
+              activeTurnId: null,
+              lastError: detail,
+              updatedAt: event.payload.createdAt,
+            },
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.flatMap(() =>
+              appendProviderFailureActivity({
+                threadId: event.payload.threadId,
+                kind: "provider.session.fork.failed",
+                summary: "Provider fork failed",
+                detail,
+                turnId: null,
+                createdAt: event.payload.createdAt,
+              }),
+            ),
+          );
+        }),
+      );
+  });
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -745,6 +970,15 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+
+    yield* ensurePreTurnBaselineForThread(event.payload.threadId).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("provider command reactor failed to capture pre-turn checkpoint", {
+          threadId: event.payload.threadId,
+          detail: error.message,
+        }),
+      ),
+    );
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
@@ -930,6 +1164,9 @@ const make = Effect.gen(function* () {
       eventType: event.type,
     });
     switch (event.type) {
+      case "thread.provider-fork-requested":
+        yield* processProviderForkRequested(event);
+        return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
         if (!thread?.session || thread.session.status === "stopped") {
@@ -980,6 +1217,7 @@ const make = Effect.gen(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         event.type === "thread.runtime-mode-set" ||
+        event.type === "thread.provider-fork-requested" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||

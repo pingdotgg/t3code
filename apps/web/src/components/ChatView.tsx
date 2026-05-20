@@ -201,7 +201,12 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
-import { buildChatFindRows, findChatFindMatches, type ChatFindMatch } from "./chat/chatFind";
+import {
+  buildChatFindRows,
+  findChatFindMatches,
+  type ChatFindMatch,
+  type ChatFindRow,
+} from "./chat/chatFind";
 import { useChatFindHighlight } from "./chat/useChatFindHighlight";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
@@ -210,6 +215,8 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_CHAT_FIND_ROWS: ChatFindRow[] = [];
+const EMPTY_CHAT_FIND_MATCHES: ChatFindMatch[] = [];
 const TIMELINE_ROW_ESTIMATED_SIZE_PX = 90;
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -1371,6 +1378,7 @@ function ChatViewBody(
     threadError: activeThread?.error,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const timelineActiveWork = isWorking || !latestTurnSettled;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -1669,7 +1677,7 @@ function ChatViewBody(
       deriveMessagesTimelineRows({
         timelineEntries,
         completionDividerBeforeEntryId,
-        isWorking,
+        isWorking: timelineActiveWork,
         activeTurnId: activeLatestTurn?.turnId ?? null,
         activeTurnStartedAt: activeWorkStartedAt,
         turnDiffSummaryByAssistantMessageId,
@@ -1678,16 +1686,22 @@ function ChatViewBody(
     [
       activeWorkStartedAt,
       completionDividerBeforeEntryId,
-      isWorking,
+      timelineActiveWork,
       activeLatestTurn?.turnId,
       revertTurnCountByUserMessageId,
       timelineEntries,
       turnDiffSummaryByAssistantMessageId,
     ],
   );
-  const chatFindRows = useMemo(() => buildChatFindRows(timelineRows), [timelineRows]);
+  const chatFindRows = useMemo(
+    () => (chatFindOpen ? buildChatFindRows(timelineRows) : EMPTY_CHAT_FIND_ROWS),
+    [chatFindOpen, timelineRows],
+  );
   const chatFindMatches = useMemo(
-    () => findChatFindMatches(chatFindRows, deferredChatFindQuery),
+    () =>
+      deferredChatFindQuery.length > 0
+        ? findChatFindMatches(chatFindRows, deferredChatFindQuery)
+        : EMPTY_CHAT_FIND_MATCHES,
     [chatFindRows, deferredChatFindQuery],
   );
   const activeChatFindMatchIndex = useMemo(
@@ -1700,7 +1714,7 @@ function ChatViewBody(
   // DOM-based highlighting via CSS Custom Highlight API
   useChatFindHighlight(
     messagesViewportRef,
-    deferredChatFindQuery,
+    chatFindOpen ? deferredChatFindQuery : "",
     activeChatFindMatch?.rowId ?? null,
     activeChatFindMatch?.matchIndexInRow ?? 0,
   );
@@ -3934,7 +3948,7 @@ function ChatViewBody(
               key={activeThread.id}
               rows={timelineRows}
               isWorking={isWorking}
-              activeTurnInProgress={isWorking || !latestTurnSettled}
+              activeTurnInProgress={timelineActiveWork}
               activeTurnId={activeLatestTurn?.turnId ?? null}
               activeTurnStartedAt={activeWorkStartedAt}
               listRef={legendListRef}

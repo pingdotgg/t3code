@@ -25,6 +25,7 @@ const permissionRequestCount = Number.parseInt(
 const permissionRequestKind = process.env.T3_ACP_PERMISSION_REQUEST_KIND ?? "execute";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const disableFork = process.env.T3_ACP_DISABLE_FORK === "1";
 const ignoreCancel = process.env.T3_ACP_IGNORE_CANCEL === "1";
 const promptDelayMs = Number.parseInt(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0", 10);
 const promptStartedText = process.env.T3_ACP_PROMPT_STARTED_TEXT;
@@ -35,6 +36,7 @@ const authMethods = (process.env.T3_ACP_AUTH_METHODS ?? "")
   .map((method) => method.trim())
   .filter((method) => method.length > 0);
 const sessionId = "mock-session-1";
+const forkedSessionId = "mock-session-fork";
 const COPILOT_AGENT_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#agent";
 const COPILOT_PLAN_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#plan";
 
@@ -293,7 +295,10 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          ...(disableFork ? {} : { sessionCapabilities: { fork: {} } }),
+        },
         ...(authMethods.length > 0
           ? {
               authMethods: authMethods.map((id) => ({
@@ -341,6 +346,16 @@ const program = Effect.gen(function* () {
       };
     }),
   );
+
+  if (!disableFork) {
+    yield* agent.handleForkSession(() =>
+      Effect.succeed({
+        sessionId: forkedSessionId,
+        modes: modeState(),
+        configOptions: configOptions(),
+      }),
+    );
+  }
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {

@@ -22,7 +22,10 @@ import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts"
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  latestCapturedCheckpointTurnCount,
+  resolveThreadWorkspaceCwd,
+} from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -1590,10 +1593,7 @@ const make = Effect.gen(function* () {
             const assistantMessageId = MessageId.make(
               `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
             );
-            const maxTurnCount = thread.checkpoints.reduce(
-              (max, c) => Math.max(max, c.checkpointTurnCount),
-              0,
-            );
+            const maxTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
             yield* orchestrationEngine.dispatch({
               type: "thread.turn.diff.complete",
               commandId: providerCommandId(event, "thread-turn-diff-complete"),

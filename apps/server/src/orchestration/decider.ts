@@ -19,6 +19,7 @@ import {
   requireThreadReadyForTurnStart,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import { assistantTurnCount } from "./Utils.ts";
 
 const FORK_TITLE_PREFIX = "Forked: ";
 const nowIso = () => new Date().toISOString();
@@ -331,29 +332,49 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
 
       const forkedMessages = sourceThread.messages.slice(0, targetMessageIndex + 1);
-      return [
-        {
-          ...withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt: command.createdAt,
-            commandId: command.commandId,
-          }),
-          type: "thread.created",
-          payload: {
-            threadId: command.threadId,
-            projectId: sourceThread.projectId,
-            title: forkedTitle(sourceThread.title),
-            modelSelection: sourceThread.modelSelection,
-            runtimeMode: sourceThread.runtimeMode,
-            pendingRuntimeMode: null,
-            interactionMode: sourceThread.interactionMode,
-            branch: sourceThread.branch,
-            worktreePath: sourceThread.worktreePath,
-            createdAt: command.createdAt,
-            updatedAt: command.createdAt,
-          },
+      const forkCreatedEvent = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.created" as const,
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          title: forkedTitle(sourceThread.title),
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          pendingRuntimeMode: null,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
         },
+      };
+      const providerForkRequestedEvent = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: forkCreatedEvent.eventId,
+        type: "thread.provider-fork-requested" as const,
+        payload: {
+          sourceThreadId: command.sourceThreadId,
+          threadId: command.threadId,
+          targetMessageId: command.targetMessageId,
+          targetTurnId: targetMessage.turnId,
+          targetTurnCount: assistantTurnCount(forkedMessages),
+          createdAt: command.createdAt,
+        },
+      };
+      return [
+        forkCreatedEvent,
+        providerForkRequestedEvent,
         ...messageForkEvents({ command, messages: forkedMessages }),
       ];
     }

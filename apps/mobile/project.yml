@@ -27,6 +27,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         OTHER_LDFLAGS: $(inherited) -lsqlite3
         INFOPLIST_KEY_CFBundleDisplayName: T3 Code
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan a T3 Code pairing QR code to connect this device.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone:

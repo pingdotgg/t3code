@@ -19,6 +19,7 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ThreadId,
@@ -41,6 +42,10 @@ export interface ProviderServiceShape {
   readonly startSession: (
     threadId: ThreadId,
     input: ProviderSessionStartInput,
+  ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
+  readonly forkSession: (
+    input: ProviderSessionForkInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 
   /**

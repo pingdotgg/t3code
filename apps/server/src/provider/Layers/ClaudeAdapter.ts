@@ -3217,6 +3217,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const listSessions: ClaudeAdapterShape["listSessions"] = () =>
     Effect.sync(() => Array.from(sessions.values(), ({ session }) => ({ ...session })));
 
+  const forkSession: ClaudeAdapterShape["forkSession"] = (input) =>
+    Effect.fail(
+      new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "session/fork",
+        detail: `Provider '${PROVIDER}' does not support native session forking for thread '${input.sourceThreadId}'.`,
+      }),
+    );
+
   const hasSession: ClaudeAdapterShape["hasSession"] = (threadId) =>
     Effect.sync(() => {
       const context = sessions.get(threadId);
@@ -3250,6 +3259,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkSession,
     sendTurn,
     interruptTurn,
     readThread,

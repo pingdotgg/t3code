@@ -149,10 +149,23 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
+function isTerminalSessionActivity(session: SessionActivityState | null): boolean {
+  return (
+    session?.orchestrationStatus === "idle" ||
+    session?.orchestrationStatus === "interrupted" ||
+    session?.orchestrationStatus === "stopped" ||
+    session?.orchestrationStatus === "error"
+  );
+}
+
 export function isThreadActivelyWorking(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
 ): boolean {
+  if (isTerminalSessionActivity(session)) {
+    return false;
+  }
+
   if (latestTurn?.startedAt && !latestTurn.completedAt) {
     return true;
   }
@@ -161,11 +174,15 @@ export function isThreadActivelyWorking(
     return false;
   }
 
+  if (!session.activeTurnId) {
+    return false;
+  }
+
   if (!latestTurn) {
     return true;
   }
 
-  if (session.activeTurnId && latestTurn.turnId !== session.activeTurnId) {
+  if (latestTurn.turnId !== session.activeTurnId) {
     return true;
   }
 
@@ -176,7 +193,11 @@ export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
 ): boolean {
-  if (!latestTurn?.startedAt) return false;
+  if (!latestTurn) {
+    return !(session?.orchestrationStatus === "running" && session.activeTurnId);
+  }
+  if (isTerminalSessionActivity(session)) return true;
+  if (!latestTurn.startedAt) return false;
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
   if (session.orchestrationStatus !== "running") return true;

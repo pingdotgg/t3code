@@ -455,6 +455,79 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["message", "work", "message", "working"]);
   });
 
+  it("keeps a non-terminal assistant response visible when the next user message arrives", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Plan this implementation",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-question-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-question" as never,
+            role: "assistant",
+            text: "I have a few questions first.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "user-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "user-2" as never,
+            role: "user",
+            text: "Answers to your questions",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-implementation-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:10Z",
+          message: {
+            id: "assistant-implementation" as never,
+            role: "assistant",
+            text: "I'll implement that now.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:01:10Z",
+            completedAt: "2026-01-01T00:01:12Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-1-entry",
+      "assistant-question-entry",
+      "user-2-entry",
+      "assistant-implementation-entry",
+    ]);
+  });
+
   it("projects assistant diff summaries and user revert counts onto the affected rows", () => {
     const assistantTurnDiffSummary = {
       turnId: "turn-1" as never,

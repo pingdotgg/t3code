@@ -191,6 +191,10 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         sessions.clear();
       }),
   );
+  const forkSession = vi.fn(
+    (): Effect.Effect<ProviderSession, ProviderAdapterError> =>
+      Effect.die(new Error("Unsupported provider fork in test adapter")),
+  );
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
@@ -198,6 +202,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkSession,
     sendTurn,
     interruptTurn,
     respondToRequest,

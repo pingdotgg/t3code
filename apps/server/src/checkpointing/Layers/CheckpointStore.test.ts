@@ -86,6 +86,10 @@ function buildLargeText(lineCount = 5_000): string {
     .concat("\n");
 }
 
+function buildOversizedSingleLine(): string {
+  return `${"x".repeat(11_000_000)}\n`;
+}
+
 it.layer(TestLayer)("CheckpointStoreLive", (it) => {
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
@@ -149,6 +153,39 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
         expect(diff).toContain("diff --git a/README.md b/README.md");
         expect(diff).not.toContain("other.md");
       }),
+    );
+  });
+
+  describe("diffCheckpointFiles", () => {
+    it.effect(
+      "returns file summaries for checkpoint diffs whose patch exceeds the output limit",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          const checkpointStore = yield* CheckpointStore;
+          const threadId = ThreadId.make("thread-checkpoint-store-large-file-summary");
+          const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+          const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+          yield* checkpointStore.captureCheckpoint({
+            cwd: tmp,
+            checkpointRef: fromCheckpointRef,
+          });
+          yield* writeTextFile(path.join(tmp, "README.md"), buildOversizedSingleLine());
+          yield* checkpointStore.captureCheckpoint({
+            cwd: tmp,
+            checkpointRef: toCheckpointRef,
+          });
+
+          const files = yield* checkpointStore.diffCheckpointFiles({
+            cwd: tmp,
+            fromCheckpointRef,
+            toCheckpointRef,
+          });
+
+          expect(files).toEqual([{ path: "README.md", additions: 1, deletions: 1 }]);
+        }),
     );
   });
 });

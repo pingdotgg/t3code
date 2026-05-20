@@ -17,6 +17,7 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   type ProviderInstanceId,
@@ -607,6 +608,66 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const forkSession: ProviderServiceShape["forkSession"] = Effect.fn("forkSession")(
+    function* (rawInput) {
+      const parsed = yield* decodeInputOrValidationError({
+        operation: "ProviderService.forkSession",
+        schema: ProviderSessionForkInput,
+        payload: rawInput,
+      });
+
+      const routed = yield* resolveRoutableSession({
+        threadId: parsed.sourceThreadId,
+        operation: "ProviderService.forkSession",
+        allowRecovery: true,
+      });
+      const instanceInfo = yield* registry.getInstanceInfo(routed.instanceId);
+      const resolvedProvider = instanceInfo.driverKind;
+      if (parsed.provider !== undefined && parsed.provider !== resolvedProvider) {
+        return yield* toValidationError(
+          "ProviderService.forkSession",
+          `Provider instance '${routed.instanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
+        );
+      }
+
+      // Lock ordering: resolve and operate on the source provider session first,
+      // then bind the target thread only after the adapter has forked. Future
+      // fork paths should preserve source-before-target ordering to avoid
+      // deadlocks with per-thread session locks.
+      const session = yield* routed.adapter.forkSession({
+        ...parsed,
+        provider: resolvedProvider,
+        providerInstanceId: routed.instanceId,
+      });
+      if (session.provider !== routed.adapter.provider) {
+        return yield* toValidationError(
+          "ProviderService.forkSession",
+          `Adapter/provider mismatch: requested '${routed.adapter.provider}', received '${session.provider}'.`,
+        );
+      }
+      const sessionWithInstance = {
+        ...session,
+        providerInstanceId: routed.instanceId,
+      };
+
+      yield* stopStaleSessionsForThread({
+        threadId: parsed.threadId,
+        currentInstanceId: routed.instanceId,
+      });
+      yield* upsertSessionBinding(sessionWithInstance, parsed.threadId, {
+        modelSelection: parsed.modelSelection,
+        lastRuntimeEvent: "provider.forkSession",
+        lastRuntimeEventAt: new Date().toISOString(),
+      });
+      yield* analytics.record("provider.session.forked", {
+        provider: sessionWithInstance.provider,
+        hasResumeCursor: sessionWithInstance.resumeCursor !== undefined,
+      });
+
+      return sessionWithInstance;
+    },
+  );
+
   const sendTurn: ProviderServiceShape["sendTurn"] = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
@@ -1014,6 +1075,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
+    forkSession,
     sendTurn,
     interruptTurn,
     respondToRequest,

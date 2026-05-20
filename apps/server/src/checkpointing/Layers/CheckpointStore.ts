@@ -19,8 +19,10 @@ import { GitCore } from "../../git/Services/GitCore.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";
 import { normalizeChangedFilePath } from "@t3tools/shared/toolChangedFiles";
+import { parseTurnDiffFilesFromNumstat } from "../Diffs.ts";
 
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES = 10_000_000;
 
 const makeCheckpointStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -183,6 +185,43 @@ const makeCheckpointStore = Effect.gen(function* () {
       Effect.map((commit) => commit !== null),
     );
 
+  const normalizeDiffPaths = (input: {
+    readonly cwd: string;
+    readonly paths?: ReadonlyArray<string>;
+  }): ReadonlyArray<string> | undefined =>
+    input.paths
+      ?.map((filePath) => normalizeChangedFilePath(filePath, { cwd: input.cwd }))
+      .filter((filePath): filePath is string => filePath !== null);
+
+  const resolveDiffCommits = Effect.fn("resolveDiffCommits")(function* (input: {
+    readonly cwd: string;
+    readonly fromCheckpointRef: CheckpointRef;
+    readonly toCheckpointRef: CheckpointRef;
+    readonly fallbackFromToHead?: boolean;
+    readonly operation: string;
+  }) {
+    let fromCommitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+    const toCommitOid = yield* resolveCheckpointCommit(input.cwd, input.toCheckpointRef);
+
+    if (!fromCommitOid && input.fallbackFromToHead === true) {
+      const headCommit = yield* resolveHeadCommit(input.cwd);
+      if (headCommit) {
+        fromCommitOid = headCommit;
+      }
+    }
+
+    if (!fromCommitOid || !toCommitOid) {
+      return yield* new GitCommandError({
+        operation: input.operation,
+        command: "git diff",
+        cwd: input.cwd,
+        detail: "Checkpoint ref is unavailable for diff operation.",
+      });
+    }
+
+    return { fromCommitOid, toCommitOid };
+  });
+
   const restoreCheckpoint: CheckpointStoreShape["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
@@ -225,28 +264,8 @@ const makeCheckpointStore = Effect.gen(function* () {
     function* (input) {
       const operation = "CheckpointStore.diffCheckpoints";
 
-      let fromCommitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
-      const toCommitOid = yield* resolveCheckpointCommit(input.cwd, input.toCheckpointRef);
-
-      if (!fromCommitOid && input.fallbackFromToHead === true) {
-        const headCommit = yield* resolveHeadCommit(input.cwd);
-        if (headCommit) {
-          fromCommitOid = headCommit;
-        }
-      }
-
-      if (!fromCommitOid || !toCommitOid) {
-        return yield* new GitCommandError({
-          operation,
-          command: "git diff",
-          cwd: input.cwd,
-          detail: "Checkpoint ref is unavailable for diff operation.",
-        });
-      }
-
-      const paths = input.paths
-        ?.map((filePath) => normalizeChangedFilePath(filePath, { cwd: input.cwd }))
-        .filter((filePath): filePath is string => filePath !== null);
+      const { fromCommitOid, toCommitOid } = yield* resolveDiffCommits({ ...input, operation });
+      const paths = normalizeDiffPaths(input);
       if (input.paths !== undefined && (paths?.length ?? 0) === 0) {
         return "";
       }
@@ -268,6 +287,34 @@ const makeCheckpointStore = Effect.gen(function* () {
       return result.stdout;
     },
   );
+
+  const diffCheckpointFiles: CheckpointStoreShape["diffCheckpointFiles"] = Effect.fn(
+    "diffCheckpointFiles",
+  )(function* (input) {
+    const operation = "CheckpointStore.diffCheckpointFiles";
+
+    const { fromCommitOid, toCommitOid } = yield* resolveDiffCommits({ ...input, operation });
+    const paths = normalizeDiffPaths(input);
+    if (input.paths !== undefined && (paths?.length ?? 0) === 0) {
+      return [];
+    }
+
+    const result = yield* git.execute({
+      operation,
+      cwd: input.cwd,
+      args: [
+        "diff",
+        "--numstat",
+        "-z",
+        fromCommitOid,
+        toCommitOid,
+        ...(paths !== undefined && paths.length > 0 ? ["--", ...paths] : []),
+      ],
+      maxOutputBytes: CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES,
+    });
+
+    return parseTurnDiffFilesFromNumstat(result.stdout);
+  });
 
   const deleteCheckpointRefs: CheckpointStoreShape["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
@@ -293,6 +340,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    diffCheckpointFiles,
     deleteCheckpointRefs,
   } satisfies CheckpointStoreShape;
 });

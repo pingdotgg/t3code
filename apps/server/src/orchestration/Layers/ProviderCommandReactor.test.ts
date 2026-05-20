@@ -36,6 +36,11 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import {
+  CheckpointStore,
+  type CheckpointStoreShape,
+} from "../../checkpointing/Services/CheckpointStore.ts";
+import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import {
   GitStatusBroadcaster,
   type GitStatusBroadcasterShape,
 } from "../../git/Services/GitStatusBroadcaster.ts";
@@ -137,6 +142,8 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly checkpointIsGitRepository?: boolean;
+    readonly checkpointRefExists?: boolean;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -150,6 +157,7 @@ describe("ProviderCommandReactor", () => {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
     };
+    const turnStartOrder: string[] = [];
     const startSession = vi.fn((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
       const resumeCursor =
@@ -207,9 +215,12 @@ describe("ProviderCommandReactor", () => {
       return Effect.succeed(session);
     });
     const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
+      Effect.sync(() => {
+        turnStartOrder.push("sendTurn");
+        return {
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+        };
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
@@ -275,10 +286,25 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: vi.fn(() => Effect.succeed(input?.checkpointIsGitRepository ?? false)),
+      hasCheckpointRef: vi.fn(() => Effect.succeed(input?.checkpointRefExists ?? false)),
+      captureCheckpoint: vi.fn((_) =>
+        Effect.sync(() => {
+          turnStartOrder.push("captureCheckpoint");
+        }),
+      ),
+      restoreCheckpoint: () => Effect.die(new Error("restoreCheckpoint should not be called")),
+      diffCheckpoints: () => Effect.die(new Error("diffCheckpoints should not be called")),
+      diffCheckpointFiles: () => Effect.die(new Error("diffCheckpointFiles should not be called")),
+      deleteCheckpointRefs: () =>
+        Effect.die(new Error("deleteCheckpointRefs should not be called")),
+    };
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
+      forkSession: unsupported as ProviderServiceShape["forkSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
@@ -325,6 +351,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
         Layer.succeed(GitStatusBroadcaster, {
@@ -392,6 +419,8 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      checkpointStore,
+      turnStartOrder,
       runtimeSessions,
       stateDir,
       drain,
@@ -462,6 +491,36 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("captures the pre-turn checkpoint before sending the provider turn", async () => {
+    const harness = await createHarness({ checkpointIsGitRepository: true });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-checkpoint-baseline"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-checkpoint-baseline"),
+          role: "user",
+          text: "change files",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.checkpointStore.captureCheckpoint).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project",
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    });
+    expect(harness.turnStartOrder).toEqual(["captureCheckpoint", "sendTurn"]);
   });
 
   it("generates a thread title on the first turn", async () => {

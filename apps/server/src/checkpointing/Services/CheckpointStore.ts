@@ -35,6 +35,12 @@ export interface DiffCheckpointsInput {
   readonly paths?: ReadonlyArray<string>;
 }
 
+export interface CheckpointDiffFileSummary {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
 export interface DeleteCheckpointRefsInput {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
@@ -82,6 +88,15 @@ export interface CheckpointStoreShape {
   readonly diffCheckpoints: (
     input: DiffCheckpointsInput,
   ) => Effect.Effect<string, CheckpointStoreError>;
+
+  /**
+   * Compute per-file diff stats between two checkpoint refs without materializing patch hunks.
+   *
+   * Can optionally treat missing "from" ref as `HEAD`.
+   */
+  readonly diffCheckpointFiles: (
+    input: DiffCheckpointsInput,
+  ) => Effect.Effect<ReadonlyArray<CheckpointDiffFileSummary>, CheckpointStoreError>;
 
   /**
    * Delete the provided checkpoint refs.

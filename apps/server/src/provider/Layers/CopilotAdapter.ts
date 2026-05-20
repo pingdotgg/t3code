@@ -137,6 +137,13 @@ interface CopilotSessionContext {
   stopped: boolean;
 }
 
+type CopilotStartSessionInput = Parameters<CopilotAdapterShape["startSession"]>[0] & {
+  readonly resumeFallback?: "create" | "fail";
+};
+
+const COPILOT_FORK_UNSUPPORTED_DETAIL =
+  "This Copilot ACP agent does not support native chat forking. The visible T3 chat fork was created, but Copilot context cannot be continued safely from it.";
+
 function stringifyCause(value: unknown): string {
   if (value instanceof Error) {
     return `${value.name}: ${value.message}`;
@@ -163,6 +170,23 @@ function formatCopilotStartupError(cause: Error): string {
     return `GitHub Copilot ACP transport failed during startup: ${cause.detail}`;
   }
   return cause.message.trim() || "GitHub Copilot ACP process failed during startup.";
+}
+
+function hasCopilotAcpForkCapability(result: AcpSessionRuntimeStartResult): boolean {
+  const forkCapability = result.initializeResult.agentCapabilities?.sessionCapabilities?.fork;
+  return forkCapability !== undefined && forkCapability !== null;
+}
+
+function mapCopilotForkAcpError(threadId: ThreadId, error: EffectAcpErrors.AcpError) {
+  if (Schema.is(EffectAcpErrors.AcpRequestError)(error) && error.code === -32601) {
+    return new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "session/fork",
+      detail: COPILOT_FORK_UNSUPPORTED_DETAIL,
+      cause: error,
+    });
+  }
+  return mapAcpToAdapterError(PROVIDER, threadId, "session/fork", error);
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -740,6 +764,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       readonly getCurrentTurnId: () => TurnId | undefined;
       readonly onFatalCopilotError?: (turnId: TurnId, message: string) => void;
       readonly resumeSessionId?: string;
+      readonly resumeFallback?: "create" | "fail";
     }) =>
       Effect.gen(function* () {
         const sessionScope = yield* Scope.make("sequential");
@@ -762,6 +787,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           cwd: input.cwd,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
+          ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
           ...acpNativeLoggers,
         }).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
@@ -1242,7 +1268,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       }).pipe(Effect.asVoid);
     };
 
-    const startSession: CopilotAdapterShape["startSession"] = (input) =>
+    const startSessionInternal = (input: CopilotStartSessionInput) =>
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -1303,6 +1329,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             pendingUserInputs,
             fullAccessWarningKeys,
             ...(resumeSessionId ? { resumeSessionId } : {}),
+            ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
             getCurrentTurnId: () => ctx?.activeTurnId,
             onFatalCopilotError: (turnId, message) => {
               if (!ctx) return;
@@ -1407,6 +1434,85 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               sessions.get(input.threadId) === ctx ? Effect.void : closeRuntimeResources(runtime),
             ),
           );
+        }),
+      );
+
+    const startSession: CopilotAdapterShape["startSession"] = (input) =>
+      startSessionInternal(input);
+
+    const forkSession: CopilotAdapterShape["forkSession"] = (input) =>
+      withThreadLock(
+        input.sourceThreadId,
+        Effect.gen(function* () {
+          if (input.threadId === input.sourceThreadId) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: "sourceThreadId and threadId must be different.",
+            });
+          }
+          if (input.provider !== undefined && input.provider !== PROVIDER) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+            });
+          }
+          const sourceCtx = yield* requireSession(input.sourceThreadId);
+          const sourceStarted = yield* sourceCtx.acp
+            .start()
+            .pipe(
+              Effect.mapError((cause) =>
+                mapAcpToAdapterError(PROVIDER, input.sourceThreadId, "session/start", cause),
+              ),
+            );
+          if (!hasCopilotAcpForkCapability(sourceStarted)) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/fork",
+              detail: COPILOT_FORK_UNSUPPORTED_DETAIL,
+            });
+          }
+          const sourceSessionId = parseCopilotResume(sourceCtx.session.resumeCursor)?.sessionId;
+          if (!sourceSessionId) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/fork",
+              detail: `Source thread '${input.sourceThreadId}' has no Copilot session id to fork.`,
+            });
+          }
+          const rawCwd = input.cwd ?? sourceCtx.session.cwd;
+          if (!rawCwd?.trim()) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: "cwd is required and must be non-empty.",
+            });
+          }
+          const cwd = nodePath.resolve(rawCwd.trim());
+
+          const forked = yield* sourceCtx.acp
+            .forkSession({ cwd, mcpServers: [] })
+            .pipe(Effect.mapError((cause) => mapCopilotForkAcpError(input.sourceThreadId, cause)));
+
+          return yield* startSessionInternal({
+            threadId: input.threadId,
+            provider: PROVIDER,
+            ...(input.providerInstanceId !== undefined
+              ? { providerInstanceId: input.providerInstanceId }
+              : {}),
+            cwd,
+            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            ...(input.interactionMode !== undefined
+              ? { interactionMode: input.interactionMode }
+              : {}),
+            runtimeMode: input.runtimeMode,
+            resumeCursor: {
+              schemaVersion: COPILOT_RESUME_VERSION,
+              sessionId: forked.sessionId,
+            },
+            resumeFallback: "fail",
+          });
         }),
       );
 
@@ -1704,6 +1810,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
       startSession,
+      forkSession,
       sendTurn,
       interruptTurn,
       readThread,

@@ -82,6 +82,7 @@ describe("CheckpointDiffQueryLive", () => {
           });
           return "diff patch";
         }),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 
@@ -157,6 +158,7 @@ describe("CheckpointDiffQueryLive", () => {
           diffCheckpointsCalls.push(paths);
           return "turn diff patch";
         }),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 
@@ -216,6 +218,7 @@ describe("CheckpointDiffQueryLive", () => {
           diffCalled = true;
           return "unexpected";
         }),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 
@@ -266,6 +269,7 @@ describe("CheckpointDiffQueryLive", () => {
           diffCalled = true;
           return "unexpected";
         }),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 
@@ -339,6 +343,7 @@ describe("CheckpointDiffQueryLive", () => {
           });
           return "snapshot patch";
         }),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 
@@ -389,6 +394,7 @@ describe("CheckpointDiffQueryLive", () => {
       hasCheckpointRef: () => Effect.succeed(true),
       restoreCheckpoint: () => Effect.succeed(true),
       diffCheckpoints: () => Effect.succeed(""),
+      diffCheckpointFiles: () => Effect.succeed([]),
       deleteCheckpointRefs: () => Effect.void,
     };
 

@@ -4,6 +4,21 @@ import T3MobileProtocol
 @testable import T3Mobile
 
 struct MobileSyncClientTests {
+    @Test func parsesMobilePairingQRCodePayload() throws {
+        let configuration = try MobilePairingPayload.configuration(
+            from: "t3code://mobile/pair?v=1&server=http%3A%2F%2F192.168.1.44%3A3773&token=pairing-token"
+        )
+
+        #expect(configuration.baseURL.absoluteString == "http://192.168.1.44:3773")
+        #expect(configuration.bootstrapCredential == "pairing-token")
+    }
+
+    @Test func rejectsNonT3PairingQRCodePayload() {
+        #expect(throws: MobilePairingPayloadError.unsupportedPayload) {
+            try MobilePairingPayload.configuration(from: "https://example.com/pair?token=nope")
+        }
+    }
+
     @Test func notConfiguredSummaryExplainsPairing() {
         let summary = MobileConnectionState.notConfigured.summary
 

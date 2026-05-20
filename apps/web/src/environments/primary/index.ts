@@ -28,6 +28,7 @@ export {
   submitServerAuthCredential,
   takePairingTokenFromUrl,
   type ServerClientSessionRecord,
+  type ServerPairingCredentialRecord,
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
 } from "./auth";

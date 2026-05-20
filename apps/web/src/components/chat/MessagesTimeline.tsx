@@ -26,6 +26,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   EyeIcon,
   GitForkIcon,
@@ -174,7 +175,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       deriveMessagesTimelineRows({
         timelineEntries,
         completionDividerBeforeEntryId,
-        isWorking,
+        isWorking: isWorking || activeTurnInProgress,
         activeTurnId: activeTurnId ?? null,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
@@ -185,6 +186,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       timelineEntries,
       completionDividerBeforeEntryId,
       isWorking,
+      activeTurnInProgress,
       activeTurnId,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
@@ -736,6 +738,7 @@ function AssistantChangedFilesSectionInner({
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const preferredScope = useUiStateStore((store) => store.changedFilesDiffScope);
   const setPreferredScope = useUiStateStore((store) => store.setChangedFilesDiffScope);
   const snapshotFiles = turnSummary.files;
@@ -746,10 +749,16 @@ function AssistantChangedFilesSectionInner({
   const changedFileCountLabel = String(visibleFiles.length);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+    <div
+      className="mt-2 rounded-lg border border-border/80 bg-card/45"
+      style={{
+        fontSize: "var(--app-tool-font-size)",
+        padding: "var(--density-work-group-px)",
+      }}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+          <p className="text-[0.75em] uppercase tracking-[0.08em] text-muted-foreground/60">
             <span>
               Changed files ({selectedScope === "turn" ? "Turn" : "Snapshot"}) (
               {changedFileCountLabel})
@@ -765,34 +774,51 @@ function AssistantChangedFilesSectionInner({
             )}
           </p>
           {selectedScope === "turn" && turnFiles.length === 0 && (
-            <p className="mt-1 text-xs text-muted-foreground/70">
+            <p className="mt-1 text-[0.9em] text-muted-foreground/70">
               No turn-scoped file changes detected. Snapshot has {snapshotFiles.length} changed{" "}
               {snapshotFiles.length === 1 ? "file" : "files"}.
             </p>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <DiffScopeToggle value={selectedScope} onChange={setPreferredScope} />
           <Button
             type="button"
             size="xs"
             variant="outline"
+            className="h-[1.5em] px-[0.4em] text-[0.8em] sm:h-[1.5em] sm:text-[0.8em]"
             disabled={visibleFiles.length === 0}
             onClick={() => onOpenTurnDiff(turnSummary.turnId, visibleFiles[0]?.path, selectedScope)}
           >
             View diff
           </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="size-[1.5em] p-0 sm:h-[1.5em]"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? "Expand changed files" : "Collapse changed files"}
+          >
+            {collapsed ? (
+              <ChevronDownIcon className="size-[0.85em]" />
+            ) : (
+              <ChevronUpIcon className="size-[0.85em]" />
+            )}
+          </Button>
         </div>
       </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
-        files={visibleFiles}
-        allDirectoriesExpanded
-        resolvedTheme={resolvedTheme}
-        diffScope={selectedScope}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
+      {!collapsed && (
+        <ChangedFilesTree
+          key={`changed-files-tree:${turnSummary.turnId}`}
+          turnId={turnSummary.turnId}
+          files={visibleFiles}
+          allDirectoriesExpanded
+          resolvedTheme={resolvedTheme}
+          diffScope={selectedScope}
+          onOpenTurnDiff={onOpenTurnDiff}
+        />
+      )}
     </div>
   );
 }

@@ -1644,6 +1644,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
+  const forkSession: CodexAdapterShape["forkSession"] = (input) =>
+    Effect.fail(
+      new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "thread/fork",
+        detail: `Provider '${PROVIDER}' native forking is not wired yet for thread '${input.sourceThreadId}'.`,
+      }),
+    );
+
   const stopAll: CodexAdapterShape["stopAll"] = () =>
     Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
       concurrency: 1,
@@ -1664,6 +1673,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkSession,
     sendTurn,
     interruptTurn,
     readThread,
