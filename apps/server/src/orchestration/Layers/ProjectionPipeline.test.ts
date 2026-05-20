@@ -255,6 +255,150 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
 );
 
 it.layer(Layer.fresh(ProjectionReadTestLayer))("OrchestrationProjectionPipeline", (it) => {
+  it.effect(
+    "keeps the completed latest turn in shell snapshots after the session becomes ready",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const projectId = ProjectId.make("project-completed-shell");
+        const threadId = ThreadId.make("thread-completed-shell");
+        const turnId = TurnId.make("turn-completed-shell");
+        const startedAt = "2026-04-05T10:00:00.000Z";
+        const completedAt = "2026-04-05T10:01:00.000Z";
+        const readyAt = "2026-04-05T10:01:02.000Z";
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-completed-shell-1"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-completed-shell-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-completed-shell-1"),
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Project Completed Shell",
+            workspaceRoot: "/tmp/project-completed-shell",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: startedAt,
+            updatedAt: startedAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-completed-shell-2"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-completed-shell-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-completed-shell-2"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Thread Completed Shell",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-completed-shell-3"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-completed-shell-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-completed-shell-3"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: startedAt,
+            },
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-completed-shell-4"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: completedAt,
+          commandId: CommandId.make("cmd-completed-shell-4"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-completed-shell-4"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-completed-shell/turn/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-completed-shell"),
+            completedAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-completed-shell-5"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: readyAt,
+          commandId: CommandId.make("cmd-completed-shell-5"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-completed-shell-5"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: readyAt,
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const threadShell = yield* snapshotQuery.getThreadShellById(threadId);
+        assert.equal(threadShell._tag, "Some");
+        if (Option.isSome(threadShell)) {
+          assert.equal(threadShell.value.session?.status, "ready");
+          assert.equal(threadShell.value.session?.activeTurnId, null);
+          assert.equal(threadShell.value.latestTurn?.turnId, turnId);
+          assert.equal(threadShell.value.latestTurn?.completedAt, completedAt);
+        }
+      }),
+  );
+
   it.effect("replays user image attachments into thread detail projections", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

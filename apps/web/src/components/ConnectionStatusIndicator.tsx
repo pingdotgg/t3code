@@ -10,7 +10,6 @@ import {
 } from "./ConnectionStatusIndicator.logic";
 import { Spinner } from "./ui/spinner";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 function requestManualReconnect() {
   void getPrimaryEnvironmentConnection()
@@ -69,38 +68,6 @@ function ConnectionGlyph({
     />
   );
 }
-
-/** Compact connection dot for the chat header action cluster. */
-export const ConnectionStatusDot = memo(function ConnectionStatusDot() {
-  const view = useConnectionIndicatorView();
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${view.label}. ${view.detail}`}
-            onClick={view.showRetry ? requestManualReconnect : undefined}
-            className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-md outline-hidden ring-ring focus-visible:ring-2",
-              view.showRetry ? "cursor-pointer hover:bg-accent" : "cursor-default",
-            )}
-          >
-            <ConnectionGlyph tone={view.tone} />
-          </button>
-        }
-      />
-      <TooltipPopup side="bottom">
-        <span className="font-medium">{view.label}</span>
-        <span className="mt-0.5 block max-w-56 text-muted-foreground">{view.detail}</span>
-        {view.showRetry ? (
-          <span className="mt-0.5 block text-muted-foreground/70">Click to retry now.</span>
-        ) : null}
-      </TooltipPopup>
-    </Tooltip>
-  );
-});
 
 /** Ambient connection pill for the sidebar footer, matching the usage row. */
 export const SidebarConnectionStatus = memo(function SidebarConnectionStatus() {

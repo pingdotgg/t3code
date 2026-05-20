@@ -1,6 +1,12 @@
 import { File, Virtualizer, type FileContents } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckIcon, CopyIcon, PanelRightCloseIcon, TextWrapIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  CopyIcon,
+  PanelRightCloseIcon,
+  TextWrapIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
@@ -14,8 +20,15 @@ import { formatWorkspaceRelativePath } from "../filePathDisplay";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
-import type { WorkspaceFilePreviewTarget } from "../workspaceFilePreview";
+import type {
+  WorkspaceFilePreviewReturnTarget,
+  WorkspaceFilePreviewTarget,
+} from "../workspaceFilePreview";
 import { closeWorkspaceFilePreview } from "../workspaceFilePreview";
+import {
+  isWorkspaceImagePreviewPath,
+  resolveWorkspaceImagePreviewUrl,
+} from "../workspaceImagePreview";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { Button } from "./ui/button";
@@ -82,7 +95,10 @@ function normalizePreviewContents(contents: string): string {
   return contents.replace(/\r\n/g, "\n");
 }
 
-function workspaceFilePreviewQueryOptions(target: WorkspaceFilePreviewTarget | null) {
+function workspaceFilePreviewQueryOptions(
+  target: WorkspaceFilePreviewTarget | null,
+  shouldReadFile: boolean,
+) {
   return {
     queryKey: [
       "workspaceFilePreview",
@@ -90,7 +106,7 @@ function workspaceFilePreviewQueryOptions(target: WorkspaceFilePreviewTarget | n
       target?.cwd ?? null,
       target?.relativePath ?? null,
     ],
-    enabled: target !== null,
+    enabled: target !== null && shouldReadFile,
     queryFn: async () => {
       if (!target) {
         throw new Error("No file selected.");
@@ -111,9 +127,49 @@ function getFilePreviewScrollElement(root: HTMLElement | null): HTMLElement | nu
   return root?.querySelector<HTMLElement>(`.${FILE_PREVIEW_VIRTUALIZER_CLASS_NAME}`) ?? null;
 }
 
+function WorkspaceImagePreview(props: { src: string; alt: string }) {
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
+
+  useEffect(() => {
+    setLoadState("loading");
+  }, [props.src]);
+
+  return (
+    <div className="relative flex min-h-0 flex-1 overflow-auto bg-background">
+      {loadState === "loading" ? (
+        <div className="absolute inset-0 flex">
+          <DiffPanelLoadingState label="Loading image preview..." />
+        </div>
+      ) : null}
+      {loadState === "error" ? (
+        <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-destructive">
+          Unable to load image preview.
+        </div>
+      ) : null}
+      <div className="flex min-h-full min-w-full items-center justify-center p-4">
+        <img
+          src={props.src}
+          alt={props.alt}
+          draggable={false}
+          aria-hidden={loadState !== "loaded"}
+          className={
+            loadState === "loaded"
+              ? "max-h-full max-w-full object-contain"
+              : "pointer-events-none max-h-full max-w-full object-contain opacity-0"
+          }
+          onLoad={() => setLoadState("loaded")}
+          onError={() => setLoadState("error")}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceFilePreviewPanel(props: {
   mode: DiffPanelMode;
   target: WorkspaceFilePreviewTarget | null;
+  returnTarget?: WorkspaceFilePreviewReturnTarget | null;
+  onReturn?: (target: WorkspaceFilePreviewReturnTarget) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -121,7 +177,21 @@ export function WorkspaceFilePreviewPanel(props: {
   const [wordWrap, setWordWrap] = useState(true);
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const lastAutoScrollKeyRef = useRef<string | null>(null);
-  const query = useQuery(workspaceFilePreviewQueryOptions(props.target));
+  const isImagePreviewTarget = useMemo(
+    () => (props.target ? isWorkspaceImagePreviewPath(props.target.relativePath) : false),
+    [props.target],
+  );
+  const imagePreviewUrl = useMemo(() => {
+    if (!props.target) {
+      return null;
+    }
+    return resolveWorkspaceImagePreviewUrl({
+      environmentId: props.target.environmentId,
+      cwd: props.target.cwd,
+      relativePath: props.target.relativePath,
+    });
+  }, [props.target]);
+  const query = useQuery(workspaceFilePreviewQueryOptions(props.target, !isImagePreviewTarget));
   const fileContents = query.data?.contents ?? "";
   const previewContents = useMemo(() => normalizePreviewContents(fileContents), [fileContents]);
   const highlightLanguage = useMemo(
@@ -221,25 +291,44 @@ export function WorkspaceFilePreviewPanel(props: {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-          title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-          onClick={() => setWordWrap((value) => !value)}
-        >
-          <TextWrapIcon className="size-3.5" />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          disabled={!query.data}
-          aria-label={isCopied ? "Copied file" : "Copy file"}
-          title={isCopied ? "Copied" : "Copy file"}
-          onClick={copyFile}
-        >
-          {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-        </Button>
+        {props.returnTarget && props.onReturn ? (
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Back to diff"
+            title="Back to diff"
+            onClick={() => {
+              if (props.returnTarget) {
+                props.onReturn?.(props.returnTarget);
+              }
+            }}
+          >
+            <ArrowLeftIcon className="size-3.5" />
+          </Button>
+        ) : null}
+        {!isImagePreviewTarget ? (
+          <>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              onClick={() => setWordWrap((value) => !value)}
+            >
+              <TextWrapIcon className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              disabled={!query.data}
+              aria-label={isCopied ? "Copied file" : "Copy file"}
+              title={isCopied ? "Copied" : "Copy file"}
+              onClick={copyFile}
+            >
+              {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+            </Button>
+          </>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost"
@@ -255,7 +344,13 @@ export function WorkspaceFilePreviewPanel(props: {
 
   return (
     <DiffPanelShell mode={props.mode} header={header}>
-      {query.isLoading ? (
+      {isImagePreviewTarget && imagePreviewUrl ? (
+        <WorkspaceImagePreview src={imagePreviewUrl} alt={`${subtitle} preview`} />
+      ) : isImagePreviewTarget ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-sm text-destructive">
+          Unable to resolve image preview URL.
+        </div>
+      ) : query.isLoading ? (
         <DiffPanelLoadingState label="Loading file preview..." />
       ) : query.error ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-sm text-destructive">

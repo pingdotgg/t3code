@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import { execFile } from "node:child_process";
 import Mime from "@effect/platform-node/Mime";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
@@ -41,7 +43,14 @@ const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 export const WORKSPACE_IMAGE_ROUTE_PATH = "/api/workspace-image";
+export const WORKSPACE_GIT_IMAGE_ROUTE_PATH = "/api/workspace-git-image";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{7,64}$/i;
+
+class WorkspaceGitImageError extends Data.TaggedError("WorkspaceGitImageError")<{
+  readonly detail: string;
+  readonly cause?: unknown;
+}> {}
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: [...browserApiCorsAllowedMethods],
@@ -70,6 +79,65 @@ const requireAuthenticatedRequest = Effect.gen(function* () {
   const serverAuth = yield* ServerAuth;
   yield* serverAuth.authenticateHttpRequest(request);
 });
+
+function execGitBuffer(input: {
+  cwd: string;
+  args: ReadonlyArray<string>;
+  maxBuffer: number;
+}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      [...input.args],
+      {
+        cwd: input.cwd,
+        encoding: "buffer",
+        maxBuffer: input.maxBuffer,
+        timeout: 5_000,
+      },
+      (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+function readGitObjectSize(cwd: string, objectId: string) {
+  return Effect.tryPromise({
+    try: () => execGitBuffer({ cwd, args: ["cat-file", "-s", objectId], maxBuffer: 128 }),
+    catch: (cause) =>
+      new WorkspaceGitImageError({
+        detail: "Failed to read git object size.",
+        cause,
+      }),
+  }).pipe(
+    Effect.map((stdout) => Number.parseInt(stdout.toString("utf8").trim(), 10)),
+    Effect.flatMap((size) =>
+      Number.isSafeInteger(size) && size > 0
+        ? Effect.succeed(size)
+        : Effect.fail(
+            new WorkspaceGitImageError({
+              detail: "Invalid git object size.",
+            }),
+          ),
+    ),
+  );
+}
+
+function readGitImageObject(cwd: string, objectId: string, maxBuffer: number) {
+  return Effect.tryPromise({
+    try: () => execGitBuffer({ cwd, args: ["cat-file", "blob", objectId], maxBuffer }),
+    catch: (cause) =>
+      new WorkspaceGitImageError({
+        detail: "Failed to read git object.",
+        cause,
+      }),
+  });
+}
 
 export const serverEnvironmentRouteLayer = HttpRouter.add(
   "GET",
@@ -284,6 +352,68 @@ export const workspaceImageRouteLayer = HttpRouter.add(
     const bytes = yield* fileSystem
       .readFile(target.absolutePath)
       .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!bytes) {
+      return HttpServerResponse.text("Internal Server Error", { status: 500 });
+    }
+
+    return HttpServerResponse.uint8Array(bytes, {
+      status: 200,
+      contentType: mimeType,
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+export const workspaceGitImageRouteLayer = HttpRouter.add(
+  "GET",
+  WORKSPACE_GIT_IMAGE_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const cwd = url.value.searchParams.get("cwd")?.trim();
+    const relativePath = url.value.searchParams.get("relativePath")?.trim();
+    const objectId = url.value.searchParams.get("objectId")?.trim();
+    if (!cwd || !relativePath || !objectId) {
+      return HttpServerResponse.text("Missing workspace git image parameters", { status: 400 });
+    }
+    if (!GIT_OBJECT_ID_PATTERN.test(objectId) || /^0+$/.test(objectId)) {
+      return HttpServerResponse.text("Invalid workspace git image object", { status: 400 });
+    }
+
+    const mimeType = imageMimeTypeFromFileName(relativePath);
+    if (!mimeType) {
+      return HttpServerResponse.text("Unsupported workspace git image type", { status: 415 });
+    }
+
+    const workspacePaths = yield* WorkspacePaths;
+    const normalizedCwd = yield* workspacePaths
+      .normalizeWorkspaceRoot(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!normalizedCwd) {
+      return HttpServerResponse.text("Invalid workspace git image path", { status: 400 });
+    }
+
+    const fileSize = yield* readGitObjectSize(normalizedCwd, objectId).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    if (fileSize === null) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (fileSize <= 0 || fileSize > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+      return HttpServerResponse.text("Workspace git image is empty or too large", { status: 413 });
+    }
+
+    const bytes = yield* readGitImageObject(normalizedCwd, objectId, fileSize).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
     if (!bytes) {
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }

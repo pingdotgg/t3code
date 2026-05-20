@@ -648,9 +648,10 @@ function shouldEvictThreadDetailSubscription(entry: ThreadDetailSubscriptionEntr
 // In normal operation this state is transient (the closing
 // `thread.session-set` event arrives moments after `thread.turn-diff-completed`),
 // but iOS Safari can drop the closing event when the tab is backgrounded.
-// hasActiveSessionWork has a UI-level safety net for the same shape; this
-// function exists so we can additionally re-fetch the snapshot and converge
-// the underlying store to the server's real state.
+// The active session remains authoritative in live UI because a completed
+// assistant message can arrive before the provider turn is done. This refresh
+// path exists specifically for resume reconciliation, where the browser may
+// have missed the closing `thread.session-set` event.
 function isThreadDetailSubscriptionStuckOnCompletedRunningTurn(
   entry: ThreadDetailSubscriptionEntry,
 ): boolean {

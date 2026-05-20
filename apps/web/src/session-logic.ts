@@ -142,7 +142,8 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
-type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
+type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt"> &
+  Partial<Pick<OrchestrationLatestTurn, "state">>;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
 export function hasActiveSessionWork(
@@ -150,20 +151,17 @@ export function hasActiveSessionWork(
   session: SessionActivityState | null,
 ): boolean {
   if (session?.orchestrationStatus !== "running") {
-    return false;
+    // Detail events can project a streaming assistant turn before the matching
+    // session-set event reaches the client. If the previous session snapshot is
+    // otherwise ready, treat that latest-turn state as active work so controls
+    // stay interruptible during the projection race.
+    return (
+      session?.orchestrationStatus === "ready" &&
+      latestTurn?.state === "running" &&
+      latestTurn.completedAt === null
+    );
   }
   if (session.activeTurnId !== undefined && session.activeTurnId !== null) {
-    // Safety net: if the session still names an active turn but the matching
-    // latestTurn already has a completedAt, the turn is observably finished.
-    // The clearing `thread.session-set` event can be missed during iOS PWA
-    // backgrounding (paused WebSocket) or dropped server-side by the strict
-    // provider lifecycle guard when a turn.completed arrives without/with a
-    // mismatched turnId. Without this guard the "Working for …" indicator
-    // sticks until a manual refresh. Do NOT remove without also fixing the
-    // upstream causes — see hasActiveSessionWork tests for the contract.
-    if (latestTurn?.turnId === session.activeTurnId && latestTurn.completedAt) {
-      return false;
-    }
     return true;
   }
   return latestTurn !== null && !latestTurn.completedAt;
@@ -1274,7 +1272,7 @@ export function derivePhase(
 ): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
   if (session.status === "connecting") return "connecting";
-  if (session.status === "running" && hasActiveSessionWork(latestTurn, session)) {
+  if (hasActiveSessionWork(latestTurn, session)) {
     return "running";
   }
   return "ready";

@@ -8,7 +8,6 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { ConnectionStatusDot } from "../ConnectionStatusIndicator";
 import { type DraftId } from "~/composerDraftStore";
 import { DiffIcon, EllipsisIcon, RefreshCwIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -188,7 +187,6 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center justify-end gap-1.5 @3xl/header-actions:gap-3">
-        <ConnectionStatusDot />
         {!isCompactHeader && renderProjectScriptsControl()}
         {!isCompactHeader && showOpenInPicker && (
           <>

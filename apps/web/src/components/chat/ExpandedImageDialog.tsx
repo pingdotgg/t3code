@@ -58,7 +58,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
+      className="fixed inset-0 z-50 flex animate-expanded-image-backdrop items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag] motion-reduce:animate-none"
       role="dialog"
       aria-modal="true"
       aria-label="Expanded image preview"
@@ -81,7 +81,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           <ChevronLeftIcon className="size-5" />
         </Button>
       )}
-      <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
+      <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw] animate-expanded-image-open motion-reduce:animate-none">
         <Button
           type="button"
           size="icon-xs"

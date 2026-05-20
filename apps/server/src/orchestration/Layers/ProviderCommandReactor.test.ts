@@ -50,7 +50,10 @@ import {
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import {
+  OrchestrationEngineService,
+  type OrchestrationEngineShape,
+} from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -142,6 +145,7 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly autoCompleteTurns?: boolean;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -150,6 +154,8 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
+    let nextTurnIndex = 1;
+    let engineRef: OrchestrationEngineShape | null = null;
     const runtimeSessions: Array<ProviderSession> = [];
     const modelSelection = input?.threadModelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
@@ -211,10 +217,60 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions.push(session);
       return Effect.succeed(session);
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>((rawInput) =>
+      Effect.gen(function* () {
+        const threadId = rawInput.threadId;
+        const turnId = asTurnId(`turn-${nextTurnIndex++}`);
+        if (input?.autoCompleteTurns !== false && engineRef) {
+          const nowForTurn = `2026-01-01T00:00:${String(nextTurnIndex).padStart(2, "0")}.000Z`;
+          const activeRuntimeSession = runtimeSessions.find(
+            (session) => session.threadId === threadId,
+          );
+          const providerName = activeRuntimeSession?.provider ?? ProviderDriverKind.make("codex");
+          const providerInstanceId =
+            activeRuntimeSession?.providerInstanceId ?? ProviderInstanceId.make("codex");
+          const runtimeMode = activeRuntimeSession?.runtimeMode ?? "approval-required";
+          yield* engineRef
+            .dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`cmd-session-running-${turnId}`),
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName,
+                providerInstanceId,
+                runtimeMode,
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: nowForTurn,
+              },
+              createdAt: nowForTurn,
+            })
+            .pipe(Effect.orDie);
+          yield* engineRef
+            .dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`cmd-session-ready-${turnId}`),
+              threadId,
+              session: {
+                threadId,
+                status: "ready",
+                providerName,
+                providerInstanceId,
+                runtimeMode,
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: nowForTurn,
+              },
+              createdAt: nowForTurn,
+            })
+            .pipe(Effect.orDie);
+        }
+        return {
+          threadId,
+          turnId,
+        };
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
@@ -284,7 +340,7 @@ describe("ProviderCommandReactor", () => {
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
-      sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
+      sendTurn,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
@@ -363,6 +419,7 @@ describe("ProviderCommandReactor", () => {
     runtime = ManagedRuntime.make(layer);
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    engineRef = engine;
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     scope = await Effect.runPromise(Scope.make("sequential"));
@@ -452,6 +509,94 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("queues turn starts while a provider turn is running and sends them FIFO after completion", async () => {
+    const harness = await createHarness({ autoCompleteTurns: false });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-queue-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-queue-1"),
+          role: "user",
+          text: "first queued turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-running-queue-1"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-queue-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-queue-2"),
+          role: "user",
+          text: "second queued turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.sendTurn.mock.calls.length).toBe(1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-queue-1"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: "second queued turn",
+    });
   });
 
   it("generates a thread title on the first turn", async () => {

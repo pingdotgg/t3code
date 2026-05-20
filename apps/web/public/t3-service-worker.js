@@ -29,16 +29,7 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = resolveNotificationUrl(event.notification.data?.url);
 
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if (client.url === url && "focus" in client) {
-          return client.focus();
-        }
-      }
-      return self.clients.openWindow(url);
-    }),
-  );
+  event.waitUntil(openNotificationUrl(url));
 });
 
 function readPushPayload(event) {
@@ -55,8 +46,72 @@ function readPushPayload(event) {
 
 function resolveNotificationUrl(rawUrl) {
   try {
-    return new URL(rawUrl || DEFAULT_NOTIFICATION_URL, self.location.origin).href;
+    const url = new URL(rawUrl || DEFAULT_NOTIFICATION_URL, self.location.origin);
+    return url.origin === self.location.origin
+      ? url.href
+      : new URL(DEFAULT_NOTIFICATION_URL, self.location.origin).href;
   } catch {
     return new URL(DEFAULT_NOTIFICATION_URL, self.location.origin).href;
+  }
+}
+
+async function openNotificationUrl(url) {
+  const clients = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  const targetClient = selectNotificationClient(clients, url);
+
+  if (!targetClient) {
+    return self.clients.openWindow(url);
+  }
+
+  if (targetClient.url === url && "focus" in targetClient) {
+    return targetClient.focus();
+  }
+
+  if ("navigate" in targetClient) {
+    try {
+      const navigatedClient = await targetClient.navigate(url);
+      if (navigatedClient && "focus" in navigatedClient) {
+        return navigatedClient.focus();
+      }
+    } catch {
+      // Fall through to opening a fresh window for the target thread.
+    }
+  }
+
+  try {
+    const openedClient = await self.clients.openWindow(url);
+    if (openedClient && "focus" in openedClient) {
+      return openedClient.focus();
+    }
+  } catch {
+    // Use the already-open app window as a last resort.
+  }
+
+  if ("focus" in targetClient) {
+    return targetClient.focus();
+  }
+
+  return undefined;
+}
+
+function selectNotificationClient(clients, url) {
+  const sameOriginClients = clients.filter((client) => isSameOriginUrl(client.url));
+  return (
+    sameOriginClients.find((client) => client.url === url) ||
+    sameOriginClients.find((client) => client.focused) ||
+    sameOriginClients.find((client) => client.visibilityState === "visible") ||
+    sameOriginClients[0] ||
+    null
+  );
+}
+
+function isSameOriginUrl(url) {
+  try {
+    return new URL(url).origin === self.location.origin;
+  } catch {
+    return false;
   }
 }

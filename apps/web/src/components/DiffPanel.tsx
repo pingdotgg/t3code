@@ -38,6 +38,11 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview";
+import {
+  isWorkspaceImagePreviewPath,
+  resolveWorkspaceGitImagePreviewUrl,
+  resolveWorkspaceImagePreviewUrl,
+} from "../workspaceImagePreview";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -161,6 +166,10 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+function resolveFileDiffPreviewObjectId(fileDiff: FileDiffMetadata): string | undefined {
+  return fileDiff.type === "deleted" ? fileDiff.prevObjectId : fileDiff.newObjectId;
+}
+
 function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
   switch (fileDiff.type) {
     case "new":
@@ -174,6 +183,56 @@ function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
     default:
       return "text-muted-foreground/80";
   }
+}
+
+function DiffImagePreview(props: {
+  filePath: string;
+  imageUrl: string | null;
+  type: FileDiffMetadata["type"];
+}) {
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
+
+  useEffect(() => {
+    setLoadState(props.imageUrl ? "loading" : "error");
+  }, [props.imageUrl]);
+
+  if (!props.imageUrl) {
+    return (
+      <div className="border-x border-b border-border/70 bg-background/55 px-3 py-6 text-center text-xs text-muted-foreground/70">
+        {props.type === "deleted" ? "Image deleted." : "Unable to resolve image preview URL."}
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-x border-b border-border/70 bg-background/55 p-3">
+      <div className="relative flex min-h-48 items-center justify-center overflow-auto rounded-sm bg-background/80">
+        {loadState === "loading" ? (
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground/70">
+            Loading image...
+          </div>
+        ) : null}
+        {loadState === "error" ? (
+          <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-destructive">
+            Unable to load image preview.
+          </div>
+        ) : null}
+        <img
+          src={props.imageUrl}
+          alt={`${props.filePath} preview`}
+          draggable={false}
+          aria-hidden={loadState !== "loaded"}
+          className={
+            loadState === "loaded"
+              ? "max-h-[60vh] max-w-full object-contain"
+              : "pointer-events-none max-h-[60vh] max-w-full object-contain opacity-0"
+          }
+          onLoad={() => setLoadState("loaded")}
+          onError={() => setLoadState("error")}
+        />
+      </div>
+    </div>
+  );
 }
 
 interface DiffPanelProps {
@@ -373,11 +432,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         targetPath,
         ...(activeThread?.environmentId ? { environmentId: activeThread.environmentId } : {}),
         ...(activeCwd ? { cwd: activeCwd, displayPath: filePath } : {}),
+        returnTarget: {
+          kind: "diff",
+          ...(selectedTurn?.turnId ? { diffTurnId: selectedTurn.turnId } : {}),
+          ...(selectedTurn?.turnId ? { diffFilePath: filePath } : {}),
+        },
       }).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd, activeThread?.environmentId],
+    [activeCwd, activeThread?.environmentId, selectedTurn?.turnId],
   );
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     setCollapsedDiffFileKeys((current) => {
@@ -665,6 +729,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
                   const collapsed = collapsedDiffFileKeys.has(fileKey);
+                  const imagePreviewObjectId = resolveFileDiffPreviewObjectId(fileDiff);
+                  const imagePreviewUrl =
+                    activeThread?.environmentId &&
+                    activeCwd &&
+                    isWorkspaceImagePreviewPath(filePath)
+                      ? (resolveWorkspaceGitImagePreviewUrl({
+                          environmentId: activeThread.environmentId,
+                          cwd: activeCwd,
+                          relativePath: filePath,
+                          objectId: imagePreviewObjectId,
+                        }) ??
+                        (fileDiff.type !== "deleted"
+                          ? resolveWorkspaceImagePreviewUrl({
+                              environmentId: activeThread.environmentId,
+                              cwd: activeCwd,
+                              relativePath: filePath,
+                            })
+                          : null))
+                      : null;
+                  const shouldRenderImagePreview =
+                    isWorkspaceImagePreviewPath(filePath) && imagePreviewUrl !== null;
                   return (
                     <div
                       key={themedFileKey}
@@ -706,7 +791,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           </button>
                         )}
                         options={{
-                          collapsed,
+                          collapsed: collapsed || shouldRenderImagePreview,
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
                           overflow: diffWordWrap ? "wrap" : "scroll",
@@ -715,6 +800,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
                       />
+                      {!collapsed && shouldRenderImagePreview ? (
+                        <DiffImagePreview
+                          filePath={filePath}
+                          imageUrl={imagePreviewUrl}
+                          type={fileDiff.type}
+                        />
+                      ) : null}
                     </div>
                   );
                 })}

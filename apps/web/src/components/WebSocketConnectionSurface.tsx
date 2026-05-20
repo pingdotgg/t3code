@@ -203,10 +203,10 @@ export function WebSocketConnectionCoordinator() {
     status.reconnectPhase,
   ]);
 
-  // Transient reconnecting / offline / recovered state is now surfaced
-  // ambiently by the ConnectionStatusDot. Only the terminal "retries
-  // exhausted" case still warrants an interrupting toast, because it is
-  // actionable and the user needs the Retry button to be unmissable.
+  // Transient reconnecting / offline / recovered state is surfaced ambiently
+  // by the sidebar connection status. Only the terminal "retries exhausted"
+  // case still warrants an interrupting toast, because it is actionable and
+  // the user needs the Retry button to be unmissable.
   useEffect(() => {
     const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
 

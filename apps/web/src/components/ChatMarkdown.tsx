@@ -35,6 +35,10 @@ import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview"
 import { resolveWorkspaceFilePreviewTarget } from "../workspaceFilePreview";
 import { resolveEnvironmentHttpUrl } from "../environments/runtime";
 import {
+  isWorkspaceImagePreviewPath,
+  resolveWorkspaceImagePreviewUrl,
+} from "../workspaceImagePreview";
+import {
   createCodeHighlightCacheKey,
   getCachedHighlightedCodeHtml,
   getCodeHighlighterPromise,
@@ -244,22 +248,7 @@ const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
 const MARKDOWN_FILE_LINK_LABEL_CLASS_NAME = "chat-markdown-file-link-label truncate";
-const MARKDOWN_WORKSPACE_IMAGE_PATHNAME = "/api/workspace-image";
 const MARKDOWN_ATTACHMENTS_ROUTE_PREFIX = "/attachments/";
-const SAFE_MARKDOWN_IMAGE_EXTENSIONS = new Set([
-  ".avif",
-  ".bmp",
-  ".gif",
-  ".heic",
-  ".heif",
-  ".ico",
-  ".jpeg",
-  ".jpg",
-  ".png",
-  ".svg",
-  ".tiff",
-  ".webp",
-]);
 
 function pathParentSegments(path: string): string[] {
   const normalized = path.replaceAll("\\", "/");
@@ -336,12 +325,6 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
-function imageExtensionFromPath(path: string): string | null {
-  const extensionMatch = /\.([a-z0-9]{1,8})$/i.exec(path.trim());
-  const extension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
-  return SAFE_MARKDOWN_IMAGE_EXTENSIONS.has(extension) ? extension : null;
-}
-
 function basenameFromPath(path: string): string {
   const normalizedPath = path.replaceAll("\\", "/");
   const separatorIndex = normalizedPath.lastIndexOf("/");
@@ -390,7 +373,7 @@ function resolveMarkdownImagePreview(input: {
   if (!fileLinkMeta || !input.cwd || !input.environmentId) {
     return null;
   }
-  if (!imageExtensionFromPath(fileLinkMeta.filePath)) {
+  if (!isWorkspaceImagePreviewPath(fileLinkMeta.filePath)) {
     return null;
   }
 
@@ -404,13 +387,10 @@ function resolveMarkdownImagePreview(input: {
     return null;
   }
 
-  const resolvedSrc = resolveEnvironmentPathUrl({
+  const resolvedSrc = resolveWorkspaceImagePreviewUrl({
     environmentId: previewTarget.environmentId,
-    pathname: MARKDOWN_WORKSPACE_IMAGE_PATHNAME,
-    searchParams: {
-      cwd: previewTarget.cwd,
-      relativePath: previewTarget.relativePath,
-    },
+    cwd: previewTarget.cwd,
+    relativePath: previewTarget.relativePath,
   });
   return resolvedSrc
     ? { src: resolvedSrc, name: input.alt || fileLinkMeta.basename || previewTarget.displayPath }

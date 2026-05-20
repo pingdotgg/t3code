@@ -296,6 +296,8 @@ function createSnapshotForTargetUser(options: {
   sessionStatus?: OrchestrationSessionStatus;
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
+  const runningTurnId =
+    options.sessionStatus === "running" ? ("turn-browser-running" as TurnId) : null;
 
   for (let index = 0; index < 22; index += 1) {
     const isTarget = index === 3;
@@ -360,7 +362,16 @@ function createSnapshotForTargetUser(options: {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
-        latestTurn: null,
+        latestTurn: runningTurnId
+          ? {
+              turnId: runningTurnId,
+              state: "running",
+              requestedAt: NOW_ISO,
+              startedAt: NOW_ISO,
+              completedAt: null,
+              assistantMessageId: null,
+            }
+          : null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         archivedAt: null,
@@ -374,7 +385,7 @@ function createSnapshotForTargetUser(options: {
           status: options.sessionStatus ?? "ready",
           providerName: "codex",
           runtimeMode: "full-access",
-          activeTurnId: null,
+          activeTurnId: runningTurnId,
           lastError: null,
           updatedAt: NOW_ISO,
         },
@@ -3921,6 +3932,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues a prompt from the composer while the current turn is running", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_REF, "Run this after the current turn");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-queue-test" as MessageId,
+        targetText: "running queue target",
+        sessionStatus: "running",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const queueButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Queue message"]'),
+        "Unable to find queue message button.",
+      );
+      expect(queueButton.disabled).toBe(false);
+      await queueButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                message?: {
+                  text?: string;
+                };
+              }
+            | undefined;
+          expect(turnStartRequest?.message?.text).toBe("Run this after the current turn");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

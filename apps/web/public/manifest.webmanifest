@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "gcode",
-  "short_name": "gcode",
+  "name": "Salchi",
+  "short_name": "Salchi",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,12 +9,12 @@
   "theme_color": "#161616",
   "icons": [
     {
-      "src": "/pwa-192.png",
+      "src": "/salchi-pwa-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/pwa-512.png",
+      "src": "/salchi-pwa-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }

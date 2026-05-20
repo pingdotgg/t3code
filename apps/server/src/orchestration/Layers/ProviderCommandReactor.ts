@@ -55,6 +55,11 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
+type ProviderCommandReactorDomainEvent =
+  | ProviderIntentEvent
+  | Extract<OrchestrationEvent, { type: "thread.activity-appended" }>
+  | Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -78,8 +83,9 @@ function mapProviderSessionStatusToOrchestrationStatus(
   }
 }
 
-const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
-  event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
+const turnStartKeyForEvent = (
+  event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
+): string => (event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`);
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
@@ -199,6 +205,12 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const queuedTurnStartsByThreadId = new Map<
+    string,
+    Array<Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>>
+  >();
+  const activeTurnStartThreadIds = new Set<string>();
+  const observedRunningTurnThreadIds = new Set<string>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -290,6 +302,34 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const queueTurnStart = (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
+  ) => {
+    const threadKey = String(event.payload.threadId);
+    const existing = queuedTurnStartsByThreadId.get(threadKey) ?? [];
+    existing.push(event);
+    queuedTurnStartsByThreadId.set(threadKey, existing);
+  };
+
+  const takeQueuedTurnStart = (threadId: ThreadId) => {
+    const threadKey = String(threadId);
+    const queue = queuedTurnStartsByThreadId.get(threadKey);
+    const next = queue?.shift();
+    if (!queue || queue.length === 0) {
+      queuedTurnStartsByThreadId.delete(threadKey);
+    }
+    return next;
+  };
+
+  const isThreadTurnBusy = Effect.fnUntraced(function* (threadId: ThreadId) {
+    if (activeTurnStartThreadIds.has(String(threadId))) {
+      return true;
+    }
+    const thread = yield* resolveThread(threadId);
+    const sessionStatus = thread?.session?.status;
+    return sessionStatus === "starting" || sessionStatus === "running";
   });
 
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
@@ -673,14 +713,9 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
+  const startTurnFromEvent = Effect.fn("startTurnFromEvent")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
-    const key = turnStartKeyForEvent(event);
-    if (yield* hasHandledTurnStartRecently(key)) {
-      return;
-    }
-
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
@@ -766,6 +801,7 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    activeTurnStartThreadIds.add(String(event.payload.threadId));
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
@@ -781,12 +817,83 @@ const make = Effect.gen(function* () {
     );
 
     if (Option.isNone(sendTurnRequest)) {
+      activeTurnStartThreadIds.delete(String(event.payload.threadId));
+      observedRunningTurnThreadIds.delete(String(event.payload.threadId));
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          activeTurnStartThreadIds.delete(String(event.payload.threadId));
+          observedRunningTurnThreadIds.delete(String(event.payload.threadId));
+        }).pipe(Effect.andThen(recoverTurnStartFailure(cause))),
+      ),
+      Effect.forkScoped,
+    );
+  });
+
+  const startNextQueuedTurnForThread = Effect.fn("startNextQueuedTurnForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    if (yield* isThreadTurnBusy(threadId)) {
+      return;
+    }
+    const next = takeQueuedTurnStart(threadId);
+    if (!next) {
+      return;
+    }
+    yield* startTurnFromEvent(next);
+  });
+
+  const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
+  ) {
+    const key = turnStartKeyForEvent(event);
+    if (yield* hasHandledTurnStartRecently(key)) {
+      return;
+    }
+    if (yield* isThreadTurnBusy(event.payload.threadId)) {
+      queueTurnStart(event);
+      return;
+    }
+    yield* startTurnFromEvent(event);
+  });
+
+  const processThreadSessionSet = Effect.fn("processThreadSessionSet")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.session-set" }>,
+  ) {
+    const threadKey = String(event.payload.threadId);
+    const { session } = event.payload;
+    if (session.status === "running" && session.activeTurnId !== null) {
+      activeTurnStartThreadIds.add(threadKey);
+      observedRunningTurnThreadIds.add(threadKey);
+      return;
+    }
+    if (session.status === "starting" && activeTurnStartThreadIds.has(threadKey)) {
+      return;
+    }
+    if (
+      session.status === "stopped" ||
+      session.status === "error" ||
+      session.status === "interrupted" ||
+      (session.status === "ready" && observedRunningTurnThreadIds.has(threadKey))
+    ) {
+      activeTurnStartThreadIds.delete(threadKey);
+      observedRunningTurnThreadIds.delete(threadKey);
+      yield* startNextQueuedTurnForThread(event.payload.threadId);
+    }
+  });
+
+  const processThreadActivityAppended = Effect.fn("processThreadActivityAppended")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.activity-appended" }>,
+  ) {
+    if (event.payload.activity.kind !== "provider.turn.start.failed") {
+      return;
+    }
+    activeTurnStartThreadIds.delete(String(event.payload.threadId));
+    observedRunningTurnThreadIds.delete(String(event.payload.threadId));
+    yield* startNextQueuedTurnForThread(event.payload.threadId);
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -932,7 +1039,7 @@ const make = Effect.gen(function* () {
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
-    event: ProviderIntentEvent,
+    event: ProviderCommandReactorDomainEvent,
   ) {
     yield* Effect.annotateCurrentSpan({
       "orchestration.event_type": event.type,
@@ -959,6 +1066,12 @@ const make = Effect.gen(function* () {
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
+      case "thread.activity-appended":
+        yield* processThreadActivityAppended(event);
+        return;
+      case "thread.session-set":
+        yield* processThreadSessionSet(event);
+        return;
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
@@ -974,7 +1087,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const processDomainEventSafely = (event: ProviderIntentEvent) =>
+  const processDomainEventSafely = (event: ProviderCommandReactorDomainEvent) =>
     processDomainEvent(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -994,6 +1107,8 @@ const make = Effect.gen(function* () {
       if (
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
+        event.type === "thread.activity-appended" ||
+        event.type === "thread.session-set" ||
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||

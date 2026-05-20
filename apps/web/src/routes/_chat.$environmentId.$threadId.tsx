@@ -33,6 +33,7 @@ import { WorkspaceFilePreviewPanel } from "../components/WorkspaceFilePreviewPan
 import {
   closeWorkspaceFilePreview,
   reopenWorkspaceFilePreview,
+  type WorkspaceFilePreviewReturnTarget,
   useWorkspaceFilePreviewState,
 } from "../workspaceFilePreview";
 
@@ -148,8 +149,12 @@ const DiffPanelInlineSidebar = (props: {
   );
 };
 
-const FilePreviewInlineSidebar = (props: { open: boolean; renderContent: boolean }) => {
-  const { open, renderContent } = props;
+const FilePreviewInlineSidebar = (props: {
+  open: boolean;
+  renderContent: boolean;
+  onReturn: (target: WorkspaceFilePreviewReturnTarget) => void;
+}) => {
+  const { onReturn, open, renderContent } = props;
   const filePreview = useWorkspaceFilePreviewState();
   const onOpenChange = useCallback((nextOpen: boolean) => {
     if (nextOpen) {
@@ -178,7 +183,12 @@ const FilePreviewInlineSidebar = (props: { open: boolean; renderContent: boolean
         }}
       >
         {renderContent ? (
-          <WorkspaceFilePreviewPanel mode="sidebar" target={filePreview.target} />
+          <WorkspaceFilePreviewPanel
+            mode="sidebar"
+            target={filePreview.target}
+            returnTarget={filePreview.returnTarget}
+            onReturn={onReturn}
+          />
         ) : null}
         <SidebarRail />
       </Sidebar>
@@ -268,6 +278,31 @@ function ChatThreadRouteView() {
   const openFilePreview = useCallback(() => {
     reopenWorkspaceFilePreview();
   }, []);
+  const returnFromFilePreview = useCallback(
+    (returnTarget: WorkspaceFilePreviewReturnTarget) => {
+      closeWorkspaceFilePreview();
+      if (!threadRef || returnTarget.kind !== "diff") {
+        return;
+      }
+      markRightPanelUsed("diff");
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return returnTarget.diffTurnId
+            ? {
+                ...rest,
+                diff: "1",
+                diffTurnId: returnTarget.diffTurnId,
+                ...(returnTarget.diffFilePath ? { diffFilePath: returnTarget.diffFilePath } : {}),
+              }
+            : { ...rest, diff: "1" };
+        },
+      });
+    },
+    [navigate, threadRef],
+  );
 
   useEffect(() => {
     if (diffOpen) {
@@ -351,6 +386,7 @@ function ChatThreadRouteView() {
         <FilePreviewInlineSidebar
           open={filePreviewOpen}
           renderContent={shouldRenderFilePreviewContent}
+          onReturn={returnFromFilePreview}
         />
       </>
     );
@@ -382,7 +418,12 @@ function ChatThreadRouteView() {
       </RightPanelSheet>
       <RightPanelSheet open={filePreviewOpen} onClose={closeWorkspaceFilePreview}>
         {shouldRenderFilePreviewContent ? (
-          <WorkspaceFilePreviewPanel mode="sheet" target={filePreview.target} />
+          <WorkspaceFilePreviewPanel
+            mode="sheet"
+            target={filePreview.target}
+            returnTarget={filePreview.returnTarget}
+            onReturn={returnFromFilePreview}
+          />
         ) : null}
       </RightPanelSheet>
     </>

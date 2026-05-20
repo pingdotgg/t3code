@@ -7,6 +7,8 @@
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --animate-fade-in-down: fade-in-down 220ms ease-out both;
+  --animate-expanded-image-backdrop: expanded-image-backdrop 160ms ease-out both;
+  --animate-expanded-image-open: expanded-image-open 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -52,6 +54,24 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+  @keyframes expanded-image-backdrop {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes expanded-image-open {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
     }
   }
 }

@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, TurnId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
@@ -6,6 +6,12 @@ import { openInPreferredEditor } from "./editorPreferences";
 import { readLocalApi } from "./localApi";
 import { openRightPanel } from "./rightPanelGesture";
 import { splitPathAndPosition } from "./terminal-links";
+
+export interface WorkspaceFilePreviewReturnTarget {
+  kind: "diff";
+  diffTurnId?: TurnId;
+  diffFilePath?: string;
+}
 
 export interface WorkspaceFilePreviewTarget {
   environmentId: EnvironmentId;
@@ -19,7 +25,11 @@ export interface WorkspaceFilePreviewTarget {
 interface WorkspaceFilePreviewState {
   open: boolean;
   target: WorkspaceFilePreviewTarget | null;
-  openPreview: (target: WorkspaceFilePreviewTarget) => void;
+  returnTarget: WorkspaceFilePreviewReturnTarget | null;
+  openPreview: (
+    target: WorkspaceFilePreviewTarget,
+    options?: { returnTarget?: WorkspaceFilePreviewReturnTarget | null },
+  ) => void;
   reopenPreview: () => void;
   closePreview: () => void;
 }
@@ -27,10 +37,13 @@ interface WorkspaceFilePreviewState {
 const useWorkspaceFilePreviewStore = create<WorkspaceFilePreviewState>((set) => ({
   open: false,
   target: null,
-  openPreview: (target) => set({ open: true, target }),
+  returnTarget: null,
+  openPreview: (target, options) =>
+    set({ open: true, target, returnTarget: options?.returnTarget ?? null }),
   reopenPreview: () =>
     set((state) => (state.target && !state.open ? { ...state, open: true } : state)),
-  closePreview: () => set((state) => (state.open ? { ...state, open: false } : state)),
+  closePreview: () =>
+    set((state) => (state.open ? { ...state, open: false, returnTarget: null } : state)),
 }));
 
 function normalizePathSeparators(value: string): string {
@@ -109,8 +122,11 @@ function isNoAvailableEditorsError(error: unknown): boolean {
   return error instanceof Error && error.message === "No available editors found.";
 }
 
-export function openWorkspaceFilePreview(target: WorkspaceFilePreviewTarget): void {
-  useWorkspaceFilePreviewStore.getState().openPreview(target);
+export function openWorkspaceFilePreview(
+  target: WorkspaceFilePreviewTarget,
+  options?: { returnTarget?: WorkspaceFilePreviewReturnTarget | null },
+): void {
+  useWorkspaceFilePreviewStore.getState().openPreview(target, options);
   openRightPanel("file");
 }
 
@@ -119,6 +135,7 @@ export async function openPathInPreferredEditorOrFilePreview(input: {
   environmentId?: EnvironmentId | undefined;
   cwd?: string | undefined;
   displayPath?: string | undefined;
+  returnTarget?: WorkspaceFilePreviewReturnTarget | null | undefined;
 }): Promise<"editor" | "preview"> {
   const api = readLocalApi();
   if (api) {
@@ -140,7 +157,7 @@ export async function openPathInPreferredEditorOrFilePreview(input: {
       ...(input.displayPath ? { displayPath: input.displayPath } : {}),
     });
     if (target) {
-      openWorkspaceFilePreview(target);
+      openWorkspaceFilePreview(target, { returnTarget: input.returnTarget ?? null });
       return "preview";
     }
   }
@@ -153,6 +170,7 @@ export function useWorkspaceFilePreviewState() {
     useShallow((state) => ({
       open: state.open,
       target: state.target,
+      returnTarget: state.returnTarget,
     })),
   );
 }

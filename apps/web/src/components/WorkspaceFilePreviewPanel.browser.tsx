@@ -1,7 +1,7 @@
 import "../index.css";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { EnvironmentId, type EnvironmentApi } from "@t3tools/contracts";
+import { EnvironmentId, TurnId, type EnvironmentApi } from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -11,16 +11,56 @@ import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
 } from "../environmentApi";
-import type { WorkspaceFilePreviewTarget } from "../workspaceFilePreview";
+import type {
+  WorkspaceFilePreviewReturnTarget,
+  WorkspaceFilePreviewTarget,
+} from "../workspaceFilePreview";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { WorkspaceFilePreviewPanel } from "./WorkspaceFilePreviewPanel";
 
-const { fileRenderCalls } = vi.hoisted(() => ({
+const { fileRenderCalls, resolveEnvironmentHttpUrlMock } = vi.hoisted(() => ({
   fileRenderCalls: [] as Array<{
     file: { contents: string; lang?: string; cacheKey?: string };
     options?: { overflow?: string };
     selectedLines?: { start: number; end: number } | null;
   }>,
+  resolveEnvironmentHttpUrlMock: vi.fn(
+    (input: { pathname: string; searchParams?: Record<string, string> }) => {
+      const url = new URL(`http://environment.test${input.pathname}`);
+      if (input.searchParams) {
+        url.search = new URLSearchParams(input.searchParams).toString();
+      }
+      return url.toString();
+    },
+  ),
+}));
+
+vi.mock("../environments/runtime", () => ({
+  addSavedEnvironment: vi.fn(),
+  connectDesktopSshEnvironment: vi.fn(),
+  disconnectSavedEnvironment: vi.fn(),
+  ensureEnvironmentConnectionBootstrapped: vi.fn(),
+  getEnvironmentHttpBaseUrl: vi.fn(() => "http://environment.test"),
+  getPrimaryEnvironmentConnection: vi.fn(() => null),
+  getSavedEnvironmentRecord: vi.fn(() => null),
+  getSavedEnvironmentRuntimeState: vi.fn(() => null),
+  hasSavedEnvironmentRegistryHydrated: vi.fn(() => true),
+  listSavedEnvironmentRecords: vi.fn(() => []),
+  readEnvironmentConnection: vi.fn(() => null),
+  reconnectSavedEnvironment: vi.fn(),
+  removeSavedEnvironment: vi.fn(),
+  requireEnvironmentConnection: vi.fn(() => {
+    throw new Error("Environment connection not found.");
+  }),
+  resetEnvironmentServiceForTests: vi.fn(),
+  resetSavedEnvironmentRegistryStoreForTests: vi.fn(),
+  resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
+  resolveEnvironmentHttpUrl: resolveEnvironmentHttpUrlMock,
+  startEnvironmentConnectionService: vi.fn(),
+  subscribeEnvironmentConnections: vi.fn(() => () => undefined),
+  useSavedEnvironmentRegistryStore: vi.fn(() => ({})),
+  useSavedEnvironmentRuntimeStore: vi.fn(() => ({})),
+  waitForSavedEnvironmentRegistryHydration: vi.fn(async () => undefined),
 }));
 
 vi.mock("@pierre/diffs/react", async () => {
@@ -118,7 +158,9 @@ function createTarget(input: { relativePath: string; line?: number }): Workspace
 async function renderPreview(input: {
   contents?: string;
   line?: number;
+  onReturn?: (target: WorkspaceFilePreviewReturnTarget) => void;
   relativePath?: string;
+  returnTarget?: WorkspaceFilePreviewReturnTarget;
   sizeBytes?: number;
   truncated?: boolean;
 }) {
@@ -144,6 +186,15 @@ async function renderPreview(input: {
   host.style.width = "720px";
   document.body.append(host);
 
+  const panelProps = {
+    mode: "sidebar" as const,
+    target: createTarget(
+      input.line === undefined ? { relativePath } : { relativePath, line: input.line },
+    ),
+    ...(input.returnTarget ? { returnTarget: input.returnTarget } : {}),
+    ...(input.onReturn ? { onReturn: input.onReturn } : {}),
+  };
+
   const screen = await render(
     createElement(
       QueryClientProvider,
@@ -151,12 +202,7 @@ async function renderPreview(input: {
       createElement(
         DiffWorkerPoolProvider,
         null,
-        createElement(WorkspaceFilePreviewPanel, {
-          mode: "sidebar",
-          target: createTarget(
-            input.line === undefined ? { relativePath } : { relativePath, line: input.line },
-          ),
-        }),
+        createElement(WorkspaceFilePreviewPanel, panelProps),
       ),
     ),
     { container: host },
@@ -182,10 +228,62 @@ async function renderPreview(input: {
   };
 }
 
+async function renderImagePreview(input: { relativePath?: string } = {}) {
+  const relativePath = input.relativePath ?? "assets/chart.png";
+  const readFile = vi.fn(async () => {
+    throw new Error("Image previews should not read text file contents.");
+  });
+  __setEnvironmentApiOverrideForTests(ENVIRONMENT_ID, createMockEnvironmentApi(readFile));
+
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+  const host = document.createElement("div");
+  host.style.height = "260px";
+  host.style.width = "720px";
+  document.body.append(host);
+
+  const screen = await render(
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        DiffWorkerPoolProvider,
+        null,
+        createElement(WorkspaceFilePreviewPanel, {
+          mode: "sidebar",
+          target: createTarget({ relativePath }),
+        }),
+      ),
+    ),
+    { container: host },
+  );
+
+  await vi.waitFor(() => {
+    expect(
+      document.querySelector('img[src^="http://environment.test/api/workspace-image"]'),
+    ).not.toBeNull();
+  });
+
+  return {
+    readFile,
+    async cleanup() {
+      await screen.unmount();
+      queryClient.clear();
+      host.remove();
+    },
+  };
+}
+
 describe("WorkspaceFilePreviewPanel", () => {
   afterEach(() => {
     __resetEnvironmentApiOverridesForTests();
     fileRenderCalls.length = 0;
+    resolveEnvironmentHttpUrlMock.mockClear();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });
@@ -260,6 +358,54 @@ describe("WorkspaceFilePreviewPanel", () => {
       await vi.waitFor(() => {
         expect(fileRenderCalls.at(-1)?.options?.overflow).toBe("scroll");
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("calls the return handler when a diff return target is present", async () => {
+    const onReturn = vi.fn();
+    const returnTarget = {
+      kind: "diff",
+      diffTurnId: TurnId.make("turn-1"),
+      diffFilePath: "src/App.tsx",
+    } satisfies WorkspaceFilePreviewReturnTarget;
+    const mounted = await renderPreview({
+      contents: DEFAULT_CONTENTS,
+      onReturn,
+      returnTarget,
+    });
+    try {
+      await page.getByRole("button", { name: "Back to diff" }).click();
+      expect(onReturn).toHaveBeenCalledWith(returnTarget);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders image files through the workspace image route without reading them as text", async () => {
+    const mounted = await renderImagePreview({ relativePath: "assets/chart.png" });
+    try {
+      const image = document.querySelector<HTMLImageElement>(
+        'img[src^="http://environment.test/api/workspace-image"]',
+      );
+      expect(image?.alt).toBe("assets/chart.png preview");
+      expect(image?.src).toBe(
+        "http://environment.test/api/workspace-image?cwd=%2Frepo%2Fproject&relativePath=assets%2Fchart.png",
+      );
+      expect(mounted.readFile).not.toHaveBeenCalled();
+      expect(resolveEnvironmentHttpUrlMock).toHaveBeenCalledWith({
+        environmentId: ENVIRONMENT_ID,
+        pathname: "/api/workspace-image",
+        searchParams: {
+          cwd: "/repo/project",
+          relativePath: "assets/chart.png",
+        },
+      });
+      await expect.element(page.getByRole("button", { name: "Copy file" })).not.toBeInTheDocument();
+      await expect
+        .element(page.getByRole("button", { name: "Disable word wrap" }))
+        .not.toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
