@@ -453,6 +453,13 @@ it.effect(
           codex: {
             enabled: false,
           },
+          piAgent: {
+            enabled: true,
+            binaryPath: "",
+            homePath: "",
+            customModels: [],
+            launchArgs: "",
+          },
         },
       });
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(

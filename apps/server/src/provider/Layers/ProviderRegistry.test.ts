@@ -993,6 +993,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
                   opencode: { enabled: false },
+                  piAgent: {
+                    enabled: true,
+                    binaryPath: "",
+                    homePath: "",
+                    customModels: [],
+                    launchArgs: "",
+                  },
                 },
                 // `providerInstances` keys are branded `ProviderInstanceId`;
                 // the branded index signature rejects plain string literals
@@ -1087,6 +1094,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
                   opencode: { enabled: false },
+                  piAgent: {
+                    enabled: true,
+                    binaryPath: "",
+                    homePath: "",
+                    customModels: [],
+                    launchArgs: "",
+                  },
                 },
               }),
             ),
@@ -1182,6 +1196,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                   claudeAgent: { enabled: false },
                   cursor: { enabled: false },
                   opencode: { enabled: false },
+                  piAgent: {
+                    enabled: true,
+                    binaryPath: "",
+                    homePath: "",
+                    customModels: [],
+                    launchArgs: "",
+                  },
                 },
                 providerInstances: {
                   ghost_main: {
@@ -1239,6 +1260,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                     },
                     cursor: {
                       enabled: false,
+                    },
+                    piAgent: {
+                      enabled: true,
+                      binaryPath: "",
+                      homePath: "",
+                      customModels: [],
+                      launchArgs: "",
                     },
                   },
                 }),
@@ -1301,6 +1329,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 "codex",
                 "cursor",
                 "opencode",
+                "piAgent",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
