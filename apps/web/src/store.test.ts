@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  type OrchestrationShellSnapshot,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
@@ -22,6 +23,7 @@ import {
   selectThreadByRef,
   selectThreadExistsByRef,
   setThreadBranch,
+  syncServerShellSnapshot,
   selectThreadsAcrossEnvironments,
   type AppState,
   type EnvironmentState,
@@ -247,6 +249,61 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
   } as Extract<OrchestrationEvent, { type: T }>;
 }
 
+function makeShellSnapshot(
+  threads: OrchestrationShellSnapshot["threads"],
+  projects: OrchestrationShellSnapshot["projects"] = [
+    {
+      id: ProjectId.make("project-1"),
+      title: "Project",
+      workspaceRoot: "/tmp/project",
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      },
+      scripts: [],
+      createdAt: "2026-02-27T00:00:00.000Z",
+      updatedAt: "2026-02-27T00:00:00.000Z",
+    },
+  ],
+): OrchestrationShellSnapshot {
+  return {
+    snapshotSequence: 1,
+    projects,
+    threads,
+    updatedAt: "2026-02-27T00:00:00.000Z",
+  };
+}
+
+function makeShellThread(
+  overrides: Partial<OrchestrationShellSnapshot["threads"][number]> = {},
+): OrchestrationShellSnapshot["threads"][number] {
+  const threadId = overrides.id ?? ThreadId.make("thread-shell-1");
+  const projectId = overrides.projectId ?? ProjectId.make("project-1");
+  return {
+    id: threadId,
+    projectId,
+    title: "Shell thread",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: DEFAULT_MODEL,
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    archivedAt: null,
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
+  };
+}
+
 describe("environment state removal", () => {
   it("drops local state for removed environments", () => {
     const removedThread = makeThread({
@@ -399,6 +456,141 @@ describe("thread selection memoization", () => {
       ),
     ).toBe(false);
     expect(selectThreadExistsByRef(state, null)).toBe(false);
+  });
+});
+
+describe("shell snapshot sync", () => {
+  it("registers shell threads by project without materializing detail records", () => {
+    const project1 = ProjectId.make("project-1");
+    const project2 = ProjectId.make("project-2");
+    const thread1 = makeShellThread({
+      id: ThreadId.make("thread-shell-1"),
+      projectId: project1,
+      title: "First shell thread",
+    });
+    const thread2 = makeShellThread({
+      id: ThreadId.make("thread-shell-2"),
+      projectId: project2,
+      title: "Second shell thread",
+      hasPendingUserInput: true,
+    });
+    const state = makeEmptyState({ bootstrapComplete: false });
+
+    const next = syncServerShellSnapshot(
+      state,
+      makeShellSnapshot(
+        [thread1, thread2],
+        [
+          {
+            id: project1,
+            title: "Project 1",
+            workspaceRoot: "/tmp/project-1",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-02-27T00:00:00.000Z",
+            updatedAt: "2026-02-27T00:00:00.000Z",
+          },
+          {
+            id: project2,
+            title: "Project 2",
+            workspaceRoot: "/tmp/project-2",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-02-27T00:00:00.000Z",
+            updatedAt: "2026-02-27T00:00:00.000Z",
+          },
+        ],
+      ),
+      localEnvironmentId,
+    );
+    const environmentState = localEnvironmentStateOf(next);
+
+    expect(environmentState.bootstrapComplete).toBe(true);
+    expect(environmentState.threadIds).toEqual([thread1.id, thread2.id]);
+    expect(environmentState.threadIdsByProjectId).toEqual({
+      [project1]: [thread1.id],
+      [project2]: [thread2.id],
+    });
+    expect(environmentState.threadShellById[thread1.id]?.title).toBe("First shell thread");
+    expect(environmentState.sidebarThreadSummaryById[thread2.id]?.hasPendingUserInput).toBe(true);
+    expect(environmentState.messageIdsByThreadId).toEqual({});
+    expect(environmentState.activityIdsByThreadId).toEqual({});
+  });
+
+  it("retains detail slices for threads still present in the shell snapshot", () => {
+    const keptThread = makeThread({
+      id: ThreadId.make("thread-kept"),
+      messages: [
+        {
+          id: MessageId.make("message-kept"),
+          role: "user",
+          text: "keep",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const removedThread = makeThread({ id: ThreadId.make("thread-removed") });
+    const baseState = makeState(keptThread);
+    const baseEnvironmentState = localEnvironmentStateOf(baseState);
+    const state = withActiveEnvironmentState(baseEnvironmentState, {
+      threadIds: [keptThread.id, removedThread.id],
+      messageIdsByThreadId: {
+        ...baseEnvironmentState.messageIdsByThreadId,
+        [removedThread.id]: [MessageId.make("message-removed")],
+      },
+      messageByThreadId: {
+        ...baseEnvironmentState.messageByThreadId,
+        [removedThread.id]: {
+          [MessageId.make("message-removed")]: {
+            id: MessageId.make("message-removed"),
+            role: "assistant",
+            text: "drop",
+            createdAt: "2026-02-27T00:00:01.000Z",
+            streaming: false,
+          },
+        },
+      },
+    });
+
+    const next = syncServerShellSnapshot(
+      state,
+      makeShellSnapshot([
+        makeShellThread({
+          id: keptThread.id,
+          projectId: keptThread.projectId,
+          title: "Kept shell",
+        }),
+      ]),
+      localEnvironmentId,
+    );
+    const environmentState = localEnvironmentStateOf(next);
+
+    expect(environmentState.messageIdsByThreadId[keptThread.id]).toEqual([
+      MessageId.make("message-kept"),
+    ]);
+    expect(
+      environmentState.messageByThreadId[keptThread.id]?.[MessageId.make("message-kept")],
+    ).toMatchObject({ text: "keep" });
+    expect(environmentState.messageIdsByThreadId[removedThread.id]).toBeUndefined();
+    expect(environmentState.messageByThreadId[removedThread.id]).toBeUndefined();
+  });
+
+  it("deduplicates malformed shell snapshots before building project indexes", () => {
+    const threadId = ThreadId.make("thread-duplicate");
+    const first = makeShellThread({ id: threadId, title: "First duplicate" });
+    const second = makeShellThread({ id: threadId, title: "Second duplicate" });
+
+    const next = syncServerShellSnapshot(
+      makeEmptyState(),
+      makeShellSnapshot([first, second]),
+      localEnvironmentId,
+    );
+    const environmentState = localEnvironmentStateOf(next);
+
+    expect(environmentState.threadIds).toEqual([threadId]);
+    expect(environmentState.threadIdsByProjectId[first.projectId]).toEqual([threadId]);
+    expect(environmentState.threadShellById[threadId]?.title).toBe("First duplicate");
   });
 });
 

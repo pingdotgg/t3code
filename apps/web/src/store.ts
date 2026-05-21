@@ -1081,16 +1081,44 @@ function syncEnvironmentShellSnapshot(
   environmentId: EnvironmentId,
 ): EnvironmentState {
   const nextProjects = snapshot.projects.map((project) => mapProject(project, environmentId));
-  const nextThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
-  let nextState: EnvironmentState = {
+  const nextThreadIds = new Set<ThreadId>();
+  const threadIds: ThreadId[] = [];
+  const threadIdsByProjectId: Record<ProjectId, ThreadId[]> = {};
+  const threadShellById: Record<ThreadId, ThreadShell> = {};
+  const threadSessionById: Record<ThreadId, ThreadSession | null> = {};
+  const threadTurnStateById: Record<ThreadId, ThreadTurnState> = {};
+  const sidebarThreadSummaryById: Record<ThreadId, SidebarThreadSummary> = {};
+
+  for (const thread of snapshot.threads) {
+    if (nextThreadIds.has(thread.id)) {
+      continue;
+    }
+    nextThreadIds.add(thread.id);
+    threadIds.push(thread.id);
+
+    const projectThreadIds = threadIdsByProjectId[thread.projectId];
+    if (projectThreadIds) {
+      projectThreadIds.push(thread.id);
+    } else {
+      threadIdsByProjectId[thread.projectId] = [thread.id];
+    }
+
+    const mappedThread = mapThreadShell(thread, environmentId);
+    threadShellById[thread.id] = mappedThread.shell;
+    threadSessionById[thread.id] = mappedThread.session;
+    threadTurnStateById[thread.id] = mappedThread.turnState;
+    sidebarThreadSummaryById[thread.id] = mappedThread.summary;
+  }
+
+  return {
     ...state,
     ...buildProjectState(nextProjects),
-    threadIds: [],
-    threadIdsByProjectId: {},
-    threadShellById: {},
-    threadSessionById: {},
-    threadTurnStateById: {},
-    sidebarThreadSummaryById: {},
+    threadIds,
+    threadIdsByProjectId,
+    threadShellById,
+    threadSessionById,
+    threadTurnStateById,
+    sidebarThreadSummaryById,
     messageIdsByThreadId: retainThreadScopedRecord(state.messageIdsByThreadId, nextThreadIds),
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
     activityIdsByThreadId: retainThreadScopedRecord(state.activityIdsByThreadId, nextThreadIds),
@@ -1107,12 +1135,6 @@ function syncEnvironmentShellSnapshot(
     ),
     bootstrapComplete: true,
   };
-
-  for (const thread of snapshot.threads) {
-    nextState = writeThreadShellState(nextState, mapThreadShell(thread, environmentId));
-  }
-
-  return nextState;
 }
 
 export function syncServerShellSnapshot(
