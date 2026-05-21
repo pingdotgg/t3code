@@ -18,6 +18,7 @@ const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
+let lastAppliedTheme: ThemeSnapshot | null = null;
 
 function emitChange() {
   for (const listener of listeners) listener();
@@ -89,11 +90,18 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  const systemDark = getSystemDark();
+  if (lastAppliedTheme?.theme === theme && lastAppliedTheme.systemDark === systemDark) {
+    syncDesktopTheme(theme);
+    return;
+  }
+
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const isDark = theme === "dark" || (theme === "system" && systemDark);
   document.documentElement.classList.toggle("dark", isDark);
+  lastAppliedTheme = { theme, systemDark };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme);
   if (suppressTransitions) {
