@@ -1,0 +1,129 @@
+{
+  "task_id": "neuropharm-basics-pack-m1-af710b",
+  "mode": "rpg",
+  "rpg_used": true,
+  "timestamp": "2026-05-21T17:57:52Z",
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.basics_pack",
+      "rpc.neuropharm.basics_pack",
+      "server.neuropharm.basics_pack",
+      "server.neuropharm.service",
+      "prompt.neuropharm.policy",
+      "web.neuropharm.database",
+      "web.neuropharm.workspace"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/rpc.ts",
+      "packages/contracts/src/ipc.ts",
+      "apps/server/src/neuropharm/NeuropharmBasicsPack.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/rpc/wsRpcClient.ts",
+      "apps/web/src/environmentApi.ts",
+      "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+      "apps/web/src/components/neuropharm/DomainPromptPicker.tsx",
+      "packages/contracts/src/neuropharm.test.ts",
+      "apps/server/src/neuropharm/NeuropharmService.test.ts",
+      "apps/web/src/localApi.test.ts"
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun run --filter @t3tools/contracts test src/neuropharm.test.ts",
+      "ok": true,
+      "interfaces": ["contracts.neuropharm.basics_pack"]
+    },
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun run --filter t3 test src/neuropharm/NeuropharmService.test.ts",
+      "ok": true,
+      "interfaces": ["server.neuropharm.basics_pack", "server.neuropharm.service"]
+    },
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun run --filter @t3tools/web test src/localApi.test.ts",
+      "ok": true,
+      "interfaces": ["rpc.neuropharm.basics_pack", "web.neuropharm.database"]
+    },
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun fmt",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.basics_pack",
+        "server.neuropharm.basics_pack",
+        "web.neuropharm.database"
+      ]
+    },
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun lint",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.basics_pack",
+        "server.neuropharm.basics_pack",
+        "web.neuropharm.database"
+      ],
+      "note": "Passed with existing unrelated warnings."
+    },
+    {
+      "cmd": "PATH=\"$HOME/.bun/bin:$PATH\" bun typecheck",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.basics_pack",
+        "rpc.neuropharm.basics_pack",
+        "server.neuropharm.basics_pack",
+        "web.neuropharm.database"
+      ]
+    },
+    {
+      "cmd": "python3 scripts/tools/rpg_builder.py --write --rpg-mode minimal --dep-depth 1 --include-tests",
+      "ok": false,
+      "interfaces": [],
+      "note": "Required helper absent in this checkout."
+    },
+    {
+      "cmd": "python3 scripts/validate_rpg.py",
+      "ok": false,
+      "interfaces": [],
+      "note": "Required validator absent in this checkout."
+    }
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.basics_pack",
+    "rpc.neuropharm.basics_pack",
+    "server.neuropharm.basics_pack",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.workspace"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.basics_pack",
+    "rpc.neuropharm.basics_pack",
+    "server.neuropharm.basics_pack",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.workspace"
+  ],
+  "files_changed": [
+    "apps/server/src/neuropharm/NeuropharmBasicsPack.ts",
+    "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+    "apps/server/src/neuropharm/NeuropharmService.ts",
+    "apps/server/src/neuropharm/NeuropharmService.test.ts",
+    "apps/server/src/ws.ts",
+    "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+    "apps/web/src/components/neuropharm/DomainPromptPicker.tsx",
+    "apps/web/src/environmentApi.ts",
+    "apps/web/src/localApi.test.ts",
+    "apps/web/src/rpc/wsRpcClient.ts",
+    "packages/contracts/src/ipc.ts",
+    "packages/contracts/src/neuropharm.test.ts",
+    "packages/contracts/src/neuropharm.ts",
+    "packages/contracts/src/rpc.ts",
+    "repo_plan/file_index.json",
+    "repo_plan/rpg.json"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null
+}

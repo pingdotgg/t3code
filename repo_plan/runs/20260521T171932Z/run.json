@@ -1,0 +1,204 @@
+{
+  "task_id": "neuropharm-local-database-v2",
+  "mode": "rpg",
+  "rpg_used": true,
+  "started_at": "2026-05-21T16:37:33Z",
+  "completed_at": "2026-05-21T17:19:32Z",
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.local_database",
+      "rpc.neuropharm.local_database",
+      "persistence.neuropharm.local_snapshots",
+      "server.neuropharm.local_databases",
+      "server.neuropharm.service",
+      "prompt.neuropharm.policy",
+      "web.neuropharm.database",
+      "web.neuropharm.product_cleanup"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/rpc.ts",
+      "packages/contracts/src/ipc.ts",
+      "apps/server/src/neuropharm/NeuropharmLocalDatabases.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/neuropharm/NeuropharmDatabaseConnectors.ts",
+      "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "apps/server/src/persistence/Migrations/033_NeuropharmReceptorDatabase.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/environmentApi.ts",
+      "apps/web/src/rpc/wsRpcClient.ts",
+      "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+      "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+      "apps/web/src/components/SplashScreen.tsx",
+      "apps/web/src/versionSkew.ts",
+      "apps/web/src/versionSkew.test.ts"
+    ],
+    "evidence": [
+      "Existing neuropharm contracts and RPC methods already carried analysis/database flows; local database schemas were added at the same contract boundary.",
+      "Server NeuropharmService is the central dependency root for database sync, persistence, analysis, and prompt policy; local database download/search was added there.",
+      "DatabaseConsole is the visible database operator surface; it now exposes local status, download, local search, live sync, and comparison controls.",
+      "CompactComposerControlsMenu carried remaining coding-agent overflow chrome; replacing the menu with direct controls reduces coding-only product framing."
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "python3 scripts/tools/rpg_builder.py --write --rpg-mode minimal --dep-depth 1 --include-tests",
+      "ok": false,
+      "interfaces": [],
+      "note": "Required helper is absent: scripts/tools/rpg_builder.py."
+    },
+    {
+      "cmd": "python3 scripts/validate_rpg.py",
+      "ok": false,
+      "interfaces": [],
+      "note": "Required validator is absent: scripts/validate_rpg.py."
+    },
+    {
+      "cmd": "mise exec -- bun run test packages/contracts/src/neuropharm.test.ts apps/server/src/neuropharm/NeuropharmService.test.ts",
+      "ok": false,
+      "interfaces": [],
+      "note": "Root turbo test does not accept direct file path tasks; reran package-filtered commands successfully."
+    },
+    {
+      "cmd": "mise exec -- bun fmt",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "rpc.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "web.neuropharm.database",
+        "web.neuropharm.product_cleanup"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun lint",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "rpc.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "web.neuropharm.database",
+        "web.neuropharm.product_cleanup"
+      ],
+      "note": "Passed with existing warnings outside this feature."
+    },
+    {
+      "cmd": "mise exec -- bun typecheck",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "rpc.neuropharm.local_database",
+        "persistence.neuropharm.local_snapshots",
+        "server.neuropharm.local_databases",
+        "server.neuropharm.service",
+        "prompt.neuropharm.policy",
+        "web.neuropharm.database",
+        "web.neuropharm.product_cleanup"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/contracts test src/neuropharm.test.ts",
+      "ok": true,
+      "interfaces": ["contracts.neuropharm.local_database"]
+    },
+    {
+      "cmd": "mise exec -- bun --filter t3 test src/neuropharm/NeuropharmService.test.ts",
+      "ok": true,
+      "interfaces": [
+        "persistence.neuropharm.local_snapshots",
+        "server.neuropharm.local_databases",
+        "server.neuropharm.service"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/web test src/versionSkew.test.ts",
+      "ok": true,
+      "interfaces": ["web.neuropharm.product_cleanup"]
+    },
+    {
+      "cmd": "mise exec -- bun run test",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "rpc.neuropharm.local_database",
+        "persistence.neuropharm.local_snapshots",
+        "server.neuropharm.local_databases",
+        "server.neuropharm.service",
+        "prompt.neuropharm.policy",
+        "web.neuropharm.database",
+        "web.neuropharm.product_cleanup"
+      ],
+      "note": "13 tasks successful; server suite reported 125 passed files, 1 skipped, 1029 passed tests, 4 skipped."
+    },
+    {
+      "cmd": "mise exec -- bun run build",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "rpc.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "web.neuropharm.database",
+        "web.neuropharm.product_cleanup"
+      ]
+    },
+    {
+      "cmd": "curl -I --max-time 5 http://localhost:5733 && curl -I --max-time 5 http://127.0.0.1:13773",
+      "ok": true,
+      "interfaces": ["web.neuropharm.database", "server.neuropharm.service"]
+    },
+    {
+      "cmd": "playwright-cli open http://localhost:5733 && playwright-cli snapshot",
+      "ok": true,
+      "interfaces": ["web.neuropharm.product_cleanup"],
+      "note": "Loaded pairing page with title Neuropharm Research (Dev)."
+    }
+  ],
+  "files_changed": [
+    "packages/contracts/src/neuropharm.ts",
+    "packages/contracts/src/rpc.ts",
+    "packages/contracts/src/ipc.ts",
+    "apps/web/src/rpc/wsRpcClient.ts",
+    "apps/web/src/environmentApi.ts",
+    "apps/server/src/neuropharm/NeuropharmLocalDatabases.ts",
+    "apps/server/src/neuropharm/NeuropharmService.ts",
+    "apps/server/src/neuropharm/NeuropharmDatabaseConnectors.ts",
+    "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+    "apps/server/src/persistence/Migrations/033_NeuropharmReceptorDatabase.ts",
+    "apps/server/src/ws.ts",
+    "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+    "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+    "apps/web/src/components/SplashScreen.tsx",
+    "apps/web/src/versionSkew.ts",
+    "apps/web/src/versionSkew.test.ts",
+    "repo_plan/rpg.json",
+    "repo_plan/file_index.json",
+    "repo_plan/runs/20260521T171932Z/run.json"
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.local_database",
+    "rpc.neuropharm.local_database",
+    "persistence.neuropharm.local_snapshots",
+    "server.neuropharm.local_databases",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.product_cleanup"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.local_database",
+    "rpc.neuropharm.local_database",
+    "persistence.neuropharm.local_snapshots",
+    "server.neuropharm.local_databases",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.product_cleanup"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null,
+  "notes": [
+    "IUPHAR/GtoPdb interactions TSV is downloaded and imported into local compound, target, and interaction tables.",
+    "ChEMBL and BindingDB public archive manifests are wired for download/status tracking; full archive extraction/import remains a follow-up for deeper local querying.",
+    "The local app was already running on ports 5733 and 13773 and was smoke-tested instead of starting a duplicate dev server."
+  ]
+}

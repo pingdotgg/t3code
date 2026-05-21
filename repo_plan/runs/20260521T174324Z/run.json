@@ -1,0 +1,154 @@
+{
+  "task_id": "neuropharm-local-database-v3-under-1gb-diagrams",
+  "mode": "rpg",
+  "rpg_used": true,
+  "started_at": "2026-05-21T17:19:32Z",
+  "completed_at": "2026-05-21T17:43:24Z",
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.local_database",
+      "server.neuropharm.local_databases",
+      "server.neuropharm.service",
+      "prompt.neuropharm.policy",
+      "web.neuropharm.database",
+      "web.neuropharm.workspace"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/neuropharm.test.ts",
+      "apps/server/src/neuropharm/NeuropharmLocalDatabases.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/neuropharm/NeuropharmService.test.ts",
+      "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+      "apps/web/src/components/ChatMarkdown.tsx",
+      "apps/web/src/components/ChatMarkdown.browser.tsx",
+      "repo_plan/rpg.json",
+      "repo_plan/file_index.json"
+    ],
+    "evidence": [
+      "The local database manifest had included ChEMBL SQLite at about 5.6 GB, which violated the requested 1 GB cap.",
+      "IUPHAR interaction TSV is small, and BindingDB all-measurements TSV zip is about 554 MB, keeping default local downloads below 1 GB.",
+      "Mermaid fences were previously highlighted as code blocks; ChatMarkdown now parses supported flowchart syntax into a rendered flowchart component."
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "mise exec -- bun fmt",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "prompt.neuropharm.policy",
+        "web.neuropharm.database",
+        "web.neuropharm.workspace"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/contracts test src/neuropharm.test.ts",
+      "ok": true,
+      "interfaces": ["contracts.neuropharm.local_database"]
+    },
+    {
+      "cmd": "mise exec -- bun --filter t3 test src/neuropharm/NeuropharmService.test.ts",
+      "ok": true,
+      "interfaces": ["server.neuropharm.local_databases", "server.neuropharm.service"],
+      "note": "Includes regression check that the default local database manifest remains under 1 GB."
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/web test src/components/ChatMarkdown.browser.tsx",
+      "ok": true,
+      "interfaces": [],
+      "note": "Normal web Vitest config does not include .browser.tsx files."
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/web test:browser -- src/components/ChatMarkdown.browser.tsx",
+      "ok": false,
+      "interfaces": ["web.neuropharm.workspace"],
+      "note": "Initial run failed because getByText matched duplicate node and edge labels; assertion was tightened to node title."
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/web test:browser -- src/components/ChatMarkdown.browser.tsx",
+      "ok": true,
+      "interfaces": ["web.neuropharm.workspace"]
+    },
+    {
+      "cmd": "mise exec -- bun lint",
+      "ok": true,
+      "interfaces": ["web.neuropharm.workspace"],
+      "note": "Passed with existing warnings outside this feature."
+    },
+    {
+      "cmd": "mise exec -- bun typecheck",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "prompt.neuropharm.policy",
+        "web.neuropharm.database",
+        "web.neuropharm.workspace"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun run test",
+      "ok": false,
+      "interfaces": [],
+      "note": "First full run hit a timeout in apps/web/src/components/chat/MessagesTimeline.test.tsx."
+    },
+    {
+      "cmd": "mise exec -- bun --filter @t3tools/web test src/components/chat/MessagesTimeline.test.tsx",
+      "ok": true,
+      "interfaces": []
+    },
+    {
+      "cmd": "mise exec -- bun run test",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.local_database",
+        "server.neuropharm.local_databases",
+        "server.neuropharm.service",
+        "prompt.neuropharm.policy",
+        "web.neuropharm.database",
+        "web.neuropharm.workspace"
+      ],
+      "note": "Full rerun passed: 13 tasks successful; server suite reported 125 passed files, 1 skipped, 1030 passed tests, 4 skipped."
+    }
+  ],
+  "files_changed": [
+    "packages/contracts/src/neuropharm.ts",
+    "packages/contracts/src/neuropharm.test.ts",
+    "apps/server/src/neuropharm/NeuropharmLocalDatabases.ts",
+    "apps/server/src/neuropharm/NeuropharmService.ts",
+    "apps/server/src/neuropharm/NeuropharmService.test.ts",
+    "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+    "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+    "apps/web/src/components/ChatMarkdown.tsx",
+    "apps/web/src/components/ChatMarkdown.browser.tsx",
+    "repo_plan/rpg.json",
+    "repo_plan/file_index.json",
+    "repo_plan/runs/20260521T174324Z/run.json"
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.local_database",
+    "server.neuropharm.local_databases",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.workspace"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.local_database",
+    "server.neuropharm.local_databases",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.database",
+    "web.neuropharm.workspace"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null,
+  "notes": [
+    "Default local downloads are now IUPHAR plus BindingDB only; ChEMBL remains available through online sync/search but is not downloaded locally by default.",
+    "The system prompt now tells the model to emit renderer-compatible Mermaid flowcharts and neuropharm-graph JSON blocks.",
+    "A lightweight Mermaid flowchart renderer was added for ChatMarkdown without adding a new dependency."
+  ]
+}
