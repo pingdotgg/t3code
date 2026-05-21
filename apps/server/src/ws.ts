@@ -114,6 +114,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { NeuropharmService } from "./neuropharm/NeuropharmService.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -308,6 +309,20 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmSearchSources, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmImportDocument, AuthOrchestrationOperateScope],
+  [WS_METHODS.neuropharmInstallBasicsPack, AuthOrchestrationOperateScope],
+  [WS_METHODS.neuropharmSearchLibrary, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmBuildEvidencePack, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmGenerateGraphSpec, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmAnalyze, AuthOrchestrationOperateScope],
+  [WS_METHODS.neuropharmSyncDatabases, AuthOrchestrationOperateScope],
+  [WS_METHODS.neuropharmLookupCompound, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmCompareCompounds, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmDownloadDatabases, AuthOrchestrationOperateScope],
+  [WS_METHODS.neuropharmDatabaseStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmSearchLocalReceptors, AuthOrchestrationReadScope],
+  [WS_METHODS.neuropharmSearchLocalInteractions, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -435,6 +450,7 @@ const makeWsRpcLayer = (
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const neuropharm = yield* NeuropharmService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1518,6 +1534,90 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.neuropharmSearchSources]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmSearchSources, neuropharm.searchSources(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmImportDocument]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmImportDocument, neuropharm.importDocument(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmInstallBasicsPack]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmInstallBasicsPack,
+            neuropharm.installBasicsPack(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmSearchLibrary]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmSearchLibrary, neuropharm.searchLibrary(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmBuildEvidencePack]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmBuildEvidencePack,
+            neuropharm.buildEvidencePack(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmGenerateGraphSpec]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmGenerateGraphSpec,
+            neuropharm.generateGraphSpec(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmAnalyze]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmAnalyze, neuropharm.analyze(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmSyncDatabases]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmSyncDatabases, neuropharm.syncDatabases(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmLookupCompound]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmLookupCompound, neuropharm.lookupCompound(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmCompareCompounds]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmCompareCompounds,
+            neuropharm.compareCompounds(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmDownloadDatabases]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmDownloadDatabases,
+            neuropharm.downloadDatabases(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmDatabaseStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.neuropharmDatabaseStatus, neuropharm.databaseStatus(input), {
+            "rpc.aggregate": "neuropharm",
+          }),
+        [WS_METHODS.neuropharmSearchLocalReceptors]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmSearchLocalReceptors,
+            neuropharm.searchLocalReceptors(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
+          ),
+        [WS_METHODS.neuropharmSearchLocalInteractions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.neuropharmSearchLocalInteractions,
+            neuropharm.searchLocalInteractions(input),
+            {
+              "rpc.aggregate": "neuropharm",
+            },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
