@@ -27,8 +27,8 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
-node_modules/
 .alchemy/
-*.log
 .env*
 !.env.example
+.playwright-cli/
+output/playwright/
