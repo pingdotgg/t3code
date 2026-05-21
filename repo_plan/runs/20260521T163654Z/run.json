@@ -1,0 +1,108 @@
+{
+  "task_id": "neuropharm-database-connectors-af710b-methylphenidate",
+  "mode": "rpg",
+  "rpg_used": true,
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.database",
+      "persistence.neuropharm.database",
+      "server.neuropharm.connectors",
+      "rpc.neuropharm.database",
+      "web.neuropharm.database"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/rpc.ts",
+      "packages/contracts/src/ipc.ts",
+      "apps/server/src/neuropharm/NeuropharmDatabaseConnectors.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/persistence/Migrations/033_NeuropharmReceptorDatabase.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/components/neuropharm/DatabaseConsole.tsx",
+      "apps/web/src/components/NoActiveThreadState.tsx",
+      "apps/web/src/rpc/wsRpcClient.ts",
+      "apps/web/src/environmentApi.ts"
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "mise exec -- bun fmt",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.database",
+        "server.neuropharm.connectors",
+        "web.neuropharm.database"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun lint",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.database",
+        "server.neuropharm.connectors",
+        "web.neuropharm.database"
+      ],
+      "note": "Passed with existing unrelated warnings."
+    },
+    {
+      "cmd": "mise exec -- bun typecheck",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.database",
+        "persistence.neuropharm.database",
+        "server.neuropharm.connectors",
+        "rpc.neuropharm.database",
+        "web.neuropharm.database"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun run test",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.database",
+        "persistence.neuropharm.database",
+        "server.neuropharm.connectors",
+        "rpc.neuropharm.database",
+        "web.neuropharm.database"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun run build",
+      "ok": true,
+      "interfaces": ["web.neuropharm.database", "server.neuropharm.connectors"]
+    },
+    {
+      "cmd": "mise exec -- curl -I --max-time 5 http://localhost:5733",
+      "ok": true,
+      "interfaces": ["web.neuropharm.database"]
+    },
+    {
+      "cmd": "mise exec -- curl -I --max-time 5 http://127.0.0.1:13773",
+      "ok": true,
+      "interfaces": ["server.neuropharm.connectors", "rpc.neuropharm.database"]
+    }
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.database",
+    "persistence.neuropharm.database",
+    "server.neuropharm.connectors",
+    "rpc.neuropharm.database",
+    "web.neuropharm.database"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.database",
+    "persistence.neuropharm.database",
+    "server.neuropharm.connectors",
+    "rpc.neuropharm.database",
+    "web.neuropharm.database"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null,
+  "dev_server": {
+    "cmd": "mise exec -- bun run dev",
+    "web_url": "http://localhost:5733",
+    "server_url": "http://localhost:13773",
+    "pairing_url": "http://localhost:5733/pair#token=W6CR7BFDHJ65",
+    "status": "running"
+  }
+}

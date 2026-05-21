@@ -1,0 +1,111 @@
+{
+  "task_id": "neuropharm-serious-tool-v1-build-for-testing",
+  "mode": "rpg",
+  "rpg_used": true,
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.analysis",
+      "rpc.neuropharm.analyze",
+      "persistence.neuropharm.library",
+      "server.neuropharm.service",
+      "prompt.neuropharm.policy",
+      "web.neuropharm.workspace",
+      "docs.neuropharm.readme"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/rpc.ts",
+      "packages/contracts/src/ipc.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "apps/server/src/persistence/Migrations/031_NeuropharmEvidenceLibrary.ts",
+      "apps/server/src/persistence/Migrations/032_NeuropharmAnalysisRuns.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/components/neuropharm/ResearchConsole.tsx",
+      "apps/web/src/components/neuropharm/ScientificGraphRenderer.tsx",
+      "apps/web/src/components/NoActiveThreadState.tsx",
+      "README.md"
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "mise exec -- bun fmt",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace",
+        "docs.neuropharm.readme"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun lint",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace"
+      ],
+      "note": "Passed with non-blocking warnings."
+    },
+    {
+      "cmd": "mise exec -- bun typecheck",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace"
+      ]
+    },
+    {
+      "cmd": "mise exec -- bun run build",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace"
+      ]
+    },
+    {
+      "cmd": "mise exec -- curl -I --max-time 5 http://localhost:5733",
+      "ok": true,
+      "interfaces": ["web.neuropharm.workspace"]
+    },
+    {
+      "cmd": "mise exec -- curl -I --max-time 5 http://127.0.0.1:13773",
+      "ok": true,
+      "interfaces": ["server.neuropharm.service", "rpc.neuropharm.analyze"]
+    }
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.analysis",
+    "rpc.neuropharm.analyze",
+    "persistence.neuropharm.library",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.workspace",
+    "docs.neuropharm.readme"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.analysis",
+    "rpc.neuropharm.analyze",
+    "persistence.neuropharm.library",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "web.neuropharm.workspace",
+    "docs.neuropharm.readme"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null,
+  "dev_server": {
+    "cmd": "mise exec -- bun run dev",
+    "web_url": "http://localhost:5733",
+    "server_url": "http://localhost:13773",
+    "pairing_url": "http://localhost:5733/pair#token=GFK9A4SDGUPF",
+    "status": "running"
+  }
+}

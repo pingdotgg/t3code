@@ -1,0 +1,122 @@
+{
+  "task_id": "neuropharm-serious-tool-v1",
+  "mode": "rpg",
+  "rpg_used": true,
+  "localization": {
+    "nodes": [
+      "contracts.neuropharm.analysis",
+      "rpc.neuropharm.analyze",
+      "server.neuropharm.service",
+      "persistence.neuropharm.library",
+      "web.neuropharm.workspace",
+      "prompt.neuropharm.policy",
+      "docs.neuropharm.readme"
+    ],
+    "files": [
+      "packages/contracts/src/neuropharm.ts",
+      "packages/contracts/src/rpc.ts",
+      "packages/contracts/src/ipc.ts",
+      "apps/server/src/neuropharm/NeuropharmService.ts",
+      "apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "apps/server/src/ws.ts",
+      "apps/server/src/persistence/Migrations.ts",
+      "apps/server/src/persistence/Migrations/031_NeuropharmEvidenceLibrary.ts",
+      "apps/server/src/persistence/Migrations/032_NeuropharmAnalysisRuns.ts",
+      "apps/web/src/components/neuropharm/ResearchConsole.tsx",
+      "apps/web/src/components/neuropharm/DomainPromptPicker.tsx",
+      "apps/web/src/components/neuropharm/NeuropharmWorkspacePanel.tsx",
+      "apps/web/src/components/neuropharm/ScientificGraphRenderer.tsx",
+      "apps/web/src/components/NoActiveThreadState.tsx",
+      "apps/web/src/components/chat/ChatComposer.tsx",
+      "apps/web/src/components/chat/ChatHeader.tsx",
+      "README.md"
+    ]
+  },
+  "tests": [
+    {
+      "cmd": "git diff --check",
+      "ok": true,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace"
+      ]
+    },
+    {
+      "cmd": "node --check packages/contracts/src/neuropharm.ts",
+      "ok": true,
+      "interfaces": ["contracts.neuropharm.analysis"]
+    },
+    {
+      "cmd": "node --check apps/server/src/neuropharm/NeuropharmService.ts",
+      "ok": true,
+      "interfaces": ["server.neuropharm.service"]
+    },
+    {
+      "cmd": "node --check apps/server/src/neuropharm/NeuropharmPromptPolicy.ts",
+      "ok": true,
+      "interfaces": ["prompt.neuropharm.policy"]
+    },
+    {
+      "cmd": "node --check apps/server/src/persistence/Migrations/032_NeuropharmAnalysisRuns.ts",
+      "ok": true,
+      "interfaces": ["persistence.neuropharm.library"]
+    },
+    {
+      "cmd": "node --check packages/contracts/src/rpc.ts",
+      "ok": true,
+      "interfaces": ["rpc.neuropharm.analyze"]
+    },
+    {
+      "cmd": "node --check packages/contracts/src/ipc.ts",
+      "ok": true,
+      "interfaces": ["rpc.neuropharm.analyze"]
+    },
+    {
+      "cmd": "node --check apps/server/src/ws.ts",
+      "ok": true,
+      "interfaces": ["rpc.neuropharm.analyze", "server.neuropharm.service"]
+    },
+    {
+      "cmd": "node --check apps/server/src/persistence/Migrations.ts",
+      "ok": true,
+      "interfaces": ["persistence.neuropharm.library"]
+    },
+    {
+      "cmd": "node -e JSON.parse(...) for repo_plan artifacts",
+      "ok": true,
+      "interfaces": ["docs.neuropharm.readme"]
+    },
+    {
+      "cmd": "bun fmt && bun lint && bun typecheck && bun run test",
+      "ok": false,
+      "interfaces": [
+        "contracts.neuropharm.analysis",
+        "rpc.neuropharm.analyze",
+        "server.neuropharm.service",
+        "web.neuropharm.workspace"
+      ],
+      "reason": "bun is not installed on PATH in this environment. `bun --version` returned `zsh:1: command not found: bun`."
+    }
+  ],
+  "implemented_interfaces": [
+    "contracts.neuropharm.analysis",
+    "rpc.neuropharm.analyze",
+    "server.neuropharm.service",
+    "persistence.neuropharm.library",
+    "web.neuropharm.workspace",
+    "prompt.neuropharm.policy",
+    "docs.neuropharm.readme"
+  ],
+  "tested_interfaces": [
+    "contracts.neuropharm.analysis",
+    "rpc.neuropharm.analyze",
+    "server.neuropharm.service",
+    "prompt.neuropharm.policy",
+    "persistence.neuropharm.library",
+    "docs.neuropharm.readme"
+  ],
+  "elapsed_s": null,
+  "tool_calls_count": null
+}
