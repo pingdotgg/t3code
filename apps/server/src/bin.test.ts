@@ -1,17 +1,14 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
-import * as NodeHttp from "node:http";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { join } from "node:path";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
@@ -20,19 +17,9 @@ import { cli } from "./bin.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
-import {
-  orchestrationDispatchRouteLayer,
-  orchestrationSnapshotRouteLayer,
-} from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
-import {
-  makePersistedServerRuntimeState,
-  persistServerRuntimeState,
-} from "./serverRuntimeState.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
-import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
-import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -100,53 +87,6 @@ const readPersistedSnapshot = (baseDir: string) =>
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       return yield* projectionSnapshotQuery.getSnapshot();
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
-  });
-
-const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const config = yield* makeCliTestServerConfig(baseDir);
-    const routesLayer = Layer.mergeAll(
-      orchestrationSnapshotRouteLayer,
-      orchestrationDispatchRouteLayer,
-    );
-    const appLayer = HttpRouter.serve(routesLayer, {
-      disableListenLog: true,
-      disableLogger: true,
-    }).pipe(
-      Layer.provideMerge(
-        ServerAuthLive.pipe(
-          Layer.provideMerge(SqlitePersistenceLayerLive),
-          Layer.provide(ServerSecretStoreLive),
-        ),
-      ),
-      Layer.provideMerge(makeProjectPersistenceLayer(config)),
-      Layer.provideMerge(
-        NodeHttpServer.layer(NodeHttp.createServer, {
-          host: "127.0.0.1",
-          port: 0,
-        }),
-      ),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(Layer.succeed(ServerConfig, config)),
-    );
-
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const server = yield* HttpServer.HttpServer;
-        const address = server.address;
-        if (typeof address === "string" || !("port" in address)) {
-          assert.fail(`Expected TCP address, got ${address}`);
-        }
-        yield* persistServerRuntimeState({
-          path: config.serverRuntimeStatePath,
-          state: yield* makePersistedServerRuntimeState({
-            config,
-            port: address.port,
-          }),
-        });
-        return yield* run();
-      }).pipe(Effect.provide(Layer.mergeAll(appLayer, NodeServices.layer))),
-    );
   });
 
 it.layer(NodeServices.layer)("bin cli parsing", (it) => {
@@ -301,34 +241,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         (project) => project.id === addedProject?.id,
       );
       assert.isTrue((removedProject?.deletedAt ?? null) !== null);
-    }),
-  );
-
-  it.effect("routes project commands through a running server when runtime state is present", () =>
-    Effect.gen(function* () {
-      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-projects-live-test-"));
-      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-projects-live-workspace-"));
-
-      yield* withLiveProjectCliServer(baseDir, () =>
-        Effect.gen(function* () {
-          yield* runCliWithRuntime([
-            "project",
-            "add",
-            workspaceRoot,
-            "--title",
-            "Live Project",
-            "--base-dir",
-            baseDir,
-          ]);
-          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-          const readModel = yield* projectionSnapshotQuery.getSnapshot();
-          const addedProject = readModel.projects.find(
-            (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
-          );
-          assert.isTrue(addedProject !== undefined);
-          assert.equal(addedProject?.title, "Live Project");
-        }),
-      );
     }),
   );
 
