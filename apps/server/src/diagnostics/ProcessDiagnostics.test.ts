@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -61,6 +61,56 @@ describe("ProcessDiagnostics", () => {
           rssBytes: 20480 * 1024,
           elapsed: "00:04",
           command: "codex app-server --config /tmp/one two",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("parses Windows process JSON through schemas", () =>
+    Effect.sync(() => {
+      const rows = ProcessDiagnostics.parseWindowsProcessRows(`
+        [
+          {
+            "ProcessId": 4242,
+            "ParentProcessId": 100,
+            "CommandLine": "node server.js",
+            "WorkingSetSize": 4096.7,
+            "PercentProcessorTime": 2.5,
+            "Status": "Running"
+          },
+          {
+            "ProcessId": 0,
+            "ParentProcessId": 100,
+            "Name": "invalid.exe"
+          },
+          {
+            "ProcessId": 4243,
+            "ParentProcessId": 4242,
+            "Name": "child.exe"
+          }
+        ]
+      `);
+
+      assert.deepEqual(rows, [
+        {
+          pid: 4242,
+          ppid: 100,
+          pgid: null,
+          status: "Running",
+          cpuPercent: 2.5,
+          rssBytes: 4097,
+          elapsed: "",
+          command: "node server.js",
+        },
+        {
+          pid: 4243,
+          ppid: 4242,
+          pgid: null,
+          status: "Live",
+          cpuPercent: 0,
+          rssBytes: 0,
+          elapsed: "",
+          command: "child.exe",
         },
       ]);
     }),
