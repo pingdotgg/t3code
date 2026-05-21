@@ -13,6 +13,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -212,6 +213,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const handleUserScrollIntent = useCallback(() => {
     onUserScrollIntent?.();
   }, [onUserScrollIntent]);
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.target === event.currentTarget) {
+        handleUserScrollIntent();
+      }
+    },
+    [handleUserScrollIntent],
+  );
   const listHeader = useMemo(() => {
     if (!hasOlderThreadDetail) {
       return TIMELINE_LIST_HEADER;
@@ -323,6 +332,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div
           className="h-full min-h-0"
+          onPointerDownCapture={handlePointerDown}
           onTouchMoveCapture={handleUserScrollIntent}
           onWheelCapture={handleUserScrollIntent}
         >

@@ -328,6 +328,42 @@ function makeThreadSessionSetEvent(params: {
   };
 }
 
+function makeThreadMessageSentEvent(params: {
+  readonly sequence: number;
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly role?: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly turnId?: TurnId | null;
+  readonly streaming?: boolean;
+  readonly occurredAt?: string;
+}): Extract<OrchestrationEvent, { type: "thread.message-sent" }> {
+  const occurredAt = params.occurredAt ?? `2026-04-13T00:00:0${params.sequence}.000Z`;
+
+  return {
+    sequence: params.sequence,
+    eventId: EventId.make(`event-message-sent-${params.sequence}`),
+    aggregateKind: "thread",
+    aggregateId: params.threadId,
+    occurredAt,
+    commandId: CommandId.make(`command-message-sent-${params.sequence}`),
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    type: "thread.message-sent",
+    payload: {
+      threadId: params.threadId,
+      messageId: params.messageId,
+      role: params.role ?? "assistant",
+      text: params.text,
+      turnId: params.turnId ?? TurnId.make("turn-1"),
+      streaming: params.streaming ?? false,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    },
+  };
+}
+
 function makeThreadCreatedEvent(params: {
   readonly sequence: number;
   readonly threadId: ThreadId;
@@ -1555,6 +1591,817 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
     release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("force-refreshes active running thread detail on browser resume even when the detail sequence is current", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    mockProbeSync.mockResolvedValueOnce({
+      clientSequence: 2,
+      serverSequence: 2,
+      behind: false,
+    });
+
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-current-running-detail-resume");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      {
+        ...makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "running",
+        }),
+        snapshotSequence: 2,
+      },
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "running",
+        messages: [
+          {
+            id: MessageId.make("assistant-current-running"),
+            role: "assistant",
+            text: "Hello",
+            turnId: TurnId.make("turn-1"),
+            streaming: true,
+            createdAt: "2026-04-13T00:00:02.000Z",
+            updatedAt: "2026-04-13T00:00:02.000Z",
+          },
+        ],
+      }),
+    });
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(mockProbeSync).toHaveBeenCalledWith({ clientSequence: 2 });
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("updates streaming assistant text from the forced active detail snapshot after browser resume", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    mockProbeSync.mockResolvedValueOnce({
+      clientSequence: 2,
+      serverSequence: 2,
+      behind: false,
+    });
+
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+    const { scopeThreadRef } = await import("@t3tools/client-runtime");
+    const { selectThreadByRef, useStore } = await import("~/store");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-current-running-detail-content-resume");
+    const messageId = MessageId.make("assistant-current-running-content");
+    const turnId = TurnId.make("turn-1");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      {
+        ...makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "running",
+        }),
+        snapshotSequence: 2,
+      },
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const initialDetailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(initialDetailListener).toBeDefined();
+    initialDetailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "running",
+        messages: [
+          {
+            id: messageId,
+            role: "assistant",
+            text: "Hello",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-13T00:00:02.000Z",
+            updatedAt: "2026-04-13T00:00:02.000Z",
+          },
+        ],
+      }),
+    });
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(mockProbeSync).toHaveBeenCalledWith({ clientSequence: 2 });
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+
+    const refreshedDetailListener = mockSubscribeThread.mock.calls[1]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(refreshedDetailListener).toBeDefined();
+    refreshedDetailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "running",
+        messages: [
+          {
+            id: messageId,
+            role: "assistant",
+            text: "Hello world",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-13T00:00:02.000Z",
+            updatedAt: "2026-04-13T00:00:03.000Z",
+          },
+        ],
+      }),
+    });
+
+    const thread = selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
+    expect(thread?.messages.map((message) => message.text)).toEqual(["Hello world"]);
+    expect(thread?.messages[0]?.streaming).toBe(true);
+    expect(thread?.latestTurn?.state).toBe("running");
+    expect(thread?.session?.status).toBe("running");
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("force-refreshes active detail when a detail completion event settles running work", async () => {
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+    const { scopeThreadRef } = await import("@t3tools/client-runtime");
+    const { selectThreadByRef, useStore } = await import("~/store");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-detail-completion-refresh");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({
+        threadId,
+        sessionStatus: "running",
+      }),
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((
+          item:
+            | {
+                readonly kind: "snapshot";
+                readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+              }
+            | {
+                readonly kind: "event";
+                readonly event: Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+              },
+        ) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 1,
+        threadId,
+        sessionStatus: "running",
+      }),
+    });
+    detailListener?.({
+      kind: "event",
+      event: makeThreadSessionSetEvent({
+        sequence: 2,
+        threadId,
+        status: "ready",
+      }),
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    const refreshedDetailListener = mockSubscribeThread.mock.calls[1]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: OrchestrationThreadDetailSnapshot;
+        }) => void)
+      | undefined;
+    const completedThread = makeCompletedThreadShellSnapshot({
+      snapshotSequence: 2,
+      threadId,
+    }).threads[0];
+    expect(refreshedDetailListener).toBeDefined();
+    expect(completedThread).toBeDefined();
+    refreshedDetailListener?.({
+      kind: "snapshot",
+      snapshot: {
+        snapshotSequence: 2,
+        thread: {
+          ...completedThread!,
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+        },
+        pageInfo: EMPTY_ORCHESTRATION_THREAD_DETAIL_PAGE_INFO,
+      },
+    });
+
+    const thread = selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
+    expect(thread?.session?.status).toBe("ready");
+    expect(thread?.latestTurn?.state).toBe("completed");
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("applies missing final message events after a completion-triggered forced snapshot reset", async () => {
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+    const { scopeThreadRef } = await import("@t3tools/client-runtime");
+    const { selectThreadByRef, useStore } = await import("~/store");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-completion-refresh-final-text");
+    const messageId = MessageId.make("assistant-completion-refresh-final-text");
+    const turnId = TurnId.make("turn-1");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({
+        threadId,
+        sessionStatus: "running",
+      }),
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const initialDetailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((
+          item:
+            | {
+                readonly kind: "snapshot";
+                readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+              }
+            | {
+                readonly kind: "event";
+                readonly event: Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+              },
+        ) => void)
+      | undefined;
+    expect(initialDetailListener).toBeDefined();
+    initialDetailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 10,
+        threadId,
+        sessionStatus: "running",
+        messages: [
+          {
+            id: messageId,
+            role: "assistant",
+            text: "Hello",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-13T00:00:10.000Z",
+            updatedAt: "2026-04-13T00:00:10.000Z",
+          },
+        ],
+      }),
+    });
+    initialDetailListener?.({
+      kind: "event",
+      event: makeThreadSessionSetEvent({
+        sequence: 12,
+        threadId,
+        status: "ready",
+        occurredAt: "2026-04-13T00:00:12.000Z",
+      }),
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+
+    const refreshedDetailListener = mockSubscribeThread.mock.calls[1]?.[1] as
+      | ((
+          item:
+            | {
+                readonly kind: "snapshot";
+                readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+              }
+            | {
+                readonly kind: "event";
+                readonly event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+              },
+        ) => void)
+      | undefined;
+    expect(refreshedDetailListener).toBeDefined();
+    refreshedDetailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 10,
+        threadId,
+        sessionStatus: "ready",
+        messages: [
+          {
+            id: messageId,
+            role: "assistant",
+            text: "Hello",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-13T00:00:10.000Z",
+            updatedAt: "2026-04-13T00:00:10.000Z",
+          },
+        ],
+      }),
+    });
+    refreshedDetailListener?.({
+      kind: "event",
+      event: makeThreadMessageSentEvent({
+        sequence: 11,
+        threadId,
+        messageId,
+        text: "Hello world",
+        turnId,
+        streaming: false,
+        occurredAt: "2026-04-13T00:00:11.000Z",
+      }),
+    });
+
+    const thread = selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
+    expect(thread?.messages.map((message) => message.text)).toEqual(["Hello world"]);
+    expect(thread?.messages[0]?.streaming).toBe(false);
+    expect(thread?.session?.status).toBe("ready");
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("force-refreshes active detail when shell completion arrives at the current detail sequence", async () => {
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-shell-completion-refresh");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      {
+        ...makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "running",
+        }),
+        snapshotSequence: 2,
+      },
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 3,
+        threadId,
+        sessionStatus: "running",
+      }),
+    });
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 3,
+        thread: makeCompletedThreadShellSnapshot({
+          snapshotSequence: 3,
+          threadId,
+          sessionStatus: "ready",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("defers shell-completion refresh for a released warm detail subscription until active re-entry", async () => {
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+    const { scopeThreadRef } = await import("@t3tools/client-runtime");
+    const { selectThreadByRef, useStore } = await import("~/store");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-warm-shell-completion-no-refresh");
+    const messageId = MessageId.make("assistant-warm-shell-completion-final");
+    const turnId = TurnId.make("turn-1");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({
+        threadId,
+        sessionStatus: "running",
+      }),
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "running",
+      }),
+    });
+    release();
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeCompletedThreadShellSnapshot({
+          snapshotSequence: 2,
+          threadId,
+          sessionStatus: "ready",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    const releaseActive = retainThreadDetailSubscription(environmentId, threadId);
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    const refreshedDetailListener = mockSubscribeThread.mock.calls[1]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(refreshedDetailListener).toBeDefined();
+    refreshedDetailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 1,
+        threadId,
+        sessionStatus: "ready",
+        messages: [
+          {
+            id: messageId,
+            role: "assistant",
+            text: "Final response",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-13T00:00:02.000Z",
+            updatedAt: "2026-04-13T00:00:03.000Z",
+          },
+        ],
+      }),
+    });
+
+    const thread = selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
+    expect(thread?.messages.map((message) => message.text)).toEqual(["Final response"]);
+    expect(thread?.session?.status).toBe("ready");
+
+    releaseActive();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("force-refreshes active empty thread detail on browser resume when shell knows conversation content", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    mockProbeSync.mockResolvedValueOnce({
+      clientSequence: 2,
+      serverSequence: 2,
+      behind: false,
+    });
+
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-known-content-empty-detail-resume");
+    const shellSnapshot = makeThreadShellSnapshot({
+      threadId,
+      sessionStatus: "ready",
+    });
+    const shellThread = shellSnapshot.threads[0];
+    expect(shellThread).toBeDefined();
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      {
+        ...shellSnapshot,
+        snapshotSequence: 2,
+        threads: [
+          {
+            ...shellThread!,
+            latestUserMessageAt: "2026-04-13T00:00:02.000Z",
+            updatedAt: "2026-04-13T00:00:02.000Z",
+          },
+        ],
+      },
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "ready",
+        messages: [],
+      }),
+    });
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(mockProbeSync).toHaveBeenCalledWith({ clientSequence: 2 });
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("defers browser-resume refresh for a released warm detail subscription until active re-entry", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    mockProbeSync.mockResolvedValueOnce({
+      clientSequence: 2,
+      serverSequence: 2,
+      behind: false,
+    });
+
+    const {
+      retainThreadDetailSubscription,
+      resetEnvironmentServiceForTests,
+      startEnvironmentConnectionService,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-warm-current-resume");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+    connectionInput.syncShellSnapshot(
+      {
+        ...makeThreadShellSnapshot({
+          threadId,
+          sessionStatus: "running",
+        }),
+        snapshotSequence: 2,
+      },
+      environmentId,
+    );
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    const detailListener = mockSubscribeThread.mock.calls[0]?.[1] as
+      | ((item: {
+          readonly kind: "snapshot";
+          readonly snapshot: ReturnType<typeof makeThreadDetailSnapshot>;
+        }) => void)
+      | undefined;
+    expect(detailListener).toBeDefined();
+    detailListener?.({
+      kind: "snapshot",
+      snapshot: makeThreadDetailSnapshot({
+        snapshotSequence: 2,
+        threadId,
+        sessionStatus: "running",
+      }),
+    });
+    release();
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(mockProbeSync).toHaveBeenCalledWith({ clientSequence: 2 });
+    });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    const releaseActive = retainThreadDetailSubscription(environmentId, threadId);
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+    });
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    releaseActive();
     stop();
     await resetEnvironmentServiceForTests();
   });

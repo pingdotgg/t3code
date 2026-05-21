@@ -231,7 +231,7 @@ describe("MessagesTimeline", () => {
     }
   });
 
-  it("reports wheel and touch scroll intent from the list surface", async () => {
+  it("reports pointer, wheel, and touch scroll intent from the list surface", async () => {
     const onUserScrollIntent = vi.fn();
     const screen = await render(
       <MessagesTimeline
@@ -258,10 +258,11 @@ describe("MessagesTimeline", () => {
       const list = document.querySelector("[data-testid='legend-list']");
       expect(list).not.toBeNull();
 
+      list?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
       list?.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
       list?.dispatchEvent(new Event("touchmove", { bubbles: true }));
 
-      expect(onUserScrollIntent).toHaveBeenCalledTimes(2);
+      expect(onUserScrollIntent).toHaveBeenCalledTimes(3);
     } finally {
       await screen.unmount();
     }

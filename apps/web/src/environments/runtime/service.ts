@@ -4,6 +4,7 @@ import {
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
   type OrchestrationEvent,
+  type OrchestrationThreadShell,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
@@ -78,6 +79,7 @@ import {
   removeCachedEnvironmentState,
   scheduleCachedEnvironmentStateWrite,
 } from "~/orchestrationStartupCache";
+import type { Thread } from "~/types";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -93,6 +95,8 @@ type ThreadDetailSubscriptionEntry = {
   unsubscribeConnectionListener: (() => void) | null;
   refCount: number;
   latestDetailSequence: number | null;
+  resetDetailSequenceOnNextSnapshot: boolean;
+  refreshOnNextRetain: boolean;
   refreshTargetSequence: number | null;
   refreshTimeoutId: ReturnType<typeof setTimeout> | null;
   activeReconcileIntervalId: ReturnType<typeof setInterval> | null;
@@ -580,6 +584,17 @@ function markThreadDetailSequence(entry: ThreadDetailSubscriptionEntry, sequence
   }
 }
 
+function resetThreadDetailSequence(entry: ThreadDetailSubscriptionEntry, sequence: number): void {
+  entry.latestDetailSequence = sequence;
+
+  if (
+    entry.refreshTargetSequence !== null &&
+    entry.latestDetailSequence >= entry.refreshTargetSequence
+  ) {
+    clearThreadDetailSubscriptionRefresh(entry);
+  }
+}
+
 function hasThreadDetailSequenceAlreadyBeenSeen(
   entry: ThreadDetailSubscriptionEntry,
   sequence: number,
@@ -593,6 +608,39 @@ function shouldPreserveThreadDetailShellFields(
 ): boolean {
   const currentProjectionVersion = readLastAppliedProjectionVersion(environmentId);
   return currentProjectionVersion !== null && sequence < currentProjectionVersion.sequence;
+}
+
+function isSettledOrchestrationStatus(status: string | null | undefined): boolean {
+  return status !== undefined && status !== null && status !== "starting" && status !== "running";
+}
+
+function hasLocalActiveThreadWork(thread: Thread | undefined): boolean {
+  if (!thread) {
+    return false;
+  }
+
+  return (
+    thread.session?.orchestrationStatus === "running" ||
+    thread.session?.activeTurnId !== undefined ||
+    thread.latestTurn?.state === "running"
+  );
+}
+
+function isSettlingThreadDetailEvent(event: OrchestrationEvent): boolean {
+  return (
+    event.type === "thread.session-set" &&
+    isSettledOrchestrationStatus(event.payload.session.status)
+  );
+}
+
+function isSettlingShellThread(thread: OrchestrationThreadShell): boolean {
+  const latestTurnState = thread.latestTurn?.state;
+  return (
+    isSettledOrchestrationStatus(thread.session?.status) ||
+    latestTurnState === "completed" ||
+    latestTurnState === "interrupted" ||
+    latestTurnState === "error"
+  );
 }
 
 function isNonIdleThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
@@ -703,16 +751,45 @@ function refreshRetainedThreadDetailSubscriptionsToCurrentProjection(
   }
 }
 
+function forceRefreshActiveThreadDetailSubscriptionsAfterBrowserResume(
+  environmentId: EnvironmentId,
+): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId !== environmentId) {
+      continue;
+    }
+    requestThreadDetailForcedSnapshot(entry.environmentId, entry.threadId);
+  }
+}
+
+function requestThreadDetailForcedSnapshot(environmentId: EnvironmentId, threadId: ThreadId): void {
+  const entry = threadDetailSubscriptions.get(
+    getThreadDetailSubscriptionKey(environmentId, threadId),
+  );
+  if (!entry) {
+    return;
+  }
+  if (entry.refCount <= 0) {
+    entry.refreshOnNextRetain = true;
+    return;
+  }
+  scheduleThreadDetailGapRefresh(entry);
+}
+
 function reconcileThreadDetailSubscriptionsAfterBrowserResume(environmentId: EnvironmentId): void {
   refreshRetainedThreadDetailSubscriptionsToCurrentProjection(environmentId);
+  forceRefreshActiveThreadDetailSubscriptionsAfterBrowserResume(environmentId);
   refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
 }
 
 function scheduleThreadDetailGapRefresh(entry: ThreadDetailSubscriptionEntry): void {
   // Use the same short debounce as scheduleThreadDetailRefreshIfBehind so
-  // multiple resume signals coalesce into one refresh.
+  // resume/focus signals and shell catch-up events coalesce into one fresh
+  // thread-detail snapshot.
+  entry.resetDetailSequenceOnNextSnapshot = true;
+  entry.refreshTargetSequence = null;
   if (entry.refreshTimeoutId !== null) {
-    return;
+    clearTimeout(entry.refreshTimeoutId);
   }
   entry.refreshTimeoutId = setTimeout(() => {
     entry.refreshTimeoutId = null;
@@ -763,13 +840,20 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
     { threadId: entry.threadId },
     (item) => {
       if (item.kind === "snapshot") {
+        const shouldResetDetailSequence = entry.resetDetailSequenceOnNextSnapshot;
+        entry.resetDetailSequenceOnNextSnapshot = false;
         if (
+          !shouldResetDetailSequence &&
           entry.latestDetailSequence !== null &&
           item.snapshot.snapshotSequence < entry.latestDetailSequence
         ) {
           return;
         }
-        markThreadDetailSequence(entry, item.snapshot.snapshotSequence);
+        if (shouldResetDetailSequence) {
+          resetThreadDetailSequence(entry, item.snapshot.snapshotSequence);
+        } else {
+          markThreadDetailSequence(entry, item.snapshot.snapshotSequence);
+        }
         useStore.getState().syncServerThreadDetail(item.snapshot.thread, entry.environmentId, {
           pageInfo: item.snapshot.pageInfo,
           preserveShellFields: shouldPreserveThreadDetailShellFields(
@@ -1048,13 +1132,19 @@ export function retainThreadDetailSubscription(
   const key = getThreadDetailSubscriptionKey(environmentId, threadId);
   const existing = threadDetailSubscriptions.get(key);
   if (existing) {
+    const wasReleased = existing.refCount === 0;
     clearThreadDetailSubscriptionEviction(existing);
     existing.refCount += 1;
     existing.lastAccessedAt = Date.now();
     if (!attachThreadDetailSubscription(existing)) {
       watchThreadDetailSubscriptionConnection(existing);
     }
-    scheduleThreadDetailRefreshToCurrentProjectionIfBehind(existing);
+    if (wasReleased && existing.refreshOnNextRetain) {
+      existing.refreshOnNextRetain = false;
+      scheduleThreadDetailGapRefresh(existing);
+    } else {
+      scheduleThreadDetailRefreshToCurrentProjectionIfBehind(existing);
+    }
     reconcileThreadDetailSubscriptionEvictionState(existing);
     let released = false;
     return () => {
@@ -1076,6 +1166,8 @@ export function retainThreadDetailSubscription(
     unsubscribeConnectionListener: null,
     refCount: 1,
     latestDetailSequence: null,
+    resetDetailSequenceOnNextSnapshot: false,
+    refreshOnNextRetain: false,
     refreshTargetSequence: null,
     refreshTimeoutId: null,
     activeReconcileIntervalId: null,
@@ -1589,9 +1681,23 @@ export function applyEnvironmentThreadDetailEvent(
   event: OrchestrationEvent,
   environmentId: EnvironmentId,
 ) {
+  const threadId = getOrchestrationEventThreadId(event);
+  const previousThread =
+    threadId === null
+      ? undefined
+      : selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
+
   applyRecoveredEventBatch([event], environmentId, {
     preserveShellFields: shouldPreserveThreadDetailShellFields(environmentId, event.sequence),
   });
+
+  if (
+    threadId !== null &&
+    hasLocalActiveThreadWork(previousThread) &&
+    isSettlingThreadDetailEvent(event)
+  ) {
+    requestThreadDetailForcedSnapshot(environmentId, threadId);
+  }
 }
 
 function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: EnvironmentId) {
@@ -1634,6 +1740,9 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
     case "thread-upserted":
       syncThreadUiFromStore();
       scheduleThreadDetailRefreshIfBehind(environmentId, event.thread.id, event.sequence);
+      if (hasLocalActiveThreadWork(previousThread) && isSettlingShellThread(event.thread)) {
+        requestThreadDetailForcedSnapshot(environmentId, event.thread.id);
+      }
       if (!previousThread && threadRef) {
         markPromotedDraftThreadByRef(threadRef);
       }

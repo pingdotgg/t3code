@@ -133,8 +133,15 @@ function isAcceptedStartSurface({
   return panel?.getAttribute(MOBILE_EDGE_SWIPE_PANEL_ATTRIBUTE) === side;
 }
 
+function hasOpenSwipePanel(side: MobileEdgeSwipeSide): boolean {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(`[${MOBILE_EDGE_SWIPE_PANEL_ATTRIBUTE}="${side}"]`),
+  ).some((panel) => !panel.hidden);
+}
+
 export function useMobileEdgeSwipe({
   action = "open",
+  blockedByOpenPanelSide,
   edgeWidth = MOBILE_EDGE_SWIPE_EDGE_WIDTH_PX,
   enabled,
   onSwipe,
@@ -143,6 +150,7 @@ export function useMobileEdgeSwipe({
   startSurface = "any",
 }: {
   readonly action?: MobileEdgeSwipeAction;
+  readonly blockedByOpenPanelSide?: MobileEdgeSwipeSide;
   readonly edgeWidth?: number;
   readonly enabled: boolean;
   readonly onSwipe: () => void;
@@ -191,6 +199,7 @@ export function useMobileEdgeSwipe({
     }) => {
       if (
         hasActiveTextSelection(window.getSelection()) ||
+        (blockedByOpenPanelSide !== undefined && hasOpenSwipePanel(blockedByOpenPanelSide)) ||
         !isAcceptedStartSurface({ side, startSurface, target }) ||
         !isMobileEdgeSwipeStart({
           edgeWidth,
@@ -344,5 +353,5 @@ export function useMobileEdgeSwipe({
       window.removeEventListener("pointerup", resetSwipe, true);
       window.removeEventListener("pointercancel", resetSwipe, true);
     };
-  }, [action, edgeWidth, enabled, side, startArea, startSurface]);
+  }, [action, blockedByOpenPanelSide, edgeWidth, enabled, side, startArea, startSurface]);
 }

@@ -28,7 +28,13 @@ import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../st
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
-import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarInset,
+  SidebarProvider,
+  SidebarRail,
+  useSidebar,
+} from "~/components/ui/sidebar";
 import { WorkspaceFilePreviewPanel } from "../components/WorkspaceFilePreviewPanel";
 import {
   closeWorkspaceFilePreview,
@@ -198,6 +204,7 @@ const FilePreviewInlineSidebar = (props: {
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
+  const { openMobile: leftSidebarOpenMobile } = useSidebar();
   const threadRef = Route.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
@@ -330,7 +337,8 @@ function ChatThreadRouteView() {
   });
 
   useMobileEdgeSwipe({
-    enabled: shouldUseDiffSheet && !diffOpen,
+    blockedByOpenPanelSide: "left",
+    enabled: shouldUseDiffSheet && !diffOpen && !leftSidebarOpenMobile,
     onSwipe: openLastUsedRightPanel,
     side: "right",
     startArea: "screen",

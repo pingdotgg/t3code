@@ -118,6 +118,7 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { appendComposerDebugEvent } from "../../composerDebugLog";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -193,6 +194,10 @@ const terminalContextIdListsEqual = (
 
 function composerNowMs(): number {
   return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function composerDebugTextTail(value: string): string {
+  return value.slice(-80);
 }
 
 function isInsideComposerFloatingLayer(element: Element): boolean {
@@ -1431,6 +1436,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const snapshot = composerEditorRef.current?.readSnapshot();
         const nextPrompt = snapshot?.value ?? promptRef.current;
         const nextExpandedCursor = snapshot?.expandedCursor ?? fallbackExpandedCursor;
+        appendComposerDebugEvent("chatComposer.trigger.deferredDetection", {
+          fallbackExpandedCursor,
+          nextExpandedCursor,
+          valueLength: nextPrompt.length,
+          valueTail: composerDebugTextTail(nextPrompt),
+        });
         setComposerTrigger(detectComposerTrigger(nextPrompt, nextExpandedCursor));
       }, COMPOSER_NATIVE_INPUT_SETTLE_MS);
     },
@@ -1447,15 +1458,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (metadata.suppressTriggerDetection) {
         nativeInputCommandSuppressUntilRef.current =
           composerNowMs() + COMPOSER_NATIVE_INPUT_SETTLE_MS;
+        appendComposerDebugEvent("chatComposer.trigger.suppressed", {
+          expandedCursor,
+          cursorAdjacentToMention,
+          metadata,
+          valueLength: nextPrompt.length,
+          valueTail: composerDebugTextTail(nextPrompt),
+        });
         setComposerTrigger(null);
         scheduleTriggerDetectionAfterNativeInput(nextPrompt, expandedCursor);
         return;
       }
 
       clearNativeInputTriggerDetectionTimeout();
-      setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-      );
+      const nextTrigger = cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(nextPrompt, expandedCursor);
+      appendComposerDebugEvent("chatComposer.trigger.updated", {
+        expandedCursor,
+        cursorAdjacentToMention,
+        metadata,
+        trigger: nextTrigger
+          ? {
+              kind: nextTrigger.kind,
+              query: nextTrigger.query,
+              rangeStart: nextTrigger.rangeStart,
+              rangeEnd: nextTrigger.rangeEnd,
+            }
+          : null,
+        valueLength: nextPrompt.length,
+        valueTail: composerDebugTextTail(nextPrompt),
+      });
+      setComposerTrigger(nextTrigger);
     },
     [clearNativeInputTriggerDetectionTimeout, scheduleTriggerDetectionAfterNativeInput],
   );

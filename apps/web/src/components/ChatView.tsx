@@ -36,6 +36,7 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
@@ -155,6 +156,12 @@ import {
   STICK_TO_BOTTOM_RESUME_LOCK_MS,
   type ScheduledStickToBottom,
 } from "./chat/stickToBottom";
+import {
+  captureTimelineScrollAnchor,
+  restoreTimelineScrollAnchor,
+  scheduleTimelineScrollAnchorRestore,
+  type ScheduledTimelineScrollAnchorRestore,
+} from "./chat/timelineScrollAnchor";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -754,12 +761,21 @@ export default function ChatView(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(true);
   const scheduledStickToBottomRef = useRef<ScheduledStickToBottom | null>(null);
+  const scheduledOlderDetailAnchorRestoreRef = useRef<ScheduledTimelineScrollAnchorRestore | null>(
+    null,
+  );
+  const olderDetailAnchorRestoreTokenRef = useRef(0);
   const stickToBottomLockUntilRef = useRef(0);
   const userScrollDetachUntilRef = useRef(0);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const cancelScheduledOlderDetailAnchorRestore = useCallback(() => {
+    olderDetailAnchorRestoreTokenRef.current += 1;
+    scheduledOlderDetailAnchorRestoreRef.current?.cancel();
+    scheduledOlderDetailAnchorRestoreRef.current = null;
+  }, []);
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef),
@@ -1833,12 +1849,27 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     setIsLoadingOlderThreadDetail(true);
+    cancelScheduledOlderDetailAnchorRestore();
     try {
       const snapshot = await api.orchestration.getThreadDetailPage({
         threadId: activeThread.id,
         page: { before },
       });
-      useStore.getState().mergeServerThreadDetailPage(snapshot, activeThread.environmentId);
+      const anchor = captureTimelineScrollAnchor(legendListRef.current);
+      const anchorRestoreToken = olderDetailAnchorRestoreTokenRef.current + 1;
+      olderDetailAnchorRestoreTokenRef.current = anchorRestoreToken;
+
+      flushSync(() => {
+        useStore.getState().mergeServerThreadDetailPage(snapshot, activeThread.environmentId);
+      });
+      if (anchor) {
+        restoreTimelineScrollAnchor(legendListRef.current, anchor);
+        scheduledOlderDetailAnchorRestoreRef.current = scheduleTimelineScrollAnchorRestore({
+          listRef: legendListRef,
+          anchor,
+          shouldCancel: () => olderDetailAnchorRestoreTokenRef.current !== anchorRestoreToken,
+        });
+      }
     } catch (error) {
       setThreadError(
         activeThread.id,
@@ -1847,10 +1878,16 @@ export default function ChatView(props: ChatViewProps) {
     } finally {
       setIsLoadingOlderThreadDetail(false);
     }
-  }, [activeThread, isLoadingOlderThreadDetail, setThreadError]);
+  }, [
+    activeThread,
+    cancelScheduledOlderDetailAnchorRestore,
+    isLoadingOlderThreadDetail,
+    setThreadError,
+  ]);
   useEffect(() => {
+    cancelScheduledOlderDetailAnchorRestore();
     setIsLoadingOlderThreadDetail(false);
-  }, [activeThreadKey]);
+  }, [activeThreadKey, cancelScheduledOlderDetailAnchorRestore]);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -2384,10 +2421,11 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onTimelineUserScrollIntent = useCallback(() => {
+    cancelScheduledOlderDetailAnchorRestore();
     stickToBottomLockUntilRef.current = 0;
     userScrollDetachUntilRef.current = performance.now() + USER_SCROLL_DETACH_GRACE_MS;
     markTimelineAwayFromEnd();
-  }, [markTimelineAwayFromEnd]);
+  }, [cancelScheduledOlderDetailAnchorRestore, markTimelineAwayFromEnd]);
 
   useEffect(() => {
     if (!isAtEndRef.current) {
@@ -2397,6 +2435,10 @@ export default function ChatView(props: ChatViewProps) {
   }, [scrollToEnd, timelineEntries]);
 
   useEffect(() => cancelScheduledStickToBottom, [cancelScheduledStickToBottom]);
+  useEffect(
+    () => cancelScheduledOlderDetailAnchorRestore,
+    [cancelScheduledOlderDetailAnchorRestore],
+  );
 
   useEffect(() => {
     setPullRequestDialogState(null);

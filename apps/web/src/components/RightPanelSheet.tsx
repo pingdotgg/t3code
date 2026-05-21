@@ -10,6 +10,7 @@ export function RightPanelSheet(props: {
 }) {
   return (
     <Sheet
+      modal={false}
       open={props.open}
       onOpenChange={(open) => {
         if (!open) {
@@ -18,8 +19,11 @@ export function RightPanelSheet(props: {
       }}
     >
       <SheetPopup
+        allowOutsidePointerEvents
+        data-right-panel-sheet="true"
         side="right"
         showCloseButton={false}
+        showBackdrop={false}
         keepMounted
         className={RIGHT_PANEL_SHEET_CLASS_NAME}
       >
