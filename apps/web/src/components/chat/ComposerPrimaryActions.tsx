@@ -1,5 +1,5 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, SendIcon, SquareIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, SendHorizontalIcon, SquareIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -95,7 +95,7 @@ function SendButton({
           />
         </svg>
       ) : (
-        <SendIcon className="size-3.5 translate-x-[0.5px] translate-y-[0.5px]" aria-hidden="true" />
+        <SendHorizontalIcon className="size-3.5" aria-hidden="true" />
       )}
     </button>
   );
