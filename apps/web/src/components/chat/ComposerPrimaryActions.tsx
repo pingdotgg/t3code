@@ -95,7 +95,7 @@ function SendButton({
           />
         </svg>
       ) : (
-        <SendIcon className="size-3.5 translate-x-[1.5px] translate-y-px" aria-hidden="true" />
+        <SendIcon className="size-3.5 translate-x-[0.5px] translate-y-[0.5px]" aria-hidden="true" />
       )}
     </button>
   );

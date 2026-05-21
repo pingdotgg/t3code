@@ -23,6 +23,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
     ...(options?.nativeEventLogger ? { nativeEventLogger: options.nativeEventLogger } : {}),
     ...(options?.instanceId ? { instanceId: options.instanceId } : {}),
     activePromptMessageMethod: KIRO_ACTIVE_PROMPT_MESSAGE_METHOD,
+    stopSessionOnInterruptCancelUnsupported: true,
     sendMessageWhilePromptActive: ({ runtime, sessionId, content, contentBlocks }) =>
       runtime.request(KIRO_ACTIVE_PROMPT_MESSAGE_METHOD, {
         sessionId,

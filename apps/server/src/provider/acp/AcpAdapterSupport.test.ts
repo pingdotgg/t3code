@@ -11,6 +11,18 @@ describe("AcpAdapterSupport", () => {
     expect(acpPermissionOutcome("decline")).toBe("reject-once");
   });
 
+  it("uses provider-supplied ACP permission option ids when available", () => {
+    const options = [
+      { optionId: "allow_once", name: "Yes", kind: "allow_once" },
+      { optionId: "allow_always", name: "Always", kind: "allow_always" },
+      { optionId: "reject_once", name: "No", kind: "reject_once" },
+    ] as const;
+
+    expect(acpPermissionOutcome("accept", options)).toBe("allow_once");
+    expect(acpPermissionOutcome("acceptForSession", options)).toBe("allow_always");
+    expect(acpPermissionOutcome("decline", options)).toBe("reject_once");
+  });
+
   it("maps ACP request errors to provider adapter request errors", () => {
     const error = mapAcpToAdapterError(
       ProviderDriverKind.make("cursor"),

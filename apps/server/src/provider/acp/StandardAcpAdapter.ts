@@ -29,7 +29,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -75,6 +75,7 @@ export interface StandardAcpAdapterOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
   readonly activePromptMessageMethod?: string;
+  readonly stopSessionOnInterruptCancelUnsupported?: boolean;
   readonly sendMessageWhilePromptActive?: (input: {
     readonly runtime: AcpSessionRuntimeShape;
     readonly sessionId: string;
@@ -593,7 +594,7 @@ export function makeStandardAcpAdapter(
                       ? ({ outcome: "cancelled" } as const)
                       : {
                           outcome: "selected" as const,
-                          optionId: acpPermissionOutcome(resolved),
+                          optionId: acpPermissionOutcome(resolved, params.options),
                         },
                 };
               }),
@@ -900,13 +901,10 @@ export function makeStandardAcpAdapter(
         // ACP owns prompt termination. Keep the turn active until the prompt
         // call returns; still forward cancel when local prompt state is missing
         // because a resumed provider may have remote work in flight.
-        yield* Effect.ignore(
-          ctx.acp.cancel.pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(provider, threadId, "session/cancel", error),
-            ),
-          ),
-        );
+        yield* Effect.ignore(ctx.acp.cancel);
+        if (options.stopSessionOnInterruptCancelUnsupported) {
+          yield* stopSessionInternal(ctx);
+        }
       });
 
     const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (

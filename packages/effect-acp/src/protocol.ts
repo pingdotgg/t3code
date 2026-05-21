@@ -72,6 +72,7 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.ElicitationCompleteNotification,
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
+const isRpcServerCompatibleRequestId = (requestId: string) => /^(0|[1-9]\d*)$/.test(requestId);
 
 export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(function* (
   options: AcpPatchedProtocolOptions,
@@ -83,6 +84,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const disconnects = yield* Queue.unbounded<number>();
   const outgoing = yield* Queue.unbounded<string | Uint8Array, Cause.Done<void>>();
   const nextRequestId = yield* Ref.make(1n);
+  const nextServerRequestId = yield* Ref.make(1n);
+  const serverRequestIdAliases = yield* Ref.make(new Map<string, string>());
   const terminationHandled = yield* Ref.make(false);
   const extPending = yield* Ref.make(
     new Map<string, Deferred.Deferred<unknown, AcpError.AcpError>>(),
@@ -101,6 +104,33 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     );
   };
 
+  const encodeNonNumericExit = (
+    message: Extract<RpcMessage.FromServerEncoded, { readonly _tag: "Exit" }>,
+  ): string | undefined => {
+    if (isRpcServerCompatibleRequestId(message.requestId)) {
+      return undefined;
+    }
+
+    if (message.exit._tag === "Success") {
+      return `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: message.requestId,
+        result: message.exit.value,
+      })}\n`;
+    }
+
+    const failure = message.exit.cause.find((entry) => entry._tag === "Fail");
+    const error = failure?.error ?? {
+      code: -32603,
+      message: "Internal error",
+    };
+    return `${JSON.stringify({
+      jsonrpc: "2.0",
+      id: message.requestId,
+      error,
+    })}\n`;
+  };
+
   const offerOutgoing = Effect.fn("offerOutgoing")(function* (
     message: RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
   ) {
@@ -111,7 +141,9 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     });
 
     const encoded = yield* Effect.try({
-      try: () => parser.encode(message),
+      try: () =>
+        (message._tag === "Exit" ? encodeNonNumericExit(message) : undefined) ??
+        parser.encode(message),
       catch: (cause) =>
         new AcpError.AcpProtocolParseError({
           detail: "Failed to encode ACP message",
@@ -249,6 +281,53 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     );
   };
 
+  const normalizeServerRequestId = (
+    message: RpcMessage.RequestEncoded,
+  ): Effect.Effect<RpcMessage.RequestEncoded> => {
+    if (isRpcServerCompatibleRequestId(message.id)) {
+      return Effect.succeed(message);
+    }
+
+    return Ref.modify(nextServerRequestId, (current) => {
+      const internalRequestId = String(current);
+      return [internalRequestId, current + 1n] as const;
+    }).pipe(
+      Effect.flatMap((internalRequestId) =>
+        Ref.update(serverRequestIdAliases, (aliases) => {
+          const next = new Map(aliases);
+          next.set(internalRequestId, message.id);
+          return next;
+        }).pipe(
+          Effect.as({
+            ...message,
+            id: internalRequestId,
+          }),
+        ),
+      ),
+    );
+  };
+
+  const restoreServerResponseRequestId = (
+    response: RpcMessage.FromServerEncoded,
+  ): Effect.Effect<RpcMessage.FromServerEncoded> => {
+    if (!("requestId" in response) || typeof response.requestId !== "string") {
+      return Effect.succeed(response);
+    }
+
+    return Ref.modify(serverRequestIdAliases, (aliases) => {
+      const originalRequestId = aliases.get(response.requestId);
+      if (!originalRequestId) {
+        return [response, aliases] as const;
+      }
+
+      const next = new Map(aliases);
+      if (response._tag === "Exit") {
+        next.delete(response.requestId);
+      }
+      return [{ ...response, requestId: originalRequestId }, next] as const;
+    });
+  };
+
   const handleRequestEncoded = (message: RpcMessage.RequestEncoded) => {
     if (message.id === "") {
       if (message.tag === CLIENT_METHODS.session_update) {
@@ -305,7 +384,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       );
     }
 
-    return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
+    return normalizeServerRequestId(message).pipe(
+      Effect.flatMap((normalizedMessage) => Queue.offer(serverQueue, normalizedMessage)),
+      Effect.asVoid,
+    );
   };
 
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
@@ -453,7 +535,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.forever,
       ),
     disconnects,
-    send: (_clientId, response) => offerOutgoing(response).pipe(Effect.orDie),
+    send: (_clientId, response) =>
+      restoreServerResponseRequestId(response).pipe(Effect.flatMap(offerOutgoing), Effect.orDie),
     end: (_clientId) => Queue.end(outgoing),
     clientIds: Effect.succeed(new Set([0])),
     initialMessage: Effect.succeedNone,

@@ -305,6 +305,70 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("maps non-numeric inbound core request ids back onto responses", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(["session/request_permission"]),
+      });
+      const inboundRequest = yield* Deferred.make<unknown>();
+      const originalRequestId = "aee865ed-8360-495a-8007-d135a97a0b4a";
+
+      yield* transport.serverProtocol
+        .run((_clientId, message) => Deferred.succeed(inboundRequest, message).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(RequestPermissionRequest, {
+          jsonrpc: "2.0",
+          id: originalRequestId,
+          method: "session/request_permission",
+          params: {
+            sessionId: "session-1",
+            toolCall: {
+              toolCallId: "tool-1",
+              title: "Editing ComposerPrimaryActions.tsx",
+            },
+            options: [{ optionId: "allow_once", name: "Yes", kind: "allow_once" }],
+          },
+          headers: [],
+        }),
+      );
+
+      const message = yield* Deferred.await(inboundRequest);
+      assert.equal(typeof message, "object");
+      assert.notEqual((message as { id?: string }).id, originalRequestId);
+
+      yield* transport.serverProtocol.send(0, {
+        _tag: "Exit",
+        requestId: (message as { id: string }).id,
+        exit: {
+          _tag: "Success",
+          value: {
+            outcome: {
+              outcome: "selected",
+              optionId: "allow_once",
+            },
+          },
+        },
+      });
+
+      const outbound = yield* Queue.take(output);
+      assert.deepEqual(yield* decodeRequestPermissionResponse(outbound), {
+        jsonrpc: "2.0",
+        id: originalRequestId,
+        result: {
+          outcome: {
+            outcome: "selected",
+            optionId: "allow_once",
+          },
+        },
+      });
+    }),
+  );
+
   it.effect("cleans up interrupted extension requests before a late response arrives", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();

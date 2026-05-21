@@ -13,27 +13,143 @@
 
 - `apps/server/src/provider/acp/StandardAcpAdapter.ts` — ACP prompt lifecycle and active-prompt steering.
 - `apps/server/src/provider/Layers/KiroAdapter.ts` — Kiro `_message/send` payload mapping.
+- `packages/effect-acp/src/protocol.ts` — ACP JSON-RPC transport compatibility for provider-originated requests.
+- `apps/server/src/provider/acp/AcpAdapterSupport.ts`, `apps/server/src/provider/acp/AcpRuntimeModel.ts` — ACP permission outcome mapping and tool-call classification.
 - `apps/server/src/provider/acp/StandardAcpAdapter.test.ts` — ACP steering regression coverage.
 - `apps/web/src/components/ChatView.tsx` — running-turn image send guard removal.
 - `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/index.css`, `apps/web/src/routes/*` — sidebar/background appearance changes.
+- `assets/*`, `apps/*/public/*`, `apps/desktop/resources/*` — generated app icon assets.
 
 ## Hotspots
 
 - ACP active-turn lifecycle ownership and duplicate `session/prompt` prevention.
+- Kiro cancel behavior because Kiro currently rejects `session/cancel`.
+- ACP permission requests with provider-owned UUID request IDs and provider-owned option IDs.
 - Active-prompt steering payload compatibility for text and image attachments.
 - Running-turn UI send behavior across provider adapters.
 - Sidebar/translucency surface consistency across route wrappers.
+- macOS app icon visual bounds, corner radius, and generated package assets.
 
 ## Review status
 
 | Field                 | Value                |
 | --------------------- | -------------------- |
 | **Review started**    | 2026-05-20           |
-| **Last reviewed**     | 2026-05-21 05:45 BST |
-| **Total turns**       | 6                    |
+| **Last reviewed**     | 2026-05-21 07:08 BST |
+| **Total turns**       | 8                    |
 | **Open findings**     | 0                    |
 | **Resolved findings** | 6                    |
 | **Accepted findings** | 0                    |
+
+## Turn 8 — 2026-05-21 07:08 BST
+
+| Field           | Value        |
+| --------------- | ------------ |
+| **Commit**      | working tree |
+| **IDE / Agent** | Codex        |
+
+**Summary:** Re-reviewed the full local diff after the Kiro ACP permission/stop fixes, send/icon/sidebar polish, and the corrected macOS-style app icon corner radius.
+**Outcome:** No findings.
+**Risk score:** High — this turn touches the shared ACP transport, shared ACP adapter lifecycle, provider-specific Kiro behavior, and generated release assets.
+**Change archetypes:** protocol compatibility, provider lifecycle, permission mapping, visual asset replacement, shared UI presentation.
+**Intended change:** Keep Kiro steering as active-prompt `_message/send`, make Kiro tool approvals complete by preserving UUID JSON-RPC request IDs and provider option IDs, make Stop actually stop Kiro when `session/cancel` is unsupported, and refresh the generated app icon assets with a rounder macOS-style boundary.
+**Intent vs actual:** The diff matches the intent. Steering remains isolated to `sendMessageWhilePromptActive` in `KiroAdapter` and is not routed through the stop fallback. The stop fallback is Kiro opt-in only through `stopSessionOnInterruptCancelUnsupported`. Permission responses now use provider-supplied option IDs, and the ACP transport preserves non-numeric request IDs without making Kiro-specific protocol branches.
+**Confidence:** High for protocol/unit behavior and package output; medium for final visual preference until the rebuilt DMG is inspected in Finder/Dock.
+**Coverage note:** Targeted ACP protocol, ACP adapter, ACP runtime-model, sidebar, and composer tests passed. Full `bun fmt`, `bun lint`, `bun typecheck`, and `git diff --check` passed. Electron macOS arm64 packaging passed and rebuilt the DMG/ZIP artifacts.
+**Finding triage:** No open findings. The main suspected issues were checked directly: Kiro Stop no longer depends on Kiro honoring `session/cancel`, and active-prompt send/attachment steering stays on the `_message/send` path.
+**Architecture impact:** The protocol fix lives in `effect-acp` as transport compatibility, not in the Kiro provider. Shared ACP adapter behavior remains opt-in for providers that cannot cancel. Kiro-specific wiring is limited to the existing Kiro adapter layer. UI polish stays in owning sidebar/composer helpers and source icon assets.
+**Bug classes / invariants checked:** nonnumeric JSON-RPC IDs round-trip; provider permission option IDs are honored; missing ACP tool kinds are inferred conservatively; Kiro Stop closes the ACP session after cancel write/failure; project row toggle behavior remains after chevron removal; generated icons preserve expected formats and dimensions.
+**Branch totality:** Reviewed all local changes in the dirty tree. The branch is still local and dirty on `main`, one commit behind `origin/main`.
+**Sibling closure:** Rechecked shared ACP transport/client tests, ACP adapter tests, Cursor adapter permission mapping, Kiro adapter active-prompt send path, provider runtime ingestion of `session.exited`, sidebar status helpers, composer primary action rendering, and desktop/web/marketing icon targets.
+**Residual risk / unknowns:** The local dev server must be restarted before live Kiro Stop reflects this patch. Kiro Stop now terminates the Kiro ACP session because Kiro does not support a soft `session/cancel`; a fresh Kiro session may be needed after stopping.
+
+### Validation
+
+- `bun --filter t3 test src/provider/acp/AcpRuntimeModel.test.ts src/provider/acp/AcpAdapterSupport.test.ts src/provider/acp/StandardAcpAdapter.test.ts` — passed, 19 tests.
+- `bun --filter effect-acp test src/client.test.ts src/protocol.test.ts` — passed, 15 tests.
+- `bun --filter @t3tools/web test src/components/Sidebar.logic.test.ts src/components/chat/ComposerPrimaryActions.test.ts src/components/ui/sidebar.test.tsx` — passed, 59 tests.
+- `bun fmt` — passed.
+- `bun lint` — passed with 9 existing warnings.
+- `bun typecheck` — passed, 13 packages.
+- `git diff --check` — passed.
+- `file`, `sips`, and `iconutil -c iconset` checks verified updated desktop/web/marketing icon file types and dimensions.
+- `bun run dist:desktop:dmg:arm64` — passed after rerunning outside the sandbox temp-dir restriction; rebuilt `release/T3-Code-0.0.24-arm64.dmg` and `.zip`.
+
+### Branch-totality proof
+
+- **Non-delta files/systems re-read:** diff-review gates, architecture-standards build-mode guidance, ACP transport protocol tests, ACP adapter/runtime helpers, Kiro adapter, Cursor adapter, sidebar helpers, composer primary actions, brand asset outputs.
+- **Prior open findings rechecked:** No open findings remained from Turn 7. The new Kiro stop regression was handled and covered.
+- **Prior resolved/adjacent areas revalidated:** Running composer remains stop-only visually while the send/steer path is still available through active-prompt dispatch. Generated icon assets were refreshed again after the radius change.
+- **Hotspots or sibling paths revisited:** Provider approval request handling, active prompt send hook, interrupt/stop path, JSON-RPC request ID translation, project row toggle handlers, status color aggregation, macOS `.icns` decode.
+- **Why this is enough:** The risky runtime changes are covered by focused unit tests in both the shared transport and server adapter layers, and the generated assets were validated by type/dimension/package checks.
+
+### Challenger pass
+
+Done — the most plausible miss was conflating Stop with steering. The code paths are separate: active-prompt user messages go through Kiro `_message/send`, while only `interruptTurn` uses the Kiro opt-in session-stop fallback.
+
+### Resolved / Carried / New findings
+
+- None.
+
+### Recommendations
+
+1. **Fix first:** none.
+2. **Then address:** restart the local backend/web process before live-testing Kiro Stop, because the old server process will still have the old adapter behavior.
+
+## Turn 7 — 2026-05-21 06:24 BST
+
+| Field           | Value        |
+| --------------- | ------------ |
+| **Commit**      | working tree |
+| **IDE / Agent** | Codex        |
+
+**Summary:** Re-reviewed the full local diff after the app icon inset, repo-list chevron removal, send-icon centering adjustment, and Lobster-colored working indicator.
+**Outcome:** No findings.
+**Risk score:** Medium — this is presentation and generated asset work across desktop/web/marketing targets, with shared sidebar status logic touched, but no provider runtime or hook architecture changes.
+**Change archetypes:** visual asset replacement, shared UI presentation, sidebar thread-status logic.
+**Intended change:** Make the packaged app icon visually match normal Dock icon sizing, remove the visible project/repo chevron without removing row toggle behavior, center the send icon, and make the active working marker use the Lobster primary color.
+**Intent vs actual:** The diff matches the stated intent. The project row click/keyboard handlers remain in place after removing the chevron. `resolveThreadStatusPill` still owns thread status presentation and now maps only the `Working` state to `text-primary`/`bg-primary`. The app icon source SVGs now keep transparent outer padding and all generated icon targets were refreshed.
+**Confidence:** High for code behavior and asset file validity; medium for final visual preference until the rebuilt Electron app is inspected in the Dock.
+**Coverage note:** Targeted sidebar/composer/brand tests passed, full repo fmt/lint/typecheck passed, generated icon formats and dimensions were checked, and the Electron macOS arm64 artifacts were rebuilt.
+**Finding triage:** No open findings. The previous provider/ACP and CORS hotspots are unchanged by this turn.
+**Architecture impact:** Presentation behavior remains in the existing owning components/helpers: sidebar status policy in `Sidebar.logic`, project row rendering in `Sidebar`, and composer primary action rendering in `ComposerPrimaryActions`. Provider hooks/adapters and ACP runtime architecture are untouched.
+**Bug classes / invariants checked:** project row remains toggleable without visual chevron; working status priority and folded project indicator still flow through shared status logic; send button still uses the existing submit path; icon assets preserve expected public dimensions while reducing opaque alpha bounds.
+**Branch totality:** Reviewed all local changes in the dirty tree. The branch is still local and dirty on `main`, which is one merge commit behind `origin/main` but had no tree delta from origin before these edits.
+**Sibling closure:** Checked sidebar project header, hidden-thread status label path, command-palette thread status consumers, composer primary action path, web/marketing/desktop icon targets, and brand asset tests.
+**Residual risk / unknowns:** The browser visual smoke for the sidebar row itself was not rerun in this turn; the packaged app was rebuilt for Dock-icon inspection.
+
+### Validation
+
+- `bun run test src/components/Sidebar.logic.test.ts src/components/chat/ComposerPrimaryActions.test.ts src/components/ui/sidebar.test.tsx` — passed, 59 tests.
+- `bun run test lib/brand-assets.test.ts` — passed, 5 tests.
+- `bun fmt` — passed.
+- `bun lint` — passed with 9 existing warnings.
+- `bun typecheck` — passed, 13 packages.
+- `git diff --check` — passed.
+- `file` and `sips` checks verified updated desktop/web/marketing icon file types and dimensions.
+- Alpha-bounds check verified `assets/prod/black-macos-1024.png` opaque content is inset to `832x832` within the `1024x1024` canvas.
+- `bun run dist:desktop:dmg:arm64` — passed after rerunning outside the local packaging temp-dir restriction; rebuilt `release/T3-Code-0.0.24-arm64.dmg` and `.zip`.
+
+### Branch-totality proof
+
+- **Non-delta files/systems re-read:** diff-review gates, architecture-standards build-mode guidance, `ThreadStatusIndicators`, `Sidebar.logic`, `Sidebar`, `ComposerPrimaryActions`, brand asset outputs.
+- **Prior open findings rechecked:** No open findings remained. Provider hook and ACP adapter paths are untouched by this turn.
+- **Prior resolved/adjacent areas revalidated:** Running composer behavior remains stop-only visually while submit behavior is unchanged outside this visual icon edit.
+- **Hotspots or sibling paths revisited:** Project row toggle handlers, status priority aggregation, compact status label, generated macOS/Windows/web icon targets.
+- **Why this is enough:** The changed code is narrow presentation logic with direct unit coverage; binary asset changes were regenerated from the source SVGs and checked for validity/dimensions; desktop packaging succeeded.
+
+### Challenger pass
+
+Done — the main plausible miss was removing the chevron in a way that also removed expand/collapse affordance behavior. The row's click and keyboard toggle handlers remain wired, and tests still cover sidebar UI primitives.
+
+### Resolved / Carried / New findings
+
+- None.
+
+### Recommendations
+
+1. **Fix first:** none.
+2. **Then address:** inspect the rebuilt DMG in the Dock to confirm the new icon inset has the desired visual size.
 
 ## Turn 6 — 2026-05-21 05:45 BST
 

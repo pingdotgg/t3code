@@ -517,7 +517,12 @@ describe("resolveThreadStatusPill", () => {
       resolveThreadStatusPill({
         thread: baseThread,
       }),
-    ).toMatchObject({ label: "Working", pulse: true });
+    ).toMatchObject({
+      label: "Working",
+      colorClass: "text-primary",
+      dotClass: "bg-primary",
+      pulse: true,
+    });
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {

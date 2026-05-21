@@ -23,6 +23,7 @@ const standardAcpAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 function makeFakeAcpRuntime(input: {
   readonly cancelCalled: Deferred.Deferred<void>;
+  readonly cancel?: Effect.Effect<void, AcpRequestError>;
   readonly prompt?: () => Effect.Effect<EffectAcpSchema.PromptResponse, unknown>;
   readonly request?: (method: string, payload: unknown) => Effect.Effect<unknown, unknown>;
 }): AcpSessionRuntimeShape {
@@ -59,7 +60,7 @@ function makeFakeAcpRuntime(input: {
     getModeState: Effect.sync(() => undefined),
     getConfigOptions: Effect.succeed([]),
     prompt: input.prompt ?? (() => Effect.succeed({ stopReason: "end_turn" })),
-    cancel: Deferred.succeed(input.cancelCalled, undefined).pipe(Effect.asVoid),
+    cancel: input.cancel ?? Deferred.succeed(input.cancelCalled, undefined).pipe(Effect.asVoid),
     setMode: () => Effect.succeed({} as EffectAcpSchema.SetSessionModeResponse),
     setConfigOption: () => Effect.succeed({} as EffectAcpSchema.SetSessionConfigOptionResponse),
     setModel: () => Effect.void,
@@ -145,6 +146,67 @@ it.effect("forwards session/cancel when no local active prompt is registered", (
     yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("1 second"));
     yield* Deferred.await(cancelCalled).pipe(Effect.timeout("1 second"));
     yield* adapter.stopSession(threadId);
+  }).pipe(Effect.scoped, Effect.provide(standardAcpAdapterTestLayer)),
+);
+
+it.effect("stops the ACP session on interrupt when cancel is unsupported and opted in", () =>
+  Effect.gen(function* () {
+    const provider = ProviderDriverKind.make("kiro");
+    const threadId = ThreadId.make("standard-acp-cancel-unsupported-stops-session");
+    const cancelCalled = yield* Deferred.make<void>();
+    const runtime = makeFakeAcpRuntime({
+      cancelCalled,
+      cancel: Deferred.succeed(cancelCalled, undefined).pipe(
+        Effect.andThen(Effect.fail(AcpRequestError.methodNotFound("session/cancel"))),
+      ),
+    });
+
+    const adapter = yield* makeStandardAcpAdapter({
+      provider,
+      runtimeLabel: "Fake ACP",
+      stopSessionOnInterruptCancelUnsupported: true,
+      makeRuntime: () => Effect.succeed(runtime),
+    });
+
+    yield* adapter.startSession({
+      threadId,
+      provider,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+
+    yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("1 second"));
+    yield* Deferred.await(cancelCalled).pipe(Effect.timeout("1 second"));
+
+    assert.isFalse(yield* adapter.hasSession(threadId));
+  }).pipe(Effect.scoped, Effect.provide(standardAcpAdapterTestLayer)),
+);
+
+it.effect("stops the ACP session on interrupt after a successful cancel write when opted in", () =>
+  Effect.gen(function* () {
+    const provider = ProviderDriverKind.make("kiro");
+    const threadId = ThreadId.make("standard-acp-cancel-write-stops-session");
+    const cancelCalled = yield* Deferred.make<void>();
+    const runtime = makeFakeAcpRuntime({ cancelCalled });
+
+    const adapter = yield* makeStandardAcpAdapter({
+      provider,
+      runtimeLabel: "Fake ACP",
+      stopSessionOnInterruptCancelUnsupported: true,
+      makeRuntime: () => Effect.succeed(runtime),
+    });
+
+    yield* adapter.startSession({
+      threadId,
+      provider,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+
+    yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("1 second"));
+    yield* Deferred.await(cancelCalled).pipe(Effect.timeout("1 second"));
+
+    assert.isFalse(yield* adapter.hasSession(threadId));
   }).pipe(Effect.scoped, Effect.provide(standardAcpAdapterTestLayer)),
 );
 

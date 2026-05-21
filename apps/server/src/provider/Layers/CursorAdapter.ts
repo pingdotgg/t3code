@@ -673,7 +673,7 @@ export function makeCursorAdapter(
                       ? ({ outcome: "cancelled" } as const)
                       : {
                           outcome: "selected" as const,
-                          optionId: acpPermissionOutcome(resolved),
+                          optionId: acpPermissionOutcome(resolved, params.options),
                         },
                 };
               }),

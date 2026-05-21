@@ -283,4 +283,28 @@ describe("AcpRuntimeModel", () => {
       },
     });
   });
+
+  it("infers Kiro permission kinds when request payload omits tool kind", () => {
+    const editRequest = parsePermissionRequest({
+      sessionId: "session-1",
+      options: [{ optionId: "allow_once", name: "Yes", kind: "allow_once" }],
+      toolCall: {
+        toolCallId: "tool-edit",
+        title: "Editing ComposerPrimaryActions.tsx",
+      },
+    });
+    const commandRequest = parsePermissionRequest({
+      sessionId: "session-1",
+      options: [{ optionId: "allow_once", name: "Yes", kind: "allow_once" }],
+      toolCall: {
+        toolCallId: "tool-command",
+        title: 'Running: find node_modules/lucide-react -name "send.js"',
+      },
+    });
+
+    expect(editRequest.kind).toBe("edit");
+    expect(editRequest.toolCall?.kind).toBe("edit");
+    expect(commandRequest.kind).toBe("execute");
+    expect(commandRequest.toolCall?.kind).toBe("execute");
+  });
 });

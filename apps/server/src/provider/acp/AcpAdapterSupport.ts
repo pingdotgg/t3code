@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   ProviderAdapterRequestError,
@@ -73,13 +74,35 @@ export function mapAcpToAdapterError(
   });
 }
 
-export function acpPermissionOutcome(decision: ProviderApprovalDecision): string {
+const FALLBACK_PERMISSION_OPTION_IDS = {
+  accept: "allow-once",
+  acceptForSession: "allow-always",
+  decline: "reject-once",
+} as const satisfies Record<Exclude<ProviderApprovalDecision, "cancel">, string>;
+
+const PERMISSION_OPTION_KINDS = {
+  accept: "allow_once",
+  acceptForSession: "allow_always",
+  decline: "reject_once",
+} as const satisfies Record<
+  Exclude<ProviderApprovalDecision, "cancel">,
+  EffectAcpSchema.PermissionOption["kind"]
+>;
+
+export function acpPermissionOutcome(
+  decision: ProviderApprovalDecision,
+  options?: ReadonlyArray<EffectAcpSchema.PermissionOption>,
+): string {
   switch (decision) {
-    case "acceptForSession":
-      return "allow-always";
     case "accept":
-      return "allow-once";
-    case "decline":
+    case "acceptForSession":
+    case "decline": {
+      const optionKind = PERMISSION_OPTION_KINDS[decision];
+      const matchingOption = options?.find(
+        (option) => option.kind === optionKind && option.optionId.trim().length > 0,
+      );
+      return matchingOption?.optionId.trim() ?? FALLBACK_PERMISSION_OPTION_IDS[decision];
+    }
     default:
       return "reject-once";
   }
