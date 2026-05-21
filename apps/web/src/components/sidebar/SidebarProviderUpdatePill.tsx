@@ -14,16 +14,16 @@ const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
     "bg-primary/15 text-primary group-has-[button.provider-update-main:hover]/provider-update:bg-primary/22",
   success:
-    "bg-success/12 text-success group-has-[button.provider-update-main:hover]/provider-update:bg-success/18",
+    "bg-primary/10 text-primary/75 group-has-[button.provider-update-main:hover]/provider-update:bg-primary/16",
   warning:
-    "bg-warning/12 text-warning group-has-[button.provider-update-main:hover]/provider-update:bg-warning/18",
+    "bg-primary/12 text-primary/90 group-has-[button.provider-update-main:hover]/provider-update:bg-primary/18",
   error:
     "bg-destructive/12 text-destructive group-has-[button.provider-update-main:hover]/provider-update:bg-destructive/18",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
-  success: "bg-success/18",
-  warning: "bg-warning/14",
+  success: "bg-primary/14",
+  warning: "bg-primary/16",
   error: "bg-destructive/14",
 } as const;
 

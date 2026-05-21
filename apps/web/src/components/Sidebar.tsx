@@ -2646,7 +2646,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <AlertAction>
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant="default"
                   disabled={desktopUpdateButtonDisabled}
                   onClick={handleDesktopUpdateButtonClick}
                 >

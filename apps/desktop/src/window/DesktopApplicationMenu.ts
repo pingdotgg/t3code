@@ -52,7 +52,7 @@ const checkForUpdatesFromMenu: Effect.Effect<
   if (updateState.status === "up-to-date") {
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "You're up to date!",
+      title: "No updates available",
       message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });

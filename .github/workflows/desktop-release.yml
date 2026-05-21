@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - "v*.*.*"
-      - "!v*-nightly.*"
+      - "!v*.*.*-*"
   workflow_dispatch:
     inputs:
       version:
@@ -24,8 +24,6 @@ jobs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
       release_name: ${{ steps.release_meta.outputs.release_name }}
-      is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
-      make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -61,22 +59,15 @@ jobs:
           fi
 
           version="${raw#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release version: $raw" >&2
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid stable release version: $raw" >&2
+            echo "Stable desktop releases must use x.y.z or vx.y.z, for example 0.0.26 or v0.0.26." >&2
             exit 1
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "release_name=T3 Code v$version" >> "$GITHUB_OUTPUT"
-
-          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "make_latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "make_latest=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Format check
         run: bun run fmt:check
@@ -362,8 +353,8 @@ jobs:
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
           generate_release_notes: true
-          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
+          prerelease: false
+          make_latest: true
           files: |
             release-assets/*.dmg
             release-assets/*.zip
