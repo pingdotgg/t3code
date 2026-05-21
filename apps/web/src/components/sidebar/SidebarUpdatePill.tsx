@@ -1,6 +1,6 @@
 import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "../../env";
 import {
   setDesktopUpdateStateQueryData,
@@ -18,6 +18,7 @@ import {
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
+import { createDesktopUpdateDownloadedToast } from "../desktopUpdateToast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -25,6 +26,7 @@ export function SidebarUpdatePill() {
   const queryClient = useQueryClient();
   const state = useDesktopUpdateState().data ?? null;
   const [dismissed, setDismissed] = useState(false);
+  const lastInstallErrorToastKeyRef = useRef<string | null>(null);
 
   const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
   const tooltip = state ? getDesktopUpdateButtonTooltip(state) : "Update available";
@@ -34,6 +36,26 @@ export function SidebarUpdatePill() {
   const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
   const arm64Description =
     state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
+
+  useEffect(() => {
+    const message = state?.message?.trim();
+    if (state?.errorContext !== "install" || !message) {
+      lastInstallErrorToastKeyRef.current = null;
+      return;
+    }
+
+    const toastKey = `${state.downloadedVersion ?? state.availableVersion ?? "unknown"}:${message}`;
+    if (lastInstallErrorToastKeyRef.current === toastKey) return;
+    lastInstallErrorToastKeyRef.current = toastKey;
+
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not install update",
+        description: message,
+      }),
+    );
+  }, [state?.availableVersion, state?.downloadedVersion, state?.errorContext, state?.message]);
 
   const handleAction = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -46,11 +68,7 @@ export function SidebarUpdatePill() {
         .then((result) => {
           setDesktopUpdateStateQueryData(queryClient, result.state);
           if (result.completed) {
-            toastManager.add({
-              type: "success",
-              title: "Update downloaded",
-              description: "Restart the app from the update button to install it.",
-            });
+            toastManager.add(createDesktopUpdateDownloadedToast());
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);

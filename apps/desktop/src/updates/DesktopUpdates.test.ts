@@ -45,6 +45,9 @@ const flushCallbacks = Effect.yieldNow;
 
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
+  let destroyAllCount = 0;
+  let quitAndInstallCount = 0;
+  let stopCount = 0;
   let allowDowngrade = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
@@ -86,7 +89,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -111,13 +117,18 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         sentStates.push(state as DesktopUpdateState);
       }),
-    destroyAll: Effect.void,
+    destroyAll: Effect.sync(() => {
+      destroyAllCount += 1;
+    }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindowShape);
 
   const backendLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
     start: Effect.void,
-    stop: () => Effect.void,
+    stop: () =>
+      Effect.sync(() => {
+        stopCount += 1;
+      }),
     currentConfig: Effect.succeed(Option.none()),
     snapshot: Effect.succeed({
       desiredRunning: false,
@@ -173,7 +184,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   return {
     layer,
     checkCount: () => checkCount,
+    destroyAllCount: () => destroyAllCount,
     feedUrls: () => feedUrls,
+    quitAndInstallCount: () => quitAndInstallCount,
+    stopCount: () => stopCount,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -235,6 +249,37 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect(
+    "delegates downloaded update installs to Electron without pre-destroying the UI",
+    () => {
+      const harness = makeHarness();
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const result = yield* updates.install;
+
+          assert.equal(result.accepted, true);
+          assert.equal(result.completed, false);
+          assert.equal(harness.quitAndInstallCount(), 1);
+          assert.equal(harness.stopCount(), 0);
+          assert.equal(harness.destroyAllCount(), 0);
+
+          const duplicateResult = yield* updates.install;
+          assert.equal(duplicateResult.accepted, false);
+          assert.equal(harness.quitAndInstallCount(), 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("persists channel changes through the settings service", () => {
     const harness = makeHarness();

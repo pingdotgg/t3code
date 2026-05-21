@@ -525,6 +525,26 @@ describe("resolveThreadStatusPill", () => {
     });
   });
 
+  it("uses the primary status color while a thread is connecting", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            status: "connecting",
+            orchestrationStatus: "starting",
+          },
+        },
+      }),
+    ).toMatchObject({
+      label: "Connecting",
+      colorClass: "text-primary",
+      dotClass: "bg-primary",
+      pulse: true,
+    });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({

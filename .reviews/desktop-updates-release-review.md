@@ -28,11 +28,60 @@
 | Field                 | Value                |
 | --------------------- | -------------------- |
 | **Review started**    | 2026-05-21 12:45 BST |
-| **Last reviewed**     | 2026-05-21 12:59 BST |
-| **Total turns**       | 2                    |
+| **Last reviewed**     | 2026-05-21 14:14 BST |
+| **Total turns**       | 3                    |
 | **Open findings**     | 0                    |
 | **Resolved findings** | 0                    |
 | **Accepted findings** | 0                    |
+
+## Turn 3 — 2026-05-21 14:14 BST
+
+| Field           | Value        |
+| --------------- | ------------ |
+| **Commit**      | working tree |
+| **IDE / Agent** | Codex        |
+
+**Summary:** Re-reviewed after the updater install handoff fix, macOS signing workflow guard, shared update-downloaded toast helper, install-error toast surfacing, and connecting-status color change.
+**Outcome:** All clear.
+**Risk score:** Medium — the patch changes a desktop updater lifecycle handoff and release workflow failure behavior.
+**Change archetypes:** desktop updater lifecycle, release automation, shared UI helper, presentation polish.
+**Intended change:** Keep the app alive while Electron/Squirrel performs install handoff, surface install failures, prevent unsigned macOS stable releases, avoid duplicate stable tag publishing, and make update/connecting UI use the lobster primary color.
+**Intent vs actual:** The diff matches the intent. `DesktopUpdates.install` now delegates directly to `quitAndInstall`, leaves the UI/window/backend running until Electron takes over, rejects duplicate install clicks, and lets updater `error` events reduce state to install failure. The release workflows now fail stable macOS builds when signing/notarization secrets are missing, and the old upstream release workflow no longer handles stable tags in this fork. The update-downloaded toast icon and connecting thread status now use `text-primary` / `bg-primary`.
+**Confidence:** High for the code path and workflow guard; medium for packaged-app install until a Developer ID signed/notarized build is published and manually installed at least once.
+**Coverage note:** Current-tree `bun fmt`, `bun lint`, `bun typecheck`, focused desktop updater tests, focused web updater tests, sidebar logic tests, and `git diff --check` passed. Lint warnings remain the existing unrelated warnings.
+**Finding triage:** No live findings.
+**Static/analyzer evidence:** No static-analysis policy changed. Fallow remains unavailable in the repo/PATH.
+**Architecture impact:** The lifecycle invariant stays owned by `apps/desktop/src/updates/DesktopUpdates.ts`; UI surfaces consume state and toast helpers without duplicating updater install policy. The signing requirement is encoded at release workflow boundaries, where the release asset invariant belongs.
+**Bug classes / invariants checked:** duplicate install clicks do not call `quitAndInstall` twice; install handoff no longer pre-destroys the UI; install failures keep the downloaded state retryable and surface a toast; stable macOS release assets cannot be unsigned; stable tags are owned by one workflow; primary color is applied through the existing sidebar status helper.
+**Branch totality:** Rechecked the working tree plus the branch-total release/updater/UI diff against `origin/main`.
+**Sibling closure:** Revisited desktop install failure handling, updater event error handling, settings/sidebar update toast consumers, release workflow tag ownership, and sidebar status color resolution.
+**Residual risk / unknowns:** Existing unsigned/ad-hoc installs may not validate an update signed with a future Developer ID certificate. A manual install of the first signed/notarized build may be required before automatic updates can install reliably.
+
+### Validation
+
+- `bun run --cwd apps/desktop test src/updates/DesktopUpdates.test.ts src/updates/updateMachine.test.ts` — passed, 12 tests.
+- `bun run --cwd apps/web test src/components/desktopUpdate.logic.test.ts` — passed, 24 tests.
+- `bun run --cwd apps/web test src/components/Sidebar.logic.test.ts` — passed, 48 tests.
+- `bun fmt` — passed.
+- `bun lint` — passed with 9 existing warnings.
+- `bun typecheck` — passed, 13 packages.
+- `git diff --check` — passed.
+
+### Branch-totality proof
+
+- **Non-delta files/systems re-read:** diff-review gates, architecture bridge, desktop update install/error paths, toast rendering data contract, sidebar status resolver, release workflow stable tag triggers.
+- **Prior open findings rechecked:** None.
+- **Prior resolved/adjacent areas revalidated:** Stable-only release policy still holds; new workflow guard prevents publishing macOS artifacts that can download but not install.
+- **Hotspots or sibling paths revisited:** settings update button, sidebar update pill, manual/downloaded update toasts, updater event listeners, macOS release signing gate.
+- **Why this is enough:** The live failure was traced to Squirrel.Mac code-signature validation. The code now preserves UI visibility for failure reporting, and CI now blocks the artifact class that caused the install failure.
+
+### Challenger pass
+
+- Not required for Medium risk. The most plausible remaining issue is packaged-app signature transition behavior from ad-hoc builds to a future signed build; this is carried as residual release/install risk rather than hidden code risk.
+
+### Resolved / Carried / New findings
+
+- None.
 
 ## Turn 2 — 2026-05-21 12:59 BST
 

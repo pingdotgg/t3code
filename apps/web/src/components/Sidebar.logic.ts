@@ -361,8 +361,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.session?.status === "connecting") {
     return {
       label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      colorClass: "text-primary",
+      dotClass: "bg-primary",
       pulse: true,
     };
   }

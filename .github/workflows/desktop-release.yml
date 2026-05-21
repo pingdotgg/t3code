@@ -246,7 +246,10 @@ jobs:
               echo "macOS signing enabled."
               args+=(--signed)
             else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
+              echo "macOS signing secrets are required for stable desktop releases." >&2
+              echo "Missing one or more of CSC_LINK, CSC_KEY_PASSWORD, APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER." >&2
+              echo "Unsigned macOS builds can download updates, but Squirrel.Mac rejects them during install." >&2
+              exit 1
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
             if has_all \

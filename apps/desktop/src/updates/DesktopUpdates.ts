@@ -9,7 +9,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -18,7 +17,6 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -187,7 +185,6 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 
 const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
-  const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -357,6 +354,7 @@ const make = Effect.gen(function* () {
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     if (
+      (yield* Ref.get(updateInstallInFlightRef)) ||
       (yield* Ref.get(desktopState.quitting)) ||
       !(yield* Ref.get(updaterConfiguredRef)) ||
       state.status !== "downloaded"
@@ -364,12 +362,17 @@ const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
-    yield* Ref.set(desktopState.quitting, true);
     yield* Ref.set(updateInstallInFlightRef, true);
 
     return yield* Effect.gen(function* () {
-      yield* backendManager.stop({ timeout: Duration.seconds(5) });
-      yield* electronWindow.destroyAll;
+      yield* updateState((current) => ({
+        ...current,
+        message: null,
+        errorContext: null,
+      }));
+      yield* logUpdaterInfo("installing downloaded update", {
+        version: state.downloadedVersion ?? state.availableVersion ?? "unknown",
+      });
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
         isForceRunAfter: true,
