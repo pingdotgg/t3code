@@ -99,19 +99,20 @@ export const Route = createRootRouteWithContext<{
   }),
 });
 
+const APP_SHELL = (
+  <CommandPalette>
+    <AppSidebarLayout>
+      <Outlet />
+    </AppSidebarLayout>
+  </CommandPalette>
+);
+
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      syncBrowserChromeTheme();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
+  useBrowserChromeThemeSync(pathname);
 
   if (pathname === "/pair") {
     return <Outlet />;
@@ -120,14 +121,6 @@ function RootRouteView() {
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
   }
-
-  const appShell = (
-    <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
-  );
 
   return (
     <ToastProvider>
@@ -142,13 +135,24 @@ function RootRouteView() {
         {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
         {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
         {primaryEnvironmentAuthenticated ? (
-          <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
+          <WebSocketConnectionSurface>{APP_SHELL}</WebSocketConnectionSurface>
         ) : (
-          appShell
+          APP_SHELL
         )}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function useBrowserChromeThemeSync(pathname: string) {
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      syncBrowserChromeTheme();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [pathname]);
 }
 
 function HostedStaticEnvironmentBootstrap() {
