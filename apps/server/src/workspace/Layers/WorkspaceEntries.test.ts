@@ -124,19 +124,91 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
-    it.effect("supports fuzzy subsequence queries for composer path search", () =>
+    it.effect("matches file and directory paths containing the typed characters", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-query-" });
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-ngram-query-" });
         yield* writeTextFile(cwd, "src/components/Composer.tsx");
         yield* writeTextFile(cwd, "src/components/composePrompt.ts");
+        yield* writeTextFile(cwd, "src/features/ComparePanel.tsx");
         yield* writeTextFile(cwd, "docs/composition.md");
+        yield* writeTextFile(cwd, "src/cmpLegacy.ts");
 
-        const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
+        const result = yield* searchWorkspaceEntries({ cwd, query: "COMP", limit: 10 });
+        const subsequenceResult = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
         const paths = result.entries.map((entry) => entry.path);
+        const subsequencePaths = subsequenceResult.entries.map((entry) => entry.path);
 
-        expect(result.entries.length).toBeGreaterThan(0);
         expect(paths).toContain("src/components");
         expect(paths).toContain("src/components/Composer.tsx");
+        expect(paths).toContain("src/components/composePrompt.ts");
+        expect(paths).toContain("src/features/ComparePanel.tsx");
+        expect(paths).toContain("docs/composition.md");
+        expect(subsequencePaths).toContain("src/cmpLegacy.ts");
+        expect(subsequencePaths).not.toContain("src/components");
+        expect(subsequencePaths).not.toContain("src/components/Composer.tsx");
+      }),
+    );
+
+    it.effect("matches representative file tagging queries in the current project", () =>
+      Effect.gen(function* () {
+        const cwd = yield* git(process.cwd(), ["rev-parse", "--show-toplevel"]);
+        const cases = [
+          {
+            query: "COMP",
+            expectedPaths: [
+              "apps/web/src/components",
+              "apps/web/src/components/chat/ChatComposer.tsx",
+            ],
+          },
+          {
+            query: "WorkspaceEntries",
+            expectedPaths: [
+              "apps/server/src/workspace/Layers/WorkspaceEntries.ts",
+              "apps/server/src/workspace/Layers/WorkspaceEntries.test.ts",
+            ],
+          },
+          {
+            query: "projectReactQuery",
+            expectedPaths: ["apps/web/src/lib/projectReactQuery.ts"],
+          },
+          {
+            query: "codex-app-server",
+            expectedPaths: ["packages/effect-codex-app-server/src/protocol.ts"],
+          },
+        ];
+
+        for (const { query, expectedPaths } of cases) {
+          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 200 });
+          const paths = result.entries.map((entry) => entry.path);
+
+          for (const expectedPath of expectedPaths) {
+            expect(paths, `query '${query}' should include '${expectedPath}'`).toContain(
+              expectedPath,
+            );
+          }
+        }
+      }),
+    );
+
+    it.effect("matches basename tokens so extensions and dotted names are searchable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-token-query-" });
+        yield* writeTextFile(cwd, "astro.config.mjs");
+        yield* writeTextFile(cwd, "src/pages/index.astro");
+        yield* writeTextFile(cwd, "src/pages/page.astro");
+        yield* writeTextFile(cwd, "src/components/Astrolabe.tsx");
+        yield* writeTextFile(cwd, "src/cmpLegacy.ts");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "astro", limit: 10 });
+        const paths = result.entries.map((entry) => entry.path);
+        const subsequenceResult = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
+        const subsequencePaths = subsequenceResult.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("astro.config.mjs");
+        expect(paths).toContain("src/pages/index.astro");
+        expect(paths).toContain("src/pages/page.astro");
+        expect(paths).toContain("src/components/Astrolabe.tsx");
+        expect(subsequencePaths).not.toContain("src/components/Astrolabe.tsx");
       }),
     );
 
@@ -152,17 +224,79 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
-    it.effect("tracks truncation without sorting every fuzzy match", () =>
+    it.effect("matches full path prefixes when the query contains a slash", () =>
       Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-limit-" });
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-path-prefix-" });
+        yield* writeTextFile(cwd, "src/components/Button.tsx");
+        yield* writeTextFile(cwd, "src/config.ts");
+        yield* writeTextFile(cwd, "tests/components/Button.test.tsx");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "src/com", limit: 10 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/components");
+        expect(paths).toContain("src/components/Button.tsx");
+        expect(paths).not.toContain("tests/components/Button.test.tsx");
+      }),
+    );
+
+    it.effect("matches substrings inside paths, basenames, and directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-substring-" });
+        yield* writeTextFile(cwd, "src/components/Button.tsx");
+        yield* writeTextFile(cwd, "src/hooks/useComponentState.ts");
+        yield* writeTextFile(cwd, "docs/component-guide.md");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "ponent", limit: 10 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/components");
+        expect(paths).toContain("src/components/Button.tsx");
+        expect(paths).toContain("src/hooks/useComponentState.ts");
+        expect(paths).toContain("docs/component-guide.md");
+      }),
+    );
+
+    it.effect("tracks truncation within prefix matches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-prefix-limit-" });
         yield* writeTextFile(cwd, "src/components/Composer.tsx");
         yield* writeTextFile(cwd, "src/components/composePrompt.ts");
         yield* writeTextFile(cwd, "docs/composition.md");
 
-        const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 1 });
+        const result = yield* searchWorkspaceEntries({ cwd, query: "com", limit: 1 });
 
         expect(result.entries).toHaveLength(1);
         expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("does not mark filesystem index truncated at exactly the entry cap", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-exact-cap-" });
+        const originalReaddir = fsPromises.readdir.bind(fsPromises);
+        vi.spyOn(fsPromises, "readdir").mockImplementation((async (
+          ...args: Parameters<typeof fsPromises.readdir>
+        ) => {
+          if (args[0] !== cwd) {
+            return originalReaddir(...args);
+          }
+          return Array.from({ length: 25_000 }, (_, index) => ({
+            name: `entry-${index}.ts`,
+            isDirectory: () => false,
+            isFile: () => true,
+          }));
+        }) as typeof fsPromises.readdir);
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 25_000 });
+
+        expect(result.entries).toHaveLength(25_000);
+        expect(result.truncated).toBe(false);
+        expect(result.index).toMatchObject({
+          indexedEntryCount: 25_000,
+          indexTruncated: false,
+          source: "filesystem",
+        });
       }),
     );
 

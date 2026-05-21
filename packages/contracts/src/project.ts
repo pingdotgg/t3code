@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
@@ -20,9 +20,22 @@ export const ProjectEntry = Schema.Struct({
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
+export const ProjectSearchIndexSource = Schema.Literals(["filesystem", "git", "jj", "unknown"]);
+export type ProjectSearchIndexSource = typeof ProjectSearchIndexSource.Type;
+
+export const ProjectSearchIndexStats = Schema.Struct({
+  source: ProjectSearchIndexSource,
+  fullIndexing: Schema.Boolean,
+  indexedEntryCount: NonNegativeInt,
+  matchedEntryCount: NonNegativeInt,
+  indexTruncated: Schema.Boolean,
+});
+export type ProjectSearchIndexStats = typeof ProjectSearchIndexStats.Type;
+
 export const ProjectSearchEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
+  index: Schema.optionalKey(ProjectSearchIndexStats),
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 

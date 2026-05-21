@@ -849,6 +849,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const workspaceIndexStats = workspaceEntriesQuery.data?.index;
+  const indexingToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  const indexingToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const clearIndexingToastTimer = () => {
+      if (indexingToastTimerRef.current === null) return;
+      window.clearTimeout(indexingToastTimerRef.current);
+      indexingToastTimerRef.current = null;
+    };
+
+    if (isPathTrigger && effectivePathQuery.length > 0 && workspaceEntriesQuery.isFetching) {
+      if (indexingToastIdRef.current === null && indexingToastTimerRef.current === null) {
+        indexingToastTimerRef.current = window.setTimeout(() => {
+          indexingToastTimerRef.current = null;
+          indexingToastIdRef.current = toastManager.add({
+            type: "loading",
+            title: "Indexing project files",
+            description: "Preparing file and folder suggestions for this workspace.",
+            data: {
+              hideCopyButton: true,
+            },
+          });
+        }, 250);
+      }
+      return clearIndexingToastTimer;
+    }
+
+    clearIndexingToastTimer();
+    if (indexingToastIdRef.current !== null) {
+      if (workspaceIndexStats) {
+        toastManager.update(indexingToastIdRef.current, {
+          type: "success",
+          title: "Project files indexed",
+          description: `${workspaceIndexStats.indexedEntryCount.toLocaleString()} entries ready for file mentions.`,
+          data: {
+            dismissAfterVisibleMs: 2_500,
+            hideCopyButton: true,
+          },
+        });
+      } else {
+        toastManager.close(indexingToastIdRef.current);
+      }
+      indexingToastIdRef.current = null;
+    }
+
+    return clearIndexingToastTimer;
+  }, [effectivePathQuery, isPathTrigger, workspaceEntriesQuery.isFetching, workspaceIndexStats]);
+
+  useEffect(
+    () => () => {
+      if (indexingToastTimerRef.current !== null) {
+        window.clearTimeout(indexingToastTimerRef.current);
+        indexingToastTimerRef.current = null;
+      }
+      if (indexingToastIdRef.current !== null) {
+        toastManager.close(indexingToastIdRef.current);
+        indexingToastIdRef.current = null;
+      }
+    },
+    [],
+  );
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];

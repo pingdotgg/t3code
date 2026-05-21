@@ -408,6 +408,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.fullProjectIndexing !== DEFAULT_UNIFIED_SETTINGS.fullProjectIndexing
+        ? ["Full project indexing"]
+        : []),
       ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
@@ -437,6 +440,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.fullProjectIndexing,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       theme,
@@ -461,6 +465,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      fullProjectIndexing: DEFAULT_UNIFIED_SETTINGS.fullProjectIndexing,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -665,6 +670,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableAssistantStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Full project indexing"
+          description="Index all files in each project. Large repositories may search slower and use more memory."
+          resetAction={
+            settings.fullProjectIndexing !== DEFAULT_UNIFIED_SETTINGS.fullProjectIndexing ? (
+              <SettingResetButton
+                label="full project indexing"
+                onClick={() =>
+                  updateSettings({
+                    fullProjectIndexing: DEFAULT_UNIFIED_SETTINGS.fullProjectIndexing,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.fullProjectIndexing}
+              onCheckedChange={(checked) =>
+                updateSettings({ fullProjectIndexing: Boolean(checked) })
+              }
+              aria-label="Enable full project indexing"
             />
           }
         />

@@ -104,7 +104,7 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
           }
           yield* input.fixture.writeFile(cwd, "untracked.ts", "export const untracked = true;\n");
 
-          const result = yield* driver.listWorkspaceFiles(cwd);
+          const result = yield* driver.listWorkspaceFiles(cwd, {});
 
           assert.include(result.paths, "tracked.ts");
           assert.include(result.paths, "untracked.ts");
@@ -126,7 +126,7 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
           yield* input.fixture.writeFile(cwd, "debug.log", "ignore me\n");
           yield* input.fixture.writeFile(cwd, "nested/error.log", "ignore me too\n");
 
-          const result = yield* driver.listWorkspaceFiles(cwd);
+          const result = yield* driver.listWorkspaceFiles(cwd, {});
 
           assert.include(result.paths, "included.ts");
           assert.notInclude(result.paths, "debug.log");

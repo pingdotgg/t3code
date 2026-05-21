@@ -9,9 +9,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
+import {
+  type FilesystemBrowseInput,
+  type ProjectEntry,
+  type ProjectSearchIndexSource,
+} from "@t3tools/contracts";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   insertRankedSearchResult,
@@ -20,6 +25,7 @@ import {
   type RankedSearchResult,
 } from "@t3tools/shared/searchRanking";
 
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsDriverRegistry } from "../../vcs/VcsDriverRegistry.ts";
 import {
   WorkspaceEntries,
@@ -32,6 +38,7 @@ import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
+const WORKSPACE_FULL_GIT_OUTPUT_MAX_BYTES = 128 * 1024 * 1024;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
@@ -48,7 +55,12 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 interface WorkspaceIndex {
   scannedAt: number;
   entries: SearchableWorkspaceEntry[];
+  grams: Map<string, Uint32Array>;
+  entryIdByPath: Map<string, number>;
+  pathTree: WorkspacePathNode;
   truncated: boolean;
+  source: ProjectSearchIndexSource;
+  fullIndexing: boolean;
 }
 
 interface SearchableWorkspaceEntry extends ProjectEntry {
@@ -57,6 +69,32 @@ interface SearchableWorkspaceEntry extends ProjectEntry {
 }
 
 type RankedWorkspaceEntry = RankedSearchResult<SearchableWorkspaceEntry>;
+
+interface WorkspacePathNode {
+  name: string;
+  path: string;
+  entryId: number | null;
+  children: Map<string, WorkspacePathNode>;
+}
+
+interface WorkspaceIndexOptions {
+  readonly cwd: string;
+  readonly fullIndexing: boolean;
+}
+
+const workspaceIndexCacheKey = (options: WorkspaceIndexOptions): string =>
+  `${options.fullIndexing ? "1" : "0"}\0${options.cwd}`;
+
+const parseWorkspaceIndexCacheKey = (key: string): WorkspaceIndexOptions => ({
+  fullIndexing: key.startsWith("1\0"),
+  cwd: key.slice(2),
+});
+
+const workspaceIndexEntryLimit = (fullIndexing: boolean): number | null =>
+  fullIndexing ? null : WORKSPACE_INDEX_MAX_ENTRIES;
+
+const workspaceIndexScanLimit = (entryLimit: number | null): number | null =>
+  entryLimit === null ? null : entryLimit + 1;
 
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
@@ -97,6 +135,167 @@ function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEnt
   };
 }
 
+function buildWorkspaceSearchIndex(
+  entries: SearchableWorkspaceEntry[],
+): Pick<WorkspaceIndex, "entries" | "grams" | "entryIdByPath" | "pathTree"> {
+  const entryIdByPath = new Map(entries.map((entry, entryId) => [entry.path, entryId]));
+
+  return {
+    entries,
+    grams: buildGramIndex(entries),
+    entryIdByPath,
+    pathTree: buildWorkspacePathTree(entries, entryIdByPath),
+  };
+}
+
+function addGramsForText(grams: Set<string>, text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    const one = text.slice(index, index + 1);
+    const two = text.slice(index, index + 2);
+    const three = text.slice(index, index + 3);
+
+    if (one.length === 1) grams.add(one);
+    if (two.length === 2) grams.add(two);
+    if (three.length === 3) grams.add(three);
+  }
+}
+
+function gramsForEntry(entry: SearchableWorkspaceEntry): string[] {
+  const grams = new Set<string>();
+  addGramsForText(grams, entry.normalizedName);
+  addGramsForText(grams, entry.normalizedPath);
+  return [...grams];
+}
+
+function gramsForQuery(query: string): string[] {
+  if (query.length <= 3) {
+    return query ? [query] : [];
+  }
+
+  const grams = new Set<string>();
+  for (let index = 0; index <= query.length - 3; index += 1) {
+    grams.add(query.slice(index, index + 3));
+  }
+  return [...grams];
+}
+
+function buildGramIndex(entries: SearchableWorkspaceEntry[]): Map<string, Uint32Array> {
+  const mutableGrams = new Map<string, number[]>();
+
+  for (const [entryId, entry] of entries.entries()) {
+    for (const gram of gramsForEntry(entry)) {
+      const ids = mutableGrams.get(gram);
+      if (ids) {
+        ids.push(entryId);
+      } else {
+        mutableGrams.set(gram, [entryId]);
+      }
+    }
+  }
+
+  return new Map(
+    [...mutableGrams].map(([gram, ids]) => [gram, Uint32Array.from(ids.toSorted((a, b) => a - b))]),
+  );
+}
+
+function makeWorkspacePathNode(
+  name: string,
+  pathValue: string,
+  entryId: number | null,
+): WorkspacePathNode {
+  return {
+    name,
+    path: pathValue,
+    entryId,
+    children: new Map(),
+  };
+}
+
+function buildWorkspacePathTree(
+  entries: SearchableWorkspaceEntry[],
+  entryIdByPath: ReadonlyMap<string, number>,
+): WorkspacePathNode {
+  const root = makeWorkspacePathNode("", "", null);
+
+  for (const entry of entries) {
+    const segments = entry.path.split("/");
+    let current = root;
+    let currentPath = "";
+
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const child =
+        current.children.get(segment) ??
+        makeWorkspacePathNode(segment, currentPath, entryIdByPath.get(currentPath) ?? null);
+      current.children.set(segment, child);
+      current = child;
+    }
+
+    current.entryId = entryIdByPath.get(entry.path) ?? null;
+  }
+
+  return root;
+}
+
+function intersectSortedEntryIds(left: Uint32Array, right: Uint32Array): Uint32Array {
+  const result: number[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftId = left[leftIndex];
+    const rightId = right[rightIndex];
+
+    if (leftId === undefined || rightId === undefined) {
+      break;
+    }
+
+    if (leftId === rightId) {
+      result.push(leftId);
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (leftId < rightId) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  return Uint32Array.from(result);
+}
+
+function getCandidateEntryIds(index: WorkspaceIndex, query: string): Uint32Array {
+  if (!query) {
+    return Uint32Array.from(index.entries.map((_, entryId) => entryId));
+  }
+
+  const queryGrams = gramsForQuery(query);
+  if (queryGrams.length === 0) {
+    return new Uint32Array();
+  }
+
+  const postingLists = queryGrams
+    .map((gram) => index.grams.get(gram))
+    .filter((postingList): postingList is Uint32Array => postingList !== undefined)
+    .toSorted((left, right) => left.length - right.length);
+
+  if (postingLists.length !== queryGrams.length) {
+    return new Uint32Array();
+  }
+
+  const firstPostingList = postingLists[0];
+  if (!firstPostingList) {
+    return new Uint32Array();
+  }
+
+  return postingLists
+    .slice(1)
+    .reduce(
+      (candidateIds, postingList) => intersectSortedEntryIds(candidateIds, postingList),
+      firstPostingList,
+    );
+}
+
 function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | null {
   if (!query) {
     return entry.kind === "directory" ? 0 : 1;
@@ -111,7 +310,6 @@ function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | nu
       exactBase: 0,
       prefixBase: 2,
       includesBase: 5,
-      fuzzyBase: 100,
     }),
     scoreQueryMatch({
       value: normalizedPath,
@@ -120,7 +318,6 @@ function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | nu
       prefixBase: 3,
       boundaryBase: 4,
       includesBase: 6,
-      fuzzyBase: 200,
       boundaryMarkers: ["/"],
     }),
   ].filter((score): score is number => score !== null);
@@ -181,6 +378,7 @@ const resolveBrowseTarget = (
 
 export const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const serverSettingsOption = yield* Effect.serviceOption(ServerSettingsService);
   const vcsRegistry = yield* VcsDriverRegistry;
   const workspacePaths = yield* WorkspacePaths;
 
@@ -207,14 +405,18 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     );
 
   const buildWorkspaceIndexFromVcs = Effect.fn("WorkspaceEntries.buildWorkspaceIndexFromVcs")(
-    function* (cwd: string) {
+    function* (input: WorkspaceIndexOptions) {
+      const { cwd, fullIndexing } = input;
       const vcs = yield* vcsRegistry.detect({ cwd }).pipe(Effect.catch(() => Effect.succeed(null)));
       if (!vcs) {
         return null;
       }
 
       const listedFiles = yield* vcs.driver
-        .listWorkspaceFiles(cwd)
+        .listWorkspaceFiles(
+          cwd,
+          fullIndexing ? { maxOutputBytes: WORKSPACE_FULL_GIT_OUTPUT_MAX_BYTES } : {},
+        )
         .pipe(Effect.catch(() => Effect.succeed(null)));
 
       if (!listedFiles) {
@@ -261,10 +463,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
       const now = yield* DateTime.now;
       const entries = [...directoryEntries, ...fileEntries];
+      const entryLimit = workspaceIndexEntryLimit(fullIndexing);
+      const indexedEntries = entryLimit === null ? entries : entries.slice(0, entryLimit);
       return {
         scannedAt: now.epochMilliseconds,
-        entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
-        truncated: listedFiles.truncated || entries.length > WORKSPACE_INDEX_MAX_ENTRIES,
+        ...buildWorkspaceSearchIndex(indexedEntries),
+        truncated: listedFiles.truncated || (entryLimit !== null && entries.length > entryLimit),
+        source: vcs.driver.capabilities.kind,
+        fullIndexing,
       };
     },
   );
@@ -299,8 +505,13 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
   const buildWorkspaceIndexFromFilesystem = Effect.fn(
     "WorkspaceEntries.buildWorkspaceIndexFromFilesystem",
-  )(function* (cwd: string): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
+  )(function* (
+    input: WorkspaceIndexOptions,
+  ): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
+    const { cwd, fullIndexing } = input;
     const shouldFilterWithGitIgnore = yield* isInsideVcsWorkTree(cwd);
+    const entryLimit = workspaceIndexEntryLimit(fullIndexing);
+    const scanLimit = workspaceIndexScanLimit(entryLimit);
 
     let pendingDirectories: string[] = [""];
     const entries: SearchableWorkspaceEntry[] = [];
@@ -368,7 +579,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             pendingDirectories.push(candidate.relativePath);
           }
 
-          if (entries.length >= WORKSPACE_INDEX_MAX_ENTRIES) {
+          if (scanLimit !== null && entries.length >= scanLimit) {
             truncated = true;
             break;
           }
@@ -381,21 +592,35 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     }
 
     const now = yield* DateTime.now;
+    const indexedEntries = entryLimit === null ? entries : entries.slice(0, entryLimit);
     return {
       scannedAt: now.epochMilliseconds,
-      entries,
+      ...buildWorkspaceSearchIndex(indexedEntries),
       truncated,
+      source: "filesystem" as const,
+      fullIndexing,
     };
   });
 
   const buildWorkspaceIndex = Effect.fn("WorkspaceEntries.buildWorkspaceIndex")(function* (
-    cwd: string,
+    cacheKey: string,
   ): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const vcsIndexed = yield* buildWorkspaceIndexFromVcs(cwd);
-    if (vcsIndexed) {
-      return vcsIndexed;
-    }
-    return yield* buildWorkspaceIndexFromFilesystem(cwd);
+    const options = parseWorkspaceIndexCacheKey(cacheKey);
+    const startedAt = yield* DateTime.now;
+    const index =
+      (yield* buildWorkspaceIndexFromVcs(options)) ??
+      (yield* buildWorkspaceIndexFromFilesystem(options));
+    const endedAt = yield* DateTime.now;
+    const durationMs = Math.max(0, endedAt.epochMilliseconds - startedAt.epochMilliseconds);
+    yield* Effect.logInfo("workspace search index built", {
+      cwd: options.cwd,
+      durationMs,
+      entries: index.entries.length,
+      fullIndexing: index.fullIndexing,
+      source: index.source,
+      truncated: index.truncated,
+    });
+    return index;
   });
 
   const workspaceIndexCache = yield* Cache.makeWith<string, WorkspaceIndex, WorkspaceEntriesError>(
@@ -428,9 +653,23 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.catch(() => Effect.succeed(cwd)),
       );
-      yield* Cache.invalidate(workspaceIndexCache, cwd);
+      yield* Cache.invalidate(
+        workspaceIndexCache,
+        workspaceIndexCacheKey({ cwd, fullIndexing: false }),
+      );
+      yield* Cache.invalidate(
+        workspaceIndexCache,
+        workspaceIndexCacheKey({ cwd, fullIndexing: true }),
+      );
       if (normalizedCwd !== cwd) {
-        yield* Cache.invalidate(workspaceIndexCache, normalizedCwd);
+        yield* Cache.invalidate(
+          workspaceIndexCache,
+          workspaceIndexCacheKey({ cwd: normalizedCwd, fullIndexing: false }),
+        );
+        yield* Cache.invalidate(
+          workspaceIndexCache,
+          workspaceIndexCacheKey({ cwd: normalizedCwd, fullIndexing: true }),
+        );
       }
     },
   );
@@ -478,7 +717,18 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
+      const fullIndexing = yield* Option.match(serverSettingsOption, {
+        onSome: (serverSettings) =>
+          serverSettings.getSettings.pipe(
+            Effect.map((settings) => settings.fullProjectIndexing),
+            Effect.catch(() => Effect.succeed(false)),
+          ),
+        onNone: () => Effect.succeed(false),
+      });
+      return yield* Cache.get(
+        workspaceIndexCache,
+        workspaceIndexCacheKey({ cwd: normalizedCwd, fullIndexing }),
+      ).pipe(
         Effect.map((index) => {
           const normalizedQuery = normalizeSearchQuery(input.query, {
             trimLeadingPattern: /^[@./]+/,
@@ -486,12 +736,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
           const limit = Math.max(0, Math.floor(input.limit));
           const rankedEntries: RankedWorkspaceEntry[] = [];
           let matchedEntryCount = 0;
+          const candidateEntryIds = getCandidateEntryIds(index, normalizedQuery);
 
-          for (const entry of index.entries) {
+          for (const entryId of candidateEntryIds) {
+            const entry = index.entries[entryId];
+            if (!entry) continue;
+
             const score = scoreEntry(entry, normalizedQuery);
-            if (score === null) {
-              continue;
-            }
+            if (score === null) continue;
 
             matchedEntryCount += 1;
             insertRankedSearchResult(
@@ -504,6 +756,13 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
           return {
             entries: rankedEntries.map((candidate) => candidate.item),
             truncated: index.truncated || matchedEntryCount > limit,
+            index: {
+              source: index.source,
+              fullIndexing: index.fullIndexing,
+              indexedEntryCount: index.entries.length,
+              matchedEntryCount,
+              indexTruncated: index.truncated,
+            },
           };
         }),
       );

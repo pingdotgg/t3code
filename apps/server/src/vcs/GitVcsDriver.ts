@@ -408,8 +408,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     };
   });
 
-  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
-    gitCommand(
+  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd, options) => {
+    const maxOutputBytes = options.maxOutputBytes ?? WORKSPACE_FILES_MAX_OUTPUT_BYTES;
+    return gitCommand(
       vcsProcess,
       "GitVcsDriver.listWorkspaceFiles",
       cwd,
@@ -424,7 +425,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       {
         allowNonZeroExit: true,
         timeoutMs: 20_000,
-        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        maxOutputBytes,
         appendTruncationMarker: true,
       },
     ).pipe(
@@ -449,6 +450,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ),
       ),
     );
+  };
 
   const listRemotes: VcsDriver.VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(
     function* (cwd) {

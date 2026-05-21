@@ -12,6 +12,10 @@ import type {
 import { CheckpointRef } from "@t3tools/contracts";
 import * as VcsProcess from "./VcsProcess.ts";
 
+export interface VcsListWorkspaceFilesOptions {
+  readonly maxOutputBytes?: number;
+}
+
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
@@ -60,6 +64,7 @@ export interface VcsDriverShape {
   readonly isInsideWorkTree: (cwd: string) => Effect.Effect<boolean, VcsError>;
   readonly listWorkspaceFiles: (
     cwd: string,
+    options: VcsListWorkspaceFilesOptions,
   ) => Effect.Effect<VcsListWorkspaceFilesResult, VcsError>;
   readonly listRemotes: (cwd: string) => Effect.Effect<VcsListRemotesResult, VcsError>;
   readonly filterIgnoredPaths: (

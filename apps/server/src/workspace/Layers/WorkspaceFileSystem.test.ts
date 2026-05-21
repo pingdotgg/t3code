@@ -87,10 +87,8 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           query: "rpc",
           limit: 10,
         });
-        expect(beforeWrite).toEqual({
-          entries: [],
-          truncated: false,
-        });
+        expect(beforeWrite.entries).toEqual([]);
+        expect(beforeWrite.truncated).toBe(false);
 
         yield* workspaceFileSystem.writeFile({
           cwd,
