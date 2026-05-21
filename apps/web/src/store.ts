@@ -131,6 +131,7 @@ const initialState: AppState = {
 interface ThreadDetailWriteOptions {
   readonly preserveShellFields?: boolean;
   readonly pageInfo?: OrchestrationThreadDetailPageInfo;
+  readonly syncSidebarSummaries?: boolean;
 }
 
 const MAX_THREAD_MESSAGES = 2_000;
@@ -836,6 +837,96 @@ function writeThreadShellState(
         [nextThread.shell.id]: nextThread.summary,
       },
     };
+  }
+
+  return nextState;
+}
+
+function deriveLatestUserMessageAtForSidebarSummary(
+  state: EnvironmentState,
+  threadId: ThreadId,
+  existingSummary: SidebarThreadSummary | undefined,
+): string | null {
+  const messageIds = state.messageIdsByThreadId[threadId] ?? [];
+  const messages = state.messageByThreadId[threadId] ?? {};
+
+  for (let index = messageIds.length - 1; index >= 0; index -= 1) {
+    const message = messages[messageIds[index]!];
+    if (message?.role === "user") {
+      return message.createdAt;
+    }
+  }
+
+  return existingSummary?.latestUserMessageAt ?? null;
+}
+
+function syncSidebarThreadSummaryFromThreadState(
+  state: EnvironmentState,
+  threadId: ThreadId,
+  environmentId: EnvironmentId,
+): EnvironmentState {
+  const shell = state.threadShellById[threadId];
+  if (!shell) {
+    return state;
+  }
+
+  const existingSummary = state.sidebarThreadSummaryById[threadId];
+  const nextSummary: SidebarThreadSummary = {
+    id: shell.id,
+    environmentId,
+    projectId: shell.projectId,
+    title: shell.title,
+    interactionMode: shell.interactionMode,
+    session: state.threadSessionById[threadId] ?? null,
+    createdAt: shell.createdAt,
+    archivedAt: shell.archivedAt,
+    updatedAt: shell.updatedAt,
+    latestTurn: state.threadTurnStateById[threadId]?.latestTurn ?? null,
+    branch: shell.branch,
+    worktreePath: shell.worktreePath,
+    latestUserMessageAt: deriveLatestUserMessageAtForSidebarSummary(
+      state,
+      threadId,
+      existingSummary,
+    ),
+    hasPendingApprovals: existingSummary?.hasPendingApprovals ?? false,
+    hasPendingUserInput: existingSummary?.hasPendingUserInput ?? false,
+    hasActionableProposedPlan: existingSummary?.hasActionableProposedPlan ?? false,
+  };
+
+  if (sidebarThreadSummariesEqual(existingSummary, nextSummary)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    sidebarThreadSummaryById: {
+      ...state.sidebarThreadSummaryById,
+      [threadId]: nextSummary,
+    },
+  };
+}
+
+function getOrchestrationEventThreadId(event: OrchestrationEvent): ThreadId | null {
+  return event.aggregateKind === "thread" ? (event.aggregateId as ThreadId) : null;
+}
+
+function syncRecoveredSidebarThreadSummaries(
+  state: EnvironmentState,
+  events: ReadonlyArray<OrchestrationEvent>,
+  environmentId: EnvironmentId,
+): EnvironmentState {
+  let nextState = state;
+  const threadIds = new Set<ThreadId>();
+  for (const event of events) {
+    const threadId = getOrchestrationEventThreadId(event);
+    if (threadId !== null) {
+      threadIds.add(threadId);
+    }
+  }
+
+  for (const threadId of threadIds) {
+    nextState = syncSidebarThreadSummaryFromThreadState(nextState, threadId, environmentId);
   }
 
   return nextState;
@@ -1935,7 +2026,13 @@ export function applyOrchestrationEvents(
       applyEnvironmentOrchestrationEvent(nextState, event, environmentId, options),
     currentEnvironmentState,
   );
-  return commitEnvironmentState(state, environmentId, nextEnvironmentState);
+  return commitEnvironmentState(
+    state,
+    environmentId,
+    options?.syncSidebarSummaries
+      ? syncRecoveredSidebarThreadSummaries(nextEnvironmentState, events, environmentId)
+      : nextEnvironmentState,
+  );
 }
 
 function getEnvironmentEntries(

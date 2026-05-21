@@ -126,6 +126,7 @@ interface ProjectionRecovery {
 
 interface RecoveredEventBatchOptions {
   readonly preserveShellFields?: boolean;
+  readonly syncSidebarSummaries?: boolean;
 }
 
 const pendingSavedEnvironmentConnections = new Map<
@@ -385,7 +386,7 @@ function applyRecoveredProjectionEventBatch(
     return;
   }
 
-  applyRecoveredEventBatch(events, environmentId);
+  applyRecoveredEventBatch(events, environmentId, { syncSidebarSummaries: true });
   markAppliedProjectionEvent(environmentId, events.at(-1)?.sequence ?? 0);
   reconcileThreadDetailSubscriptionsAfterRecoveredEvents(events, environmentId);
 }
@@ -686,6 +687,25 @@ function refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(
     }
     scheduleThreadDetailGapRefresh(entry);
   }
+}
+
+function refreshRetainedThreadDetailSubscriptionsToCurrentProjection(
+  environmentId: EnvironmentId,
+): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId !== environmentId) {
+      continue;
+    }
+    if (!shouldRefreshRetainedThreadDetailSubscription(entry)) {
+      continue;
+    }
+    scheduleThreadDetailRefreshToCurrentProjectionIfBehind(entry);
+  }
+}
+
+function reconcileThreadDetailSubscriptionsAfterBrowserResume(environmentId: EnvironmentId): void {
+  refreshRetainedThreadDetailSubscriptionsToCurrentProjection(environmentId);
+  refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
 }
 
 function scheduleThreadDetailGapRefresh(entry: ThreadDetailSubscriptionEntry): void {
@@ -1515,6 +1535,7 @@ function applyRecoveredEventBatch(
 
   useStore.getState().applyOrchestrationEvents(uiEvents, environmentId, {
     preserveShellFields: options.preserveShellFields ?? false,
+    syncSidebarSummaries: options.syncSidebarSummaries ?? false,
   });
   if (needsProjectUiSync) {
     const projects = selectProjectsAcrossEnvironments(useStore.getState());
@@ -2079,12 +2100,10 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
     const latestSequenceAfterProbe =
       readLastAppliedProjectionVersion(environmentId)?.sequence ?? currentSequence;
     if (!syncProbe.behind || syncProbe.serverSequence <= latestSequenceAfterProbe) {
-      // Even when sequences align, a thread may be parked in the gap state
-      // where session.activeTurnId still names a turn that latestTurn marks
-      // completed — typically because the closing thread.session-set was
-      // dropped while iOS backgrounded the tab. Re-fetch the affected thread
-      // detail subscription(s) so the store converges to the server snapshot.
-      refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
+      // The shell cursor can be current while a retained per-thread detail
+      // subscription is still behind after foregrounding. Refresh stale
+      // retained details so the visible chat converges without a page reload.
+      reconcileThreadDetailSubscriptionsAfterBrowserResume(environmentId);
       return;
     }
 
@@ -2113,7 +2132,7 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
     if (highestReplayedSequence > recoveredSequence) {
       queueProjectionRecovery(environmentId, highestReplayedSequence);
     }
-    refreshThreadDetailSubscriptionsStuckOnCompletedRunningTurn(environmentId);
+    reconcileThreadDetailSubscriptionsAfterBrowserResume(environmentId);
   } catch (error) {
     if (readEnvironmentConnection(environmentId) !== connection) {
       return;
