@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 
 const MCP_SETTING = "mcp.enabled";
 const MCP_RUN_COMMAND_ALLOWLIST_SETTING = "mcp.allowedRunCommands";
+const MCP_ACTIVATE_EXTENSION_ALLOWLIST_SETTING = "mcp.allowedActivateExtensions";
 const MCP_SERVER_NAME_PREFIX = "t3code-vscode";
 const DEFAULT_MCP_SERVER_NAME = MCP_SERVER_NAME_PREFIX;
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -26,6 +27,7 @@ const DEFAULT_ALLOWED_RUN_COMMAND_PATTERNS = [
   "vscode.diff",
   "revealLine",
 ] as const;
+const DEFAULT_ALLOWED_ACTIVATE_EXTENSION_IDS: readonly string[] = [];
 
 export interface VscodeMcpServerBootstrap {
   readonly name: string;
@@ -368,6 +370,7 @@ const MCP_TOOLS = [
         command: {
           type: "string",
           minLength: 1,
+          pattern: "\\S",
         },
         args: {
           type: "array",
@@ -376,6 +379,7 @@ const MCP_TOOLS = [
         activateExtension: {
           type: "string",
           minLength: 1,
+          pattern: "\\S",
         },
       },
       required: ["command"],
@@ -421,7 +425,7 @@ export async function executeVsCodeRunCommand(
   }
 
   if (args.activateExtension) {
-    await activateVsCodeExtension(args.activateExtension, args.command);
+    await activateVsCodeExtension(args.activateExtension, outputChannel);
   }
 
   const registeredCommands = await vscode.commands.getCommands(true);
@@ -613,35 +617,28 @@ function parseRunCommandInput(input: unknown): {
   };
 }
 
-async function activateVsCodeExtension(extensionId: string, command: string): Promise<void> {
+async function activateVsCodeExtension(
+  extensionId: string,
+  outputChannel?: Pick<vscode.OutputChannel, "appendLine">,
+): Promise<void> {
+  if (!isAllowedActivateExtension(extensionId)) {
+    throw new Error(`VS Code extension activation is not allowed through MCP: ${extensionId}`);
+  }
   const extension = vscode.extensions.getExtension(extensionId);
   if (!extension) {
     throw new Error(`VS Code extension is not installed: ${extensionId}`);
   }
-  if (!extensionContributesCommand(extension.packageJSON, command)) {
-    throw new Error(`VS Code extension ${extensionId} does not contribute command: ${command}`);
+  if (typeof extension.activate !== "function") {
+    throw new Error(`VS Code extension cannot be activated through MCP: ${extensionId}`);
   }
-  await extension.activate();
-}
-
-function extensionContributesCommand(packageJson: unknown, command: string): boolean {
-  if (!isRecord(packageJson)) {
-    return false;
+  outputChannel?.appendLine(`[mcp] Activating VS Code extension ${extensionId}`);
+  try {
+    await extension.activate();
+  } catch (error) {
+    throw new Error(`Failed to activate VS Code extension ${extensionId}: ${errorMessage(error)}`, {
+      cause: error,
+    });
   }
-  const contributes = packageJson.contributes;
-  if (!isRecord(contributes)) {
-    return false;
-  }
-  const commands = contributes.commands;
-  if (!Array.isArray(commands)) {
-    return false;
-  }
-  return commands.some((contribution) => {
-    if (typeof contribution === "string") {
-      return contribution === command;
-    }
-    return isRecord(contribution) && contribution.command === command;
-  });
 }
 
 function parseDiagnosticsInput(input: unknown): {
@@ -1152,6 +1149,10 @@ function isAllowedRunCommand(command: string): boolean {
   );
 }
 
+function isAllowedActivateExtension(extensionId: string): boolean {
+  return getAllowedActivateExtensionIds().includes(extensionId);
+}
+
 function getAllowedRunCommandPatterns(): readonly string[] {
   const configured = vscode.workspace
     .getConfiguration("t3code")
@@ -1173,6 +1174,29 @@ function getAllowedRunCommandPatterns(): readonly string[] {
     }
   }
   return [...patterns];
+}
+
+function getAllowedActivateExtensionIds(): readonly string[] {
+  const configured = vscode.workspace
+    .getConfiguration("t3code")
+    .get<unknown>(MCP_ACTIVATE_EXTENSION_ALLOWLIST_SETTING);
+  if (configured === undefined) {
+    return DEFAULT_ALLOWED_ACTIVATE_EXTENSION_IDS;
+  }
+  if (!Array.isArray(configured)) {
+    return [];
+  }
+  const extensionIds = new Set<string>();
+  for (const entry of configured) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const extensionId = entry.trim();
+    if (extensionId.length > 0) {
+      extensionIds.add(extensionId);
+    }
+  }
+  return [...extensionIds];
 }
 
 function isValidAllowedRunCommandPattern(pattern: string): boolean {

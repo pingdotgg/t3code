@@ -35,8 +35,9 @@ The VS Code extension exposes VS Code-backed tools through a local MCP server ow
 - `t3code.mcp.enabled`
 - `t3code.mcp.toolTimeoutSec`
 - `t3code.mcp.allowedRunCommands`
+- `t3code.mcp.allowedActivateExtensions`
 
-The bridge setting defaults to `true`, the tool timeout setting defaults to `120` seconds, and the `vscodeRunCommand` allowlist defaults to `t3code.*`, `vscode.open`, `vscode.diff`, and `revealLine`. When enabled, each VS Code window starts a temporary local socket server with a unique `t3code-vscode-*` name and includes `{ name, socketPath, toolTimeoutSec }` in the desktop bootstrap envelope. The backend converts that metadata into each provider's MCP configuration shape. The per-window name avoids same-named MCP server collisions when multiple VS Code windows are running agents at the same time.
+The bridge setting defaults to `true`, the tool timeout setting defaults to `120` seconds, the `vscodeRunCommand` allowlist defaults to `t3code.*`, `vscode.open`, `vscode.diff`, and `revealLine`, and extension activation is disabled by default. When enabled, each VS Code window starts a temporary local socket server with a unique `t3code-vscode-*` name and includes `{ name, socketPath, toolTimeoutSec }` in the desktop bootstrap envelope. The backend converts that metadata into each provider's MCP configuration shape. The per-window name avoids same-named MCP server collisions when multiple VS Code windows are running agents at the same time.
 
 The extension MCP server is generic, so that provider integrations translate the same bootstrap MCP server list into their provider-native MCP/tool configuration.
 
@@ -65,7 +66,7 @@ The current supported MCP tools are:
 }
 ```
 
-`activateExtension` is optional. When provided, `vscodeRunCommand` calls `vscode.extensions.getExtension(...).activate()` after the command has passed the internal-command and MCP allowlist checks, then verifies registration with `vscode.commands.getCommands(true)`. This lets the tool run commands contributed by extensions whose activation events have not fired yet while still rejecting disallowed command ids before extension activation. `vscodeRunCommand` hydrates supported JSON encodings for VS Code `Uri`, `Position`, and `Range` arguments, and serializes command return values into bounded JSON-safe values. The policy is configured by `t3code.mcp.allowedRunCommands`; entries ending in `*` are treated as non-empty command-prefix rules, and the default list is `t3code.*`, `vscode.open`, `vscode.diff`, and `revealLine`. The language-service tools return bounded JSON-safe result sets with truncation metadata.
+`activateExtension` is optional and expects an installed extension id. When provided, `vscodeRunCommand` first rejects internal or command-disallowed requests, then verifies the extension id is listed in `t3code.mcp.allowedActivateExtensions` before calling `vscode.extensions.getExtension(...).activate()`. Registration is checked afterward with `vscode.commands.getCommands(true)`, which supports extensions that register commands during activation without letting MCP activate arbitrary installed extensions by default. `vscodeRunCommand` hydrates supported JSON encodings for VS Code `Uri`, `Position`, and `Range` arguments, and serializes command return values into bounded JSON-safe values. The command policy is configured by `t3code.mcp.allowedRunCommands`; entries ending in `*` are treated as non-empty command-prefix rules, and the default list is `t3code.*`, `vscode.open`, `vscode.diff`, and `revealLine`. Extension activation is disabled by default because `t3code.mcp.allowedActivateExtensions` defaults to an empty list. The language-service tools return bounded JSON-safe result sets with truncation metadata.
 
 ## VS Code Webview UI Defaults
 
@@ -169,6 +170,7 @@ Implemented so far:
   - generic `vscodeRunCommand` tool execution through `vscode.commands.executeCommand(...)`
   - registered-command validation and internal-command rejection
   - configurable command allowlist for `vscodeRunCommand` through `t3code.mcp.allowedRunCommands`
+  - configurable extension activation allowlist for `vscodeRunCommand` through `t3code.mcp.allowedActivateExtensions`
   - JSON-safe command argument/result handling, including supported `Uri`, `Position`, and `Range` arguments
   - `t3code.mcp.enabled` setting for enabling or disabling the whole bridge
 - Added a neutral host bridge contract:
@@ -234,6 +236,7 @@ Implemented so far:
   - `t3code.mcp.enabled`
   - `t3code.mcp.toolTimeoutSec`
   - `t3code.mcp.allowedRunCommands`
+  - `t3code.mcp.allowedActivateExtensions`
 - Added shared T3 Code app `ClientSettings` persistence for VS Code:
   - persists to `<T3 home>/userdata/client-settings.json`
   - uses the same raw client-settings file format as desktop
@@ -318,7 +321,7 @@ Implemented:
 Boundaries:
 
 - Internal VS Code commands prefixed with `_` and commands outside the explicit MCP allowlist are rejected.
-- The command list is queried with `vscode.commands.getCommands(true)`, so stale or unregistered allowed commands are still rejected. Tool calls may provide `activateExtension` to activate an installed extension before this registration check.
+- The command list is queried with `vscode.commands.getCommands(true)`, so stale or unregistered allowed commands are still rejected. Tool calls may provide `activateExtension` to activate an installed extension before this registration check only when the extension id is listed in `t3code.mcp.allowedActivateExtensions`.
 - `vscodeRunCommand` is intentionally narrow by default. Users can expand `t3code.mcp.allowedRunCommands` only when the command side effects and argument shapes are understood.
 - MCP bridge startup is gated by one setting, `t3code.mcp.enabled`, which defaults to `true`.
 - Codex MCP tool calls use `t3code.mcp.toolTimeoutSec`, which defaults to `120` seconds, rejects values below `5` seconds, and is passed as `tool_timeout_sec`.

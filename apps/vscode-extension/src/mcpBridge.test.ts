@@ -310,13 +310,10 @@ describe("executeVsCodeRunCommand", () => {
     const activate = vi.fn(async () => {
       calls.push("activate");
     });
+    setT3CodeSetting("mcp.allowedActivateExtensions", ["publisher.example-extension"]);
     getExtension.mockReturnValue({
       activate,
-      packageJSON: {
-        contributes: {
-          commands: [{ command: "t3code.example.fromExtension" }],
-        },
-      },
+      packageJSON: {},
     });
     getCommands.mockImplementation(async () => {
       calls.push("getCommands");
@@ -335,17 +332,8 @@ describe("executeVsCodeRunCommand", () => {
     expect(executeCommand).toHaveBeenCalledWith("t3code.example.fromExtension");
   });
 
-  it("rejects requested extensions that do not contribute the command before activation", async () => {
+  it("rejects requested extensions outside the activation allowlist before lookup", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
-    const activate = vi.fn();
-    getExtension.mockReturnValue({
-      activate,
-      packageJSON: {
-        contributes: {
-          commands: [{ command: "t3code.example.otherCommand" }],
-        },
-      },
-    });
 
     await expect(
       executeVsCodeRunCommand({
@@ -353,15 +341,16 @@ describe("executeVsCodeRunCommand", () => {
         activateExtension: "publisher.example-extension",
       }),
     ).rejects.toThrow(
-      "VS Code extension publisher.example-extension does not contribute command: t3code.example.fromExtension",
+      "VS Code extension activation is not allowed through MCP: publisher.example-extension",
     );
-    expect(activate).not.toHaveBeenCalled();
+    expect(getExtension).not.toHaveBeenCalled();
     expect(getCommands).not.toHaveBeenCalled();
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
   it("rejects missing requested extensions before checking registered commands", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    setT3CodeSetting("mcp.allowedActivateExtensions", ["publisher.missing-extension"]);
     getExtension.mockReturnValue(undefined);
 
     await expect(
@@ -370,6 +359,49 @@ describe("executeVsCodeRunCommand", () => {
         activateExtension: "publisher.missing-extension",
       }),
     ).rejects.toThrow("VS Code extension is not installed: publisher.missing-extension");
+    expect(getCommands).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed requested extensions before checking registered commands", async () => {
+    const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    setT3CodeSetting("mcp.allowedActivateExtensions", ["publisher.example-extension"]);
+    getExtension.mockReturnValue({
+      packageJSON: {},
+    });
+
+    await expect(
+      executeVsCodeRunCommand({
+        command: "t3code.example.fromExtension",
+        activateExtension: "publisher.example-extension",
+      }),
+    ).rejects.toThrow(
+      "VS Code extension cannot be activated through MCP: publisher.example-extension",
+    );
+    expect(getCommands).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("reports requested extension activation failures before checking registered commands", async () => {
+    const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    const activate = vi.fn(async () => {
+      throw new Error("activation failed");
+    });
+    setT3CodeSetting("mcp.allowedActivateExtensions", ["publisher.example-extension"]);
+    getExtension.mockReturnValue({
+      activate,
+      packageJSON: {},
+    });
+
+    await expect(
+      executeVsCodeRunCommand({
+        command: "t3code.example.fromExtension",
+        activateExtension: "publisher.example-extension",
+      }),
+    ).rejects.toThrow(
+      "Failed to activate VS Code extension publisher.example-extension: activation failed",
+    );
+    expect(activate).toHaveBeenCalledTimes(1);
     expect(getCommands).not.toHaveBeenCalled();
     expect(executeCommand).not.toHaveBeenCalled();
   });
@@ -676,6 +708,16 @@ describe("handleMcpRequest", () => {
           },
           {
             name: "vscodeRunCommand",
+            inputSchema: {
+              properties: {
+                command: expect.objectContaining({
+                  pattern: "\\S",
+                }),
+                activateExtension: expect.objectContaining({
+                  pattern: "\\S",
+                }),
+              },
+            },
           },
         ],
       },

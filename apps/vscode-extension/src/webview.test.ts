@@ -205,5 +205,12 @@ describe("VS Code MCP settings", () => {
       minLength: 1,
       pattern: "^[^*]+\\*?$",
     });
+    expect(properties["t3code.mcp.allowedActivateExtensions"]?.type).toBe("array");
+    expect(properties["t3code.mcp.allowedActivateExtensions"]?.default).toEqual([]);
+    expect(properties["t3code.mcp.allowedActivateExtensions"]?.items).toEqual({
+      type: "string",
+      minLength: 1,
+      pattern: "\\S",
+    });
   });
 });
