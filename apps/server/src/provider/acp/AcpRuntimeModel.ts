@@ -126,19 +126,20 @@ export function parseSessionModeState(
   if (!currentModeId) {
     return undefined;
   }
-  const availableModes = modes.availableModes
-    .map((mode) => {
-      const id = mode.id.trim();
-      const name = mode.name.trim();
-      if (!id || !name) {
-        return undefined;
-      }
-      const description = mode.description?.trim() || undefined;
-      return description !== undefined
+  const availableModes: Array<AcpSessionMode> = [];
+  for (const mode of modes.availableModes) {
+    const id = mode.id.trim();
+    const name = mode.name.trim();
+    if (!id || !name) {
+      continue;
+    }
+    const description = mode.description?.trim() || undefined;
+    availableModes.push(
+      description !== undefined
         ? ({ id, name, description } satisfies AcpSessionMode)
-        : ({ id, name } satisfies AcpSessionMode);
-    })
-    .filter((mode): mode is AcpSessionMode => mode !== undefined);
+        : ({ id, name } satisfies AcpSessionMode),
+    );
+  }
   if (availableModes.length === 0) {
     return undefined;
   }
@@ -186,9 +187,15 @@ function normalizeCommandValue(value: unknown): string | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const parts = value
-    .map((entry) => (typeof entry === "string" && entry.trim().length > 0 ? entry.trim() : null))
-    .filter((entry): entry is string => entry !== null);
+  const parts: Array<string> = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const part = entry.trim();
+      if (part.length > 0) {
+        parts.push(part);
+      }
+    }
+  }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
@@ -222,18 +229,20 @@ function extractTextContentFromToolCallContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined,
 ): string | undefined {
   if (!content) return undefined;
-  const chunks = content
-    .map((entry) => {
-      if (entry.type !== "content") {
-        return undefined;
-      }
-      const nestedContent = entry.content;
-      if (nestedContent.type !== "text") {
-        return undefined;
-      }
-      return nestedContent.text.trim().length > 0 ? nestedContent.text.trim() : undefined;
-    })
-    .filter((entry): entry is string => entry !== undefined);
+  const chunks: Array<string> = [];
+  for (const entry of content) {
+    if (entry.type !== "content") {
+      continue;
+    }
+    const nestedContent = entry.content;
+    if (nestedContent.type !== "text") {
+      continue;
+    }
+    const text = nestedContent.text.trim();
+    if (text.length > 0) {
+      chunks.push(text);
+    }
+  }
   return chunks.length > 0 ? chunks.join("\n") : undefined;
 }
 

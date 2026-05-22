@@ -137,11 +137,13 @@ function formatOpenCodeProbeError(input: {
 }
 
 function titleCaseSlug(value: string): string {
-  return value
-    .split(/[-_/]+/)
-    .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  const segments: Array<string> = [];
+  for (const segment of value.split(/[-_/]+/)) {
+    if (segment.length > 0) {
+      segments.push(segment.charAt(0).toUpperCase() + segment.slice(1));
+    }
+  }
+  return segments.join(" ");
 }
 
 function inferDefaultVariant(

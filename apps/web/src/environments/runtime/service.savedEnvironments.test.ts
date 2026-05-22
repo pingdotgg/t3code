@@ -66,9 +66,13 @@ vi.mock("./connection", () => ({
   createEnvironmentConnection: mockCreateEnvironmentConnection,
 }));
 
-vi.mock("../../rpc/wsRpcClient", () => ({
-  createWsRpcClient: mockCreateWsRpcClient,
-}));
+vi.mock("@t3tools/client-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime")>();
+  return {
+    ...actual,
+    createWsRpcClient: mockCreateWsRpcClient,
+  };
+});
 
 vi.mock("../../rpc/wsTransport", () => ({
   WsTransport: MockWsTransport,
@@ -102,18 +106,6 @@ vi.mock("~/orchestrationEventEffects", () => ({
     promotedThreadRefs: [],
     invalidatedProviderState: false,
   })),
-}));
-
-vi.mock("~/lib/projectReactQuery", () => ({
-  projectQueryKeys: {
-    all: ["projects"],
-  },
-}));
-
-vi.mock("~/lib/providerReactQuery", () => ({
-  providerQueryKeys: {
-    all: ["providers"],
-  },
 }));
 
 vi.mock("~/store", () => ({
@@ -192,7 +184,7 @@ function createClient() {
       clear: vi.fn(async () => undefined),
       restart: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
-      onEvent: vi.fn(() => () => undefined),
+      onMetadata: vi.fn(() => () => undefined),
     },
     projects: {
       searchEntries: vi.fn(async () => []),

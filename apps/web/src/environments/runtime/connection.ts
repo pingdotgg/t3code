@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 
-import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 
 export interface EnvironmentConnection {
   readonly kind: "primary" | "saved";
@@ -29,7 +29,7 @@ interface OrchestrationHandlers {
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
   ) => void;
-  readonly applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => void;
+  readonly applyTerminalEvent?: (event: TerminalEvent, environmentId: EnvironmentId) => void;
 }
 
 interface EnvironmentConnectionInput extends OrchestrationHandlers {
@@ -145,7 +145,7 @@ export function createEnvironmentConnection(
 
   const unsubTerminalEvent = input.client.terminal.onEvent(
     (event: Parameters<Parameters<WsRpcClient["terminal"]["onEvent"]>[0]>[0]) => {
-      input.applyTerminalEvent(event, environmentId);
+      input.applyTerminalEvent?.(event, environmentId);
     },
   );
 

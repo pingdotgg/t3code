@@ -29,6 +29,10 @@ export class LRUCache<T> {
       this.cache.delete(key);
     }
 
+    if (approximateSize > this.maxMemoryBytes) {
+      return;
+    }
+
     this.evictIfNeeded(approximateSize);
     this.cache.set(key, { value, approximateSize });
     this.totalSize += approximateSize;

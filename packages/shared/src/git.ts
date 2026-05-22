@@ -6,8 +6,10 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
+import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -172,7 +174,9 @@ export function dedupeRemoteBranchesWithLocalMatches(
   refs: ReadonlyArray<VcsRef>,
 ): ReadonlyArray<VcsRef> {
   const localBranchNames = new Set(
-    refs.filter((refName) => !refName.isRemote).map((refName) => refName.name),
+    Arr.filterMap(refs, (refName) =>
+      refName.isRemote ? Result.failVoid : Result.succeed(refName.name),
+    ),
   );
 
   return refs.filter((refName) => {

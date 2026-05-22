@@ -109,16 +109,23 @@ vi.mock("./connection", () => ({
   createEnvironmentConnection: mockCreateEnvironmentConnection,
 }));
 
-vi.mock("../../rpc/wsRpcClient", () => ({
-  createWsRpcClient: vi.fn(() => ({
-    server: {
-      getConfig: mockClientGetConfig,
-    },
-    orchestration: {
-      subscribeThread: vi.fn(() => () => {}),
-    },
-  })),
-}));
+vi.mock("@t3tools/client-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime")>();
+  return {
+    ...actual,
+    createWsRpcClient: vi.fn(() => ({
+      server: {
+        getConfig: mockClientGetConfig,
+      },
+      terminal: {
+        onMetadata: vi.fn(() => () => undefined),
+      },
+      orchestration: {
+        subscribeThread: vi.fn(() => () => {}),
+      },
+    })),
+  };
+});
 
 vi.mock("../../rpc/wsTransport", () => ({
   WsTransport: vi.fn(),
@@ -501,7 +508,11 @@ describe("addSavedEnvironment", () => {
       knownEnvironment: {
         environmentId: EnvironmentId.make("environment-1"),
       },
-      client: {},
+      client: {
+        terminal: {
+          onMetadata: vi.fn(() => () => undefined),
+        },
+      },
       ensureBootstrapped: async () => undefined,
       reconnect: vi.fn(async () => {
         throw new Error("socket closed");

@@ -1,0 +1,15 @@
+diff --git a/ios/EXDevLauncherController.m b/ios/EXDevLauncherController.m
+index c9ca6fbfe758e6f97d6f05b0c88e382f0eebae2f..7ed12652528ab31350ecbc9cca736bcda7adf3f3 100644
+--- a/ios/EXDevLauncherController.m
++++ b/ios/EXDevLauncherController.m
+@@ -625,7 +625,9 @@ -(void)copyToClipboard:(NSString *)content {
+ - (void)setDevMenuAppBridge
+ {
+   DevMenuManager *manager = [DevMenuManager shared];
+-  [manager updateCurrentBridge:self.appBridge];
++  // Expo SDK 55's dev launcher still references `self.appBridge`,
++  // but React Native 0.83 removed that property from the delegate base class.
++  // Newer Expo builds stop updating the dev menu bridge here.
+ 
+   if (self.manifest != nil) {
+     [manager updateCurrentManifest:self.manifest manifestURL:self.manifestURL];
