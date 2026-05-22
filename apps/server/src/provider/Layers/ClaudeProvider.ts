@@ -19,11 +19,12 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import {
-  query as claudeQuery,
-  type SlashCommand as ClaudeSlashCommand,
-  type SDKUserMessage,
+import type {
+  SlashCommand as ClaudeSlashCommand,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+
+import { makeClaudeCliQuery } from "./ClaudeCliTransport.ts";
 
 import {
   buildBooleanOptionDescriptor,
@@ -454,7 +455,7 @@ const probeClaudeCapabilities = (
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     return yield* Effect.tryPromise(async () => {
-      const q = claudeQuery({
+      const q = makeClaudeCliQuery({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
         // oxlint-disable-next-line require-yield
@@ -464,27 +465,25 @@ const probeClaudeCapabilities = (
         options: {
           persistSession: false,
           pathToClaudeCodeExecutable: claudeSettings.binaryPath,
-          abortController: abort,
           settingSources: ["user", "project", "local"],
           allowedTools: [],
           env: claudeEnvironment,
-          stderr: () => {},
-        },
+        } as unknown as Parameters<typeof makeClaudeCliQuery>[0]["options"],
       });
-      const init = await q.initializationResult();
-      const account = init.account as
-        | {
-            readonly email?: string;
-            readonly subscriptionType?: string;
-            readonly tokenSource?: string;
-          }
-        | undefined;
-      return {
-        email: account?.email,
-        subscriptionType: account?.subscriptionType,
-        tokenSource: account?.tokenSource,
-        slashCommands: parseClaudeInitializationCommands(init.commands),
-      } satisfies ClaudeCapabilitiesProbe;
+      try {
+        const init = await q.initialize();
+        const account = init.account;
+        return {
+          email: account?.email,
+          subscriptionType: account?.subscriptionType,
+          tokenSource: account?.tokenSource,
+          slashCommands: parseClaudeInitializationCommands(
+            init.commands as ReadonlyArray<ClaudeSlashCommand> | undefined,
+          ),
+        } satisfies ClaudeCapabilitiesProbe;
+      } finally {
+        q.close();
+      }
     });
   }).pipe(
     Effect.ensuring(
