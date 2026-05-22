@@ -70,6 +70,16 @@ export interface ProviderRegistryShape {
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Enable and start lifecycle-owned background refreshes.
+   *
+   * Server startup calls this after command readiness and the ready
+   * lifecycle event, so provider CLI probes cannot block the server from
+   * accepting commands. Manual `refresh` and `refreshInstance` remain
+   * available before this point.
+   */
+  readonly startBackgroundRefreshes: Effect.Effect<void>;
+
+  /**
    * Stream of provider snapshot updates — one emission per aggregated
    * change. The array contains the full current state.
    */

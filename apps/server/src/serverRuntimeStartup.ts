@@ -32,6 +32,7 @@ import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -283,6 +284,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
+  const providerRegistry = yield* ProviderRegistry;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -427,7 +429,6 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
           },
         }),
       );
-
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
       if (serverConfig.startupPresentation === "headless") {
@@ -447,6 +448,16 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         }
         yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       }
+      yield* Effect.logDebug("startup phase: starting provider refreshes");
+      yield* runStartupPhase(
+        "providers.refresh.start",
+        providerRegistry.startBackgroundRefreshes.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider startup refresh failed", { cause }),
+          ),
+          Effect.forkScoped,
+        ),
+      );
       yield* Effect.logDebug("startup phase: complete");
     }),
   );
