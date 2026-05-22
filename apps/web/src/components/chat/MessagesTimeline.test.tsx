@@ -243,7 +243,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Ran command");
   });
 
-  it("collapses completed tool-call groups while the response is still active", async () => {
+  it("keeps completed tool-call groups open while the response is still active", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -279,10 +279,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Tool calls (2)");
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).not.toContain("Read file");
-    expect(markup).not.toContain("Ran command");
+    expect(markup).not.toContain("Tool calls (2)");
+    expect(markup).not.toContain('aria-expanded="false"');
+    expect(markup).toContain("Read file");
+    expect(markup).toContain("Ran command");
   });
 
   it("collapses active tool-call groups once following assistant text starts", async () => {

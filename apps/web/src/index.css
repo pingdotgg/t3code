@@ -682,6 +682,21 @@ label:has(> select#reasoning-effort) select {
   line-height: 1.625;
 }
 
+/* Composer footer: scale buttons/icons to match chat font size setting */
+[data-chat-composer-footer] {
+  font-size: var(--app-chat-font-size);
+}
+
+[data-chat-composer-footer] > :not([data-chat-composer-actions="right"]) button,
+[data-chat-composer-footer] > :not([data-chat-composer-actions="right"]) [role="combobox"] {
+  font-size: inherit;
+  height: 1.75em;
+}
+
+[data-chat-composer-footer] [data-slot="separator"] {
+  height: 1.25em;
+}
+
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));

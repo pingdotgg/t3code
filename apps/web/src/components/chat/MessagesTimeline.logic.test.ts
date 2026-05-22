@@ -398,7 +398,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
 
     expect(reasoningRows.map((row) => row.workedFor)).toEqual(["10s", "20s"]);
-    expect(reasoningRows.map((row) => row.rows).flat()).toHaveLength(2);
+    expect(reasoningRows.flatMap((row) => row.rows)).toHaveLength(2);
   });
 
   it("does not collapse reasoning for the active turn while work continues", () => {
@@ -453,6 +453,49 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.some((row) => row.kind === "reasoning")).toBe(false);
     expect(rows.map((row) => row.kind)).toEqual(["message", "work", "message", "working"]);
+  });
+
+  it("keeps active trailing work groups open even when all known entries are complete", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry-1",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:05Z",
+            label: "Read files",
+            tone: "tool",
+            isComplete: true,
+          },
+        },
+        {
+          id: "work-entry-2",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:06Z",
+          entry: {
+            id: "work-2",
+            createdAt: "2026-01-01T00:00:06Z",
+            label: "Ran command",
+            tone: "tool",
+            isComplete: true,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnId: "turn-1" as never,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const workRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "work" }> => row.kind === "work",
+    );
+
+    expect(workRow?.shouldAutoCollapse).toBe(false);
   });
 
   it("keeps a non-terminal assistant response visible when the next user message arrives", () => {

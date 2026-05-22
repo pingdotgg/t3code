@@ -305,12 +305,15 @@ function shouldAutoCollapseWorkGroup({
   isWorking: boolean;
 }): boolean {
   if (groupedEntries.length <= 1) return false;
-  if (groupedEntries.every((entry) => entry.isComplete === true)) return true;
-  if (!isWorking) return true;
+  if (isWorking) return isAssistantTextBoundary(nextEntry);
+  return true;
+}
+
+function isAssistantTextBoundary(entry: TimelineEntry | undefined): boolean {
   return (
-    nextEntry?.kind === "message" &&
-    nextEntry.message.role === "assistant" &&
-    nextEntry.message.text.trim().length > 0
+    entry?.kind === "message" &&
+    entry.message.role === "assistant" &&
+    entry.message.text.trim().length > 0
   );
 }
 

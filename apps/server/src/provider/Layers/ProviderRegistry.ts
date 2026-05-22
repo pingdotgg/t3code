@@ -365,6 +365,109 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const syncLiveSourcesBase = Effect.fn("syncLiveSources")(function* (options: {
+      readonly waitForRefresh: boolean;
+    }) {
+      const instances = yield* instanceRegistry.listInstances;
+      const unavailableProviders = yield* instanceRegistry.listUnavailable;
+      const nextByInstance = new Map<ProviderInstanceId, ProviderInstance>(
+        instances.map((instance) => [instance.instanceId, instance] as const),
+      );
+      const knownInstanceIds = new Set<ProviderInstanceId>(nextByInstance.keys());
+      for (const provider of unavailableProviders) {
+        knownInstanceIds.add(snapshotInstanceKey(provider));
+      }
+      const previousSubs = yield* Ref.get(liveSubsRef);
+
+      // Carry over subscriptions for instances whose identity is
+      // unchanged (reconcile treated them as no-op). Instances that
+      // disappeared, or were rebuilt with a different reference,
+      // fall through to the "newly-added" branch below.
+      const carriedOver = new Map<ProviderInstanceId, ProviderInstance>();
+      for (const [instanceId, previousInstance] of previousSubs) {
+        const nextInstance = nextByInstance.get(instanceId);
+        if (nextInstance !== undefined && nextInstance === previousInstance) {
+          carriedOver.set(instanceId, previousInstance);
+        }
+      }
+
+      // Collect new/rebuilt instances in `nextByInstance` insertion
+      // order (which preserves settings-author order).
+      const newlyAdded: Array<readonly [ProviderInstanceId, ProviderInstance]> = [];
+      for (const [instanceId, instance] of nextByInstance) {
+        if (carriedOver.has(instanceId)) {
+          continue;
+        }
+        newlyAdded.push([instanceId, instance] as const);
+      }
+
+      // Fork long-lived subscriptions to each new/rebuilt instance's
+      // change stream BEFORE kicking off refreshes — if the driver's
+      // own initial probe (line 140 in `makeManagedServerProvider`)
+      // wins the refreshSemaphore race, its PubSub publish must land
+      // in an active subscriber or the result is dropped.
+      for (const [, instance] of newlyAdded) {
+        const source = buildSnapshotSource(instance);
+        yield* Stream.runForEach(source.streamChanges, (provider) =>
+          correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+        ).pipe(Effect.forkScoped);
+      }
+
+      const nextSubs = new Map(carriedOver);
+      for (const [instanceId, instance] of newlyAdded) {
+        nextSubs.set(instanceId, instance);
+      }
+      yield* Ref.set(liveSubsRef, nextSubs);
+
+      const refreshLiveInstance = Effect.fn("refreshLiveInstance")(function* (
+        instance: ProviderInstance,
+      ) {
+        const source = buildSnapshotSource(instance);
+        const nextProvider = yield* source.refresh.pipe(
+          Effect.flatMap((snapshot) => correlateSnapshotWithSource(source, snapshot)),
+        );
+        const currentSubs = yield* Ref.get(liveSubsRef);
+        if (currentSubs.get(instance.instanceId) !== instance) {
+          return yield* Ref.get(providersRef);
+        }
+        return yield* syncProvider(nextProvider);
+      });
+
+      const refreshNewSources = Effect.forEach(
+        newlyAdded,
+        ([, instance]) => refreshLiveInstance(instance).pipe(Effect.ignoreCause({ log: true })),
+        { concurrency: "unbounded", discard: true },
+      );
+
+      if (options.waitForRefresh) {
+        yield* refreshNewSources;
+      } else {
+        yield* refreshNewSources.pipe(Effect.forkScoped);
+      }
+
+      yield* upsertProviders(unavailableProviders, {
+        persist: false,
+        replace: true,
+      });
+
+      // Drop aggregator state for instances that have disappeared —
+      // otherwise the UI would keep rendering ghosts.
+      const [previousProviders, providers] = yield* Ref.modify(
+        providersRef,
+        (previousProviders) => {
+          const providers = orderProviderSnapshots(
+            previousProviders.filter((provider) =>
+              knownInstanceIds.has(snapshotInstanceKey(provider)),
+            ),
+          );
+          return [[previousProviders, providers] as const, providers];
+        },
+      );
+      if (haveProvidersChanged(previousProviders, providers)) {
+        yield* PubSub.publish(changesPubSub, providers);
+      }
+    });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -376,105 +479,18 @@ export const ProviderRegistryLive = Layer.effect(
      *     attachment race that otherwise drops the initial probe;
      *   - prune `providersRef` of instances that no longer exist.
      *
-     * Initial refreshes are awaited in parallel rather than forked, so
-     * callers (layer build; `streamChanges` watcher) see fully-probed
-     * state on return. This matters for layer build in particular:
-     * consumers reading `getProviders` immediately after layer build
-     * expect the probe to have already landed.
+     * Boot uses `waitForRefresh: false` so provider CLI probes cannot block
+     * HTTP readiness. Settings-change syncs keep awaiting refreshes because
+     * they run off the hot-reload fiber after startup and callers expect
+     * rebuilt instances to publish a fresh snapshot deterministically.
      *
      * Per-instance subscription fibers are not tracked explicitly. When
      * a rebuilt instance's old child scope closes, its PubSub shuts
      * down and our `Stream.runForEach` fiber exits naturally.
      */
-    const syncLiveSources = syncSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const instances = yield* instanceRegistry.listInstances;
-        const unavailableProviders = yield* instanceRegistry.listUnavailable;
-        const nextByInstance = new Map<ProviderInstanceId, ProviderInstance>(
-          instances.map((instance) => [instance.instanceId, instance] as const),
-        );
-        const knownInstanceIds = new Set<ProviderInstanceId>(nextByInstance.keys());
-        for (const provider of unavailableProviders) {
-          knownInstanceIds.add(snapshotInstanceKey(provider));
-        }
-        const previousSubs = yield* Ref.get(liveSubsRef);
-
-        // Carry over subscriptions for instances whose identity is
-        // unchanged (reconcile treated them as no-op). Instances that
-        // disappeared, or were rebuilt with a different reference,
-        // fall through to the "newly-added" branch below.
-        const carriedOver = new Map<ProviderInstanceId, ProviderInstance>();
-        for (const [instanceId, previousInstance] of previousSubs) {
-          const nextInstance = nextByInstance.get(instanceId);
-          if (nextInstance !== undefined && nextInstance === previousInstance) {
-            carriedOver.set(instanceId, previousInstance);
-          }
-        }
-
-        // Collect new/rebuilt instances in `nextByInstance` insertion
-        // order (which preserves settings-author order).
-        const newlyAdded: Array<readonly [ProviderInstanceId, ProviderInstance]> = [];
-        for (const [instanceId, instance] of nextByInstance) {
-          if (carriedOver.has(instanceId)) {
-            continue;
-          }
-          newlyAdded.push([instanceId, instance] as const);
-        }
-
-        // Fork long-lived subscriptions to each new/rebuilt instance's
-        // change stream BEFORE kicking off refreshes — if the driver's
-        // own initial probe (line 140 in `makeManagedServerProvider`)
-        // wins the refreshSemaphore race, its PubSub publish must land
-        // in an active subscriber or the result is dropped.
-        for (const [, instance] of newlyAdded) {
-          const source = buildSnapshotSource(instance);
-          yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
-          ).pipe(Effect.forkScoped);
-        }
-
-        // Force-refresh every new/rebuilt instance in parallel and wait
-        // for them all to complete. The refresh's result is piped
-        // directly into `syncProvider`, so `providersRef` is populated
-        // deterministically by the time this block returns — regardless
-        // of PubSub subscription timing. Failures are logged and
-        // swallowed so one bad driver can't wedge the whole registry.
-        yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
-            refreshOneSource(buildSnapshotSource(instance)).pipe(Effect.ignoreCause({ log: true })),
-          { concurrency: "unbounded", discard: true },
-        );
-        yield* upsertProviders(unavailableProviders, {
-          persist: false,
-          replace: true,
-        });
-
-        const nextSubs = new Map(carriedOver);
-        for (const [instanceId, instance] of newlyAdded) {
-          nextSubs.set(instanceId, instance);
-        }
-        yield* Ref.set(liveSubsRef, nextSubs);
-
-        // Drop aggregator state for instances that have disappeared —
-        // otherwise the UI would keep rendering ghosts.
-        const [previousProviders, providers] = yield* Ref.modify(
-          providersRef,
-          (previousProviders) => {
-            const providers = orderProviderSnapshots(
-              previousProviders.filter((provider) =>
-                knownInstanceIds.has(snapshotInstanceKey(provider)),
-              ),
-            );
-            return [[previousProviders, providers] as const, providers];
-          },
-        );
-        if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
-        }
-      }),
-    );
-    const syncLiveSourcesAndContinue = syncLiveSources.pipe(
+    const syncLiveSources = (options: { readonly waitForRefresh: boolean }) =>
+      syncSemaphore.withPermits(1)(syncLiveSourcesBase(options));
+    const syncLiveSourcesAndContinue = syncLiveSources({ waitForRefresh: true }).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
@@ -496,19 +512,6 @@ export const ProviderRegistryLive = Layer.effect(
     // and pending fallbacks fill the gaps.
     yield* upsertProviders(fallbackProviders, { publish: false });
     // Subscribe to registry mutations BEFORE running the initial sync.
-    // `subscribeChanges` acquires the dequeue synchronously in this
-    // fibre; the subscription is active the instant this `yield*`
-    // returns. Forking the consumer loop later cannot lose a publish
-    // because no publish can reach a not-yet-subscribed dequeue.
-    //
-    // (Contrast with the pre-fix code that did
-    // `Stream.runForEach(instanceRegistry.streamChanges, …).pipe(Effect.forkScoped)`.
-    // `Stream.fromPubSub` defers `PubSub.subscribe` to stream start,
-    // and `forkScoped` only schedules the fibre — so a reconcile that
-    // published between "fibre scheduled" and "fibre starts running"
-    // was dropped, which made any settings change that replaced an
-    // instance never propagate to the aggregator's `providersRef`.)
-    // Subscribe to registry mutations BEFORE running the initial sync.
     // `subscribeChanges` acquires the `PubSub.Subscription` synchronously
     // in this fibre; the subscription is registered with the PubSub the
     // instant this `yield*` returns, so any subsequent publish is
@@ -525,9 +528,10 @@ export const ProviderRegistryLive = Layer.effect(
     // instance never propagate to the aggregator's `providersRef`.)
     const instanceChanges = yield* instanceRegistry.subscribeChanges;
     // Initial sync: subscribe + kick off refreshes for every instance
-    // present at boot. Run synchronously so consumers pulling immediately
-    // after the layer build see the correct aggregator state.
-    yield* syncLiveSources;
+    // present at boot. Do not wait for provider CLI probes here; fallback
+    // and cached snapshots are already in `providersRef`, and the refresh
+    // results will publish when the background probes complete.
+    yield* syncLiveSources({ waitForRefresh: false });
     // React to registry mutations — instance added / removed / rebuilt.
     // `Stream.fromSubscription` builds a stream over the pre-acquired
     // subscription rather than subscribing on stream start, which is

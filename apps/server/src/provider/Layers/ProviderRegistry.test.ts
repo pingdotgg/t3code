@@ -31,7 +31,10 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import {
+  ProviderInstanceRegistry,
+  type ProviderInstanceRegistryShape,
+} from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
@@ -246,9 +249,140 @@ function makeMutableServerSettingsService(
   });
 }
 
+const unsupportedProviderAdapter = (provider: ProviderDriverKind): ProviderInstance["adapter"] => ({
+  provider,
+  capabilities: { sessionModelSwitch: "unsupported" },
+  startSession: () => Effect.die("unsupported test adapter"),
+  forkSession: () => Effect.die("unsupported test adapter"),
+  sendTurn: () => Effect.die("unsupported test adapter"),
+  interruptTurn: () => Effect.die("unsupported test adapter"),
+  respondToRequest: () => Effect.die("unsupported test adapter"),
+  respondToUserInput: () => Effect.die("unsupported test adapter"),
+  stopSession: () => Effect.die("unsupported test adapter"),
+  listSessions: () => Effect.succeed([]),
+  hasSession: () => Effect.succeed(false),
+  readThread: () => Effect.die("unsupported test adapter"),
+  rollbackThread: () => Effect.die("unsupported test adapter"),
+  stopAll: () => Effect.void,
+  streamEvents: Stream.never,
+});
+
+const unsupportedTextGeneration: ProviderInstance["textGeneration"] = {
+  generateCommitMessage: () => Effect.die("unsupported test text generation"),
+  generatePrContent: () => Effect.die("unsupported test text generation"),
+  generateBranchName: () => Effect.die("unsupported test text generation"),
+  generateThreadTitle: () => Effect.die("unsupported test text generation"),
+};
+
+function makeTestProviderSnapshot(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+  readonly checkedAt: string;
+  readonly status: ServerProvider["status"];
+  readonly message: string;
+}): ServerProvider {
+  return {
+    instanceId: input.instanceId,
+    driver: input.driver,
+    displayName: "Slow Test Provider",
+    enabled: true,
+    installed: false,
+    version: null,
+    status: input.status,
+    auth: { status: "unknown" },
+    checkedAt: input.checkedAt,
+    message: input.message,
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
   "ProviderRegistry",
   (it) => {
+    live("does not block layer build on boot-time provider refresh", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("slowTest");
+        const instanceId = ProviderInstanceId.make("slow_test");
+        const initialSnapshot = makeTestProviderSnapshot({
+          instanceId,
+          driver,
+          checkedAt: "initial",
+          status: "warning",
+          message: "Initial fallback snapshot.",
+        });
+        const refreshedSnapshot = makeTestProviderSnapshot({
+          instanceId,
+          driver,
+          checkedAt: "refreshed",
+          status: "ready",
+          message: "Refreshed snapshot.",
+        });
+        const slowInstance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: `${driver}:instance:${instanceId}`,
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            getSnapshot: Effect.succeed(initialSnapshot),
+            refresh: Effect.sleep("5 seconds").pipe(Effect.as(refreshedSnapshot)),
+            streamChanges: Stream.never,
+          },
+          adapter: unsupportedProviderAdapter(driver),
+          textGeneration: unsupportedTextGeneration,
+        };
+        const registryChanges = yield* PubSub.unbounded<void>();
+        const instanceRegistry = {
+          getInstance: (id) => Effect.succeed(id === instanceId ? slowInstance : undefined),
+          listInstances: Effect.succeed([slowInstance]),
+          listUnavailable: Effect.succeed([]),
+          get streamChanges() {
+            return Stream.fromPubSub(registryChanges);
+          },
+          get subscribeChanges() {
+            return PubSub.subscribe(registryChanges);
+          },
+        } satisfies ProviderInstanceRegistryShape;
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() =>
+          Effect.all([Scope.close(scope, Exit.void), PubSub.shutdown(registryChanges)], {
+            discard: true,
+          }),
+        );
+
+        const providerRegistryLayer = ProviderRegistryLive.pipe(
+          Layer.provideMerge(Layer.succeed(ProviderInstanceRegistry, instanceRegistry)),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-provider-registry-startup-",
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        );
+        const startedAt = Date.now();
+        const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
+          Scope.provide(scope),
+        );
+        const elapsedMs = Date.now() - startedAt;
+
+        assert.ok(
+          elapsedMs < 500,
+          `Expected ProviderRegistryLive to build without waiting for the 5s refresh; took ${elapsedMs}ms`,
+        );
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry;
+          const providers = yield* registry.getProviders;
+          assert.strictEqual(providers[0]?.checkedAt, "initial");
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     describe("checkCodexProviderStatus", () => {
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
@@ -719,7 +853,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       // breaks — the `codex_personal`-never-probes bug we are guarding
       // against — that snapshot never lands in `getProviders` and the
       // assertions below fail.
-      it.effect("propagates real Codex probe failures to the aggregator at boot", () =>
+      live("propagates real Codex probe failures to the aggregator after boot", () =>
         Effect.gen(function* () {
           const missingBinary = `t3code_codex_missing_${process.pid}_${Date.now()}`;
           const serverSettings = yield* makeMutableServerSettingsService(
@@ -770,11 +904,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             ),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
+            Layer.provideMerge(NodeServices.layer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
-            // outer `NodeServices.layer` on `it.layer(...)` and will
-            // genuinely spawn a subprocess. The missing-binary ENOENT is
-            // what exercises the same failure mode as a misconfigured
-            // production `binaryPath`.
+            // real `NodeServices.layer` and will genuinely spawn a subprocess.
+            // The missing-binary ENOENT is what exercises the same failure mode
+            // as a misconfigured production `binaryPath`.
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
             Scope.provide(scope),
@@ -782,7 +916,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            const providers = yield* registry.getProviders;
+            const providers = yield* Effect.gen(function* () {
+              for (let attempts = 0; attempts < 60; attempts += 1) {
+                const nextProviders = yield* registry.getProviders;
+                const codexPersonal = nextProviders.find(
+                  (provider) => provider.instanceId === "codex_personal",
+                );
+                if (codexPersonal?.status === "error") {
+                  return nextProviders;
+                }
+                yield* Effect.sleep("50 millis");
+              }
+              return yield* registry.getProviders;
+            });
             const codexPersonal = providers.find(
               (provider) => provider.instanceId === "codex_personal",
             );
@@ -866,13 +1012,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            // Boot-time probe: the default codex instance is enabled with
-            // `firstMissing`, so the real spawner yields ENOENT and the
-            // snapshot should be `status: "error"`. What *distinguishes*
-            // the two probe runs is `checkedAt` — each probe stamps a
-            // fresh DateTime, so we capture it and assert it advances
-            // after the settings mutation.
-            const initialProviders = yield* registry.getProviders;
+            // Boot-time refresh now runs in the background. Wait for the
+            // default codex instance to publish its ENOENT probe result, then
+            // capture `checkedAt` so the settings-change assertion can verify
+            // that a fresh probe ran.
+            const initialProviders = yield* Effect.gen(function* () {
+              for (let attempts = 0; attempts < 60; attempts += 1) {
+                const providers = yield* registry.getProviders;
+                const codex = providers.find((provider) => provider.instanceId === "codex");
+                if (codex?.status === "error") {
+                  return providers;
+                }
+                yield* Effect.sleep("50 millis");
+              }
+              return yield* registry.getProviders;
+            });
             const initialCodex = initialProviders.find(
               (provider) => provider.instanceId === "codex",
             );
@@ -1049,6 +1203,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
                 "claudeAgent",
                 "codex",
+                "copilot",
                 "cursor",
                 "opencode",
               ]);
