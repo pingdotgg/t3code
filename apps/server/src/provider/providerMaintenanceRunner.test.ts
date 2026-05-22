@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -125,6 +125,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    options: ChildProcess.CommandOptions,
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -138,9 +139,32 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options: ChildProcess.CommandOptions;
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
+      );
     }),
+  );
+}
+
+function withProcessPlatform<A, E, R>(
+  platform: NodeJS.Platform,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: platform });
+      return descriptor;
+    }),
+    () => effect,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor) {
+          Object.defineProperty(process, "platform", descriptor);
+        }
+      }),
   );
 }
 
@@ -318,6 +342,42 @@ describe("providerMaintenanceRunner", () => {
       );
     },
   );
+
+  it.effect("runs provider update commands through a shell on Windows", () => {
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      shell: ChildProcess.CommandOptions["shell"];
+    }> = [];
+    return withProcessPlatform(
+      "win32",
+      Effect.gen(function* () {
+        const { registry } = yield* makeRegistry(baseProvider);
+        const runner = yield* makeTestRunner(registry);
+
+        const result = yield* runner.updateProvider(CODEX_DRIVER);
+
+        assert.deepStrictEqual(calls, [
+          {
+            command: "npm",
+            args: ["install", "-g", "@openai/codex@latest"],
+            shell: true,
+          },
+        ]);
+        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args, options) => {
+            calls.push({ command, args, shell: options.shell });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("updates a single provider instance without touching sibling instances", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
