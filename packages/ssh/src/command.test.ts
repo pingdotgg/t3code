@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
+  parseReleaseRepository,
   parseSshResolveOutput,
   resolveRemoteT3CliPackageSpec,
   runSshCommand,
@@ -110,6 +111,73 @@ describe("ssh command", () => {
         }),
         "t3@nightly",
       );
+    }),
+  );
+
+  it.effect(
+    "resolves the remote t3 package spec to a GitHub Release tarball URL when releaseRepository is provided",
+    () =>
+      Effect.sync(() => {
+        const releaseRepository = { owner: "bscholar-tt", repo: "t3code" } as const;
+
+        assert.equal(
+          resolveRemoteT3CliPackageSpec({
+            appVersion: "0.0.17",
+            updateChannel: "latest",
+            releaseRepository,
+          }),
+          "https://github.com/bscholar-tt/t3code/releases/download/v0.0.17/t3-0.0.17.tgz",
+        );
+
+        assert.equal(
+          resolveRemoteT3CliPackageSpec({
+            appVersion: "0.0.17-nightly.20260415.44",
+            updateChannel: "nightly",
+            releaseRepository,
+          }),
+          "https://github.com/bscholar-tt/t3code/releases/download/v0.0.17-nightly.20260415.44/t3-0.0.17-nightly.20260415.44.tgz",
+        );
+
+        // Dev mode / channel fallback both point at the rolling latest alias
+        // so URLs stay stable even when no exact tag matches.
+        assert.equal(
+          resolveRemoteT3CliPackageSpec({
+            appVersion: "0.0.0-dev",
+            updateChannel: "latest",
+            isDevelopment: true,
+            releaseRepository,
+          }),
+          "https://github.com/bscholar-tt/t3code/releases/latest/download/t3-latest.tgz",
+        );
+
+        assert.equal(
+          resolveRemoteT3CliPackageSpec({
+            appVersion: "not-a-version",
+            updateChannel: "nightly",
+            releaseRepository,
+          }),
+          "https://github.com/bscholar-tt/t3code/releases/latest/download/t3-latest.tgz",
+        );
+      }),
+  );
+
+  it.effect("parses release repository slugs and GitHub URLs", () =>
+    Effect.sync(() => {
+      assert.deepEqual(parseReleaseRepository("bscholar-tt/t3code"), {
+        owner: "bscholar-tt",
+        repo: "t3code",
+      });
+      assert.deepEqual(parseReleaseRepository("https://github.com/bscholar-tt/t3code"), {
+        owner: "bscholar-tt",
+        repo: "t3code",
+      });
+      assert.deepEqual(parseReleaseRepository("https://github.com/bscholar-tt/t3code.git"), {
+        owner: "bscholar-tt",
+        repo: "t3code",
+      });
+      assert.equal(parseReleaseRepository(""), undefined);
+      assert.equal(parseReleaseRepository(undefined), undefined);
+      assert.equal(parseReleaseRepository("not a repo"), undefined);
     }),
   );
 

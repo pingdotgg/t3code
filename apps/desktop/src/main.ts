@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
-import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
+import { parseReleaseRepository, resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -71,11 +71,15 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
+  // Public-fork friendly: prefer the GitHub Release tarball URL so remote
+  // hosts don't need any registry auth (.npmrc tokens) to `npx --yes` t3.
+  const releaseRepository = parseReleaseRepository(serverPackageJson.repository.url);
   return {
     packageSpec: resolveRemoteT3CliPackageSpec({
       appVersion: environment.appVersion,
       updateChannel: settings.updateChannel,
       isDevelopment: environment.isDevelopment,
+      ...(releaseRepository ? { releaseRepository } : {}),
     }),
     nodeEngineRange: serverPackageJson.engines.node,
   };

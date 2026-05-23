@@ -325,19 +325,73 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   );
 });
 
+export interface ReleaseRepository {
+  readonly owner: string;
+  readonly repo: string;
+}
+
+/**
+ * Parses an `owner/repo` slug (with optional `.git` suffix) or a GitHub HTTPS
+ * URL (`https://github.com/owner/repo[.git]`) into a {@link ReleaseRepository}.
+ * Returns `undefined` for inputs that do not match those shapes so callers can
+ * fall back to registry-based package specs.
+ */
+export function parseReleaseRepository(
+  input: string | undefined | null,
+): ReleaseRepository | undefined {
+  if (!input) return undefined;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+
+  const httpsMatch = /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/u.exec(trimmed);
+  if (httpsMatch) {
+    return { owner: httpsMatch[1]!, repo: httpsMatch[2]! };
+  }
+  const slugMatch = /^([^/\s]+)\/([^/\s]+?)(?:\.git)?$/u.exec(trimmed);
+  if (slugMatch) {
+    return { owner: slugMatch[1]!, repo: slugMatch[2]! };
+  }
+  return undefined;
+}
+
+function releaseTarballUrl(repo: ReleaseRepository, tag: string, assetName: string): string {
+  return `https://github.com/${repo.owner}/${repo.repo}/releases/download/${tag}/${assetName}`;
+}
+
+function latestReleaseTarballUrl(repo: ReleaseRepository): string {
+  // GitHub redirects this path to whichever asset of that name is attached to
+  // the release marked `latest`. release.yml uploads `t3-latest.tgz` on every
+  // stable release, keeping this URL stable across versions.
+  return `https://github.com/${repo.owner}/${repo.repo}/releases/latest/download/t3-latest.tgz`;
+}
+
 export function resolveRemoteT3CliPackageSpec(input: {
   readonly appVersion: string;
   readonly updateChannel: DesktopUpdateChannel;
   readonly isDevelopment?: boolean;
+  /**
+   * When provided, the remote runner will install t3 from the fork's GitHub
+   * Release tarball (`.tgz` attached to the matching release) rather than from
+   * the npm registry. This lets `npx --yes <spec>` work on hosts without any
+   * registry auth (no `.npmrc` modification required).
+   */
+  readonly releaseRepository?: ReleaseRepository;
 }): string {
   const appVersion = input.appVersion.trim();
+  const repo = input.releaseRepository;
+
   if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
+    if (repo) {
+      return releaseTarballUrl(repo, `v${appVersion}`, `t3-${appVersion}.tgz`);
+    }
     return `t3@${appVersion}`;
   }
 
   if (input.isDevelopment) {
+    if (repo) return latestReleaseTarballUrl(repo);
     return "t3@nightly";
   }
 
+  if (repo) return latestReleaseTarballUrl(repo);
   return input.updateChannel === "nightly" ? "t3@nightly" : "t3@latest";
 }

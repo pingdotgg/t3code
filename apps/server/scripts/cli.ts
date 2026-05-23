@@ -278,12 +278,122 @@ const publishCmd = Command.make(
 ).pipe(Command.withDescription("Publish the server package to npm."));
 
 // ---------------------------------------------------------------------------
+// pack subcommand
+// ---------------------------------------------------------------------------
+
+const packCmd = Command.make(
+  "pack",
+  {
+    appVersion: Flag.string("app-version").pipe(Flag.optional),
+    packDestination: Flag.string("pack-destination").pipe(Flag.optional),
+    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+  },
+  (config) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repoRoot = yield* RepoRoot;
+      const serverDir = path.join(repoRoot, "apps/server");
+      const packageJsonPath = path.join(serverDir, "package.json");
+      const backupPath = `${packageJsonPath}.bak`;
+
+      for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
+        const abs = path.join(serverDir, relPath);
+        if (!(yield* fs.exists(abs))) {
+          return yield* new CliError({
+            message: `Missing build asset: ${abs}. Run the build subcommand first.`,
+          });
+        }
+      }
+
+      const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+      const packDestination = path.resolve(
+        Option.getOrElse(config.packDestination, () => serverDir),
+      );
+      yield* fs
+        .makeDirectory(packDestination, { recursive: true })
+        .pipe(Effect.catch(() => Effect.void));
+
+      yield* Effect.acquireUseRelease(
+        Effect.gen(function* () {
+          const pkg: PackageJson = {
+            name: serverPackageJson.name,
+            repository: serverPackageJson.repository,
+            bin: serverPackageJson.bin,
+            type: serverPackageJson.type,
+            version,
+            engines: serverPackageJson.engines,
+            files: serverPackageJson.files,
+            dependencies: resolveCatalogDependencies(
+              serverPackageJson.dependencies,
+              rootPackageJson.workspaces.catalog,
+              "apps/server",
+            ),
+            overrides: resolveCatalogDependencies(
+              rootPackageJson.overrides,
+              rootPackageJson.workspaces.catalog,
+              "apps/server",
+            ),
+          };
+
+          const original = yield* fs.readFileString(packageJsonPath);
+          const packageJsonString = yield* encodePackageJson(pkg);
+          yield* fs.writeFileString(backupPath, original);
+          yield* fs.writeFileString(packageJsonPath, `${packageJsonString}\n`);
+          yield* Effect.log("[cli] Prepared package.json for pack");
+
+          const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
+          return { iconBackups };
+        }),
+        () =>
+          Effect.gen(function* () {
+            const args = ["pack", "--pack-destination", packDestination];
+            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+            yield* runCommand(
+              ChildProcess.make("npm", args, {
+                cwd: serverDir,
+                stdout: config.verbose ? "inherit" : "ignore",
+                stderr: "inherit",
+                shell: process.platform === "win32",
+              }),
+            );
+
+            const tarballName = `${serverPackageJson.name}-${version}.tgz`;
+            const tarballPath = path.join(packDestination, tarballName);
+            if (!(yield* fs.exists(tarballPath))) {
+              return yield* new CliError({
+                message: `Expected packed tarball was not produced at ${tarballPath}`,
+              });
+            }
+            yield* Effect.log(`[cli] Packed tarball: ${tarballPath}`);
+
+            // Also emit a rolling alias (t3-latest.tgz) so GitHub's
+            // /releases/latest/download/<name> URL stays stable.
+            const latestAlias = path.join(packDestination, `${serverPackageJson.name}-latest.tgz`);
+            yield* fs.copyFile(tarballPath, latestAlias);
+            yield* Effect.log(`[cli] Wrote rolling alias: ${latestAlias}`);
+          }),
+        (resource: { readonly iconBackups: ReadonlyArray<PublishIconBackup> }) =>
+          Effect.gen(function* () {
+            yield* restorePublishIconOverrides(resource.iconBackups).pipe(
+              Effect.catch((error) =>
+                Effect.logError(`[cli] Failed to restore publish icon overrides: ${String(error)}`),
+              ),
+            );
+            yield* fs.rename(backupPath, packageJsonPath);
+            if (config.verbose) yield* Effect.log("[cli] Restored original package.json");
+          }),
+      );
+    }),
+).pipe(Command.withDescription("Pack the server package into a .tgz tarball (no publish)."));
+
+// ---------------------------------------------------------------------------
 // root command
 // ---------------------------------------------------------------------------
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),
-  Command.withSubcommands([buildCmd, publishCmd]),
+  Command.withSubcommands([buildCmd, publishCmd, packCmd]),
 );
 
 Command.run(cli, { version: "0.0.0" }).pipe(

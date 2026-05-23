@@ -220,9 +220,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const showLockedInstanceSidebar = isLocked && lockedInstanceEntries.length > 1;
   const showSidebar = !isSearching && (!isLocked || showLockedInstanceSidebar);
-  const sidebarInstanceEntries = (showLockedInstanceSidebar
-    ? lockedInstanceEntries
-    : instanceEntries
+  const sidebarInstanceEntries = (
+    showLockedInstanceSidebar ? lockedInstanceEntries : instanceEntries
   ).filter((entry) => entry.isAvailable && entry.status === "ready");
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),

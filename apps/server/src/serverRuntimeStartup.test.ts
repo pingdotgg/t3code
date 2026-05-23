@@ -1,5 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  defaultInstanceIdForDriver,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,10 +32,11 @@ import {
   ServerRuntimeStartupError,
 } from "./serverRuntimeStartup.ts";
 
-it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
+it("uses the canonical Claude default for auto-bootstrapped model selection", () => {
+  const provider = ProviderDriverKind.make("claudeAgent");
   assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
-    instanceId: ProviderInstanceId.make("codex"),
-    model: DEFAULT_MODEL,
+    instanceId: defaultInstanceIdForDriver(provider),
+    model: DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL,
   });
 });
 

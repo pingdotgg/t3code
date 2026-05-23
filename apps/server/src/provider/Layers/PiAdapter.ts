@@ -1,5 +1,6 @@
 import {
   createAgentSession,
+  SessionManager,
   type AgentSession,
   type AgentSessionEvent,
   type CreateAgentSessionOptions,
@@ -41,10 +42,17 @@ import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
 
+interface PiToolItem {
+  readonly id: RuntimeItemId;
+  readonly type: CanonicalItemType;
+  readonly toolName: string;
+  readonly args: unknown;
+}
+
 interface PiTurnState {
   readonly turnId: TurnId;
   readonly startedAt: string;
-  readonly items: Array<unknown>;
+  readonly items: Array<PiToolItem>;
 }
 
 interface PiSessionContext {
@@ -54,7 +62,7 @@ interface PiSessionContext {
   streamFiber: Fiber.Fiber<void, never> | undefined;
   readonly startedAt: string;
   turnState: PiTurnState | undefined;
-  readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  readonly turns: Array<{ id: TurnId; items: Array<PiToolItem> }>;
   stopped: boolean;
 }
 
@@ -63,6 +71,14 @@ function toMessage(cause: unknown, fallback: string): string {
     return cause.message;
   }
   return fallback;
+}
+
+function readPiResumeState(resumeCursor: unknown): { sessionFile: string } | undefined {
+  if (!resumeCursor || typeof resumeCursor !== "object") return undefined;
+  const cursor = resumeCursor as Record<string, unknown>;
+  return typeof cursor.sessionFile === "string" && cursor.sessionFile.trim().length > 0
+    ? { sessionFile: cursor.sessionFile }
+    : undefined;
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -90,6 +106,29 @@ function classifyToolItemType(toolName: string): CanonicalItemType {
     return "web_search";
   }
   return "dynamic_tool_call";
+}
+
+function summarizePiToolArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const input = args as Record<string, unknown>;
+
+  const commandValue = input.command ?? input.cmd;
+  if (typeof commandValue === "string" && commandValue.trim().length > 0) {
+    return commandValue.trim().slice(0, 400);
+  }
+
+  const pathValue = input.file_path ?? input.path ?? input.filePath;
+  if (typeof pathValue === "string" && pathValue.trim().length > 0) {
+    return pathValue.trim().slice(0, 400);
+  }
+
+  try {
+    const serialized = JSON.stringify(input);
+    if (serialized.length <= 400) return serialized;
+    return `${serialized.slice(0, 397)}...`;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface PiAdapterLiveOptions {
@@ -235,10 +274,16 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         if (!context.turnState) return;
         const itemId = RuntimeItemId.make(event.toolCallId);
         const itemType = classifyToolItemType(event.toolName);
+        const detail = summarizePiToolArgs(event.args);
+        const argsObj =
+          event.args && typeof event.args === "object"
+            ? (event.args as Record<string, unknown>)
+            : undefined;
         context.turnState.items.push({
           id: itemId,
           type: itemType,
           toolName: event.toolName,
+          args: event.args,
         });
         yield* offerRuntimeEvent({
           ...base,
@@ -248,7 +293,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           payload: {
             itemType,
             title: event.toolName,
-            ...(event.args ? { detail: String(event.args) } : {}),
+            ...(detail ? { detail } : {}),
+            ...(argsObj ? { data: { toolName: event.toolName, input: argsObj } } : {}),
           },
         });
         return;
@@ -282,6 +328,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         if (!context.turnState) return;
         const itemId = RuntimeItemId.make(event.toolCallId);
         const itemType = classifyToolItemType(event.toolName);
+        const storedItem = context.turnState.items.find((item) => item.id === itemId);
+        const args = storedItem?.args;
+        const detail = summarizePiToolArgs(args);
+        const argsObj =
+          args && typeof args === "object" ? (args as Record<string, unknown>) : undefined;
         yield* offerRuntimeEvent({
           ...base,
           turnId: context.turnState.turnId,
@@ -291,15 +342,18 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
             itemType,
             title: event.toolName,
             status: event.isError ? "failed" : "completed",
+            ...(detail ? { detail } : {}),
+            ...(argsObj ? { data: { toolName: event.toolName, input: argsObj } } : {}),
           },
         });
         return;
       }
 
       case "turn_end": {
-        if (context.turnState) {
-          yield* completeTurn(context, "completed");
-        }
+        // Pi fires turn_end after each internal LLM call, but agent_end fires
+        // after the full agent run. Completing here would fragment the Pi run
+        // into multiple t3code turns, causing tool activities to disappear and
+        // the timer to reset on every sub-turn. Let agent_end drive completion.
         return;
       }
 
@@ -438,13 +492,21 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     const runtimeContext = yield* Effect.context<never>();
     const runFork = Effect.runForkWith(runtimeContext);
 
-    const sessionOptions: CreateAgentSessionOptions = {
-      cwd: input.cwd ?? serverConfig.cwd,
-    };
+    const piResumeState = readPiResumeState(input.resumeCursor);
+    const baseCwd = input.cwd ?? serverConfig.cwd;
 
     const piSession = yield* Effect.tryPromise({
       try: async () => {
-        const result = await createAgentSession(sessionOptions);
+        if (piResumeState) {
+          try {
+            const sessionManager = SessionManager.open(piResumeState.sessionFile);
+            const result = await createAgentSession({ cwd: baseCwd, sessionManager });
+            return result.session;
+          } catch {
+            // Session file inaccessible; fall through to a fresh session.
+          }
+        }
+        const result = await createAgentSession({ cwd: baseCwd });
         return result.session;
       },
       catch: (cause) =>
@@ -456,6 +518,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         }),
     });
 
+    const piSessionFile = piSession.sessionFile;
+
     const session: ProviderSession = {
       threadId,
       provider: PROVIDER,
@@ -464,6 +528,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       runtimeMode: input.runtimeMode,
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+      ...(piSessionFile !== undefined ? { resumeCursor: { sessionFile: piSessionFile } } : {}),
       createdAt: startedAt,
       updatedAt: startedAt,
     };

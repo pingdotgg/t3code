@@ -182,7 +182,21 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: bun install --frozen-lockfile
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Build t3 server package
+        run: bun run build --filter=t3
+
+      - name: Pack t3 CLI tarball
+        run: |
+          mkdir -p release-assets
+          node apps/server/scripts/cli.ts pack \
+            --app-version "${{ needs.preflight.outputs.version }}" \
+            --pack-destination "$(pwd)/release-assets" \
+            --verbose
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -207,6 +221,7 @@ jobs:
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.yml
+            release-assets/*.tgz
           fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -225,5 +240,6 @@ jobs:
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.yml
+            release-assets/*.tgz
           fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}

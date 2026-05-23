@@ -113,7 +113,7 @@ const runPiCommand = Effect.fn("runPiCommand")(function* (
   const piEnvironment = yield* makePiEnvironment(piSettings, environment);
   const command = ChildProcess.make(piSettings.binaryPath || "pi", [...args], {
     env: piEnvironment,
-    shell: true,
+    shell: false,
   });
   return yield* spawnAndCollect(piSettings.binaryPath || "pi", command);
 });
