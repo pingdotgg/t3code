@@ -349,7 +349,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             estimatedItemSize={90}
             initialScrollAtEnd
             maintainScrollAtEnd={MAINTAIN_SCROLL_AT_END_ANIMATED}
-            maintainScrollAtEndThreshold={8}
+            maintainScrollAtEndThreshold={0.1}
             onIsAtEndChange={onIsAtEndChange}
             className="h-full overflow-x-hidden overscroll-y-contain"
             style={{ height: "100%" }}

@@ -2292,7 +2292,7 @@ function SalchiLogo() {
     <img
       alt=""
       aria-hidden="true"
-      className="size-5 shrink-0 object-contain"
+      className="size-5 shrink-0 object-contain [image-rendering:pixelated]"
       src="/salchi-logo.png"
     />
   );

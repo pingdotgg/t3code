@@ -20,6 +20,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@effect/atom-react": "catalog:",
     "@formkit/auto-animate": "^0.9.0",
+    "@legendapp/list": "3.0.0-beta.44",
     "@lexical/react": "^0.44.0",
     "@pierre/diffs": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
@@ -37,7 +38,6 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
-    "react-virtuoso": "4.18.7",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.11"

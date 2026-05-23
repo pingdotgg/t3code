@@ -3417,9 +3417,7 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mockReplayEvents).not.toHaveBeenCalled();
     await expectThreadDetailReconcileCallCount(1);
-    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId }),
-    );
+    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
@@ -3512,9 +3510,7 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mockReplayEvents).not.toHaveBeenCalled();
     await expectThreadDetailReconcileCallCount(1);
-    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId }),
-    );
+    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
@@ -3613,9 +3609,7 @@ describe("retainThreadDetailSubscription", () => {
     // The forced refresh on foreground resume reconciles the active thread,
     // but the server reports it is current so streaming text is preserved.
     await expectThreadDetailReconcileCallCount(1);
-    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId }),
-    );
+    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
     const thread = selectThreadByRef(useStore.getState(), scopeThreadRef(environmentId, threadId));
@@ -4072,9 +4066,7 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mockReplayEvents).not.toHaveBeenCalled();
     await expectThreadDetailReconcileCallCount(1);
-    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId }),
-    );
+    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
@@ -4227,9 +4219,7 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mockReplayEvents).not.toHaveBeenCalled();
     await expectThreadDetailReconcileCallCount(1);
-    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId }),
-    );
+    expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
@@ -4971,9 +4961,7 @@ describe("retainThreadDetailSubscription", () => {
     });
     await vi.advanceTimersByTimeAsync(300);
     await vi.waitFor(() => {
-      expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId }),
-      );
+      expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     });
 
     release();
@@ -5043,9 +5031,7 @@ describe("retainThreadDetailSubscription", () => {
     });
     await vi.advanceTimersByTimeAsync(300);
     await vi.waitFor(() => {
-      expect(mockReconcileThreadDetail).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId }),
-      );
+      expect(mockReconcileThreadDetail).toHaveBeenCalledWith(expect.objectContaining({ threadId }));
     });
 
     release();

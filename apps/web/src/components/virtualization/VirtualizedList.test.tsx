@@ -3,44 +3,41 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
-  latestProps: null as MockVirtuosoProps | null,
+  latestProps: null as MockLegendListProps | null,
 }));
 
-interface MockVirtuosoProps {
+interface MockLegendListProps {
   readonly data?: readonly string[];
-  readonly computeItemKey?: (index: number, item: string) => Key;
-  readonly itemContent?: (index: number, item: string) => ReactNode;
-  readonly components?: {
-    readonly Header?: () => ReactNode;
-    readonly Footer?: () => ReactNode;
-  };
-  readonly followOutput?: (isAtBottom: boolean) => "auto" | "smooth" | false;
-  readonly atBottomStateChange?: (isAtEnd: boolean) => void;
-  readonly endReached?: (index: number) => void;
-  readonly initialTopMostItemIndex?: unknown;
-  readonly defaultItemHeight?: number;
-  readonly increaseViewportBy?: unknown;
-  readonly minOverscanItemCount?: unknown;
+  readonly keyExtractor?: (item: string, index: number) => Key;
+  readonly renderItem?: (args: { item: string; index: number }) => ReactNode;
+  readonly ListHeaderComponent?: ReactNode;
+  readonly ListFooterComponent?: ReactNode;
+  readonly initialScrollAtEnd?: boolean;
+  readonly maintainScrollAtEnd?: boolean | { animated?: boolean };
+  readonly maintainScrollAtEndThreshold?: number;
+  readonly maintainVisibleContentPosition?: unknown;
+  readonly onScroll?: () => void;
+  readonly onEndReached?: () => void;
+  readonly estimatedItemSize?: number;
+  readonly drawDistance?: number;
   readonly "data-testid"?: string;
 }
 
-vi.mock("react-virtuoso", () => ({
-  Virtuoso: (props: MockVirtuosoProps) => {
+vi.mock("@legendapp/list/react", () => ({
+  LegendList: (props: MockLegendListProps) => {
     mockState.latestProps = props;
-    const Header = props.components?.Header;
-    const Footer = props.components?.Footer;
     return (
       <div data-testid={props["data-testid"]}>
-        {Header ? <Header /> : null}
+        {props.ListHeaderComponent}
         {props.data?.map((item, index) => {
-          const key = props.computeItemKey?.(index, item) ?? index;
+          const key = props.keyExtractor?.(item, index) ?? index;
           return (
             <div data-key={String(key)} key={String(key)}>
-              {props.itemContent?.(index, item)}
+              {props.renderItem?.({ item, index })}
             </div>
           );
         })}
-        {Footer ? <Footer /> : null}
+        {props.ListFooterComponent}
       </div>
     );
   },
@@ -50,13 +47,12 @@ import {
   VirtualizedList,
   type VirtualizedListHandle,
   createVirtualizedListHandle,
-  getVirtualizedListInitialTopMostItemIndex,
-  resolveVirtualizedListFollowOutput,
+  resolveVirtualizedListDrawDistance,
 } from "./VirtualizedList";
 
-function getLatestVirtuosoProps(): MockVirtuosoProps {
+function getLatestLegendListProps(): MockLegendListProps {
   if (!mockState.latestProps) {
-    throw new Error("Virtuoso was not rendered.");
+    throw new Error("LegendList was not rendered.");
   }
   return mockState.latestProps;
 }
@@ -82,7 +78,7 @@ describe("VirtualizedList", () => {
     expect(markup).toContain('data-key="item-beta"');
   });
 
-  it("maps initialScrollAtEnd to the last item index when data is present", () => {
+  it("passes initialScrollAtEnd through to LegendList", () => {
     renderToStaticMarkup(
       <VirtualizedList
         data={["alpha"]}
@@ -92,14 +88,10 @@ describe("VirtualizedList", () => {
       />,
     );
 
-    expect(getLatestVirtuosoProps().initialTopMostItemIndex).toEqual({
-      index: "LAST",
-      align: "end",
-    });
-    expect(getVirtualizedListInitialTopMostItemIndex(true, 0)).toBeUndefined();
+    expect(getLatestLegendListProps().initialScrollAtEnd).toBe(true);
   });
 
-  it("maps animated maintainScrollAtEnd to smooth followOutput only at bottom", () => {
+  it("passes animated maintainScrollAtEnd through to LegendList", () => {
     renderToStaticMarkup(
       <VirtualizedList
         data={["alpha"]}
@@ -109,10 +101,11 @@ describe("VirtualizedList", () => {
       />,
     );
 
-    const followOutput = getLatestVirtuosoProps().followOutput;
-    expect(followOutput?.(true)).toBe("smooth");
-    expect(followOutput?.(false)).toBe(false);
-    expect(resolveVirtualizedListFollowOutput(true, true)).toBe("auto");
+    expect(getLatestLegendListProps().maintainScrollAtEnd).toEqual({ animated: true });
+    expect(getLatestLegendListProps().maintainVisibleContentPosition).toEqual({
+      data: false,
+      size: true,
+    });
   });
 
   it("updates at-end state through the imperative handle state source", () => {
@@ -126,13 +119,12 @@ describe("VirtualizedList", () => {
       />,
     );
 
-    getLatestVirtuosoProps().atBottomStateChange?.(true);
-    expect(onIsAtEndChange).toHaveBeenCalledWith(true);
+    getLatestLegendListProps().onScroll?.();
+    expect(onIsAtEndChange).not.toHaveBeenCalled();
 
     const isAtEndRef = { current: false };
     const handle = createVirtualizedListHandle({
-      virtuosoRef: { current: null },
-      scrollableNodeRef: { current: null },
+      listRef: { current: null },
       isAtEndRef,
     });
     expect(handle.getState()).toEqual({ isAtEnd: false });
@@ -140,20 +132,21 @@ describe("VirtualizedList", () => {
     expect(handle.getState()).toEqual({ isAtEnd: true });
   });
 
-  it("maps imperative methods to Virtuoso scroll methods", () => {
-    const scrollToIndex = vi.fn();
-    const scrollTo = vi.fn();
-    const scrollIntoView = vi.fn();
+  it("maps imperative methods to LegendList scroll methods", () => {
+    const scrollToEnd = vi.fn();
+    const scrollToOffset = vi.fn();
+    const scrollIndexIntoView = vi.fn();
     const scrollableNode = {} as HTMLElement;
     const handle = createVirtualizedListHandle({
-      virtuosoRef: {
+      listRef: {
         current: {
-          scrollToIndex,
-          scrollTo,
-          scrollIntoView,
+          getScrollableNode: () => scrollableNode,
+          getState: () => ({ isAtEnd: true }) as ReturnType<VirtualizedListHandle["getState"]>,
+          scrollToEnd,
+          scrollToOffset,
+          scrollIndexIntoView,
         },
       },
-      scrollableNodeRef: { current: scrollableNode },
       isAtEndRef: { current: true },
     });
 
@@ -164,21 +157,13 @@ describe("VirtualizedList", () => {
     handle.scrollToOffset({ offset: 0, animated: false });
     handle.scrollIndexIntoView({ index: 10, animated: false });
 
-    expect(scrollToIndex).toHaveBeenNthCalledWith(1, {
-      index: "LAST",
-      align: "end",
-      behavior: "auto",
-    });
-    expect(scrollToIndex).toHaveBeenNthCalledWith(2, {
-      index: "LAST",
-      align: "end",
-      behavior: "smooth",
-    });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
-    expect(scrollIntoView).toHaveBeenCalledWith({ index: 10, behavior: "auto" });
+    expect(scrollToEnd).toHaveBeenNthCalledWith(1, { animated: false });
+    expect(scrollToEnd).toHaveBeenNthCalledWith(2, { animated: true });
+    expect(scrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
+    expect(scrollIndexIntoView).toHaveBeenCalledWith({ index: 10, animated: false });
   });
 
-  it("calls onEndReached when Virtuoso reports the end", () => {
+  it("calls onEndReached when LegendList reports the end", () => {
     const onEndReached = vi.fn();
     renderToStaticMarkup(
       <VirtualizedList
@@ -189,8 +174,30 @@ describe("VirtualizedList", () => {
       />,
     );
 
-    getLatestVirtuosoProps().endReached?.(0);
+    getLatestLegendListProps().onEndReached?.();
     expect(onEndReached).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps overscan props to LegendList drawDistance", () => {
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => item}
+        renderItem={({ item }) => item}
+        estimatedItemSize={28}
+        increaseViewportBy={{ top: 100, bottom: 336 }}
+        minOverscanItemCount={{ top: 2, bottom: 4 }}
+      />,
+    );
+
+    expect(getLatestLegendListProps().drawDistance).toBe(336);
+    expect(
+      resolveVirtualizedListDrawDistance({
+        estimatedItemSize: 28,
+        increaseViewportBy: undefined,
+        minOverscanItemCount: 4,
+      }),
+    ).toBe(112);
   });
 
   it("accepts refs with the public handle type", () => {

@@ -2,7 +2,6 @@ import {
   forwardRef,
   useCallback,
   useImperativeHandle,
-  useMemo,
   useRef,
   type CSSProperties,
   type ForwardedRef,
@@ -11,20 +10,22 @@ import {
   type ReactNode,
   type RefAttributes,
 } from "react";
-import {
-  Virtuoso,
-  type Components as VirtuosoComponents,
-  type VirtuosoHandle,
-} from "react-virtuoso";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
-type VirtualizedListFollowOutput = "auto" | "smooth" | false;
-type VirtualizedListInitialIndex = { readonly index: "LAST"; readonly align: "end" };
-type VirtualizedListScrollBehavior = "auto" | "smooth";
 type RefBox<T> = { current: T };
-type VirtualizedListImperativeTarget = Pick<
-  VirtuosoHandle,
-  "scrollIntoView" | "scrollTo" | "scrollToIndex"
->;
+type VirtualizedListImperativeTarget = {
+  getScrollableNode(): HTMLElement | null;
+  getState(): VirtualizedListState;
+  scrollToEnd(options?: { animated?: boolean }): Promise<void> | void;
+  scrollToOffset(options: { offset: number; animated?: boolean }): Promise<void> | void;
+  scrollIndexIntoView(options: { index: number; animated?: boolean }): Promise<void> | void;
+};
+
+interface VirtualizedListDrawDistanceInput {
+  readonly estimatedItemSize: number | undefined;
+  readonly increaseViewportBy: number | { top: number; bottom: number } | undefined;
+  readonly minOverscanItemCount: number | { top: number; bottom: number } | undefined;
+}
 
 export interface VirtualizedListState {
   readonly isAtEnd: boolean;
@@ -57,64 +58,64 @@ export interface VirtualizedListProps<T> {
   readonly "data-testid"?: string;
 }
 
-export function resolveVirtualizedListFollowOutput(
-  maintainScrollAtEnd: boolean | { animated?: boolean },
-  isAtBottom: boolean,
-): VirtualizedListFollowOutput {
-  if (!isAtBottom || !maintainScrollAtEnd) {
-    return false;
+export function resolveVirtualizedListDrawDistance({
+  estimatedItemSize,
+  increaseViewportBy,
+  minOverscanItemCount,
+}: VirtualizedListDrawDistanceInput): number | undefined {
+  const viewportDistance = resolveMaxOverscanValue(increaseViewportBy);
+  const overscanItemCount = resolveMaxOverscanValue(minOverscanItemCount);
+  const itemDistance =
+    overscanItemCount !== undefined && estimatedItemSize !== undefined
+      ? overscanItemCount * estimatedItemSize
+      : undefined;
+  if (viewportDistance === undefined) {
+    return itemDistance;
   }
-  if (typeof maintainScrollAtEnd === "object" && maintainScrollAtEnd.animated) {
-    return "smooth";
+  if (itemDistance === undefined) {
+    return viewportDistance;
   }
-  return "auto";
-}
-
-export function getVirtualizedListInitialTopMostItemIndex(
-  initialScrollAtEnd: boolean,
-  itemCount: number,
-): VirtualizedListInitialIndex | undefined {
-  return initialScrollAtEnd && itemCount > 0 ? { index: "LAST", align: "end" } : undefined;
-}
-
-export function getVirtualizedListScrollBehavior(
-  animated?: boolean,
-): VirtualizedListScrollBehavior {
-  return animated ? "smooth" : "auto";
+  return Math.max(viewportDistance, itemDistance);
 }
 
 export function createVirtualizedListHandle({
-  virtuosoRef,
-  scrollableNodeRef,
+  listRef,
   isAtEndRef,
 }: {
-  readonly virtuosoRef: RefBox<VirtualizedListImperativeTarget | null>;
-  readonly scrollableNodeRef: RefBox<HTMLElement | null>;
+  readonly listRef: RefBox<VirtualizedListImperativeTarget | null>;
   readonly isAtEndRef: RefBox<boolean>;
 }): VirtualizedListHandle {
   return {
-    getScrollableNode: () => scrollableNodeRef.current,
-    getState: () => ({ isAtEnd: isAtEndRef.current }),
+    getScrollableNode: () => listRef.current?.getScrollableNode?.() ?? null,
+    getState: () => ({
+      isAtEnd: listRef.current?.getState?.().isAtEnd ?? isAtEndRef.current,
+    }),
     scrollToEnd: (options) => {
-      virtuosoRef.current?.scrollToIndex({
-        index: "LAST",
-        align: "end",
-        behavior: getVirtualizedListScrollBehavior(options?.animated),
-      });
+      const scrollOptions =
+        options?.animated === undefined ? undefined : { animated: options.animated };
+      void listRef.current?.scrollToEnd?.(scrollOptions);
     },
     scrollToOffset: ({ offset, animated }) => {
-      virtuosoRef.current?.scrollTo({
-        top: offset,
-        behavior: getVirtualizedListScrollBehavior(animated),
-      });
+      const scrollOptions = animated === undefined ? { offset } : { offset, animated };
+      void listRef.current?.scrollToOffset?.(scrollOptions);
     },
     scrollIndexIntoView: ({ index, animated }) => {
-      virtuosoRef.current?.scrollIntoView({
-        index,
-        behavior: getVirtualizedListScrollBehavior(animated),
-      });
+      const scrollOptions = animated === undefined ? { index } : { index, animated };
+      void listRef.current?.scrollIndexIntoView?.(scrollOptions);
     },
   };
+}
+
+function resolveMaxOverscanValue(
+  value: number | { top: number; bottom: number } | undefined,
+): number | undefined {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (!value) {
+    return undefined;
+  }
+  return Math.max(value.top, value.bottom);
 }
 
 function VirtualizedListInner<T>(
@@ -138,81 +139,62 @@ function VirtualizedListInner<T>(
   }: VirtualizedListProps<T>,
   ref: ForwardedRef<VirtualizedListHandle>,
 ) {
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
-  const scrollableNodeRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(initialScrollAtEnd || data.length === 0);
 
-  const followOutput = useCallback(
-    (isAtBottom: boolean) => {
-      isAtEndRef.current = isAtBottom;
-      return resolveVirtualizedListFollowOutput(maintainScrollAtEnd, isAtBottom);
-    },
-    [maintainScrollAtEnd],
+  const handleScroll = useCallback(() => {
+    const nextIsAtEnd = listRef.current?.getState?.().isAtEnd ?? isAtEndRef.current;
+    if (nextIsAtEnd !== isAtEndRef.current) {
+      onIsAtEndChange?.(nextIsAtEnd);
+    }
+    isAtEndRef.current = nextIsAtEnd;
+  }, [onIsAtEndChange]);
+
+  const handleKeyExtractor = useCallback(
+    (item: T, index: number) => String(keyExtractor(item, index)),
+    [keyExtractor],
   );
 
-  const handleAtBottomStateChange = useCallback(
-    (isAtEnd: boolean) => {
-      isAtEndRef.current = isAtEnd;
-      onIsAtEndChange?.(isAtEnd);
-    },
-    [onIsAtEndChange],
+  const handleRenderItem = useCallback(
+    ({ item, index }: { item: T; index: number }) => renderItem({ item, index }),
+    [renderItem],
   );
-
-  const setScrollerRef = useCallback((node: HTMLElement | Window | null) => {
-    scrollableNodeRef.current = node instanceof HTMLElement ? node : null;
-  }, []);
 
   useImperativeHandle(
     ref,
     () =>
       createVirtualizedListHandle({
-        virtuosoRef,
-        scrollableNodeRef,
+        listRef,
         isAtEndRef,
       }),
     [],
   );
 
-  const components = useMemo<VirtuosoComponents<T>>(() => {
-    const nextComponents: VirtuosoComponents<T> = {};
-    if (ListHeaderComponent) {
-      nextComponents.Header = function Header() {
-        return <>{ListHeaderComponent}</>;
-      };
-    }
-    if (ListFooterComponent) {
-      nextComponents.Footer = function Footer() {
-        return <>{ListFooterComponent}</>;
-      };
-    }
-    return nextComponents;
-  }, [ListFooterComponent, ListHeaderComponent]);
-  const initialTopMostItemIndex = getVirtualizedListInitialTopMostItemIndex(
-    initialScrollAtEnd,
-    data.length,
-  );
+  const drawDistance = resolveVirtualizedListDrawDistance({
+    estimatedItemSize,
+    increaseViewportBy,
+    minOverscanItemCount,
+  });
 
   return (
-    <Virtuoso<T>
-      ref={virtuosoRef}
+    <LegendList<T>
+      ref={listRef}
       data={data}
-      computeItemKey={(index, item) => keyExtractor(item, index)}
-      itemContent={(index, item) => renderItem({ item, index })}
-      followOutput={followOutput}
-      atBottomStateChange={handleAtBottomStateChange}
-      className={className}
-      style={style}
-      components={components}
-      scrollerRef={setScrollerRef}
-      {...(initialTopMostItemIndex !== undefined ? { initialTopMostItemIndex } : {})}
-      {...(onEndReached ? { endReached: () => onEndReached() } : {})}
+      keyExtractor={handleKeyExtractor}
+      renderItem={handleRenderItem}
+      initialScrollAtEnd={initialScrollAtEnd}
+      maintainScrollAtEnd={maintainScrollAtEnd}
+      maintainVisibleContentPosition={{ data: false, size: true }}
+      onScroll={handleScroll}
+      ListHeaderComponent={ListHeaderComponent ? <>{ListHeaderComponent}</> : null}
+      ListFooterComponent={ListFooterComponent ? <>{ListFooterComponent}</> : null}
+      {...(className !== undefined ? { className } : {})}
+      {...(style !== undefined ? { style } : {})}
+      {...(onEndReached ? { onEndReached: () => onEndReached() } : {})}
       {...(dataTestId !== undefined ? { "data-testid": dataTestId } : {})}
-      {...(estimatedItemSize !== undefined ? { defaultItemHeight: estimatedItemSize } : {})}
-      {...(maintainScrollAtEndThreshold !== undefined
-        ? { atBottomThreshold: maintainScrollAtEndThreshold }
-        : {})}
-      {...(increaseViewportBy !== undefined ? { increaseViewportBy } : {})}
-      {...(minOverscanItemCount !== undefined ? { minOverscanItemCount } : {})}
+      {...(estimatedItemSize !== undefined ? { estimatedItemSize } : {})}
+      {...(maintainScrollAtEndThreshold !== undefined ? { maintainScrollAtEndThreshold } : {})}
+      {...(drawDistance !== undefined ? { drawDistance } : {})}
     />
   );
 }
