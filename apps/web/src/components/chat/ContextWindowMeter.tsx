@@ -25,7 +25,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot; onOpen
       <button
         type="button"
         onClick={onOpenContextTab}
-        className="group inline-flex cursor-pointer items-center justify-center rounded-full p-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="group/meter inline-flex cursor-pointer items-center justify-center rounded-full p-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         aria-label={
           usage.maxTokens !== null && usedPercentage
             ? `Context window ${usedPercentage} used`
@@ -61,7 +61,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot; onOpen
           </svg>
           <span
             className={cn(
-              "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium transition-colors group-hover:bg-accent",
+              "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium transition-colors group-hover/meter:bg-accent",
               "text-muted-foreground",
             )}
           >
@@ -83,7 +83,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot; onOpen
         render={
           <button
             type="button"
-            className="group inline-flex cursor-pointer items-center justify-center rounded-full p-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            className="group/meter inline-flex cursor-pointer items-center justify-center rounded-full p-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
