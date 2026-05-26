@@ -4,8 +4,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter } from "effect/unstable/http";
 import {
+  readPersistedT3WorkProjectSetupState,
   renderT3WorkProjectSetupFiles,
   resolveT3WorkProjectSetupProfileId,
+  resolveT3WorkProjectSetupWriteDecision,
   T3WORK_PROJECT_PROFILE_MANIFEST_PATH,
 } from "./t3work-projectSetup.ts";
 import {
@@ -36,15 +38,6 @@ import type {
   ReferenceManifestFile,
 } from "./t3work-project-repository-utils.ts";
 
-function readPersistedSetupProfileId(value: string): string | undefined {
-  try {
-    const parsed = JSON.parse(value);
-    return typeof parsed?.profileId === "string" ? parsed.profileId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export const t3workProjectWorkspaceBootstrapRouteLayer = HttpRouter.add(
   "POST",
   "/api/t3work/project/workspace/bootstrap",
@@ -65,22 +58,62 @@ export const t3workProjectWorkspaceBootstrapRouteLayer = HttpRouter.add(
     const persistedProfileExists = yield* fileSystem
       .exists(persistedProfilePath)
       .pipe(Effect.orElseSucceed(() => false));
-    const persistedProfileId = persistedProfileExists
-      ? readPersistedSetupProfileId(
+    const persistedSetupState = persistedProfileExists
+      ? readPersistedT3WorkProjectSetupState(
           yield* fileSystem
             .readFileString(persistedProfilePath)
             .pipe(Effect.orElseSucceed(() => "")),
         )
-      : undefined;
+      : { managedFileHashes: {} };
     const setupProfileId = resolveT3WorkProjectSetupProfileId(
-      input.setupProfileId ?? persistedProfileId,
+      input.setupProfileId ?? persistedSetupState.profileId,
     );
-    const setupFiles = renderT3WorkProjectSetupFiles({ profileId: setupProfileId });
+    const previewSetupFiles = renderT3WorkProjectSetupFiles({ profileId: setupProfileId });
+    const writeDecisions = new Map<
+      string,
+      ReturnType<typeof resolveT3WorkProjectSetupWriteDecision>
+    >();
+    const nextManagedFileHashes: Record<string, string> = {
+      ...persistedSetupState.managedFileHashes,
+    };
+
+    for (const file of previewSetupFiles) {
+      if (!file.managedRefresh) {
+        continue;
+      }
+
+      const targetPath = path.join(workspaceRoot, file.relativePath);
+      const exists = yield* fileSystem.exists(targetPath).pipe(Effect.orElseSucceed(() => false));
+      const currentContents = exists
+        ? yield* fileSystem
+            .readFileString(targetPath)
+            .pipe(Effect.mapError(toAtlassianError("Failed to read workspace setup file.")))
+        : undefined;
+      const persistedManagedHash = persistedSetupState.managedFileHashes[file.relativePath];
+      const decision = resolveT3WorkProjectSetupWriteDecision({
+        file,
+        ...(typeof currentContents === "string" ? { currentContents } : {}),
+        ...(typeof persistedManagedHash === "string" ? { persistedManagedHash } : {}),
+      });
+      writeDecisions.set(file.relativePath, decision);
+      if (decision.nextManagedHash) {
+        nextManagedFileHashes[file.relativePath] = decision.nextManagedHash;
+      }
+    }
+
+    const setupFiles = renderT3WorkProjectSetupFiles({
+      profileId: setupProfileId,
+      managedFileHashes: nextManagedFileHashes,
+    });
     for (const file of setupFiles) {
       const targetPath = path.join(workspaceRoot, file.relativePath);
       const exists = yield* fileSystem.exists(targetPath).pipe(Effect.orElseSucceed(() => false));
-      if (exists && file.writeMode !== "overwrite") {
-        continue;
+      if (exists) {
+        if (file.writeMode === "overwrite") {
+          // Always rewrite the manifest so stored scaffold hashes stay current.
+        } else if (!writeDecisions.get(file.relativePath)?.shouldWrite) {
+          continue;
+        }
       }
       yield* fileSystem
         .makeDirectory(path.dirname(targetPath), { recursive: true })

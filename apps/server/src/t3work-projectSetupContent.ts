@@ -4,6 +4,7 @@ import {
   T3WORK_PROJECT_PROFILE_MANIFEST_PATH,
   T3WORK_PROJECT_RECIPES_ROOT,
   T3WORK_PROJECT_SKILLS_ROOT,
+  T3WORK_PROJECT_STATUS_SKILL_PATH,
   type ProjectSetupProfileDefinition,
 } from "./t3work-projectSetupShared.ts";
 
@@ -29,6 +30,8 @@ export function renderAgentsMd(profile: ProjectSetupProfileDefinition): string {
 - Keep replies short and direct.
 - ${technicalDepthLine}
 - ${complexityLine}
+- Use project context files as internal evidence, but answer in user-facing project terms.
+- Do not mention cache paths, JSON file names, or workspace internals unless the user asks for provenance or debugging detail.
 - Explain what changed, why it matters, and what the user should do next.
 
 ## Thread Naming
@@ -39,18 +42,26 @@ export function renderAgentsMd(profile: ProjectSetupProfileDefinition): string {
 
 ## Start With Project Context
 
-Use these project files before asking the user to restate context:
+Use these project files internally before asking the user to restate context:
 
 - ${T3WORK_PROJECT_CONTEXT_ENTRYPOINT_PATH}
 - ${T3WORK_PROJECT_CONTEXT_ROOT}/
 - .t3work/references/reference-repositories.json
 - ${T3WORK_PROJECT_PROFILE_MANIFEST_PATH}
 
+## Status And Context Questions
+
+- Lead with the direct answer first.
+- Then add owner, blocker, due signal, next step, or affected repository when available.
+- Keep the exploration steps internal unless the user asks how the answer was verified.
+- If the answer requires checking multiple context bundles or repositories, prefer a read-only subagent and return one synthesized summary.
+
 ## Durable Outputs
 
 - Save durable project artifacts in the workspace, not only in chat.
 - Prefer project-local recipes under ${T3WORK_PROJECT_RECIPES_ROOT}/.
 - Prefer project-local skills under ${T3WORK_PROJECT_SKILLS_ROOT}/ for repeatable workflows.
+- For ticket or project status lookups, prefer ${T3WORK_PROJECT_STATUS_SKILL_PATH} when it is available.
 - After a workflow succeeds and looks reusable, proactively offer to create or update a project skill or recipe.
 - Offer first. Do not silently create project skills or recipes.
 
@@ -64,11 +75,20 @@ Use these project files before asking the user to restate context:
 export function renderContextReadme(): string {
   return `# Project Context
 
-Start with entrypoint.json for the latest synced project summary.
+Use this context bundle to answer project questions without making the user restate background.
 
-- metadata.json holds the latest project overview prepared for agent context.
-- jira/, github/, misc/, and work-items/ contain the linked structured snapshots written during add-to-chat and automatic sync.
+Internal navigation only:
+
+- entrypoint.json is the quickest status snapshot for the current workspace.
+- metadata.json is the prepared project overview for agent context.
+- jira/, github/, misc/, and work-items/ contain linked structured snapshots written during add-to-chat and automatic sync.
 - ../references/reference-repositories.json lists linked local repository mirrors.
+
+Response rules:
+
+- Translate findings into user-facing project terms such as status, owner, blocker, next step, or affected repository.
+- Do not mention internal cache paths, JSON file names, or sync mechanics unless the user asks for provenance or debugging detail.
+- When the answer requires checking several sources, prefer a read-only subagent and return one synthesized summary.
 `;
 }
 
@@ -79,6 +99,8 @@ Save project-local skills here when a workflow becomes repeatable.
 
 - Offer before creating a new skill.
 - Keep skills focused on one repeatable workflow.
+- For read-only lookup workflows, prefer a subagent-driven exploration phase and a user-facing summary.
+- Hide internal file layout unless the user explicitly asks where the answer came from.
 - Prefer durable artifacts over chat-only summaries.
 - Use ../templates/skills/ as a starting point when helpful.
 `;
@@ -127,7 +149,14 @@ Help with a repeatable ${profile.title.toLowerCase()} workflow.
 
 ## Required Context
 
-- ${T3WORK_PROJECT_CONTEXT_ENTRYPOINT_PATH}
+- Use ${T3WORK_PROJECT_CONTEXT_ENTRYPOINT_PATH} and neighboring context bundles as internal evidence.
+
+## Workflow
+
+1. If the task is mostly read-only lookup or synthesis, use a read-only subagent for the exploration phase.
+2. Reconcile the findings into the smallest useful answer.
+3. Lead with the outcome in user-facing terms.
+4. Mention internal paths or JSON file names only when the user explicitly asks for provenance.
 
 ## Working Rules
 
