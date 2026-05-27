@@ -1,7 +1,7 @@
 import {
-  AuthBearerBootstrapResult,
-  AuthSessionState,
-  AuthWebSocketTokenResult,
+  AuthBearerBootstrapJsonResult,
+  AuthSessionJsonState,
+  AuthWebSocketTokenJsonResult,
   type AuthBearerBootstrapResult as AuthBearerBootstrapResultType,
   type AuthSessionState as AuthSessionStateType,
   type AuthWebSocketTokenResult as AuthWebSocketTokenResultType,
@@ -58,9 +58,9 @@ export class DesktopSshRemoteApi extends Context.Service<
 const decodeExecutionEnvironmentDescriptor = Schema.decodeUnknownEffect(
   ExecutionEnvironmentDescriptor,
 );
-const decodeAuthBearerBootstrapResult = Schema.decodeUnknownEffect(AuthBearerBootstrapResult);
-const decodeAuthSessionState = Schema.decodeUnknownEffect(AuthSessionState);
-const decodeAuthWebSocketTokenResult = Schema.decodeUnknownEffect(AuthWebSocketTokenResult);
+const decodeAuthBearerBootstrapResult = Schema.decodeUnknownEffect(AuthBearerBootstrapJsonResult);
+const decodeAuthSessionState = Schema.decodeUnknownEffect(AuthSessionJsonState);
+const decodeAuthWebSocketTokenResult = Schema.decodeUnknownEffect(AuthWebSocketTokenJsonResult);
 
 const mapError =
   (operation: DesktopSshRemoteApiOperation) =>

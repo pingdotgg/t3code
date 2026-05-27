@@ -122,11 +122,26 @@ export const AuthBearerBootstrapResult = Schema.Struct({
 });
 export type AuthBearerBootstrapResult = typeof AuthBearerBootstrapResult.Type;
 
+export const AuthBearerBootstrapJsonResult = Schema.Struct({
+  authenticated: Schema.Literal(true),
+  role: AuthSessionRole,
+  sessionMethod: Schema.Literal("bearer-session-token"),
+  expiresAt: Schema.DateTimeUtcFromString,
+  sessionToken: TrimmedNonEmptyString,
+});
+export type AuthBearerBootstrapJsonResult = typeof AuthBearerBootstrapJsonResult.Type;
+
 export const AuthWebSocketTokenResult = Schema.Struct({
   token: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthWebSocketTokenResult = typeof AuthWebSocketTokenResult.Type;
+
+export const AuthWebSocketTokenJsonResult = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtcFromString,
+});
+export type AuthWebSocketTokenJsonResult = typeof AuthWebSocketTokenJsonResult.Type;
 
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -264,3 +279,12 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
+
+export const AuthSessionJsonState = Schema.Struct({
+  authenticated: Schema.Boolean,
+  auth: ServerAuthDescriptor,
+  role: Schema.optionalKey(AuthSessionRole),
+  sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
+  expiresAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+});
+export type AuthSessionJsonState = typeof AuthSessionJsonState.Type;
