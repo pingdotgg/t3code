@@ -277,7 +277,7 @@ Provider resume flow:
 
 ```text
 resolve activeProviderThreadId
-resolve nativeThreadRef / resume cursor
+resolve nativeThreadRef / nativeConversationHeadRef resume cursor
 start ProviderSession
 provider resume
 bind new ProviderSessionId to ProviderThread

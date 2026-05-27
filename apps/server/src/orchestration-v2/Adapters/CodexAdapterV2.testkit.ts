@@ -2,10 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
-import { Effect, Layer, Schema } from "effect";
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -46,69 +48,83 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
   };
 }
 
-function makeReplayServerConfig(scenario: string): ServerConfigShape {
-  const baseDir = mkdtempSync(path.join(tmpdir(), `t3-orchestration-v2-codex-${scenario}-`));
-  const stateDir = path.join(baseDir, "userdata");
-  const logsDir = path.join(stateDir, "logs");
-  const providerLogsDir = path.join(logsDir, "provider");
-  const terminalLogsDir = path.join(logsDir, "terminals");
-  const attachmentsDir = path.join(stateDir, "attachments");
-  const worktreesDir = path.join(baseDir, "worktrees");
-  const providerStatusCacheDir = path.join(baseDir, "caches");
+function makeReplayServerConfig(
+  scenario: string,
+): Effect.Effect<
+  ServerConfigShape,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectory({
+      prefix: `t3-orchestration-v2-codex-${scenario}-`,
+    });
+    const stateDir = path.join(baseDir, "userdata");
+    const logsDir = path.join(stateDir, "logs");
+    const providerLogsDir = path.join(logsDir, "provider");
+    const terminalLogsDir = path.join(logsDir, "terminals");
+    const attachmentsDir = path.join(stateDir, "attachments");
+    const worktreesDir = path.join(baseDir, "worktrees");
+    const providerStatusCacheDir = path.join(baseDir, "caches");
 
-  for (const directory of [
-    stateDir,
-    logsDir,
-    providerLogsDir,
-    terminalLogsDir,
-    attachmentsDir,
-    worktreesDir,
-    providerStatusCacheDir,
-  ]) {
-    mkdirSync(directory, { recursive: true });
-  }
+    for (const directory of [
+      stateDir,
+      logsDir,
+      providerLogsDir,
+      terminalLogsDir,
+      attachmentsDir,
+      worktreesDir,
+      providerStatusCacheDir,
+    ]) {
+      yield* fs.makeDirectory(directory, { recursive: true });
+    }
 
-  return {
-    logLevel: "Error",
-    traceMinLevel: "Info",
-    traceTimingEnabled: true,
-    traceBatchWindowMs: 200,
-    traceMaxBytes: 10 * 1024 * 1024,
-    traceMaxFiles: 10,
-    otlpTracesUrl: undefined,
-    otlpMetricsUrl: undefined,
-    otlpExportIntervalMs: 10_000,
-    otlpServiceName: "t3-server",
-    mode: "web",
-    port: 0,
-    host: undefined,
-    cwd: process.cwd(),
-    baseDir,
-    staticDir: undefined,
-    devUrl: undefined,
-    noBrowser: false,
-    startupPresentation: "browser",
-    desktopBootstrapToken: undefined,
-    autoBootstrapProjectFromCwd: false,
-    logWebSocketEvents: false,
-    stateDir,
-    dbPath: path.join(stateDir, "state.sqlite"),
-    keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
-    settingsPath: path.join(stateDir, "settings.json"),
-    providerStatusCacheDir,
-    worktreesDir,
-    attachmentsDir,
-    logsDir,
-    serverLogPath: path.join(logsDir, "server.log"),
-    serverTracePath: path.join(logsDir, "server.trace.ndjson"),
-    providerLogsDir,
-    providerEventLogPath: path.join(providerLogsDir, "events.log"),
-    terminalLogsDir,
-    anonymousIdPath: path.join(stateDir, "anonymous-id"),
-    environmentIdPath: path.join(stateDir, "environment-id"),
-    serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
-    secretsDir: path.join(stateDir, "secrets"),
-  };
+    return {
+      logLevel: "Error",
+      traceMinLevel: "Info",
+      traceTimingEnabled: true,
+      traceBatchWindowMs: 200,
+      traceMaxBytes: 10 * 1024 * 1024,
+      traceMaxFiles: 10,
+      otlpTracesUrl: undefined,
+      otlpMetricsUrl: undefined,
+      otlpExportIntervalMs: 10_000,
+      otlpServiceName: "t3-server",
+      mode: "web",
+      port: 0,
+      host: undefined,
+      cwd: process.cwd(),
+      baseDir,
+      staticDir: undefined,
+      devUrl: undefined,
+      noBrowser: false,
+      startupPresentation: "browser",
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
+      desktopBootstrapToken: undefined,
+      autoBootstrapProjectFromCwd: false,
+      logWebSocketEvents: false,
+      stateDir,
+      dbPath: path.join(stateDir, "state.sqlite"),
+      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+      settingsPath: path.join(stateDir, "settings.json"),
+      providerStatusCacheDir,
+      worktreesDir,
+      attachmentsDir,
+      logsDir,
+      serverLogPath: path.join(logsDir, "server.log"),
+      serverTracePath: path.join(logsDir, "server.trace.ndjson"),
+      providerLogsDir,
+      providerEventLogPath: path.join(providerLogsDir, "events.log"),
+      terminalLogsDir,
+      anonymousIdPath: path.join(stateDir, "anonymous-id"),
+      environmentIdPath: path.join(stateDir, "environment-id"),
+      serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
+      secretsDir: path.join(stateDir, "secrets"),
+    };
+  });
 }
 
 export function makeCodexProviderAdapterRegistryReplayLayer(input: {
@@ -137,11 +153,18 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
         );
       }),
   });
-  const serverConfigLayer = Layer.succeed(
+  const serverConfigLayer = Layer.effect(
     ServerConfig,
-    makeReplayServerConfig(input.transcript.scenario),
-  );
-  const adapterLayer = codexAdapterLayer.pipe(
+    makeReplayServerConfig(input.transcript.scenario).pipe(Effect.orDie),
+  ).pipe(Layer.provide(NodeServices.layer));
+  const registryLayer = makeProviderAdapterRegistryDriverLayer({
+    drivers: [CodexAdapterV2Driver],
+    configMap: {
+      [CODEX_DEFAULT_INSTANCE_ID]: {
+        driver: CODEX_DRIVER_KIND,
+      },
+    },
+  }).pipe(
     Layer.provide(
       Layer.mergeAll(
         replayClientFactoryLayer,

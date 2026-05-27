@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 import {
   CheckpointId,
@@ -426,6 +426,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   appThreadId: Schema.NullOr(ThreadId),
   ownerNodeId: Schema.NullOr(NodeId),
   nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  nativeConversationHeadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   status: Schema.Literals(["not_loaded", "idle", "active", "archived", "closed", "error"]),
   firstRunOrdinal: Schema.NullOr(PositiveInt),
   lastRunOrdinal: Schema.NullOr(PositiveInt),
@@ -1488,6 +1489,7 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedErrorClass
     commandId: CommandId,
     commandType: Schema.String,
     message: Schema.String,
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
