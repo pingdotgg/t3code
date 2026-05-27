@@ -64,7 +64,6 @@ import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
-  selectProjectByRef,
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
@@ -156,6 +155,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarThreadGitCwd,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -165,7 +165,6 @@ import {
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
-import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
@@ -264,6 +263,7 @@ function buildThreadJumpLabelMap(input: {
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
+  threadProjectCwd: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
   jumpLabel: string | null;
@@ -337,6 +337,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     projectKey,
     sortable,
     thread,
+    threadProjectCwd,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -359,18 +360,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadEnvironmentLabel = isRemoteThread
     ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
     : null;
-  // For grouped projects, the thread may belong to a different environment
-  // than the representative project.  Look up the thread's own project cwd
-  // so git status (and thus PR detection) queries the correct path.
-  const threadProjectCwd = useStore(
-    useMemo(
-      () => (state: import("../store").AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
-      [thread.environmentId, thread.projectId],
-    ),
-  );
-  const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd,
+    projectCwd: props.projectCwd,
+  });
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
@@ -794,6 +788,7 @@ interface SidebarProjectThreadListProps {
   orderedProjectThreadKeys: readonly string[];
   pinnedThreadKeys: readonly string[];
   renderedThreads: readonly SidebarThreadSummary[];
+  memberProjectByScopedKey: ReadonlyMap<string, SidebarProjectGroupMember>;
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
@@ -851,6 +846,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     orderedProjectThreadKeys,
     pinnedThreadKeys,
     renderedThreads,
+    memberProjectByScopedKey,
     showEmptyThreadState,
     shouldShowThreadPanel,
     isThreadListExpanded,
@@ -916,9 +912,13 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const renderThreadRow = useCallback(
     (thread: SidebarThreadSummary) => {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      const threadProjectKey = scopedProjectKey(
+        scopeProjectRef(thread.environmentId, thread.projectId),
+      );
       const rowProps: SidebarThreadRowProps = {
         thread,
         projectCwd,
+        threadProjectCwd: memberProjectByScopedKey.get(threadProjectKey)?.cwd ?? null,
         orderedProjectThreadKeys,
         isActive: activeRouteThreadKey === threadKey,
         jumpLabel: threadJumpLabelByKey.get(threadKey) ?? null,
@@ -963,6 +963,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
       handleMultiSelectContextMenu,
       handleThreadClick,
       handleThreadContextMenu,
+      memberProjectByScopedKey,
       navigateToThread,
       openPrLink,
       orderedProjectThreadKeys,
@@ -2240,6 +2241,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         pinnedThreadKeys={pinnedThreadKeys}
         renderedThreads={renderedThreads}
+        memberProjectByScopedKey={memberProjectByScopedKey}
         showEmptyThreadState={showEmptyThreadState}
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
