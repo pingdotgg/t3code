@@ -13,8 +13,10 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { Context, Option, Schema } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import type * as Effect from "effect/Effect";
 
 export const CorrelationScopeV2 = Schema.Struct({
   provider: ProviderKind,

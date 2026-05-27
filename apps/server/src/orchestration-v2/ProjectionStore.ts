@@ -28,7 +28,12 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { Context, DateTime, Effect, Layer, Ref, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedErrorClass<ProjectionStoreApplyEventError>()(
@@ -154,10 +159,10 @@ export function applyToProjection(
       };
     case "run.created":
     case "run.updated":
-      return {
+      return withLocalVisibleTurnItems({
         ...base,
         runs: upsertById(base.runs, event.payload),
-      };
+      });
     case "run-attempt.created":
     case "run-attempt.updated":
       return {
@@ -406,12 +411,38 @@ function sortMessagesByTurnItemOrder(
   });
 }
 
-function localVisibleTurnItems(
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+function rolledBackRunIds(projection: OrchestrationV2ThreadProjection): ReadonlySet<RunId> {
+  return new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+}
+
+function activeLocalTurnItems(
+  projection: OrchestrationV2ThreadProjection,
 ): Array<OrchestrationV2ProjectedTurnItem> {
-  return turnItems.map((item, position) => ({
-    position,
-    visibility: "local",
+  const rolledBack = rolledBackRunIds(projection);
+  return projection.turnItems
+    .filter((item) => item.runId === null || !rolledBack.has(item.runId))
+    .map((item, position) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: item.threadId,
+      sourceItemId: item.id,
+      item,
+    }));
+}
+
+function localVisibleTurnItems(
+  projection: OrchestrationV2ThreadProjection,
+): Array<OrchestrationV2ProjectedTurnItem> {
+  return activeLocalTurnItems(projection);
+}
+
+function inheritedVisibleTurnItemsFromLocalItems(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+): Array<Omit<OrchestrationV2ProjectedTurnItem, "position">> {
+  return items.map((item) => ({
+    visibility: "inherited" as const,
     sourceThreadId: item.threadId,
     sourceItemId: item.id,
     item,
@@ -423,7 +454,7 @@ function withLocalVisibleTurnItems(
 ): OrchestrationV2ThreadProjection {
   return {
     ...projection,
-    visibleTurnItems: localVisibleTurnItems(projection.turnItems),
+    visibleTurnItems: localVisibleTurnItems(projection),
   };
 }
 
@@ -469,27 +500,27 @@ function visibleTurnItemsThroughRun(input: {
   }
 
   const runOrdinalById = new Map(input.sourceProjection.runs.map((run) => [run.id, run.ordinal]));
-  return input.sourceProjection.visibleTurnItems
-    .filter((row) => {
-      const item = row.item;
-      if (item.threadId !== input.sourceProjection.thread.id) {
-        return true;
-      }
-      if (item.type === "fork") {
-        return true;
-      }
+  const inheritedPrefix = input.sourceProjection.visibleTurnItems
+    .filter(
+      (row) => row.item.threadId !== input.sourceProjection.thread.id || row.item.type === "fork",
+    )
+    .map((row) => ({
+      visibility: "inherited" as const,
+      sourceThreadId: row.sourceThreadId,
+      sourceItemId: row.sourceItemId,
+      item: row.item,
+    }));
+  const localPrefix = inheritedVisibleTurnItemsFromLocalItems(
+    input.sourceProjection.turnItems.filter((item) => {
       if (item.runId === null) {
         return false;
       }
       const ordinal = runOrdinalById.get(item.runId);
       return ordinal !== undefined && ordinal <= sourceRun.ordinal;
-    })
-    .map((row) => ({
-      visibility: "inherited",
-      sourceThreadId: row.sourceThreadId,
-      sourceItemId: row.sourceItemId,
-      item: row.item,
-    }));
+    }),
+  );
+
+  return [...inheritedPrefix, ...localPrefix];
 }
 
 function buildVisibleTurnItems(input: {
@@ -498,7 +529,7 @@ function buildVisibleTurnItems(input: {
 }): Array<OrchestrationV2ProjectedTurnItem> {
   const forkedFrom = input.projection.thread.forkedFrom;
   if (forkedFrom?.type !== "run" || input.sourceProjection === null) {
-    return localVisibleTurnItems(input.projection.turnItems);
+    return localVisibleTurnItems(input.projection);
   }
 
   const inherited = visibleTurnItemsThroughRun({
@@ -510,11 +541,11 @@ function buildVisibleTurnItems(input: {
     sourceThreadId: forkedFrom.threadId,
     sourceRunId: forkedFrom.runId,
   });
-  const local = input.projection.turnItems.map((item) => ({
+  const local = activeLocalTurnItems(input.projection).map((row) => ({
     visibility: "local" as const,
-    sourceThreadId: item.threadId,
-    sourceItemId: item.id,
-    item,
+    sourceThreadId: row.sourceThreadId,
+    sourceItemId: row.sourceItemId,
+    item: row.item,
   }));
 
   return renumberVisibleTurnItems([
@@ -546,7 +577,7 @@ export function threadShellFromProjection(
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     latestRunId: latestRun?.id ?? null,
     status: latestRun?.status ?? "idle",
-    itemCount: projection.turnItems.length,
+    itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
     updatedAt: projection.updatedAt,
@@ -1490,8 +1521,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems);
-
-        return {
+        const projection = {
           thread,
           runs,
           attempts,
@@ -1507,9 +1537,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpoints,
           contextHandoffs,
           contextTransfers,
-          visibleTurnItems: localVisibleTurnItems(turnItems),
+          visibleTurnItems: [],
           updatedAt: thread.updatedAt,
         } satisfies OrchestrationV2ThreadProjection;
+        return withLocalVisibleTurnItems(projection);
       }).pipe(
         Effect.mapError((cause) =>
           Schema.is(ProjectionStoreThreadNotFoundError)(cause)
@@ -1572,7 +1603,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT COUNT(*)
                 FROM orchestration_v2_projection_turn_items i
+                LEFT JOIN orchestration_v2_projection_runs r
+                  ON r.run_id = i.run_id
                 WHERE i.thread_id = t.thread_id
+                  AND (i.run_id IS NULL OR r.status <> 'rolled_back')
               ) AS item_count
             FROM orchestration_v2_projection_threads t
             WHERE t.deleted_at IS NULL

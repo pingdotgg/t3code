@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DateTime, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import {
   CheckpointId,
@@ -26,7 +27,7 @@ import {
   OrchestrationV2TurnItem,
 } from "./orchestrationV2.ts";
 
-const now = DateTime.fromDateUnsafe(new Date("2026-04-20T00:00:00.000Z"));
+const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
 describe("orchestration V2 contracts", () => {
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {

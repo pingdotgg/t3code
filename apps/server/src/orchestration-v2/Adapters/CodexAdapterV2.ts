@@ -19,19 +19,18 @@ import type {
 } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
-import {
-  Context,
-  DateTime,
-  Deferred,
-  Effect,
-  FileSystem,
-  Layer,
-  Queue,
-  Ref,
-  Schema,
-  Scope,
-  Stream,
-} from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -58,6 +57,7 @@ import {
   ProviderAdapterV2,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2ForkThreadInput,
+  type ProviderAdapterV2RollbackThreadInput,
   type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2SteerInput,
@@ -180,7 +180,7 @@ function normalizeCodexCause(error: unknown): unknown {
 function codexTimestamp(seconds: number | null | undefined): DateTime.Utc {
   return seconds === null || seconds === undefined
     ? DateTime.nowUnsafe()
-    : DateTime.fromDateUnsafe(new Date(seconds * 1000));
+    : DateTime.makeUnsafe(seconds * 1000);
 }
 
 function mapCodexTurnStatus(
@@ -481,6 +481,7 @@ function providerThreadFromCodexThread(input: {
       nativeId: input.thread.id,
       strength: "strong" as const,
     },
+    nativeConversationHeadRef: null,
     status: "idle",
     firstRunOrdinal: null,
     lastRunOrdinal: null,
@@ -497,17 +498,37 @@ const isTerminalProviderTurn = (turn: OrchestrationV2ProviderTurn): boolean =>
   turn.status === "failed" ||
   turn.status === "cancelled";
 
+const providerTurnsForThread = (
+  providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+  providerThread: OrchestrationV2ProviderThread,
+): ReadonlyArray<OrchestrationV2ProviderTurn> =>
+  providerTurns.filter((turn) => turn.providerThreadId === providerThread.id);
+
+const countTerminalTurnsAfterBoundary = (
+  providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+  providerTurnId: ProviderTurnId,
+): number | null => {
+  const boundaryTurn = providerTurns.find((turn) => turn.id === providerTurnId);
+  if (boundaryTurn === undefined) {
+    return null;
+  }
+
+  return providerTurns.filter(
+    (turn) => turn.ordinal > boundaryTurn.ordinal && isTerminalProviderTurn(turn),
+  ).length;
+};
+
 const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkRollbackTurnCount")(
   function* (input: ProviderAdapterV2ForkThreadInput) {
     if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
       return 0;
     }
 
-    const sourceTurns = input.sourceProviderTurns
-      .filter((turn) => turn.providerThreadId === input.sourceProviderThread.id)
-      .toSorted((left, right) => left.ordinal - right.ordinal);
-    const boundaryIndex = sourceTurns.findIndex((turn) => turn.id === input.providerTurnId);
-    if (boundaryIndex < 0) {
+    const rollbackTurnCount = countTerminalTurnsAfterBoundary(
+      providerTurnsForThread(input.sourceProviderTurns, input.sourceProviderThread),
+      input.providerTurnId,
+    );
+    if (rollbackTurnCount === null) {
       return yield* new ProviderAdapterForkThreadError({
         provider: CODEX_PROVIDER,
         providerThreadId: input.sourceProviderThread.id,
@@ -515,7 +536,40 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
       });
     }
 
-    return sourceTurns.slice(boundaryIndex + 1).filter(isTerminalProviderTurn).length;
+    return rollbackTurnCount;
+  },
+);
+
+export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
+  function* (input: ProviderAdapterV2RollbackThreadInput) {
+    const providerTurns = input.providerThreadTurns;
+    switch (input.target.type) {
+      case "thread_start":
+        return providerTurns.filter(isTerminalProviderTurn).length;
+      case "provider_turn": {
+        if (input.target.providerTurn.providerThreadId !== input.providerThread.id) {
+          return yield* new ProviderAdapterRollbackThreadError({
+            provider: CODEX_PROVIDER,
+            providerThreadId: input.providerThread.id,
+            cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${input.target.providerTurn.id}: target turn belongs to provider thread ${input.target.providerTurn.providerThreadId}.`,
+          });
+        }
+
+        const rollbackTurnCount = countTerminalTurnsAfterBoundary(
+          providerTurns,
+          input.target.providerTurn.id,
+        );
+        if (rollbackTurnCount === null) {
+          return yield* new ProviderAdapterRollbackThreadError({
+            provider: CODEX_PROVIDER,
+            providerThreadId: input.providerThread.id,
+            cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${input.target.providerTurn.id}: target turn was not found in durable provider turn history.`,
+          });
+        }
+
+        return rollbackTurnCount;
+      }
+    }
   },
 );
 
@@ -739,31 +793,46 @@ export const layer: Layer.Layer<
               return;
             }
 
-            yield* client.request("initialize", {
-              clientInfo: CODEX_CLIENT_INFO,
-              capabilities: CODEX_CLIENT_CAPABILITIES,
-            });
-            yield* client.notify("initialized", undefined);
-            yield* Ref.set(initialized, true);
-          });
-          const now = yield* DateTime.now;
-          const session = providerSession({
-            providerSessionId: input.providerSessionId,
-            cwd: input.runtimePolicy.cwd,
-            model: input.modelSelection.model,
-            now,
-          });
-          const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-          const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
-          const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
-          const itemOrdinals = yield* Ref.make(new Map<string, number>());
-          const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
-          const agentMessageDeltas = yield* Ref.make(new Map<string, string>());
-          const planDeltas = yield* Ref.make(new Map<string, string>());
-          const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
-          const pendingRuntimeRequests = yield* Ref.make(
-            new Map<string, PendingCodexRuntimeRequest>(),
-          );
+            const now = yield* DateTime.now;
+            for (const [index, nativeThreadId] of input.item.receiverThreadIds.entries()) {
+              const subagentNodeId = idAllocator.derive.nodeFromProviderItem({
+                provider: CODEX_PROVIDER,
+                nativeItemId: `${input.item.id}:${nativeThreadId}`,
+              });
+              const providerThread = {
+                id: idAllocator.derive.providerThread({
+                  provider: CODEX_PROVIDER,
+                  nativeThreadId,
+                }),
+                provider: CODEX_PROVIDER,
+                providerSessionId: input.context.providerThread.providerSessionId,
+                appThreadId: input.context.input.threadId,
+                ownerNodeId: subagentNodeId,
+                nativeThreadRef: {
+                  provider: CODEX_PROVIDER,
+                  nativeId: nativeThreadId,
+                  strength: "strong" as const,
+                },
+                nativeConversationHeadRef: null,
+                status: "idle" as const,
+                firstRunOrdinal: input.context.input.runOrdinal,
+                lastRunOrdinal: input.context.input.runOrdinal,
+                handoffIds: [],
+                forkedFrom: {
+                  providerThreadId: input.context.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                },
+                createdAt: now,
+                updatedAt: now,
+              } satisfies OrchestrationV2ProviderThread;
+              const subagent = {
+                parentContext: input.context,
+                providerThread,
+                subagentNodeId,
+                nativeToolCallId: input.item.id,
+                ordinal: index + 1,
+                startedAt: now,
+              } satisfies CodexSubagentThreadContext;
 
           const emitProviderEvent = (event: ProviderAdapterV2Event) =>
             Queue.offer(events, event).pipe(Effect.asVoid);
@@ -2354,15 +2423,26 @@ export const layer: Layer.Layer<
                 yield* emitProviderEvent({
                   type: "node.updated",
                   provider: CODEX_PROVIDER,
-                  node: artifacts.node,
-                });
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  provider: CODEX_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                });
-                return;
-              }
+                  nativeId: response.thread.id,
+                  strength: "strong",
+                },
+                nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
+                updatedAt: codexTimestamp(response.thread.updatedAt),
+              } satisfies OrchestrationV2ProviderThread;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterResumeThreadError({
+                    provider: CODEX_PROVIDER,
+                    providerSessionId: input.providerSessionId,
+                    providerThreadId: threadInput.providerThread.id,
+                    cause: normalizeCodexCause(cause),
+                  }),
+              ),
+            ),
+          startTurn: (turnInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(turnInput.providerThread);
 
               if (payload.item.type === "fileChange") {
                 const artifacts = yield* buildFileChangeArtifacts(context, payload.item);
@@ -3143,69 +3223,79 @@ export const layer: Layer.Layer<
                     status: "idle" as const,
                     updatedAt: codexTimestamp(response.thread.updatedAt),
                   },
+                  nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
+                  updatedAt: codexTimestamp(response.thread.updatedAt),
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+                providerPayload: response.thread,
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterReadThreadSnapshotError({
+                    provider: CODEX_PROVIDER,
+                    providerThreadId: threadInput.providerThread.id,
+                    cause,
+                  }),
+              ),
+            ),
+          rollbackThread: (threadInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(threadInput.providerThread);
+              const numTurns = yield* resolveCodexRollbackTurnCount(threadInput);
+              const nativeConversationHeadRef =
+                threadInput.target.type === "provider_turn"
+                  ? threadInput.target.providerTurn.nativeTurnRef
+                  : null;
+              if (numTurns === 0) {
+                return {
+                  providerThread: {
+                    ...threadInput.providerThread,
+                    nativeConversationHeadRef,
+                    status: "idle" as const,
+                  },
                   providerTurns: [],
                   messages: [],
                   runtimeRequests: [],
-                  providerPayload: response.thread,
                 };
-              }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterRollbackThreadError({
-                      provider: CODEX_PROVIDER,
-                      providerThreadId: threadInput.providerThread.id,
-                      cause: normalizeCodexCause(cause),
-                    }),
-                ),
-              ),
-            forkThread: (threadInput) =>
-              Effect.gen(function* () {
-                const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
-                const response = yield* ensureInitialized.pipe(
-                  Effect.andThen(client.request("thread/fork", { threadId })),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderAdapterForkThreadError({
-                        provider: CODEX_PROVIDER,
-                        providerThreadId: threadInput.sourceProviderThread.id,
-                        cause: normalizeCodexCause(cause),
-                      }),
-                  ),
-                );
-                const rollbackTurnCount = yield* resolveCodexForkRollbackTurnCount(threadInput);
-                const forkedThread =
-                  rollbackTurnCount === 0
-                    ? response.thread
-                    : (yield* ensureInitialized.pipe(
-                        Effect.andThen(
-                          client.request("thread/rollback", {
-                            threadId: response.thread.id,
-                            numTurns: rollbackTurnCount,
-                          }),
-                        ),
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderAdapterForkThreadError({
-                              provider: CODEX_PROVIDER,
-                              providerThreadId: threadInput.sourceProviderThread.id,
-                              cause: normalizeCodexCause(cause),
-                            }),
-                        ),
-                      )).thread;
-                return providerThreadFromCodexThread({
-                  appThreadId: threadInput.targetThreadId,
-                  idAllocator,
-                  ownerNodeId: threadInput.ownerNodeId ?? null,
-                  providerSessionId: input.providerSessionId,
-                  thread: forkedThread,
-                  forkedFrom: {
-                    providerThreadId: threadInput.sourceProviderThread.id,
-                    ...(threadInput.providerTurnId === undefined
-                      ? {}
-                      : { providerTurnId: threadInput.providerTurnId }),
+              }
+              const response = yield* ensureInitialized.pipe(
+                Effect.andThen(client.request("thread/rollback", { threadId, numTurns })),
+              );
+              return {
+                providerThread: {
+                  ...threadInput.providerThread,
+                  nativeThreadRef: {
+                    provider: CODEX_PROVIDER,
+                    nativeId: response.thread.id,
+                    strength: "strong" as const,
                   },
-                });
-              }).pipe(
+                  nativeConversationHeadRef,
+                  status: "idle" as const,
+                  updatedAt: codexTimestamp(response.thread.updatedAt),
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+                providerPayload: response.thread,
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRollbackThreadError({
+                    provider: CODEX_PROVIDER,
+                    providerThreadId: threadInput.providerThread.id,
+                    cause: normalizeCodexCause(cause),
+                  }),
+              ),
+            ),
+          forkThread: (threadInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
+              const response = yield* ensureInitialized.pipe(
+                Effect.andThen(client.request("thread/fork", { threadId })),
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterForkThreadError({

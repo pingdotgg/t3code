@@ -8,7 +8,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, DateTime, Effect, Layer, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
