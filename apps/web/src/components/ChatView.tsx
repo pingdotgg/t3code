@@ -152,6 +152,7 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { ConnectionStatusBanner } from "./mobile/ConnectionStatusBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -3539,6 +3540,7 @@ export default function ChatView(props: ChatViewProps) {
           onToggleDiff={onToggleDiff}
         />
       </header>
+      <ConnectionStatusBanner />
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
 
+import { ConnectionStatusBanner } from "../components/mobile/ConnectionStatusBanner";
 import { NoActiveThreadState } from "../components/NoActiveThreadState";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
@@ -37,6 +38,7 @@ function HostedStaticOnboardingState() {
             </span>
           </div>
         </header>
+        <ConnectionStatusBanner />
 
         <Empty className="flex-1">
           <div className="w-full max-w-xl rounded-3xl border border-border/55 bg-card/20 px-8 py-12 shadow-sm/5">
