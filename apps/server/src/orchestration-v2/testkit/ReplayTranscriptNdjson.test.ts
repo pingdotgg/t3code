@@ -1,6 +1,7 @@
 import { ProviderReplayNdjsonParseError } from "./ReplayTranscriptNdjson.ts";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 

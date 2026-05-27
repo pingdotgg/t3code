@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import * as Layer from "effect/Layer";
 
 import {
   claudeAgentSdkQueryRunnerLiveLayer,

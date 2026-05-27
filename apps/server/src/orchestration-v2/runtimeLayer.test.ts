@@ -1,7 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { CommandId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import {
+  CommandId,
+  type ModelSelection,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { CheckpointStoreLive } from "../checkpointing/Layers/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";

@@ -9,7 +9,13 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, DateTime, Effect, Encoding, Layer, Ref, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../checkpointing/Diffs.ts";

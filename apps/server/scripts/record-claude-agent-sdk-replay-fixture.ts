@@ -1,5 +1,8 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 
 import {
   recordClaudeAgentSdkReplayTranscript,
@@ -22,6 +25,15 @@ import {
   RESTRICTED_GRANULAR_POLICY,
   MULTI_TURN_SECOND_PROMPT,
   SIMPLE_PROMPT,
+  SUBAGENT_PROMPT,
+  THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
+  THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
+  THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
+  THREAD_FORK_NATIVE_SOURCE_PROMPT,
+  THREAD_FORK_NATIVE_TARGET_PROMPT,
+  THREAD_ROLLBACK_AFTER_PROMPT,
+  THREAD_ROLLBACK_FIRST_PROMPT,
+  THREAD_ROLLBACK_SECOND_PROMPT,
   TOOL_CALL_READ_ONLY_PROMPT,
   TOOL_CALL_READ_ONLY_WORKSPACE_ROOT,
   TOOL_CALL_WRITE_PROMPT,
@@ -117,6 +129,38 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
   },
+  subagent: {
+    prompts: [SUBAGENT_PROMPT],
+    defaultTranscriptFile: "fixtures/subagent/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
+  thread_rollback: {
+    prompts: [
+      THREAD_ROLLBACK_FIRST_PROMPT,
+      THREAD_ROLLBACK_SECOND_PROMPT,
+      THREAD_ROLLBACK_AFTER_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_rollback/claude_transcript.ndjson",
+    queryMode: "resume_at_cursor",
+    enableTools: true,
+  },
+  thread_fork_native: {
+    prompts: [THREAD_FORK_NATIVE_SOURCE_PROMPT, THREAD_FORK_NATIVE_TARGET_PROMPT],
+    defaultTranscriptFile: "fixtures/thread_fork_native/claude_transcript.ndjson",
+    queryMode: "fork_session",
+    enableTools: true,
+  },
+  thread_fork_native_prior_turn: {
+    prompts: [
+      THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
+      THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
+      THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_fork_native_prior_turn/claude_transcript.ndjson",
+    queryMode: "fork_session_prior_turn",
+    enableTools: true,
+  },
 } as const;
 
 function readArgValue(name: string): string | undefined {
@@ -128,6 +172,9 @@ function readArgValue(name: string): string | undefined {
 type ClaudeRecordingQueryMode =
   | "streaming"
   | "restart"
+  | "resume_at_cursor"
+  | "fork_session"
+  | "fork_session_prior_turn"
   | "active_steering"
   | "interrupt"
   | "interrupt_restart";
@@ -140,6 +187,9 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
   if (
     raw === "streaming" ||
     raw === "restart" ||
+    raw === "resume_at_cursor" ||
+    raw === "fork_session" ||
+    raw === "fork_session_prior_turn" ||
     raw === "active_steering" ||
     raw === "interrupt" ||
     raw === "interrupt_restart"
@@ -147,12 +197,13 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
     return raw;
   }
   throw new Error(
-    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
+    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'resume_at_cursor', 'fork_session', 'fork_session_prior_turn', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
   );
 }
 
 const scenario = readArgValue("--scenario") ?? process.env.T3_CLAUDE_REPLAY_SCENARIO ?? "simple";
 const recording = CLAUDE_RECORDINGS[scenario as keyof typeof CLAUDE_RECORDINGS];
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 if (recording === undefined) {
   throw new Error(
@@ -177,6 +228,23 @@ function encodeTranscriptNdjson(
     ...entries.map((entry) => JSON.stringify(entry)),
     "",
   ].join("\n");
+}
+
+function dirname(filePath: string): string {
+  const normalized = filePath.replace(/\/+$/u, "");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash < 0) {
+    return ".";
+  }
+  return lastSlash === 0 ? "/" : normalized.slice(0, lastSlash);
+}
+
+function joinPath(directory: string, fileName: string): string {
+  return `${directory.replace(/\/+$/u, "")}/${fileName.replace(/^\/+/u, "")}`;
+}
+
+function runFileSystem<A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>): Promise<A> {
+  return Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
 }
 
 function selectedPrompts(): ReadonlyArray<string> {
@@ -212,8 +280,13 @@ function runtimePolicyForRecording(input: {
 }
 
 async function makeToolCallReadOnlyRecordingWorkspace(): Promise<string> {
-  await rm(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, { recursive: true, force: true });
-  await mkdir(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, { recursive: true });
+  await runFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, { recursive: true, force: true });
+      yield* fs.makeDirectory(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, { recursive: true });
+    }),
+  );
   return TOOL_CALL_READ_ONLY_WORKSPACE_ROOT;
 }
 
@@ -224,34 +297,29 @@ const cwd =
     : await makeCheckpointWorkspace(`claude-agent-sdk-record-${scenario}`));
 const shouldRemoveCwd = process.env.T3_CLAUDE_REPLAY_CWD === undefined;
 
-if (shouldRemoveCwd && scenario === "tool_call_read_only") {
-  await writeFile(
-    path.join(cwd, "package.json"),
-    JSON.stringify(
-      {
-        name: "claude-read-only-fixture",
-        private: true,
-        scripts: { typecheck: "tsc --noEmit" },
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  await writeFile(
-    path.join(cwd, "tsconfig.json"),
-    JSON.stringify(
-      {
-        compilerOptions: {
-          module: "ESNext",
-          strict: true,
-          target: "ES2022",
-        },
-      },
-      null,
-      2,
-    ),
-    "utf8",
+if (shouldRemoveCwd && (scenario === "tool_call_read_only" || scenario === "subagent")) {
+  await runFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        joinPath(cwd, "package.json"),
+        encodeUnknownJsonString({
+          name: "claude-read-only-fixture",
+          private: true,
+          scripts: { typecheck: "tsc --noEmit" },
+        }),
+      );
+      yield* fs.writeFileString(
+        joinPath(cwd, "tsconfig.json"),
+        encodeUnknownJsonString({
+          compilerOptions: {
+            module: "ESNext",
+            strict: true,
+            target: "ES2022",
+          },
+        }),
+      );
+    }),
   );
 }
 
@@ -284,13 +352,25 @@ try {
     ...(queryPolicy.installPermissionCallback ? { enablePermissionCallback: true } : {}),
     ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
   });
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, encodeTranscriptNdjson(transcript), "utf8");
-  console.log(
-    `Wrote ${transcript.entries.length} ${CLAUDE_AGENT_SDK_REPLAY_PROTOCOL} replay entries to ${outputPath}`,
+  await runFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(dirname(outputPath), { recursive: true });
+      yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
+    }),
+  );
+  await Effect.runPromise(
+    Console.log(
+      `Wrote ${transcript.entries.length} ${CLAUDE_AGENT_SDK_REPLAY_PROTOCOL} replay entries to ${outputPath}`,
+    ),
   );
 } finally {
   if (shouldRemoveCwd) {
-    await rm(cwd, { recursive: true, force: true });
+    await runFileSystem(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(cwd, { recursive: true, force: true });
+      }),
+    );
   }
 }

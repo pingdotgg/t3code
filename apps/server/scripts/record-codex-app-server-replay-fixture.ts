@@ -1,6 +1,9 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Deferred, FileSystem, Path, PlatformError } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
@@ -238,7 +241,6 @@ function getTurnId(response: TurnStartResponse): string {
 
 function readOnlyFullAccessSandbox(): SandboxPolicy {
   return {
-    access: { type: "fullAccess" },
     networkAccess: false,
     type: "readOnly",
   };
@@ -246,11 +248,6 @@ function readOnlyFullAccessSandbox(): SandboxPolicy {
 
 function readOnlyRestrictedSandbox(): SandboxPolicy {
   return {
-    access: {
-      includePlatformDefaults: false,
-      readableRoots: [],
-      type: "restricted",
-    },
     networkAccess: false,
     type: "readOnly",
   };
@@ -259,7 +256,6 @@ function readOnlyRestrictedSandbox(): SandboxPolicy {
 function workspaceWriteSandbox(): SandboxPolicy {
   return {
     networkAccess: false,
-    readOnlyAccess: { type: "fullAccess" },
     type: "workspaceWrite",
     writableRoots: [],
   };

@@ -77,6 +77,7 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
+import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -1387,15 +1388,16 @@ const makeWsRpcLayer = (
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             orchestrationV2.dispatch(command).pipe(
               Effect.map((result) => ({ sequence: result.sequence })),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationV2DispatchCommandError({
-                    commandId: command.commandId,
-                    commandType: command.type,
-                    message: "Failed to dispatch orchestration V2 command",
-                    cause,
-                  }),
-              ),
+              Effect.mapError((cause) => {
+                const detail = userFacingDispatchErrorMessage(cause);
+                return new OrchestrationV2DispatchCommandError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  message: detail ?? "Failed to dispatch orchestration V2 command",
+                  ...(detail === undefined ? {} : { detail }),
+                  cause,
+                });
+              }),
             ),
             {
               "rpc.aggregate": "orchestrationV2",

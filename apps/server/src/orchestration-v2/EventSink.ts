@@ -4,7 +4,12 @@ import {
   OrchestrationV2StoredEvent,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, Effect, Layer, PubSub, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { EventStoreV2 } from "./EventStore.ts";

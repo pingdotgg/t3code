@@ -143,13 +143,13 @@ Target docs:
 
 TODO:
 
-- [ ] Defer subagents until lineage, context transfer, and provider capability policy are stable.
+- [x] Add provider-native subagent observation for Codex and Claude replay-backed fixtures.
 - [ ] Model native subagents and app-owned cross-provider subagents as related thread/subthread graph
       entries with different creator/lifecycle policy.
 - [ ] Preserve native provider subagent refs where available, but do not make the app graph depend on
       provider-native ids as primary ids.
-- [ ] Add projection support for subagent lifecycle, wait, close, result transfer, and pending approvals
-      originating from subagents.
+- [ ] Add deeper tests for subagent wait, close, result transfer, pending approvals, failed/stopped
+      tasks, and fork-from-subagent behavior.
 
 FOOD FOR THOUGHT:
 
