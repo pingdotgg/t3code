@@ -143,6 +143,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         haveSettingsChanged: () => false,
         initialSnapshot: (settings) => stampIdentity(makePendingCodexProvider(settings)),
         checkProvider,
+        startInitialRefresh: false,
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

@@ -366,7 +366,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         "mock-session-1",
       );
       assert.include(
-        ["architect", "plan"],
+        ["https://agentclientprotocol.com/protocol/session-modes#plan"],
         String(
           (modeRequest?.params as Record<string, unknown> | undefined)?.modeId ??
             (modeRequest?.params as Record<string, unknown> | undefined)?.value,
@@ -418,10 +418,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         );
         assert.deepStrictEqual(configIdsAfterStart, [
           "model",
-          "reasoning",
+          "reasoning_effort",
           "context",
           "fast",
-          "mode",
         ]);
 
         yield* adapter.sendTurn({
@@ -440,7 +439,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             ? [String((entry.params as Record<string, unknown>).configId)]
             : [],
         );
-        assert.deepStrictEqual(finalConfigIds, ["model", "reasoning", "context", "fast", "mode"]);
+        assert.deepStrictEqual(finalConfigIds, ["model", "reasoning_effort", "context", "fast"]);
         assert.equal(finalRequests.filter((entry) => entry.method === "session/prompt").length, 1);
       }),
   );

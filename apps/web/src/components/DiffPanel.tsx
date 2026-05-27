@@ -1,9 +1,9 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { TurnDiffScope, TurnId } from "@t3tools/contracts";
+import type { DiffFile, DiffSnapshot, TurnDiffScope, TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -24,7 +24,7 @@ import {
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
 import { useGitStatus } from "~/lib/gitStatusState";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import { diffStateQueryOptions, providerQueryKeys } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
@@ -215,6 +215,25 @@ function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
   }
 }
 
+function diffFileSafetyLabel(diffFile: DiffFile | undefined): string | null {
+  if (!diffFile) {
+    return null;
+  }
+  if (diffFile.isBinary) {
+    return "Binary file diff is not rendered.";
+  }
+  if (diffFile.hasHiddenBidiChars) {
+    return "Hidden bidirectional Unicode characters detected.";
+  }
+  if (diffFile.size === "large") {
+    return "Large diff collapsed by default.";
+  }
+  if (diffFile.size === "unrenderable") {
+    return "Diff is too large to render safely.";
+  }
+  return null;
+}
+
 interface DiffPanelProps {
   mode?: DiffPanelMode;
 }
@@ -223,6 +242,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
@@ -261,6 +281,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     cwd: activeCwd ?? null,
   });
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const gitStatusRevision = useMemo(() => {
+    const status = gitStatusQuery.data;
+    if (!status) {
+      return null;
+    }
+    return JSON.stringify({
+      branch: status.branch,
+      hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+      aheadCount: status.aheadCount,
+      behindCount: status.behindCount,
+      workingTreeFiles: status.workingTree.files.map((file) => [
+        file.path,
+        file.insertions,
+        file.deletions,
+      ]),
+    });
+  }, [gitStatusQuery.data]);
+  const previousGitStatusRevisionRef = useRef<string | null>(null);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -339,37 +377,100 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
   }, [orderedTurnDiffSummaries, selectedTurn]);
-  const activeCheckpointDiffQuery = useQuery(
-    checkpointDiffQueryOptions({
+  const activeDiffCacheScope = selectedTurn
+    ? `turn:${selectedTurn.turnId}:${selectedScope}`
+    : conversationCacheScope;
+  const activeDiffStateQuery = useQuery(
+    diffStateQueryOptions({
       environmentId: activeThread?.environmentId ?? null,
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       kind: selectedTurn ? "turn" : "conversation",
       scope: selectedScope,
-      cacheScope: selectedTurn
-        ? `turn:${selectedTurn.turnId}:${selectedScope}`
-        : conversationCacheScope,
+      cacheScope: activeDiffCacheScope,
       enabled: isGitRepo && !selectedTurnRequestedButMissing && !selectedTurnRangeMissing,
     }),
   );
-  const selectedTurnCheckpointDiff = selectedTurn
-    ? activeCheckpointDiffQuery.data?.diff
+  useEffect(() => {
+    if (!diffOpen || !activeThread || !gitStatusRevision) {
+      return;
+    }
+    const previous = previousGitStatusRevisionRef.current;
+    previousGitStatusRevisionRef.current = gitStatusRevision;
+    if (previous === null || previous === gitStatusRevision) {
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: providerQueryKeys
+        .diffState({
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+          fromTurnCount: null,
+          toTurnCount: null,
+        })
+        .slice(0, 4),
+    });
+  }, [activeThread, diffOpen, gitStatusRevision, queryClient]);
+  const activeDiffState = activeDiffStateQuery.data;
+  const lastReadyDiffSnapshotByKeyRef = useRef(new Map<string, DiffSnapshot>());
+  const activeDiffKey =
+    activeThreadId && activeDiffCacheScope
+      ? `${activeThread?.environmentId ?? "unknown"}:${activeThreadId}:${activeDiffCacheScope}:${activeCheckpointRange?.fromTurnCount ?? "none"}:${activeCheckpointRange?.toTurnCount ?? "none"}`
+      : null;
+  useEffect(() => {
+    if (activeDiffKey && activeDiffState?._tag === "ready") {
+      const snapshots = lastReadyDiffSnapshotByKeyRef.current;
+      snapshots.set(activeDiffKey, activeDiffState.snapshot);
+      if (snapshots.size > 20) {
+        const oldestKey = snapshots.keys().next().value;
+        if (oldestKey) {
+          snapshots.delete(oldestKey);
+        }
+      }
+    }
+  }, [activeDiffKey, activeDiffState]);
+  const staleSnapshot = activeDiffKey
+    ? lastReadyDiffSnapshotByKeyRef.current.get(activeDiffKey)
     : undefined;
-  const conversationCheckpointDiff = selectedTurn
-    ? undefined
-    : activeCheckpointDiffQuery.data?.diff;
-  const isLoadingCheckpointDiff = activeCheckpointDiffQuery.isLoading;
+  const staleDiffState =
+    staleSnapshot && (activeDiffState?._tag === "unavailable" || activeDiffState?._tag === "error")
+      ? {
+          _tag: "stale" as const,
+          snapshot: staleSnapshot,
+          message: activeDiffState.message,
+        }
+      : null;
+  const displayDiffState = staleDiffState ?? activeDiffState;
+  const activeDiffSnapshot =
+    displayDiffState?._tag === "ready" || displayDiffState?._tag === "stale"
+      ? displayDiffState.snapshot
+      : null;
+  const selectedTurnCheckpointDiff = selectedTurn ? activeDiffSnapshot?.patch : undefined;
+  const conversationCheckpointDiff = selectedTurn ? undefined : activeDiffSnapshot?.patch;
+  const isLoadingCheckpointDiff =
+    activeDiffStateQuery.isLoading || displayDiffState?._tag === "loading";
+  const diffStateMessage =
+    displayDiffState?._tag === "unavailable" ||
+    displayDiffState?._tag === "error" ||
+    displayDiffState?._tag === "stale"
+      ? displayDiffState.message
+      : null;
   const checkpointDiffError =
-    activeCheckpointDiffQuery.error instanceof Error
-      ? activeCheckpointDiffQuery.error.message
-      : activeCheckpointDiffQuery.error
+    diffStateMessage ??
+    (activeDiffStateQuery.error instanceof Error
+      ? activeDiffStateQuery.error.message
+      : activeDiffStateQuery.error
         ? "Failed to load checkpoint diff."
-        : null;
+        : null);
 
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const diffSafetyByPath = useMemo(() => {
+    const entries = activeDiffSnapshot?.files.map((file) => [file.path, file] as const) ?? [];
+    return new Map(entries);
+  }, [activeDiffSnapshot?.files]);
   const renderablePatch = useMemo(
     () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
     [resolvedTheme, selectedPatch],
@@ -406,9 +507,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     const visibleFileKeys = new Set(renderableFiles.map(buildFileDiffRenderKey));
     setCollapsedDiffFileKeys((current) => {
       const next = new Set([...current].filter((fileKey) => visibleFileKeys.has(fileKey)));
+      for (const fileDiff of renderableFiles) {
+        const filePath = resolveFileDiffPath(fileDiff);
+        const safety = diffSafetyByPath.get(filePath);
+        if (safety?.size === "large") {
+          next.add(buildFileDiffRenderKey(fileDiff));
+        }
+      }
       return next.size === current.size ? current : next;
     });
-  }, [renderableFiles]);
+  }, [diffSafetyByPath, renderableFiles]);
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -738,6 +846,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
               </div>
             )}
+            {displayDiffState?._tag === "stale" && renderablePatch && (
+              <div className="px-3 pt-2">
+                <p className="rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground/75">
+                  Showing the last loaded diff while the latest checkpoint is unavailable:{" "}
+                  {displayDiffState.message}
+                </p>
+              </div>
+            )}
             {!renderablePatch ? (
               isLoadingCheckpointDiff ? (
                 <DiffPanelLoadingState label="Loading checkpoint diff..." />
@@ -763,6 +879,29 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
                   const collapsed = collapsedDiffFileKeys.has(fileKey);
+                  const safety = diffSafetyByPath.get(filePath);
+                  const safetyLabel = diffFileSafetyLabel(safety);
+                  if (safety?.size === "unrenderable") {
+                    return (
+                      <div
+                        key={themedFileKey}
+                        data-diff-file-path={filePath}
+                        className="diff-render-file mb-2 rounded-md border border-border/70 bg-background/70 p-3 first:mt-2 last:mb-0"
+                      >
+                        <button
+                          type="button"
+                          className="mb-2 block max-w-full truncate font-mono text-xs text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
+                          onClick={() => openDiffFileInEditor(filePath)}
+                          title={filePath}
+                        >
+                          {filePath}
+                        </button>
+                        <p className="text-xs text-muted-foreground/80">
+                          {safetyLabel ?? "Diff is not renderable."}
+                        </p>
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={themedFileKey}
@@ -779,6 +918,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         openDiffFileInEditor(filePath);
                       }}
                     >
+                      {safetyLabel && (
+                        <div className="rounded-t-md border border-b-0 border-border/70 bg-background/70 px-3 py-1 text-[11px] text-muted-foreground/75">
+                          {safetyLabel}
+                        </div>
+                      )}
                       <FileDiff
                         fileDiff={fileDiff}
                         renderHeaderPrefix={() => (

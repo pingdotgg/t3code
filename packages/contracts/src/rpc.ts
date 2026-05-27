@@ -40,9 +40,11 @@ import {
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
+  OrchestrationGetFullThreadDiffStateError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
+  OrchestrationGetTurnDiffStateError,
   OrchestrationGetTurnDiffInput,
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
@@ -333,6 +335,24 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetTurnDiffStateRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getTurnDiffState,
+  {
+    payload: OrchestrationRpcSchemas.getTurnDiffState.input,
+    success: OrchestrationRpcSchemas.getTurnDiffState.output,
+    error: OrchestrationGetTurnDiffStateError,
+  },
+);
+
+export const WsOrchestrationGetFullThreadDiffStateRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getFullThreadDiffState,
+  {
+    payload: OrchestrationRpcSchemas.getFullThreadDiffState.input,
+    success: OrchestrationRpcSchemas.getFullThreadDiffState.output,
+    error: OrchestrationGetFullThreadDiffStateError,
+  },
+);
+
 export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.replayEvents, {
   payload: OrchestrationReplayEventsInput,
   success: OrchestrationRpcSchemas.replayEvents.output,
@@ -418,6 +438,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationGetTurnDiffStateRpc,
+  WsOrchestrationGetFullThreadDiffStateRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,

@@ -21,6 +21,8 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getTurnDiffState: "orchestration.getTurnDiffState",
+  getFullThreadDiffState: "orchestration.getFullThreadDiffState",
   replayEvents: "orchestration.replayEvents",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -274,7 +276,12 @@ export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Typ
 const OrchestrationCheckpointFiles = Schema.Array(OrchestrationCheckpointFile);
 const OrchestrationAgentTouchedPaths = Schema.Array(TrimmedNonEmptyString);
 
-export const OrchestrationCheckpointStatus = Schema.Literals(["ready", "missing", "error"]);
+export const OrchestrationCheckpointStatus = Schema.Literals([
+  "ready",
+  "missing",
+  "speculative",
+  "error",
+]);
 export type OrchestrationCheckpointStatus = typeof OrchestrationCheckpointStatus.Type;
 
 export const OrchestrationCheckpointSummary = Schema.Struct({
@@ -1206,6 +1213,141 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
 export const TurnDiffScope = Schema.Literals(["turn", "snapshot"]);
 export type TurnDiffScope = typeof TurnDiffScope.Type;
 
+export const DiffLineType = Schema.Literals(["context", "add", "delete", "hunk"]);
+export type DiffLineType = typeof DiffLineType.Type;
+
+export const DiffLine = Schema.Struct({
+  type: DiffLineType,
+  oldLineNumber: Schema.NullOr(NonNegativeInt),
+  newLineNumber: Schema.NullOr(NonNegativeInt),
+  text: Schema.String,
+});
+export type DiffLine = typeof DiffLine.Type;
+
+export const DiffHunk = Schema.Struct({
+  oldStartLine: NonNegativeInt,
+  oldLineCount: NonNegativeInt,
+  newStartLine: NonNegativeInt,
+  newLineCount: NonNegativeInt,
+  lines: Schema.Array(DiffLine),
+});
+export type DiffHunk = typeof DiffHunk.Type;
+
+export const DiffFileStatus = Schema.Literals([
+  "new",
+  "modified",
+  "deleted",
+  "renamed",
+  "copied",
+  "untracked",
+  "conflicted",
+  "unknown",
+]);
+export type DiffFileStatus = typeof DiffFileStatus.Type;
+
+export const DiffSize = Schema.Literals(["normal", "large", "unrenderable"]);
+export type DiffSize = typeof DiffSize.Type;
+
+export const DiffFile = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  previousPath: Schema.NullOr(TrimmedNonEmptyString),
+  status: DiffFileStatus,
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+  hunks: Schema.Array(DiffHunk),
+  isBinary: Schema.Boolean,
+  size: DiffSize,
+  hasHiddenBidiChars: Schema.Boolean,
+});
+export type DiffFile = typeof DiffFile.Type;
+
+export const DiffMetadata = Schema.Struct({
+  filesChanged: NonNegativeInt,
+  totalAdditions: NonNegativeInt,
+  totalDeletions: NonNegativeInt,
+  largeFiles: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  unrenderableFiles: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type DiffMetadata = typeof DiffMetadata.Type;
+
+export const DiffMetadataRefreshed = TurnCountRange.mapFields(
+  Struct.assign({
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+    metadata: DiffMetadata,
+    files: Schema.Array(DiffFile),
+  }),
+  { unsafePreserveChecks: true },
+);
+export type DiffMetadataRefreshed = typeof DiffMetadataRefreshed.Type;
+
+export const DiffFileDelta = TurnCountRange.mapFields(
+  Struct.assign({
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+    path: TrimmedNonEmptyString,
+    file: Schema.NullOr(DiffFile),
+    metadata: DiffMetadata,
+  }),
+  { unsafePreserveChecks: true },
+);
+export type DiffFileDelta = typeof DiffFileDelta.Type;
+
+export const DiffSnapshot = TurnCountRange.mapFields(
+  Struct.assign({
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+    patch: Schema.String,
+    metadata: DiffMetadata,
+    files: Schema.Array(DiffFile),
+  }),
+  { unsafePreserveChecks: true },
+);
+export type DiffSnapshot = typeof DiffSnapshot.Type;
+
+const DiffLoadingState = TurnCountRange.mapFields(
+  Struct.assign({
+    _tag: Schema.Literal("loading"),
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+  }),
+  { unsafePreserveChecks: true },
+);
+
+const DiffUnavailableState = TurnCountRange.mapFields(
+  Struct.assign({
+    _tag: Schema.Literal("unavailable"),
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+    message: TrimmedNonEmptyString,
+  }),
+  { unsafePreserveChecks: true },
+);
+
+const DiffErrorState = TurnCountRange.mapFields(
+  Struct.assign({
+    _tag: Schema.Literal("error"),
+    threadId: ThreadId,
+    scope: TurnDiffScope,
+    message: TrimmedNonEmptyString,
+  }),
+  { unsafePreserveChecks: true },
+);
+
+export const DiffState = Schema.Union([
+  Schema.TaggedStruct("ready", {
+    snapshot: DiffSnapshot,
+  }),
+  Schema.TaggedStruct("stale", {
+    snapshot: DiffSnapshot,
+    message: TrimmedNonEmptyString,
+  }),
+  DiffLoadingState,
+  DiffUnavailableState,
+  DiffErrorState,
+]);
+export type DiffState = typeof DiffState.Type;
+
 export const ProviderSessionRuntimeStatus = Schema.Literals([
   "starting",
   "running",
@@ -1270,6 +1412,33 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationGetTurnDiffStateInput = OrchestrationGetTurnDiffInput;
+export type OrchestrationGetTurnDiffStateInput = typeof OrchestrationGetTurnDiffStateInput.Type;
+
+export const OrchestrationGetTurnDiffStateResult = DiffState;
+export type OrchestrationGetTurnDiffStateResult = typeof OrchestrationGetTurnDiffStateResult.Type;
+
+export const OrchestrationGetTurnDiffFileDeltaInput = OrchestrationGetTurnDiffInput.mapFields(
+  Struct.assign({
+    path: TrimmedNonEmptyString,
+  }),
+  { unsafePreserveChecks: true },
+);
+export type OrchestrationGetTurnDiffFileDeltaInput =
+  typeof OrchestrationGetTurnDiffFileDeltaInput.Type;
+
+export const OrchestrationGetTurnDiffFileDeltaResult = DiffFileDelta;
+export type OrchestrationGetTurnDiffFileDeltaResult =
+  typeof OrchestrationGetTurnDiffFileDeltaResult.Type;
+
+export const OrchestrationGetFullThreadDiffStateInput = OrchestrationGetFullThreadDiffInput;
+export type OrchestrationGetFullThreadDiffStateInput =
+  typeof OrchestrationGetFullThreadDiffStateInput.Type;
+
+export const OrchestrationGetFullThreadDiffStateResult = DiffState;
+export type OrchestrationGetFullThreadDiffStateResult =
+  typeof OrchestrationGetFullThreadDiffStateResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1290,6 +1459,14 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getTurnDiffState: {
+    input: OrchestrationGetTurnDiffStateInput,
+    output: OrchestrationGetTurnDiffStateResult,
+  },
+  getFullThreadDiffState: {
+    input: OrchestrationGetFullThreadDiffStateInput,
+    output: OrchestrationGetFullThreadDiffStateResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
@@ -1331,6 +1508,22 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGetTurnDiffStateError extends Schema.TaggedErrorClass<OrchestrationGetTurnDiffStateError>()(
+  "OrchestrationGetTurnDiffStateError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationGetFullThreadDiffStateError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffStateError>()(
+  "OrchestrationGetFullThreadDiffStateError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

@@ -118,6 +118,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         haveSettingsChanged: () => false,
         initialSnapshot: (settings) => stampIdentity(buildInitialCopilotProviderSnapshot(settings)),
         checkProvider,
+        startInitialRefresh: false,
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

@@ -2724,7 +2724,7 @@ describe("ProviderRuntimeIngestion", () => {
     const checkpoint = thread.checkpoints.find(
       (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
     );
-    expect(checkpoint?.status).toBe("missing");
+    expect(checkpoint?.status).toBe("speculative");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
     expect(checkpoint?.agentTouchedPaths).toEqual(["apps/web/src/components/Sidebar.tsx"]);

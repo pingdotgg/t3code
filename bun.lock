@@ -6,6 +6,7 @@
       "name": "@t3tools/monorepo",
       "devDependencies": {
         "@effect/language-service": "catalog:",
+        "@oxlint/plugins": "^1.63.0",
         "@types/node": "catalog:",
         "oxfmt": "^0.40.0",
         "oxlint": "^1.55.0",
@@ -16,7 +17,7 @@
     },
     "apps/desktop": {
       "name": "@t3tools/desktop",
-      "version": "0.0.21",
+      "version": "0.0.23",
       "dependencies": {
         "effect": "catalog:",
         "electron": "40.6.0",
@@ -49,7 +50,7 @@
     },
     "apps/server": {
       "name": "t3",
-      "version": "0.0.21",
+      "version": "0.0.23",
       "bin": {
         "t3": "./dist/bin.mjs",
       },
@@ -81,7 +82,7 @@
     },
     "apps/web": {
       "name": "@t3tools/web",
-      "version": "0.0.21",
+      "version": "0.0.23",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
         "@dnd-kit/core": "^6.3.1",
@@ -132,6 +133,21 @@
         "vitest-browser-react": "^2.0.5",
       },
     },
+    "oxlint-plugin-t3code": {
+      "name": "@t3tools/oxlint-plugin-t3code",
+      "dependencies": {
+        "@effect/platform-node": "catalog:",
+        "@oxlint/plugins": "^1.63.0",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/language-service": "catalog:",
+        "@effect/vitest": "catalog:",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/client-runtime": {
       "name": "@t3tools/client-runtime",
       "version": "0.0.0-alpha.1",
@@ -146,7 +162,7 @@
     },
     "packages/contracts": {
       "name": "@t3tools/contracts",
-      "version": "0.0.21",
+      "version": "0.0.23",
       "dependencies": {
         "effect": "catalog:",
       },
@@ -664,9 +680,11 @@
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.56.0", "https://registry.npmmirror.com/@oxlint/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.56.0.tgz", { "os": "win32", "cpu": "x64" }, "sha512-ZHa0clocjLmIDr+1LwoWtxRcoYniAvERotvwKUYKhH41NVfl0Y4LNbyQkwMZzwDvKklKGvGZ5+DAG58/Ik47tQ=="],
 
-    "@pierre/diffs": ["@pierre/diffs@1.1.20", "", { "dependencies": { "@pierre/theme": "0.0.28", "@shikijs/transformers": "^3.0.0", "diff": "8.0.3", "hast-util-to-html": "9.0.5", "lru_map": "0.4.1", "shiki": "^3.0.0" }, "peerDependencies": { "react": "^18.3.1 || ^19.0.0", "react-dom": "^18.3.1 || ^19.0.0" } }, "sha512-lLi+3sLCm3QDd5/aLO9pw+WbF6UzhrkWm2oTZ5WZJTGemOyUNRJ4DDhcEKmVusu4C4bXx9Nssh6fF+wQcapb5w=="],
+    "@oxlint/plugins": ["@oxlint/plugins@1.66.0", "https://registry.npmmirror.com/@oxlint/plugins/-/plugins-1.66.0.tgz", {}, "sha512-dVw9+y1tB9rDObtjzsDhxRsreZrEoKohujt+w/sZ09+kmA5yI/ORQJFPR/xSC+jpw0TWmE6gnb6N1lD/z7uElA=="],
 
-    "@pierre/theme": ["@pierre/theme@0.0.28", "", {}, "sha512-1j/H/fECBuc9dEvntdWI+l435HZapw+RCJTlqCA6BboQ5TjlnE005j/ROWutXIs8aq5OAc82JI2Kwk4A1WWBgw=="],
+    "@pierre/diffs": ["@pierre/diffs@1.1.20", "https://registry.npmmirror.com/@pierre/diffs/-/diffs-1.1.20.tgz", { "dependencies": { "@pierre/theme": "0.0.28", "@shikijs/transformers": "^3.0.0", "diff": "8.0.3", "hast-util-to-html": "9.0.5", "lru_map": "0.4.1", "shiki": "^3.0.0" }, "peerDependencies": { "react": "^18.3.1 || ^19.0.0", "react-dom": "^18.3.1 || ^19.0.0" } }, "sha512-lLi+3sLCm3QDd5/aLO9pw+WbF6UzhrkWm2oTZ5WZJTGemOyUNRJ4DDhcEKmVusu4C4bXx9Nssh6fF+wQcapb5w=="],
+
+    "@pierre/theme": ["@pierre/theme@0.0.28", "https://registry.npmmirror.com/@pierre/theme/-/theme-0.0.28.tgz", {}, "sha512-1j/H/fECBuc9dEvntdWI+l435HZapw+RCJTlqCA6BboQ5TjlnE005j/ROWutXIs8aq5OAc82JI2Kwk4A1WWBgw=="],
 
     "@polka/url": ["@polka/url@1.0.0-next.29", "https://registry.npmmirror.com/@polka/url/-/url-1.0.0-next.29.tgz", {}, "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww=="],
 
@@ -743,6 +761,8 @@
     "@t3tools/marketing": ["@t3tools/marketing@workspace:apps/marketing"],
 
     "@t3tools/mobile": ["@t3tools/mobile@workspace:apps/mobile"],
+
+    "@t3tools/oxlint-plugin-t3code": ["@t3tools/oxlint-plugin-t3code@workspace:oxlint-plugin-t3code"],
 
     "@t3tools/scripts": ["@t3tools/scripts@workspace:scripts"],
 

@@ -3865,6 +3865,7 @@ function ChatViewBody(
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
+              activeChatFindRowId={chatFindOpen ? (activeChatFindMatch?.rowId ?? null) : null}
             />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}

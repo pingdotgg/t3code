@@ -1,7 +1,7 @@
 import {
   type EnvironmentId,
-  OrchestrationGetFullThreadDiffInput,
-  OrchestrationGetTurnDiffInput,
+  OrchestrationGetFullThreadDiffStateInput,
+  OrchestrationGetTurnDiffStateInput,
   type ProviderDriverKind,
   type ServerProviderListCommandsResult,
   ThreadId,
@@ -29,10 +29,10 @@ export const providerQueryKeys = {
     provider: ProviderDriverKind | null,
     cwd: string | null,
   ) => ["providers", "commands", environmentId ?? null, provider ?? null, cwd ?? null] as const,
-  checkpointDiff: (input: CheckpointDiffQueryInput) =>
+  diffState: (input: CheckpointDiffQueryInput) =>
     [
       "providers",
-      "checkpointDiff",
+      "diffState",
       input.environmentId ?? null,
       input.threadId,
       input.fromTurnCount,
@@ -47,20 +47,25 @@ const EMPTY_PROVIDER_COMMANDS_RESULT: ServerProviderListCommandsResult = {
   commands: [],
 };
 
-function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
+const decodeFullThreadDiffStateInput = Schema.decodeUnknownOption(
+  OrchestrationGetFullThreadDiffStateInput,
+);
+const decodeTurnDiffStateInput = Schema.decodeUnknownOption(OrchestrationGetTurnDiffStateInput);
+
+function decodeDiffStateRequest(input: CheckpointDiffQueryInput) {
   if ((input.kind ?? "conversation") === "conversation") {
-    return Schema.decodeUnknownOption(OrchestrationGetFullThreadDiffInput)({
+    return decodeFullThreadDiffStateInput({
       threadId: input.threadId,
       toTurnCount: input.toTurnCount,
-    }).pipe(Option.map((fields) => ({ kind: "fullThreadDiff" as const, input: fields })));
+    }).pipe(Option.map((fields) => ({ kind: "fullThreadDiffState" as const, input: fields })));
   }
 
-  return Schema.decodeUnknownOption(OrchestrationGetTurnDiffInput)({
+  return decodeTurnDiffStateInput({
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,
     scope: input.scope ?? "snapshot",
-  }).pipe(Option.map((fields) => ({ kind: "turnDiff" as const, input: fields })));
+  }).pipe(Option.map((fields) => ({ kind: "turnDiffState" as const, input: fields })));
 }
 
 function asCheckpointErrorMessage(error: unknown): string {
@@ -109,21 +114,21 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
   );
 }
 
-export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
-  const decodedRequest = decodeCheckpointDiffRequest(input);
+export function diffStateQueryOptions(input: CheckpointDiffQueryInput) {
+  const decodedRequest = decodeDiffStateRequest(input);
 
   return queryOptions({
-    queryKey: providerQueryKeys.checkpointDiff(input),
+    queryKey: providerQueryKeys.diffState(input),
     queryFn: async () => {
       if (!input.environmentId || !input.threadId || decodedRequest._tag === "None") {
-        throw new Error("Checkpoint diff is unavailable.");
+        throw new Error("Diff state is unavailable.");
       }
       const api = ensureEnvironmentApi(input.environmentId);
       try {
-        if (decodedRequest.value.kind === "fullThreadDiff") {
-          return await api.orchestration.getFullThreadDiff(decodedRequest.value.input);
+        if (decodedRequest.value.kind === "fullThreadDiffState") {
+          return await api.orchestration.getFullThreadDiffState(decodedRequest.value.input);
         }
-        return await api.orchestration.getTurnDiff(decodedRequest.value.input);
+        return await api.orchestration.getTurnDiffState(decodedRequest.value.input);
       } catch (error) {
         throw new Error(normalizeCheckpointErrorMessage(error), { cause: error });
       }

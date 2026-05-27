@@ -1577,7 +1577,11 @@ const make = Effect.gen(function* () {
         const workspaceCwd = yield* resolveGitRepositoryCwdForThread(thread.id);
         if (turnId && workspaceCwd !== null) {
           const existingCheckpoint = thread.checkpoints.find((c) => c.turnId === turnId);
-          if (existingCheckpoint !== undefined && existingCheckpoint.status !== "missing") {
+          if (
+            existingCheckpoint !== undefined &&
+            existingCheckpoint.status !== "missing" &&
+            existingCheckpoint.status !== "speculative"
+          ) {
             // A real capture from CheckpointReactor should not be clobbered by
             // subsequent provider diff updates for the same turn.
           } else {
@@ -1603,7 +1607,7 @@ const make = Effect.gen(function* () {
               checkpointRef:
                 existingCheckpoint?.checkpointRef ??
                 CheckpointRef.make(`provider-diff:${event.eventId}`),
-              status: "missing",
+              status: "speculative",
               files: [],
               agentTouchedPaths,
               turnFiles,

@@ -1,3 +1,5 @@
+import type { DiffFileDelta, DiffSnapshot } from "@t3tools/contracts";
+
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
@@ -36,4 +38,28 @@ export function buildPatchCacheKey(patch: string, scope = "diff-panel"): string 
     SECONDARY_HASH_MULTIPLIER,
   ).toString(36);
   return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+}
+
+export function applyDiffFileDelta(snapshot: DiffSnapshot, delta: DiffFileDelta): DiffSnapshot {
+  if (
+    snapshot.threadId !== delta.threadId ||
+    snapshot.fromTurnCount !== delta.fromTurnCount ||
+    snapshot.toTurnCount !== delta.toTurnCount ||
+    snapshot.scope !== delta.scope
+  ) {
+    return snapshot;
+  }
+
+  const nextFiles = new Map(snapshot.files.map((file) => [file.path, file] as const));
+  if (delta.file) {
+    nextFiles.set(delta.path, delta.file);
+  } else {
+    nextFiles.delete(delta.path);
+  }
+
+  return {
+    ...snapshot,
+    metadata: delta.metadata,
+    files: [...nextFiles.values()].toSorted((left, right) => left.path.localeCompare(right.path)),
+  };
 }

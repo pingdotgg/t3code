@@ -108,6 +108,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         haveSettingsChanged: () => false,
         initialSnapshot: (settings) => stampIdentity(buildInitialCursorProviderSnapshot(settings)),
         checkProvider,
+        startInitialRefresh: false,
         // Preserve the background ACP model-capability probe that used to
         // live on `CursorProviderLive`. Only fires when the snapshot reports
         // an authenticated, enabled provider with at least one non-custom

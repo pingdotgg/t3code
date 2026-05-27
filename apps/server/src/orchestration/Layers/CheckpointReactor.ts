@@ -78,6 +78,10 @@ const toCheckpointFiles = (files: ReadonlyArray<CheckpointDiffFileSummary>) =>
     deletions: file.deletions,
   }));
 
+function isNonAuthoritativeCheckpoint(status: string): boolean {
+  return status === "missing" || status === "speculative";
+}
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
@@ -399,12 +403,13 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
-      // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
+      // Only skip if a real checkpoint already exists for this turn.
+      // ProviderRuntimeIngestion may insert speculative entries from provider diffs
       // before this reactor runs; those must not prevent real git capture.
       if (
         thread.checkpoints.some(
-          (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
+          (checkpoint) =>
+            checkpoint.turnId === turnId && !isNonAuthoritativeCheckpoint(checkpoint.status),
         )
       ) {
         return;
@@ -420,14 +425,15 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // If a placeholder checkpoint exists for this turn, reuse its turn count
+      // If a non-authoritative checkpoint exists for this turn, reuse its turn count
       // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
+      const existingNonAuthoritative = thread.checkpoints.find(
+        (checkpoint) =>
+          checkpoint.turnId === turnId && isNonAuthoritativeCheckpoint(checkpoint.status),
       );
       const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
+      const nextTurnCount = existingNonAuthoritative
+        ? existingNonAuthoritative.checkpointTurnCount
         : currentTurnCount + 1;
 
       yield* captureAndDispatchCheckpoint({
@@ -443,41 +449,45 @@ const make = Effect.gen(function* () {
     },
   );
 
-  // Captures a real git checkpoint when a placeholder checkpoint (status "missing")
-  // is detected via a domain event. This replaces the placeholder with a real
+  // Captures a real git checkpoint when a speculative provider diff is
+  // detected via a domain event. This replaces the speculative entry with a real
   // git-ref-based checkpoint.
   //
-  // ProviderRuntimeIngestion creates placeholder checkpoints on turn.diff.updated
+  // ProviderRuntimeIngestion creates speculative checkpoints on turn.diff.updated
   // events from the Codex runtime. This handler fires when the corresponding
   // domain event arrives, allowing the reactor to capture the actual filesystem
   // state into a git ref and dispatch a replacement checkpoint.
-  const captureCheckpointFromPlaceholder = Effect.fn("captureCheckpointFromPlaceholder")(function* (
-    event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>,
-  ) {
+  const captureCheckpointFromNonAuthoritativeDiff = Effect.fn(
+    "captureCheckpointFromNonAuthoritativeDiff",
+  )(function* (event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>) {
     const { threadId, turnId, checkpointTurnCount, status } = event.payload;
 
-    // Only replace placeholders; skip events from our own real captures.
-    if (status !== "missing") {
+    // Only replace non-authoritative provider diffs; skip events from our own real captures.
+    if (!isNonAuthoritativeCheckpoint(status)) {
       return;
     }
 
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
     if (!thread) {
-      yield* Effect.logWarning("checkpoint capture from placeholder skipped: thread not found", {
-        threadId,
-      });
+      yield* Effect.logWarning(
+        "checkpoint capture from speculative diff skipped: thread not found",
+        {
+          threadId,
+        },
+      );
       return;
     }
 
     // If a real checkpoint already exists for this turn, skip.
     if (
       thread.checkpoints.some(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
+        (checkpoint) =>
+          checkpoint.turnId === turnId && !isNonAuthoritativeCheckpoint(checkpoint.status),
       )
     ) {
       yield* Effect.logDebug(
-        "checkpoint capture from placeholder skipped: real checkpoint already exists",
+        "checkpoint capture from speculative diff skipped: real checkpoint already exists",
         { threadId, turnId },
       );
       return;
@@ -775,13 +785,13 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
+    // When ProviderRuntimeIngestion creates a speculative checkpoint
     // from a turn.diff.updated runtime event, capture the real git checkpoint to
     // replace it. The providerService.streamEvents PubSub does not reliably deliver
     // turn.completed runtime events to this reactor (shared subscription), so
     // reacting to the domain event is the reliable path.
     if (event.type === "thread.turn-diff-completed") {
-      yield* captureCheckpointFromPlaceholder(event).pipe(
+      yield* captureCheckpointFromNonAuthoritativeDiff(event).pipe(
         Effect.catch((error) =>
           appendCaptureFailureActivity({
             threadId: event.payload.threadId,

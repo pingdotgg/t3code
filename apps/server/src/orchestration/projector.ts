@@ -32,10 +32,50 @@ type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
-function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
+function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "speculative" | "error") {
   if (status === "error") return "error" as const;
   if (status === "missing") return "interrupted" as const;
+  if (status === "speculative") return "running" as const;
   return "completed" as const;
+}
+
+function isNonAuthoritativeCheckpoint(status: string | undefined): boolean {
+  return status === "missing" || status === "speculative";
+}
+
+function latestTurnFromSession(
+  thread: OrchestrationThread,
+  session: OrchestrationSession,
+): OrchestrationThread["latestTurn"] {
+  if (session.status === "running" && session.activeTurnId !== null) {
+    return {
+      turnId: session.activeTurnId,
+      state: "running",
+      requestedAt:
+        thread.latestTurn?.turnId === session.activeTurnId
+          ? thread.latestTurn.requestedAt
+          : session.updatedAt,
+      startedAt:
+        thread.latestTurn?.turnId === session.activeTurnId
+          ? (thread.latestTurn.startedAt ?? session.updatedAt)
+          : session.updatedAt,
+      completedAt: null,
+      assistantMessageId:
+        thread.latestTurn?.turnId === session.activeTurnId
+          ? thread.latestTurn.assistantMessageId
+          : null,
+    };
+  }
+
+  if (thread.latestTurn?.state === "running") {
+    return {
+      ...thread.latestTurn,
+      state: session.status === "error" ? "error" : "interrupted",
+      completedAt: session.updatedAt,
+    };
+  }
+
+  return thread.latestTurn;
 }
 
 function updateThread(
@@ -461,26 +501,7 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
-            latestTurn:
-              session.status === "running" && session.activeTurnId !== null
-                ? {
-                    turnId: session.activeTurnId,
-                    state: "running",
-                    requestedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? thread.latestTurn.requestedAt
-                        : session.updatedAt,
-                    startedAt:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? (thread.latestTurn.startedAt ?? session.updatedAt)
-                        : session.updatedAt,
-                    completedAt: null,
-                    assistantMessageId:
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? thread.latestTurn.assistantMessageId
-                        : null,
-                  }
-                : thread.latestTurn,
+            latestTurn: latestTurnFromSession(thread, session),
             updatedAt: event.occurredAt,
           }),
         };
@@ -548,13 +569,17 @@ export function projectEvent(
           "checkpoint",
         );
 
-        // Do not let a placeholder (status "missing") overwrite a checkpoint
-        // that has already been captured with a real git ref (status "ready").
+        // Do not let a speculative provider diff overwrite a checkpoint that
+        // has already been captured with a real git ref (status "ready").
         // ProviderRuntimeIngestion may fire multiple turn.diff.updated events
-        // per turn; without this guard later placeholders would clobber the
+        // per turn; without this guard later speculative updates would clobber the
         // real capture dispatched by CheckpointReactor.
         const existing = thread.checkpoints.find((entry) => entry.turnId === checkpoint.turnId);
-        if (existing && existing.status !== "missing" && checkpoint.status === "missing") {
+        if (
+          existing &&
+          !isNonAuthoritativeCheckpoint(existing.status) &&
+          isNonAuthoritativeCheckpoint(checkpoint.status)
+        ) {
           return nextBase;
         }
 

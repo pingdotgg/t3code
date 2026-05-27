@@ -45,6 +45,8 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
+const BOOT_PROVIDER_REFRESH_DELAY = "1 second";
+
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
 ): Effect.Effect<ReadonlyArray<ServerProvider>> =>
@@ -442,7 +444,10 @@ export const ProviderRegistryLive = Layer.effect(
       if (options.waitForRefresh) {
         yield* refreshNewSources;
       } else {
-        yield* refreshNewSources.pipe(Effect.forkScoped);
+        yield* Effect.sleep(BOOT_PROVIDER_REFRESH_DELAY).pipe(
+          Effect.andThen(refreshNewSources),
+          Effect.forkScoped,
+        );
       }
 
       yield* upsertProviders(unavailableProviders, {
@@ -479,10 +484,11 @@ export const ProviderRegistryLive = Layer.effect(
      *     attachment race that otherwise drops the initial probe;
      *   - prune `providersRef` of instances that no longer exist.
      *
-     * Boot uses `waitForRefresh: false` so provider CLI probes cannot block
-     * HTTP readiness. Settings-change syncs keep awaiting refreshes because
-     * they run off the hot-reload fiber after startup and callers expect
-     * rebuilt instances to publish a fresh snapshot deterministically.
+     * Boot uses `waitForRefresh: false` so provider CLI probes are delayed and
+     * cannot block HTTP readiness or first paint. Settings-change syncs keep
+     * awaiting refreshes because they run off the hot-reload fiber after
+     * startup and callers expect rebuilt instances to publish a fresh snapshot
+     * deterministically.
      *
      * Per-instance subscription fibers are not tracked explicitly. When
      * a rebuilt instance's old child scope closes, its PubSub shuts

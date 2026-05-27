@@ -4,6 +4,7 @@
   "workspaces": {
     "packages": [
       "apps/*",
+      "oxlint-plugin-t3code",
       "packages/*",
       "scripts"
     ],
@@ -63,6 +64,7 @@
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
+    "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",

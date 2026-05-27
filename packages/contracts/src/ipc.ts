@@ -49,8 +49,12 @@ import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetFullThreadDiffStateInput,
+  OrchestrationGetFullThreadDiffStateResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
+  OrchestrationGetTurnDiffStateInput,
+  OrchestrationGetTurnDiffStateResult,
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
@@ -295,6 +299,12 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    getTurnDiffState: (
+      input: OrchestrationGetTurnDiffStateInput,
+    ) => Promise<OrchestrationGetTurnDiffStateResult>;
+    getFullThreadDiffState: (
+      input: OrchestrationGetFullThreadDiffStateInput,
+    ) => Promise<OrchestrationGetFullThreadDiffStateResult>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,
       options?: {

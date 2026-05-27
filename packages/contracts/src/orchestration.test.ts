@@ -5,6 +5,7 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  DiffState,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationCheckpointSummary,
@@ -26,6 +27,7 @@ import {
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
+const decodeDiffState = Schema.decodeUnknownEffect(DiffState);
 const decodeCheckpointSummary = Schema.decodeUnknownEffect(OrchestrationCheckpointSummary);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeThreadTurnDiffCompletedPayload = Schema.decodeUnknownEffect(
@@ -134,6 +136,89 @@ it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
         diff: "patch",
       }),
     );
+
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("parses ready diff state snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeDiffState({
+      _tag: "ready",
+      snapshot: {
+        threadId: "thread-1",
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        scope: "snapshot",
+        patch: "diff --git a/a.ts b/a.ts",
+        metadata: {
+          filesChanged: 1,
+          totalAdditions: 2,
+          totalDeletions: 1,
+          largeFiles: 0,
+          unrenderableFiles: 0,
+        },
+        files: [
+          {
+            path: "a.ts",
+            previousPath: null,
+            status: "modified",
+            additions: 2,
+            deletions: 1,
+            hunks: [],
+            isBinary: false,
+            size: "normal",
+            hasHiddenBidiChars: false,
+          },
+        ],
+      },
+    });
+
+    assert.strictEqual(parsed._tag, "ready");
+    assert.strictEqual(parsed.snapshot.files[0]?.path, "a.ts");
+  }),
+);
+
+it.effect("parses stale diff state snapshots with a message", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeDiffState({
+      _tag: "stale",
+      message: "Showing the last loaded diff while the latest checkpoint is unavailable.",
+      snapshot: {
+        threadId: "thread-1",
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        scope: "snapshot",
+        patch: "",
+        metadata: {
+          filesChanged: 0,
+          totalAdditions: 0,
+          totalDeletions: 0,
+          largeFiles: 0,
+          unrenderableFiles: 0,
+        },
+        files: [],
+      },
+    });
+
+    assert.strictEqual(parsed._tag, "stale");
+    assert.strictEqual(parsed.snapshot.threadId, "thread-1");
+  }),
+);
+
+it.effect("rejects unavailable diff state when fromTurnCount > toTurnCount", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeDiffState({
+        _tag: "unavailable",
+        threadId: "thread-1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
+        scope: "snapshot",
+        message: "Checkpoint is unavailable.",
+      }),
+    );
+
     assert.strictEqual(result._tag, "Failure");
   }),
 );

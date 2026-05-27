@@ -62,6 +62,7 @@ import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
+import { DiffStateQuery, type DiffStateQueryShape } from "./diffState/Services/DiffStateQuery.ts";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
@@ -338,6 +339,7 @@ const buildAppUnderTest = (options?: {
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
+    diffStateQuery?: Partial<DiffStateQueryShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
@@ -507,6 +509,65 @@ const buildAppUnderTest = (options?: {
               diff: "",
             }),
           ...options?.layers?.checkpointDiffQuery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(DiffStateQuery)({
+          getTurnDiffState: () =>
+            Effect.succeed({
+              _tag: "ready" as const,
+              snapshot: {
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                scope: "snapshot" as const,
+                patch: "",
+                metadata: {
+                  filesChanged: 0,
+                  totalAdditions: 0,
+                  totalDeletions: 0,
+                  largeFiles: 0,
+                  unrenderableFiles: 0,
+                },
+                files: [],
+              },
+            }),
+          getFullThreadDiffState: () =>
+            Effect.succeed({
+              _tag: "ready" as const,
+              snapshot: {
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                scope: "snapshot" as const,
+                patch: "",
+                metadata: {
+                  filesChanged: 0,
+                  totalAdditions: 0,
+                  totalDeletions: 0,
+                  largeFiles: 0,
+                  unrenderableFiles: 0,
+                },
+                files: [],
+              },
+            }),
+          getTurnDiffFileDelta: () =>
+            Effect.succeed({
+              threadId: defaultThreadId,
+              fromTurnCount: 0,
+              toTurnCount: 0,
+              scope: "snapshot" as const,
+              path: "README.md",
+              file: null,
+              metadata: {
+                filesChanged: 0,
+                totalAdditions: 0,
+                totalDeletions: 0,
+                largeFiles: 0,
+                unrenderableFiles: 0,
+              },
+            }),
+          ...options?.layers?.diffStateQuery,
         }),
       ),
     );

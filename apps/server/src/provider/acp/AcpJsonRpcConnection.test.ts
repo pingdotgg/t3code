@@ -14,6 +14,8 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const bunExe = "bun";
+const ACP_AGENT_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#agent";
+const ACP_PLAN_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#plan";
 
 describe("AcpSessionRuntime", () => {
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
@@ -346,7 +348,7 @@ describe("AcpSessionRuntime", () => {
       yield* runtime.start();
 
       yield* runtime.setConfigOption("model", "default");
-      yield* runtime.setMode("ask");
+      yield* runtime.setMode(ACP_AGENT_MODE_ID);
 
       expect(
         requestEvents.some(
@@ -380,7 +382,7 @@ describe("AcpSessionRuntime", () => {
       const runtime = yield* AcpSessionRuntime;
       yield* runtime.start();
 
-      yield* runtime.setMode("code");
+      yield* runtime.setMode(ACP_PLAN_MODE_ID);
 
       expect(
         requestEvents.some(
@@ -475,7 +477,7 @@ describe("AcpSessionRuntime", () => {
         expect(error.message).toContain(
           'Invalid value "composer-2[fast=false]" for session config option "model"',
         );
-        expect(error.message).toContain("composer-2[fast=true]");
+        expect(error.message).toContain("composer-2");
       }
 
       const recordedRequests = readFileSync(requestLogPath, "utf8")

@@ -7,7 +7,7 @@ import {
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  checkpointDiffQueryOptions,
+  diffStateQueryOptions,
   providerCommandsQueryOptions,
   providerQueryKeys,
 } from "./providerReactQuery";
@@ -18,8 +18,8 @@ const environmentId = EnvironmentId.make("environment-local");
 const copilotDriver = ProviderDriverKind.make("copilot");
 
 function mockNativeApi(input: {
-  getTurnDiff: ReturnType<typeof vi.fn>;
-  getFullThreadDiff: ReturnType<typeof vi.fn>;
+  getTurnDiffState: ReturnType<typeof vi.fn>;
+  getFullThreadDiffState: ReturnType<typeof vi.fn>;
   listProviderCommands?: ReturnType<typeof vi.fn>;
 }) {
   vi.spyOn(environmentApi, "ensureEnvironmentApi").mockReturnValue({
@@ -27,8 +27,8 @@ function mockNativeApi(input: {
       listProviderCommands: input.listProviderCommands ?? vi.fn(),
     },
     orchestration: {
-      getTurnDiff: input.getTurnDiff,
-      getFullThreadDiff: input.getFullThreadDiff,
+      getTurnDiffState: input.getTurnDiffState,
+      getFullThreadDiffState: input.getFullThreadDiffState,
     },
   } as unknown as EnvironmentApi);
 }
@@ -43,8 +43,8 @@ describe("providerCommandsQueryOptions", () => {
       commands: [{ name: "review", description: "Review changes" }],
     });
     mockNativeApi({
-      getTurnDiff: vi.fn(),
-      getFullThreadDiff: vi.fn(),
+      getTurnDiffState: vi.fn(),
+      getFullThreadDiffState: vi.fn(),
       listProviderCommands,
     });
 
@@ -73,7 +73,7 @@ describe("providerCommandsQueryOptions", () => {
   });
 });
 
-describe("providerQueryKeys.checkpointDiff", () => {
+describe("providerQueryKeys.diffState", () => {
   it("includes cacheScope so reused turn counts do not collide", () => {
     const baseInput = {
       environmentId,
@@ -83,12 +83,12 @@ describe("providerQueryKeys.checkpointDiff", () => {
     } as const;
 
     expect(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         cacheScope: "turn:old-turn",
       }),
     ).not.toEqual(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         cacheScope: "turn:new-turn",
       }),
@@ -105,26 +105,26 @@ describe("providerQueryKeys.checkpointDiff", () => {
     } as const;
 
     expect(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         kind: "turn",
         scope: "turn",
       }),
     ).not.toEqual(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         kind: "turn",
         scope: "snapshot",
       }),
     );
     expect(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         kind: "turn",
         scope: "turn",
       }),
     ).not.toEqual(
-      providerQueryKeys.checkpointDiff({
+      providerQueryKeys.diffState({
         ...baseInput,
         kind: "conversation",
         scope: "snapshot",
@@ -133,13 +133,18 @@ describe("providerQueryKeys.checkpointDiff", () => {
   });
 });
 
-describe("checkpointDiffQueryOptions", () => {
+describe("diffStateQueryOptions", () => {
   it("forwards checkpoint range to the provider API", async () => {
-    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    mockNativeApi({ getTurnDiff, getFullThreadDiff });
+    const getTurnDiffState = vi
+      .fn()
+      .mockResolvedValue({ _tag: "ready", snapshot: { patch: "patch" } });
+    const getFullThreadDiffState = vi.fn().mockResolvedValue({
+      _tag: "ready",
+      snapshot: { patch: "patch" },
+    });
+    mockNativeApi({ getTurnDiffState, getFullThreadDiffState });
 
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 3,
@@ -152,21 +157,26 @@ describe("checkpointDiffQueryOptions", () => {
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(options);
 
-    expect(getTurnDiff).toHaveBeenCalledWith({
+    expect(getTurnDiffState).toHaveBeenCalledWith({
       threadId,
       fromTurnCount: 3,
       toTurnCount: 4,
       scope: "turn",
     });
-    expect(getFullThreadDiff).not.toHaveBeenCalled();
+    expect(getFullThreadDiffState).not.toHaveBeenCalled();
   });
 
   it("uses explicit full thread diff API when range starts from zero", async () => {
-    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    mockNativeApi({ getTurnDiff, getFullThreadDiff });
+    const getTurnDiffState = vi
+      .fn()
+      .mockResolvedValue({ _tag: "ready", snapshot: { patch: "patch" } });
+    const getFullThreadDiffState = vi.fn().mockResolvedValue({
+      _tag: "ready",
+      snapshot: { patch: "patch" },
+    });
+    mockNativeApi({ getTurnDiffState, getFullThreadDiffState });
 
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 0,
@@ -178,19 +188,24 @@ describe("checkpointDiffQueryOptions", () => {
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(options);
 
-    expect(getFullThreadDiff).toHaveBeenCalledWith({
+    expect(getFullThreadDiffState).toHaveBeenCalledWith({
       threadId,
       toTurnCount: 2,
     });
-    expect(getTurnDiff).not.toHaveBeenCalled();
+    expect(getTurnDiffState).not.toHaveBeenCalled();
   });
 
   it("uses turn diff API for an explicitly selected first turn", async () => {
-    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    mockNativeApi({ getTurnDiff, getFullThreadDiff });
+    const getTurnDiffState = vi
+      .fn()
+      .mockResolvedValue({ _tag: "ready", snapshot: { patch: "patch" } });
+    const getFullThreadDiffState = vi.fn().mockResolvedValue({
+      _tag: "ready",
+      snapshot: { patch: "patch" },
+    });
+    mockNativeApi({ getTurnDiffState, getFullThreadDiffState });
 
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 0,
@@ -203,21 +218,26 @@ describe("checkpointDiffQueryOptions", () => {
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(options);
 
-    expect(getTurnDiff).toHaveBeenCalledWith({
+    expect(getTurnDiffState).toHaveBeenCalledWith({
       threadId,
       fromTurnCount: 0,
       toTurnCount: 1,
       scope: "turn",
     });
-    expect(getFullThreadDiff).not.toHaveBeenCalled();
+    expect(getFullThreadDiffState).not.toHaveBeenCalled();
   });
 
   it("fails fast on invalid range and does not call provider RPC", async () => {
-    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
-    mockNativeApi({ getTurnDiff, getFullThreadDiff });
+    const getTurnDiffState = vi
+      .fn()
+      .mockResolvedValue({ _tag: "ready", snapshot: { patch: "patch" } });
+    const getFullThreadDiffState = vi.fn().mockResolvedValue({
+      _tag: "ready",
+      snapshot: { patch: "patch" },
+    });
+    mockNativeApi({ getTurnDiffState, getFullThreadDiffState });
 
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 4,
@@ -228,15 +248,13 @@ describe("checkpointDiffQueryOptions", () => {
 
     const queryClient = new QueryClient();
 
-    await expect(queryClient.fetchQuery(options)).rejects.toThrow(
-      "Checkpoint diff is unavailable.",
-    );
-    expect(getTurnDiff).not.toHaveBeenCalled();
-    expect(getFullThreadDiff).not.toHaveBeenCalled();
+    await expect(queryClient.fetchQuery(options)).rejects.toThrow("Diff state is unavailable.");
+    expect(getTurnDiffState).not.toHaveBeenCalled();
+    expect(getFullThreadDiffState).not.toHaveBeenCalled();
   });
 
   it("retries checkpoint-not-ready errors longer than generic failures", () => {
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 1,
@@ -261,7 +279,7 @@ describe("checkpointDiffQueryOptions", () => {
   });
 
   it("backs off longer for checkpoint-not-ready errors", () => {
-    const options = checkpointDiffQueryOptions({
+    const options = diffStateQueryOptions({
       environmentId,
       threadId,
       fromTurnCount: 1,

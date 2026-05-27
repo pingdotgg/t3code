@@ -142,8 +142,8 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
             requests.some(
               (request) =>
                 request.method === "session/set_config_option" &&
-                request.params?.configId === "reasoning" &&
-                request.params?.value === "extra-high",
+                request.params?.configId === "reasoning_effort" &&
+                request.params?.value === "xhigh",
             ),
           ).toBe(true);
           expect(

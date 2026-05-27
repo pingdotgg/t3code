@@ -836,14 +836,21 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   };
 }
 
-function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
+function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "speculative" | "error") {
   if (status === "error") {
     return "error" as const;
   }
   if (status === "missing") {
     return "interrupted" as const;
   }
+  if (status === "speculative") {
+    return "running" as const;
+  }
   return "completed" as const;
+}
+
+function isNonAuthoritativeCheckpoint(status: string | undefined): boolean {
+  return status === "missing" || status === "speculative";
 }
 
 function compareActivities(
@@ -1547,7 +1554,11 @@ function applyEnvironmentOrchestrationEvent(
         const existing = thread.turnDiffSummaries.find(
           (entry) => entry.turnId === checkpoint.turnId,
         );
-        if (existing && existing.status !== "missing" && checkpoint.status === "missing") {
+        if (
+          existing &&
+          !isNonAuthoritativeCheckpoint(existing.status) &&
+          isNonAuthoritativeCheckpoint(checkpoint.status)
+        ) {
           return thread;
         }
         const turnDiffSummaries = [
@@ -1621,7 +1632,11 @@ function applyEnvironmentOrchestrationEvent(
               : {
                   turnId: latestCheckpoint.turnId,
                   state: checkpointStatusToLatestTurnState(
-                    (latestCheckpoint.status ?? "ready") as "ready" | "missing" | "error",
+                    (latestCheckpoint.status ?? "ready") as
+                      | "ready"
+                      | "missing"
+                      | "speculative"
+                      | "error",
                   ),
                   requestedAt: latestCheckpoint.completedAt,
                   startedAt: latestCheckpoint.completedAt,

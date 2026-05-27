@@ -94,6 +94,7 @@ interface TimelineRowSharedState {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  activeChatFindRowId: string | null;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -135,7 +136,11 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  activeChatFindRowId?: string | null;
 }
+
+const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
+const USER_MESSAGE_COLLAPSE_CHAR_THRESHOLD = 900;
 
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
@@ -167,6 +172,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   onIsAtEndChange,
+  activeChatFindRowId = null,
 }: MessagesTimelineProps) {
   const handleForkAssistantMessage = onForkAssistantMessage ?? NOOP_FORK_ASSISTANT_MESSAGE;
   const rawRows = useMemo(
@@ -237,6 +243,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       activeThreadEnvironmentId,
       activeThreadId,
+      activeChatFindRowId,
       onRevertUserMessage,
       onForkAssistantMessage: handleForkAssistantMessage,
       onImageExpand,
@@ -391,35 +398,36 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                     )}
                   </div>
                 )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
-                    )}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
-                        onClick={() => ctx.onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-xs text-muted-foreground/50">
-                    {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
-                  </p>
-                </div>
+                <CollapsibleUserMessageBody
+                  rowId={row.id}
+                  text={displayedUserMessage.visibleText}
+                  terminalContexts={terminalContexts}
+                  forceExpanded={ctx.activeChatFindRowId === row.id}
+                  footer={
+                    <>
+                      <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                        {displayedUserMessage.copyText && (
+                          <MessageCopyButton text={displayedUserMessage.copyText} />
+                        )}
+                        {canRevertAgentWork && (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
+                            onClick={() => ctx.onRevertUserMessage(row.message.id)}
+                            title="Revert to this message"
+                          >
+                            <Undo2Icon className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-right text-xs text-muted-foreground/50">
+                        {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
+                      </p>
+                    </>
+                  }
+                />
               </div>
             </div>
           );
@@ -838,6 +846,60 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  rowId: string;
+  text: string;
+  terminalContexts: ParsedTerminalContextEntry[];
+  forceExpanded: boolean;
+  footer: ReactNode;
+}) {
+  const hasBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
+  const isCollapsible = shouldCollapseUserMessage(props.text, props.terminalContexts);
+  const [isExpandedOverride, setIsExpandedOverride] = useState<boolean | null>(null);
+  const isExpanded = props.forceExpanded || !isCollapsible || isExpandedOverride === true;
+  const isCollapsed = isCollapsible && !isExpanded;
+
+  return (
+    <>
+      {hasBody ? (
+        <div
+          data-user-message-body="true"
+          data-user-message-row-id={props.rowId}
+          data-user-message-collapsible={String(isCollapsible)}
+          data-user-message-collapsed={String(isCollapsed)}
+          data-user-message-fade={String(isCollapsed)}
+          className={cn("relative", isCollapsed ? "max-h-44 overflow-hidden" : null)}
+          style={
+            isCollapsed
+              ? {
+                  maskImage: "linear-gradient(to bottom, black 65%, transparent 100%)",
+                  WebkitMaskImage: "linear-gradient(to bottom, black 65%, transparent 100%)",
+                }
+              : undefined
+          }
+        >
+          <UserMessageBody text={props.text} terminalContexts={props.terminalContexts} />
+        </div>
+      ) : null}
+      <div data-user-message-footer="true" className="mt-1.5 flex items-center justify-end gap-2">
+        {isCollapsible ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            aria-expanded={isExpanded}
+            onClick={() => setIsExpandedOverride(isExpanded ? false : true)}
+            className="mr-auto h-6 px-0 text-muted-foreground/70 text-xs hover:bg-transparent hover:text-foreground"
+          >
+            {isExpanded ? "Show less" : "Show full message"}
+          </Button>
+        ) : null}
+        {props.footer}
+      </div>
+    </>
+  );
+});
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
@@ -976,6 +1038,18 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   }
 
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function shouldCollapseUserMessage(
+  text: string,
+  terminalContexts: ReadonlyArray<ParsedTerminalContextEntry>,
+): boolean {
+  const trimmedText = text.trim();
+  if (trimmedText.length >= USER_MESSAGE_COLLAPSE_CHAR_THRESHOLD) {
+    return true;
+  }
+  const lineCount = trimmedText.length === 0 ? 0 : trimmedText.split(/\r\n|\r|\n/).length;
+  return lineCount > USER_MESSAGE_COLLAPSE_LINE_THRESHOLD || terminalContexts.length > 2;
 }
 
 function formatMessageMeta(
