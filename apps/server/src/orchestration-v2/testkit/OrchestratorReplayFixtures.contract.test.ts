@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OrchestrationV2Command, type ProviderReplayTranscript } from "@t3tools/contracts";
-import { Effect, Schema } from "effect";
-import { readFile } from "node:fs/promises";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -10,7 +12,12 @@ import { materializeFixtureInput } from "./fixtures/shared.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
-  const text = await readFile(file, "utf8");
+  const text = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(decodeURIComponent(file.pathname));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
 }
 

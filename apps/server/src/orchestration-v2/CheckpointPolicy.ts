@@ -10,8 +10,9 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, Schema } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
+import type * as Effect from "effect/Effect";
 
 export class CheckpointPolicyPrepareRunError extends Schema.TaggedErrorClass<CheckpointPolicyPrepareRunError>()(
   "CheckpointPolicyPrepareRunError",

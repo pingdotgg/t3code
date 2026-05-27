@@ -13,6 +13,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ShellSnapshot,
@@ -21,7 +22,14 @@ import {
   type OrchestrationV2TurnItem,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, DateTime, Effect, Layer, Option, Ref, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
@@ -34,6 +42,7 @@ import {
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RunExecutionServiceV2 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -218,21 +227,29 @@ function providerThreadForRun(
     : projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId);
 }
 
+function providerTurnForRun(
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+): OrchestrationV2ProviderTurn | undefined {
+  if (run.activeAttemptId === null) {
+    return undefined;
+  }
+
+  return (
+    projection.providerTurns.find((turn) => turn.runAttemptId === run.activeAttemptId) ??
+    projection.providerTurns.find((turn) => {
+      const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+      return attempt?.providerTurnId === turn.id;
+    })
+  );
+}
+
 function contextSourcePointForRun(
   projection: OrchestrationV2ThreadProjection,
   run: OrchestrationV2Run,
 ): OrchestrationV2ContextSourcePoint {
   const providerThread = providerThreadForRun(projection, run);
-  const providerTurn =
-    run.activeAttemptId === null
-      ? undefined
-      : (projection.providerTurns.find((turn) => turn.runAttemptId === run.activeAttemptId) ??
-        projection.providerTurns.find((turn) => {
-          const attempt = projection.attempts.find(
-            (candidate) => candidate.id === run.activeAttemptId,
-          );
-          return attempt?.providerTurnId === turn.id;
-        }));
+  const providerTurn = providerTurnForRun(projection, run);
   return {
     threadId: projection.thread.id,
     runId: run.id,
@@ -2846,6 +2863,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runsToRollback = projection.runs.filter(
         (run) => run.ordinal > targetOrdinal && run.status === "completed",
       );
+      const providerThreadTurns = projection.providerTurns.filter(
+        (turn) => turn.providerThreadId === providerThread.id,
+      );
+      const rollbackTarget: ProviderAdapterV2RollbackTarget =
+        targetOrdinal === 0
+          ? {
+              type: "thread_start",
+              checkpointId: targetCheckpoint.id,
+              appRunOrdinal: 0,
+            }
+          : yield* Effect.gen(function* () {
+              const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
+              if (targetRun === undefined) {
+                return yield* new OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: no run exists for app ordinal ${targetOrdinal}.`,
+                });
+              }
+              const targetProviderTurn = providerTurnForRun(projection, targetRun);
+              if (targetProviderTurn === undefined) {
+                return yield* new OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: run ${targetRun.id} has no provider turn.`,
+                });
+              }
+              if (targetProviderTurn.providerThreadId !== providerThread.id) {
+                return yield* new OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: `Cannot roll back provider thread ${providerThread.id} to checkpoint ${targetCheckpoint.id}: target provider turn ${targetProviderTurn.id} belongs to provider thread ${targetProviderTurn.providerThreadId}.`,
+                });
+              }
+              return {
+                type: "provider_turn" as const,
+                checkpointId: targetCheckpoint.id,
+                appRunOrdinal: targetOrdinal,
+                providerTurn: targetProviderTurn,
+              };
+            });
       yield* checkpointService
         .restore({
           scope: targetScope,
@@ -2868,7 +2926,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : yield* session
               .rollbackThread({
                 providerThread,
-                providerPayload: { numTurns },
+                target: rollbackTarget,
+                providerThreadTurns,
               })
               .pipe(
                 Effect.mapError(

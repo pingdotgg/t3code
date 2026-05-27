@@ -14,7 +14,9 @@ import { assertSimpleClaudeOutput } from "./simple/claude_output.ts";
 import { assertSimpleOutput } from "./simple/codex_output.ts";
 import { simpleInput } from "./simple/input.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
+import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
+import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
@@ -171,6 +173,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertSubagentOutput,
+      },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./subagent/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeSubagentOutput,
       },
     ],
   },
@@ -369,6 +377,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertThreadRollbackOutput,
       },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./thread_rollback/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeThreadRollbackOutput,
+      },
     ],
   },
 ] satisfies ReadonlyArray<OrchestratorReplayFixture>;
@@ -385,8 +399,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
 // and docs/orchestration-v2/thread-lineage-and-context-transfer.md. The return fixture should
 // prefer a delta handoff into an existing Claude provider thread.
 
-// TODO(claude-v2/fork-rollback-subagents): add Claude providers to fork, rollback, and subagent
-// fixtures only after Claude's native behavior is proven by real transcripts, or after V2 has an
-// explicit portable fallback. Cross-reference `thread_fork_native/codex_transcript.ndjson`,
-// `thread_rollback/codex_transcript.ndjson`, `subagent/codex_transcript.ndjson`, and
+// TODO(claude-v2/context-transfer-fixtures): register provider-switch, merge-back, and cross-provider
+// fork fixtures after each path has a real provider transcript. Cross-reference
+// docs/orchestration-v2/provider-switching-and-context.md and
 // docs/orchestration-v2/thread-lineage-and-context-transfer.md.

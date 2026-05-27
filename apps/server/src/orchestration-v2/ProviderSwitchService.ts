@@ -6,7 +6,9 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, Schema, Effect } from "effect";
+import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 export const ProviderSwitchStrategyV2 = Schema.Literals([
   "resume_with_delta_handoff",
