@@ -167,6 +167,14 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+export function resolveSidebarThreadGitCwd(input: {
+  worktreePath: string | null;
+  threadProjectCwd: string | null;
+  projectCwd: string | null;
+}): string | null {
+  return input.worktreePath ?? input.threadProjectCwd ?? input.projectCwd;
+}
+
 export function resolveSidebarNewThreadSeedContext(input: {
   projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;

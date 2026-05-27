@@ -16,6 +16,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarThreadGitCwd,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -66,6 +67,38 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("resolveSidebarThreadGitCwd", () => {
+  it("uses the worktree path before project cwd fallbacks", () => {
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: "/repo/.worktrees/thread",
+        threadProjectCwd: "/repo/thread-project",
+        projectCwd: "/repo/project",
+      }),
+    ).toBe("/repo/.worktrees/thread");
+  });
+
+  it("uses the owning thread project cwd before the displayed project cwd", () => {
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: "/repo/thread-project",
+        projectCwd: "/repo/display-project",
+      }),
+    ).toBe("/repo/thread-project");
+  });
+
+  it("falls back to the displayed project cwd when the thread project is unknown", () => {
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: null,
+        projectCwd: "/repo/display-project",
+      }),
+    ).toBe("/repo/display-project");
   });
 });
 
