@@ -27,8 +27,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, Schema } from "effect";
-import type { Effect, Scope, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
+import type * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
@@ -385,10 +388,23 @@ export interface ProviderAdapterV2ReadThreadSnapshotInput {
   readonly providerThread: OrchestrationV2ProviderThread;
 }
 
+export type ProviderAdapterV2RollbackTarget =
+  | {
+      readonly type: "thread_start";
+      readonly checkpointId: CheckpointId;
+      readonly appRunOrdinal: 0;
+    }
+  | {
+      readonly type: "provider_turn";
+      readonly checkpointId: CheckpointId;
+      readonly appRunOrdinal: number;
+      readonly providerTurn: OrchestrationV2ProviderTurn;
+    };
+
 export interface ProviderAdapterV2RollbackThreadInput {
   readonly providerThread: OrchestrationV2ProviderThread;
-  readonly providerTurnId?: ProviderTurnId;
-  readonly providerPayload?: unknown;
+  readonly target: ProviderAdapterV2RollbackTarget;
+  readonly providerThreadTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
 }
 
 export interface ProviderAdapterV2ForkThreadInput {

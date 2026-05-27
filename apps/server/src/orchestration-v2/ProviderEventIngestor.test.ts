@@ -4,7 +4,10 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import { DateTime, Effect, Layer, Stream } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
@@ -120,6 +123,7 @@ layer("ProviderEventIngestorV2", (it) => {
           nativeId: "native-thread",
           strength: "strong",
         },
+        nativeConversationHeadRef: null,
         status: "idle",
         firstRunOrdinal: null,
         lastRunOrdinal: null,

@@ -42,6 +42,7 @@ export const CodexAppServerReplayTranscript = Schema.Struct({
   entries: Schema.Array(CodexAppServerReplayEntry),
 });
 export type CodexAppServerReplayTranscript = typeof CodexAppServerReplayTranscript.Type;
+const decodeOutboundJsonFrame = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 export class CodexAppServerReplayJsonParseError extends Schema.TaggedErrorClass<CodexAppServerReplayJsonParseError>()(
   "CodexAppServerReplayJsonParseError",
@@ -363,7 +364,7 @@ const makeReplayClientWithState = Effect.fn(
       return Effect.void;
     }
     return Effect.try({
-      try: () => JSON.parse(trimmed),
+      try: () => decodeOutboundJsonFrame(trimmed),
       catch: (cause) =>
         new CodexAppServerReplayJsonParseError({
           scenario: transcript.scenario,

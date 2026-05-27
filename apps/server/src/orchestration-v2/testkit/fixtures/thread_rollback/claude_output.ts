@@ -7,17 +7,17 @@ import {
   assertRunOrdinals,
   assertSemanticProjectionIntegrity,
   assertTurnItemTypeSequence,
+  assertUserMessagesInclude,
   assertVisibleTurnItemTypeSequence,
   assertVisibleUserMessagesExclude,
   assertVisibleUserMessagesInclude,
-  assertUserMessagesInclude,
   projectionFor,
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
 } from "../shared.ts";
 
-export function assertThreadRollbackOutput(
+export function assertClaudeThreadRollbackOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
@@ -65,4 +65,5 @@ export function assertThreadRollbackOutput(
     projection.runs.some((run) => run.status === "rolled_back"),
     "rollback must be visible in run state",
   );
+  assert.equal(projection.providerThreads[0]?.nativeConversationHeadRef, null);
 }

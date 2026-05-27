@@ -96,6 +96,7 @@ ProviderThread
   providerSessionId?
   appThreadId?
   nativeThreadRef?
+  nativeConversationHeadRef?
   coveredRunRange?
   contextHandoffIds[]
   forkSource?
@@ -349,6 +350,7 @@ type ProviderThread = {
   appThreadId: ThreadId | null;
   ownerNodeId: NodeId | null;
   nativeThreadRef: string | null;
+  nativeConversationHeadRef: ProviderRef | null;
   status: "not_loaded" | "idle" | "active" | "archived" | "closed" | "error";
   firstRunOrdinal: number | null;
   lastRunOrdinal: number | null;

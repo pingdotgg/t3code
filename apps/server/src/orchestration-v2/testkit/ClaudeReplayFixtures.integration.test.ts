@@ -1,7 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
-import { Effect } from "effect";
-import { readFile, rm } from "node:fs/promises";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 
 import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
 import {
@@ -19,8 +20,22 @@ import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
-  const text = await readFile(file, "utf8");
+  const text = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(decodeURIComponent(file.pathname));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
+}
+
+async function removeDirectory(path: string): Promise<void> {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(path, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 }
 
 function claudeFixture(name: string) {
@@ -32,8 +47,58 @@ function claudeFixture(name: string) {
   return { fixture, provider };
 }
 
+async function readClaudeTranscriptFixture(path: string): Promise<ProviderReplayTranscript> {
+  return await readTranscript(
+    new URL(`./fixtures/${path}/claude_transcript.ndjson`, import.meta.url),
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function metadataString(transcript: ProviderReplayTranscript, key: string): string {
+  const value = transcript.metadata?.[key];
+  if (typeof value !== "string") {
+    throw new Error(`${transcript.scenario} metadata.${key} must be a string.`);
+  }
+  return value;
+}
+
+type FramedReplayEntry = Extract<
+  ProviderReplayTranscript["entries"][number],
+  { readonly frame: unknown }
+>;
+
+function frameRecord(entry: FramedReplayEntry): Record<string, unknown> {
+  if (!isRecord(entry.frame)) {
+    throw new Error("Replay entry frame must be an object.");
+  }
+  return entry.frame;
+}
+
+function findEntryFrame(
+  transcript: ProviderReplayTranscript,
+  label: string,
+): Record<string, unknown> {
+  const entry = transcript.entries.find(
+    (candidate): candidate is FramedReplayEntry =>
+      "label" in candidate && candidate.label === label && "frame" in candidate,
+  );
+  assert.isDefined(entry, `${transcript.scenario} must include replay entry ${label}`);
+  return frameRecord(entry);
+}
+
+function successResultTexts(transcript: ProviderReplayTranscript): ReadonlyArray<string> {
+  return transcript.entries.flatMap((entry) => {
+    if (entry.type !== "emit_inbound" || !isRecord(entry.frame)) {
+      return [];
+    }
+    if (entry.frame.type !== "result" || entry.frame.subtype !== "success") {
+      return [];
+    }
+    return typeof entry.frame.result === "string" ? [entry.frame.result] : [];
+  });
 }
 
 function claudeToolUseNamesFromTranscript(
@@ -91,6 +156,59 @@ describe("Claude Agent SDK replay fixtures", () => {
     assert.deepEqual([...unknownToolNames], []);
   });
 
+  it("keeps unregistered native conversation-state transcripts reviewable", async () => {
+    const rollback = await readClaudeTranscriptFixture("thread_rollback");
+    assert.equal(rollback.metadata?.queryMode, "resume_at_cursor");
+    const rollbackCursor = metadataString(rollback, "resumeSessionAt");
+    const rollbackResumeFrame = findEntryFrame(rollback, "query.open:resume_at_cursor");
+    const rollbackResumeOptions = rollbackResumeFrame.options;
+    if (!isRecord(rollbackResumeOptions)) {
+      throw new Error("Rollback resume query.open options must be an object.");
+    }
+    assert.equal(rollbackResumeOptions.resumeSessionAt, rollbackCursor);
+    const rollbackFinalText = successResultTexts(rollback).at(-1) ?? "";
+    assert.include(rollbackFinalText, "rollback fixture first turn complete");
+    assert.notInclude(rollbackFinalText, "rollback fixture second turn complete");
+
+    const latestFork = await readClaudeTranscriptFixture("thread_fork_native");
+    assert.equal(latestFork.metadata?.queryMode, "fork_session");
+    const latestForkedSessionId = metadataString(latestFork, "forkedNativeSessionId");
+    const latestForkedFrame = findEntryFrame(latestFork, "session.forked");
+    assert.equal(latestForkedFrame.sessionId, latestForkedSessionId);
+
+    const priorFork = await readClaudeTranscriptFixture("thread_fork_native_prior_turn");
+    assert.equal(priorFork.metadata?.queryMode, "fork_session_prior_turn");
+    const priorForkCursor = metadataString(priorFork, "forkUpToMessageId");
+    const priorForkFrame = findEntryFrame(priorFork, "session.fork");
+    const priorForkOptions = priorForkFrame.options;
+    if (!isRecord(priorForkOptions)) {
+      throw new Error("Prior-turn fork options must be an object.");
+    }
+    assert.equal(priorForkOptions.upToMessageId, priorForkCursor);
+    const priorForkFinalText = successResultTexts(priorFork).at(-1) ?? "";
+    assert.include(priorForkFinalText, "fork boundary alpha");
+    assert.notInclude(priorForkFinalText, "fork boundary beta");
+
+    const forkLocalRollback = await readClaudeTranscriptFixture(
+      "thread_fork_native_fork_local_rollback",
+    );
+    assert.equal(forkLocalRollback.metadata?.queryMode, "fork_session_resume_at_fork_cursor");
+    const forkLocalRollbackCursor = metadataString(forkLocalRollback, "resumeSessionAt");
+    const forkLocalRollbackFrame = findEntryFrame(
+      forkLocalRollback,
+      "query.open:fork-resume-at-cursor",
+    );
+    const forkLocalRollbackOptions = forkLocalRollbackFrame.options;
+    if (!isRecord(forkLocalRollbackOptions)) {
+      throw new Error("Fork-local rollback resume query.open options must be an object.");
+    }
+    assert.equal(forkLocalRollbackOptions.resumeSessionAt, forkLocalRollbackCursor);
+    const forkLocalRollbackFinalText = successResultTexts(forkLocalRollback).at(-1) ?? "";
+    assert.include(forkLocalRollbackFinalText, "fork local source alpha");
+    assert.include(forkLocalRollbackFinalText, "fork local first");
+    assert.notInclude(forkLocalRollbackFinalText, "fork local second");
+  });
+
   it.skipIf(process.env.T3_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
     "records simple from real Claude Code query() output",
     async () => {
@@ -109,7 +227,7 @@ describe("Claude Agent SDK replay fixtures", () => {
         assert.equal(transcript.protocol, "claude-agent-sdk.query");
         assert.isAtLeast(transcript.entries.length, 3);
       } finally {
-        await rm(checkpointWorkspace, { recursive: true, force: true });
+        await removeDirectory(checkpointWorkspace);
       }
     },
   );
