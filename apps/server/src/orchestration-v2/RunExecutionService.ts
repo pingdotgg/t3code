@@ -11,7 +11,14 @@ import {
   type ProviderSessionId,
   type RunAttemptId,
 } from "@t3tools/contracts";
-import { Context, DateTime, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -280,6 +287,7 @@ export const layer: Layer.Layer<
             OrchestrationV2Run["status"],
             "completed" | "interrupted" | "failed" | "cancelled"
           > | null>(null);
+          const latestProviderThread = yield* Ref.make(input.providerThread);
           const providerEventFiber = yield* input.session.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
@@ -291,6 +299,9 @@ export const layer: Layer.Layer<
                   nodeId: input.rootNode.id,
                   event,
                 });
+                if (event.type === "provider_thread.updated") {
+                  yield* Ref.set(latestProviderThread, event.providerThread);
+                }
                 if (event.type === "turn.terminal") {
                   yield* Ref.set(terminalStatus, event.status);
                 }
@@ -303,11 +314,12 @@ export const layer: Layer.Layer<
                 if (status === null) {
                   return;
                 }
+                const providerThread = yield* Ref.get(latestProviderThread);
                 yield* writeFinalRunEvents({
                   run: input.run,
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
-                  providerThread: input.providerThread,
+                  providerThread,
                   attempt: input.attempt,
                   status,
                   runtimePolicy: input.runtimePolicy,
@@ -319,15 +331,18 @@ export const layer: Layer.Layer<
               }),
             ),
             Effect.catchCause((cause) =>
-              writeFinalRunEvents({
-                run: input.run,
-                rootNode: input.rootNode,
-                checkpointScope: input.checkpointScope,
-                providerThread: input.providerThread,
-                attempt: input.attempt,
-                status: "failed",
-                runtimePolicy: input.runtimePolicy,
-              }).pipe(
+              Ref.get(latestProviderThread).pipe(
+                Effect.flatMap((providerThread) =>
+                  writeFinalRunEvents({
+                    run: input.run,
+                    rootNode: input.rootNode,
+                    checkpointScope: input.checkpointScope,
+                    providerThread,
+                    attempt: input.attempt,
+                    status: "failed",
+                    runtimePolicy: input.runtimePolicy,
+                  }),
+                ),
                 Effect.mapError(
                   (writeCause) =>
                     new RunExecutionIngestError({
@@ -371,12 +386,13 @@ export const layer: Layer.Layer<
             .pipe(
               Effect.catchCause((cause) =>
                 Fiber.interrupt(providerEventFiber).pipe(
-                  Effect.andThen(
+                  Effect.andThen(Ref.get(latestProviderThread)),
+                  Effect.flatMap((providerThread) =>
                     writeFinalRunEvents({
                       run: input.run,
                       rootNode: input.rootNode,
                       checkpointScope: input.checkpointScope,
-                      providerThread: input.providerThread,
+                      providerThread,
                       attempt: input.attempt,
                       status: "failed",
                       runtimePolicy: input.runtimePolicy,

@@ -12,7 +12,12 @@ import type {
   CommandId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Duration, Effect, Fiber, Ref, Schema, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";

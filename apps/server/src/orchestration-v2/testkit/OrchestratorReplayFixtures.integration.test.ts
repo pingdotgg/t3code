@@ -1,7 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
-import { Effect } from "effect";
-import { readFile, rm } from "node:fs/promises";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -21,8 +22,22 @@ import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
-  const text = await readFile(file, "utf8");
+  const text = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(decodeURIComponent(file.pathname));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
+}
+
+async function removeDirectory(path: string): Promise<void> {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(path, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 }
 
 async function runFixtureProvider<Transcript extends ProviderReplayTranscript, Error>(input: {
@@ -68,7 +83,7 @@ async function runFixtureProvider<Transcript extends ProviderReplayTranscript, E
     const latestRun = projection.runs.at(-1);
     assert.deepEqual(latestRun?.modelSelection, input.provider.modelSelection);
   } finally {
-    await rm(checkpointWorkspace, { recursive: true, force: true });
+    await removeDirectory(checkpointWorkspace);
   }
 }
 
