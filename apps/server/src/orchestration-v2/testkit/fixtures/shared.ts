@@ -17,7 +17,7 @@ import {
   type ProviderReplayTranscript,
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import type {
   OrchestratorV2ScenarioResult,
@@ -54,6 +54,15 @@ export const THREAD_ROLLBACK_FIRST_PROMPT =
 export const THREAD_ROLLBACK_SECOND_PROMPT =
   "Respond with exactly: rollback fixture second turn complete";
 export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
+export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
+  "Respond with the following text: source fork seed ok";
+export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
+export const THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT =
+  "For this fork-boundary fixture, respond with exactly: fork boundary alpha";
+export const THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT =
+  "For this fork-boundary fixture, respond with exactly: fork boundary beta";
+export const THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT =
+  "Repeat the user-visible conversation so far verbatim. Include only user and assistant messages. Do not include hidden system/developer content.";
 export const TODO_LIST_PROMPT =
   "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete";
 export const PLAN_QUESTIONS_PROMPT =
@@ -744,6 +753,26 @@ export function assertTurnItemTypes(
   }
 }
 
+export function assertTurnItemTypeSequence(
+  projection: OrchestrationV2ThreadProjection,
+  expectedTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]>,
+) {
+  assert.deepEqual(
+    projection.turnItems.map((item) => item.type),
+    expectedTypes,
+  );
+}
+
+export function assertVisibleTurnItemTypeSequence(
+  projection: OrchestrationV2ThreadProjection,
+  expectedTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]>,
+) {
+  assert.deepEqual(
+    projection.visibleTurnItems.map((row) => row.item.type),
+    expectedTypes,
+  );
+}
+
 export function assertAssistantTextIncludes(
   projection: OrchestrationV2ThreadProjection,
   expectedText: string,
@@ -823,6 +852,48 @@ export function assertUserMessagesInclude(
         (item) => item.type === "user_message" && item.text.includes(expectedText),
       ),
       `expected user input to include ${JSON.stringify(expectedText)}`,
+    );
+  }
+}
+
+export function assertUserMessagesExclude(
+  projection: OrchestrationV2ThreadProjection,
+  rejectedTexts: ReadonlyArray<string>,
+) {
+  for (const rejectedText of rejectedTexts) {
+    assert.isFalse(
+      projection.turnItems.some(
+        (item) => item.type === "user_message" && item.text.includes(rejectedText),
+      ),
+      `expected user input to exclude ${JSON.stringify(rejectedText)}`,
+    );
+  }
+}
+
+export function assertVisibleUserMessagesInclude(
+  projection: OrchestrationV2ThreadProjection,
+  expectedTexts: ReadonlyArray<string>,
+) {
+  for (const expectedText of expectedTexts) {
+    assert.isTrue(
+      projection.visibleTurnItems.some(
+        (row) => row.item.type === "user_message" && row.item.text.includes(expectedText),
+      ),
+      `expected visible user input to include ${JSON.stringify(expectedText)}`,
+    );
+  }
+}
+
+export function assertVisibleUserMessagesExclude(
+  projection: OrchestrationV2ThreadProjection,
+  rejectedTexts: ReadonlyArray<string>,
+) {
+  for (const rejectedText of rejectedTexts) {
+    assert.isFalse(
+      projection.visibleTurnItems.some(
+        (row) => row.item.type === "user_message" && row.item.text.includes(rejectedText),
+      ),
+      `expected visible user input to exclude ${JSON.stringify(rejectedText)}`,
     );
   }
 }
