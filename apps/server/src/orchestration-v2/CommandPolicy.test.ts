@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { CommandId, type OrchestrationV2ProviderCapabilities, ThreadId } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {

@@ -1,18 +1,58 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const execFileAsync = promisify(execFile);
+class ReplayFixtureGitCommandError extends Schema.TaggedErrorClass<ReplayFixtureGitCommandError>()(
+  "ReplayFixtureGitCommandError",
+  {
+    command: Schema.String,
+    exitCode: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.command} failed with exit ${this.exitCode}.`;
+  }
+}
+
+function runGit(
+  cwd: string,
+  args: ReadonlyArray<string>,
+): Effect.Effect<
+  void,
+  ReplayFixtureGitCommandError | PlatformError.PlatformError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  return Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const exitCode = yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }));
+    if (Number(exitCode) !== 0) {
+      return yield* new ReplayFixtureGitCommandError({
+        command: `git ${args.join(" ")}`,
+        exitCode: Number(exitCode),
+      });
+    }
+  });
+}
 
 export async function makeCheckpointWorkspace(fixtureName: string): Promise<string> {
-  const cwd = await mkdtemp(path.join(tmpdir(), `t3-orchestrator-v2-${fixtureName}-`));
-  await execFileAsync("git", ["init"], { cwd });
-  await execFileAsync("git", ["config", "user.name", "T3 Code Test"], { cwd });
-  await execFileAsync("git", ["config", "user.email", "t3code-test@example.com"], { cwd });
-  await writeFile(path.join(cwd, "README.md"), `# ${fixtureName}\n`, "utf8");
-  await execFileAsync("git", ["add", "README.md"], { cwd });
-  await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
-  return cwd;
+  return await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectory({
+        prefix: `t3-orchestrator-v2-${fixtureName}-`,
+      });
+      yield* runGit(cwd, ["init"]);
+      yield* runGit(cwd, ["config", "user.name", "T3 Code Test"]);
+      yield* runGit(cwd, ["config", "user.email", "t3code-test@example.com"]);
+      yield* fs.writeFileString(path.join(cwd, "README.md"), `# ${fixtureName}\n`);
+      yield* runGit(cwd, ["add", "README.md"]);
+      yield* runGit(cwd, ["commit", "-m", "initial"]);
+      return cwd;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 }

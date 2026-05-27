@@ -1,11 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as CodexReplay from "effect-codex-app-server/replay";
-import { mkdirSync, mkdtempSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import {
   CodexOrchestratorReplayHarness,
@@ -38,9 +38,15 @@ const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
 
 async function readCodexTranscript(): Promise<CodexReplay.CodexAppServerReplayTranscript> {
-  const text = await readFile(
-    new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
-    "utf8",
+  const file = new URL(
+    "./fixtures/provider_thread_resume/codex_transcript.ndjson",
+    import.meta.url,
+  );
+  const text = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(decodeURIComponent(file.pathname));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
   const transcript = await Effect.runPromise(decodeProviderReplayNdjson(text));
   return Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayTranscript)(transcript);
@@ -65,12 +71,16 @@ function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput)
 describe("orchestrator replay recovery", () => {
   it("resumes a provider-native Codex thread after recreating the orchestrator runtime", async () => {
     const transcript = await readCodexTranscript();
-    const tempDir = mkdtempSync(path.join(tmpdir(), "t3-orchestration-v2-recovery-"));
-    mkdirSync(tempDir, { recursive: true });
-    const dbPath = path.join(tempDir, "state.sqlite");
 
     await Effect.runPromise(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectory({
+          prefix: "t3-orchestration-v2-recovery-",
+        });
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        const dbPath = path.join(tempDir, "state.sqlite");
         const driver = yield* CodexReplay.makeReplayDriver(transcript);
         const materialized = yield* materializeFixtureInput({
           scenario: "provider_thread_resume",
@@ -136,7 +146,10 @@ describe("orchestrator replay recovery", () => {
         assertAssistantTextIncludes(projection, FIRST_FINAL);
         assertAssistantTextIncludes(projection, SECOND_FINAL);
         assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer)),
+        provideDeterministicTestRuntime,
+      ),
     );
   });
 });

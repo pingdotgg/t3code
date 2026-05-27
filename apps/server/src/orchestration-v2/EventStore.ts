@@ -5,7 +5,11 @@ import {
   OrchestrationV2StoredEvent,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context, Effect, Layer, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
@@ -89,9 +93,11 @@ type EventRow = {
 const encodeEventJson = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2DomainEventJson));
 const decodeEventJson = Schema.decodeUnknownEffect(OrchestrationV2DomainEventJson);
 const decodeStoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeUnknownJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function parseJson(json: string): unknown {
-  return JSON.parse(json) as unknown;
+  return decodeUnknownJsonString(json);
 }
 
 function compactUndefined(record: Record<string, unknown>): Record<string, unknown> {
@@ -171,7 +177,7 @@ export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = Laye
                 ${event.rawEventId ?? null},
                 ${event.type},
                 ${normalized.occurredAt},
-                ${JSON.stringify(normalized.payload)}
+                ${encodeUnknownJsonString(normalized.payload)}
               )
               RETURNING
                 sequence,

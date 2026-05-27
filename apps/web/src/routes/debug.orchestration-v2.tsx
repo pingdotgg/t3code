@@ -20,15 +20,23 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { createFileRoute } from "@tanstack/react-router";
+import { GitMergeIcon } from "lucide-react";
 import type { CSSProperties, DragEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
+import { useSettings } from "../hooks/useSettings";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
-import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "../providerInstances";
-import { GitMergeIcon } from "lucide-react";
+import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
+import {
+  type ProviderInstanceEntry,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
+import { useServerKeybindings, useServerProviders } from "../rpc/serverState";
 
 export const Route = createFileRoute("/debug/orchestration-v2")({
   component: OrchestrationV2DebugRoute,
@@ -39,10 +47,7 @@ const DEBUG_CODEX_DRIVER = ProviderDriverKind.make("codex");
 const DEBUG_CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const DEBUG_CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const DEBUG_CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
-const DEFAULT_MODEL_SELECTION = {
-  instanceId: DEBUG_CODEX_INSTANCE_ID,
-  model: "gpt-5.4",
-} satisfies ModelSelection;
+const DEFAULT_MODEL_SELECTION = createModelSelection(DEBUG_CODEX_INSTANCE_ID, "gpt-5.4");
 
 const DEBUG_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [
   {
@@ -56,6 +61,20 @@ const DEBUG_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
     models: [
+      {
+        slug: "gpt-5.5",
+        name: "GPT-5.5",
+        shortName: "5.5",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gpt-5.3-codex",
+        name: "GPT-5.3 Codex",
+        shortName: "5.3",
+        isCustom: false,
+        capabilities: null,
+      },
       {
         slug: "gpt-5.4",
         name: "GPT-5.4",
@@ -71,16 +90,16 @@ const DEBUG_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [
         capabilities: null,
       },
       {
-        slug: "gpt-5.3-codex",
-        name: "GPT-5.3 Codex",
-        shortName: "5.3",
+        slug: "gpt-5.3-codex-spark",
+        name: "GPT-5.3 Codex Spark",
+        shortName: "Spark",
         isCustom: false,
         capabilities: null,
       },
       {
-        slug: "gpt-5.3-codex-spark",
-        name: "GPT-5.3 Codex Spark",
-        shortName: "Spark",
+        slug: "gpt-5.2",
+        name: "GPT-5.2",
+        shortName: "5.2",
         isCustom: false,
         capabilities: null,
       },
@@ -133,14 +152,6 @@ const DEBUG_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [
   },
 ];
 
-const DEBUG_PROVIDER_INSTANCE_ENTRIES = sortProviderInstanceEntries(
-  deriveProviderInstanceEntries(DEBUG_PROVIDER_SNAPSHOTS),
-);
-
-const DEBUG_MODEL_OPTIONS_BY_INSTANCE = new Map(
-  DEBUG_PROVIDER_SNAPSHOTS.map((provider) => [provider.instanceId, provider.models] as const),
-);
-
 type LogEntry =
   | {
       readonly type: "command";
@@ -173,6 +184,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function formatErrorMessage(error: unknown): string {
+  if (isRecord(error) && typeof error.detail === "string" && error.detail.trim().length > 0) {
+    return error.detail;
+  }
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
@@ -254,6 +268,36 @@ function useNow(intervalMs = 10_000): number {
     };
   }, [intervalMs]);
   return now;
+}
+
+function selectDebugFallbackProviderInstance(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): ProviderInstanceEntry | undefined {
+  return (
+    entries.find((entry) => entry.enabled && entry.isAvailable && entry.status === "ready") ??
+    entries.find((entry) => entry.enabled && entry.isAvailable) ??
+    entries[0]
+  );
+}
+
+function resolveDebugModelSelection(
+  current: ModelSelection,
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>,
+): ModelSelection {
+  const currentEntry = entries.find((entry) => entry.instanceId === current.instanceId);
+  const entry = currentEntry ?? selectDebugFallbackProviderInstance(entries);
+  if (!entry) return current;
+
+  const modelOptions = modelOptionsByInstance.get(entry.instanceId) ?? [];
+  const hasCurrentModel =
+    currentEntry !== undefined && modelOptions.some((option) => option.slug === current.model);
+  if (currentEntry !== undefined && (modelOptions.length === 0 || hasCurrentModel)) {
+    return current;
+  }
+
+  const model = modelOptions[0]?.slug ?? current.model;
+  return createModelSelection(entry.instanceId, model);
 }
 
 const IS_MAC =
@@ -448,6 +492,37 @@ function upsertVisibleTurnItem(
   );
 }
 
+function rolledBackRunIds(projection: OrchestrationV2ThreadProjection): ReadonlySet<RunId> {
+  return new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+}
+
+function shouldShowLocalTurnItem(
+  projection: OrchestrationV2ThreadProjection,
+  item: OrchestrationV2TurnItem,
+): boolean {
+  return item.runId === null || !rolledBackRunIds(projection).has(item.runId);
+}
+
+function activeVisibleTurnItems(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["visibleTurnItems"] {
+  const rolledBack = rolledBackRunIds(projection);
+  return projection.visibleTurnItems
+    .filter(
+      (row) =>
+        row.visibility !== "local" || row.item.runId === null || !rolledBack.has(row.item.runId),
+    )
+    .map((row, position) => ({
+      position,
+      visibility: row.visibility,
+      sourceThreadId: row.sourceThreadId,
+      sourceItemId: row.sourceItemId,
+      item: row.item,
+    }));
+}
+
 function applyStreamEventToProjection(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
@@ -465,11 +540,16 @@ function applyStreamEventToProjection(
     case "thread.created":
       return { ...base, thread: event.payload };
     case "run.created":
-    case "run.updated":
-      return {
+    case "run.updated": {
+      const nextProjection = {
         ...base,
         runs: upsertProjectionEntity(base.runs, event.payload),
       };
+      return {
+        ...nextProjection,
+        visibleTurnItems: activeVisibleTurnItems(nextProjection),
+      };
+    }
     case "run-attempt.created":
     case "run-attempt.updated":
       return {
@@ -511,12 +591,24 @@ function applyStreamEventToProjection(
         ...base,
         plans: upsertProjectionEntity(base.plans, event.payload),
       };
-    case "turn-item.updated":
-      return {
+    case "turn-item.updated": {
+      const nextProjection = {
         ...base,
         turnItems: upsertProjectionEntity(base.turnItems, event.payload),
-        visibleTurnItems: upsertVisibleTurnItem(base, event.payload),
       };
+      const withoutStaleItem = {
+        ...nextProjection,
+        visibleTurnItems: activeVisibleTurnItems(nextProjection).filter(
+          (row) => row.sourceItemId !== event.payload.id,
+        ),
+      };
+      return {
+        ...nextProjection,
+        visibleTurnItems: shouldShowLocalTurnItem(nextProjection, event.payload)
+          ? upsertVisibleTurnItem(withoutStaleItem, event.payload)
+          : withoutStaleItem.visibleTurnItems,
+      };
+    }
     case "checkpoint-scope.created":
       return {
         ...base,
@@ -1524,6 +1616,37 @@ function OrchestrationV2DebugRoute() {
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const shellUnsubscribeRef = useRef<(() => void) | null>(null);
 
+  const serverProviders = useServerProviders();
+  const settings = useSettings();
+  const keybindings = useServerKeybindings();
+  const providerSnapshots = serverProviders.length > 0 ? serverProviders : DEBUG_PROVIDER_SNAPSHOTS;
+  const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
+    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerSnapshots)),
+    [providerSnapshots],
+  );
+  const modelOptionsByInstance = useMemo<
+    ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>
+  >(() => {
+    const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
+    for (const entry of providerInstanceEntries) {
+      out.set(entry.instanceId, getAppModelOptionsForInstance(settings, entry));
+    }
+    return out;
+  }, [providerInstanceEntries, settings]);
+
+  useEffect(() => {
+    setModelSelection((current) => {
+      const next = resolveDebugModelSelection(
+        current,
+        providerInstanceEntries,
+        modelOptionsByInstance,
+      );
+      return current.instanceId === next.instanceId && current.model === next.model
+        ? current
+        : next;
+    });
+  }, [modelOptionsByInstance, providerInstanceEntries]);
+
   const hiddenPanels = useMemo(
     () => ALL_PANEL_KEYS.filter((key) => !visiblePanels.includes(key)),
     [visiblePanels],
@@ -1679,7 +1802,10 @@ function OrchestrationV2DebugRoute() {
     async (nextThreadId: ThreadId) => {
       setThreadId(nextThreadId);
       subscribeToThread(nextThreadId);
-      await refreshProjection(nextThreadId);
+      const nextProjection = await refreshProjection(nextThreadId);
+      if (nextProjection !== null) {
+        setModelSelection(nextProjection.thread.modelSelection);
+      }
     },
     [refreshProjection, subscribeToThread],
   );
@@ -1764,7 +1890,7 @@ function OrchestrationV2DebugRoute() {
       } catch (error) {
         appendLog({
           type: "error",
-          message: error instanceof Error ? error.message : String(error),
+          message: formatErrorMessage(error),
         });
       } finally {
         setIsBusy(false);
@@ -1803,7 +1929,7 @@ function OrchestrationV2DebugRoute() {
       } catch (error) {
         appendLog({
           type: "error",
-          message: error instanceof Error ? error.message : String(error),
+          message: formatErrorMessage(error),
         });
       } finally {
         setIsBusy(false);
@@ -1855,7 +1981,7 @@ function OrchestrationV2DebugRoute() {
       } catch (error) {
         appendLog({
           type: "error",
-          message: error instanceof Error ? error.message : String(error),
+          message: formatErrorMessage(error),
         });
       } finally {
         setIsBusy(false);
@@ -1944,7 +2070,7 @@ function OrchestrationV2DebugRoute() {
       } catch (error) {
         appendLog({
           type: "error",
-          message: error instanceof Error ? error.message : String(error),
+          message: formatErrorMessage(error),
         });
       } finally {
         setIsBusy(false);
@@ -2040,14 +2166,15 @@ function OrchestrationV2DebugRoute() {
             activeInstanceId={modelSelection.instanceId}
             model={modelSelection.model}
             lockedProvider={null}
-            instanceEntries={DEBUG_PROVIDER_INSTANCE_ENTRIES}
-            modelOptionsByInstance={DEBUG_MODEL_OPTIONS_BY_INSTANCE}
+            instanceEntries={providerInstanceEntries}
+            keybindings={keybindings}
+            modelOptionsByInstance={modelOptionsByInstance}
             compact
-            disabled={isBusy}
+            disabled={isBusy || providerInstanceEntries.length === 0}
             triggerVariant="outline"
             triggerClassName="h-9 max-w-64 bg-background"
             onInstanceModelChange={(instanceId, model) => {
-              setModelSelection({ instanceId, model });
+              setModelSelection(createModelSelection(instanceId, model));
             }}
           />
           <button
