@@ -11,7 +11,7 @@ import {
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
-import { selectThreadByRef, useStore } from "../store";
+import { type AppState, type EnvironmentState, selectThreadByRef, useStore } from "../store";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -23,6 +23,145 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+
+export type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+type CachedThreadPlanCatalogEntry = {
+  environmentId: EnvironmentId | null;
+  shell: object | null;
+  proposedPlanIds: readonly string[] | undefined;
+  proposedPlansById: Record<string, Thread["proposedPlans"][number]> | undefined;
+  entry: ThreadPlanCatalogEntry;
+};
+
+function findThreadPlanCatalogSource(
+  state: AppState,
+  threadId: ThreadId,
+  previous: CachedThreadPlanCatalogEntry | undefined,
+):
+  | {
+      environmentId: EnvironmentId;
+      environmentState: EnvironmentState;
+      shell: object;
+    }
+  | undefined {
+  if (previous?.environmentId) {
+    const environmentState = state.environmentStateById[previous.environmentId];
+    const shell = environmentState?.threadShellById[threadId];
+    if (shell) {
+      return {
+        environmentId: previous.environmentId,
+        environmentState,
+        shell,
+      };
+    }
+  }
+
+  for (const [environmentId, environmentState] of Object.entries(
+    state.environmentStateById,
+  ) as Array<[EnvironmentId, EnvironmentState]>) {
+    const shell = environmentState.threadShellById[threadId];
+    if (shell) {
+      return {
+        environmentId,
+        environmentState,
+        shell,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export function createThreadPlanCatalogSelector(
+  threadIds: readonly ThreadId[],
+): (state: AppState) => ThreadPlanCatalogEntry[] {
+  let previousThreadIds: readonly ThreadId[] = [];
+  let previousResult: ThreadPlanCatalogEntry[] = [];
+  let previousEntries = new Map<ThreadId, CachedThreadPlanCatalogEntry>();
+
+  return (state) => {
+    const sameThreadIds =
+      previousThreadIds.length === threadIds.length &&
+      previousThreadIds.every((id, index) => id === threadIds[index]);
+    const nextEntries = new Map<ThreadId, CachedThreadPlanCatalogEntry>();
+    const nextResult: ThreadPlanCatalogEntry[] = [];
+    let changed = !sameThreadIds;
+
+    for (const threadId of threadIds) {
+      const previous = previousEntries.get(threadId);
+      const source = findThreadPlanCatalogSource(state, threadId, previous);
+
+      if (!source) {
+        if (
+          previous &&
+          previous.environmentId === null &&
+          previous.shell === null &&
+          previous.proposedPlanIds === undefined &&
+          previous.proposedPlansById === undefined
+        ) {
+          nextEntries.set(threadId, previous);
+          continue;
+        }
+        changed = true;
+        nextEntries.set(threadId, {
+          environmentId: null,
+          shell: null,
+          proposedPlanIds: undefined,
+          proposedPlansById: undefined,
+          entry: { id: threadId, proposedPlans: EMPTY_PROPOSED_PLANS },
+        });
+        continue;
+      }
+
+      const proposedPlanIds = source.environmentState.proposedPlanIdsByThreadId[threadId];
+      const proposedPlansById = source.environmentState.proposedPlanByThreadId[threadId] as
+        | Record<string, Thread["proposedPlans"][number]>
+        | undefined;
+
+      if (
+        previous &&
+        previous.environmentId === source.environmentId &&
+        previous.shell === source.shell &&
+        previous.proposedPlanIds === proposedPlanIds &&
+        previous.proposedPlansById === proposedPlansById
+      ) {
+        nextEntries.set(threadId, previous);
+        nextResult.push(previous.entry);
+        continue;
+      }
+
+      changed = true;
+      const proposedPlans =
+        proposedPlanIds && proposedPlanIds.length > 0 && proposedPlansById
+          ? proposedPlanIds.flatMap((planId) => {
+              const proposedPlan = proposedPlansById[planId];
+              return proposedPlan ? [proposedPlan] : [];
+            })
+          : EMPTY_PROPOSED_PLANS;
+      const entry = { id: threadId, proposedPlans };
+      nextEntries.set(threadId, {
+        environmentId: source.environmentId,
+        shell: source.shell,
+        proposedPlanIds,
+        proposedPlansById,
+        entry,
+      });
+      nextResult.push(entry);
+    }
+
+    if (!changed && previousResult.length === nextResult.length) {
+      return previousResult;
+    }
+
+    previousThreadIds = threadIds;
+    previousEntries = nextEntries;
+    previousResult = nextResult;
+    return nextResult;
+  };
+}
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

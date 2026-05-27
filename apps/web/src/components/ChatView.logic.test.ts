@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   canStartThreadTurn,
   createLocalDispatchSnapshot,
+  createThreadPlanCatalogSelector,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
@@ -247,6 +248,7 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 
 const makeThread = (input?: {
   id?: ThreadId;
+  proposedPlans?: Thread["proposedPlans"];
   latestTurn?: {
     turnId: TurnId;
     state: "running" | "completed";
@@ -266,7 +268,7 @@ const makeThread = (input?: {
   interactionMode: "default" as const,
   session: null,
   messages: [],
-  proposedPlans: [],
+  proposedPlans: input?.proposedPlans ?? [],
   error: null,
   createdAt: "2026-03-29T00:00:00.000Z",
   archivedAt: null,
@@ -394,6 +396,46 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   setStoreThreads([]);
+});
+
+describe("createThreadPlanCatalogSelector", () => {
+  it("reuses the resolved environment for stable thread lookups", () => {
+    const threadId = ThreadId.make("thread-with-plan");
+    const proposedPlan: Thread["proposedPlans"][number] = {
+      id: "plan-1",
+      turnId: TurnId.make("turn-1"),
+      planMarkdown: "# Plan",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      updatedAt: "2026-03-29T00:00:00.000Z",
+    };
+    setStoreThreads([
+      makeThread({
+        id: threadId,
+        proposedPlans: [proposedPlan],
+      }),
+    ]);
+    const selector = createThreadPlanCatalogSelector([threadId]);
+    const firstResult = selector(useStore.getState());
+    const throwingEnvironmentState = {
+      ...useStore.getState().environmentStateById[localEnvironmentId],
+      get threadShellById(): EnvironmentState["threadShellById"] {
+        throw new Error("unrelated environment should not be scanned");
+      },
+    } as EnvironmentState;
+
+    const nextResult = selector({
+      ...useStore.getState(),
+      environmentStateById: {
+        [EnvironmentId.make("environment-unrelated")]: throwingEnvironmentState,
+        ...useStore.getState().environmentStateById,
+      },
+    });
+
+    expect(firstResult).toEqual([{ id: threadId, proposedPlans: [proposedPlan] }]);
+    expect(nextResult).toBe(firstResult);
+  });
 });
 
 describe("waitForStartedServerThread", () => {
