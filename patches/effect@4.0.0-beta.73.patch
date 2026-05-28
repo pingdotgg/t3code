@@ -1,5 +1,5 @@
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
-index 7c5970042df67a25b4145df017960b3e6febed9c..7af3374632d53ad59f24e80835aa6741853b1f2b 100644
+index b0f61df..ead663e 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
 +++ b/dist/unstable/rpc/RpcClient.d.ts
 @@ -2,6 +2,7 @@ import * as Cause from "../../Cause.ts";
@@ -10,7 +10,7 @@ index 7c5970042df67a25b4145df017960b3e6febed9c..7af3374632d53ad59f24e80835aa6741
  import * as Layer from "../../Layer.ts";
  import * as Queue from "../../Queue.ts";
  import * as Schedule from "../../Schedule.ts";
-@@ -192,9 +193,40 @@ export declare const layerProtocolWorker: (options: {
+@@ -260,9 +261,40 @@ export declare const layerProtocolWorker: (options: {
      readonly targetUtilization?: number | undefined;
      readonly timeToLive: Duration.Input;
  }) => Layer.Layer<Protocol, WorkerError, Worker.WorkerPlatform | Worker.Spawner>;
@@ -50,12 +50,19 @@ index 7c5970042df67a25b4145df017960b3e6febed9c..7af3374632d53ad59f24e80835aa6741
 +    readonly onPingTimeout?: Effect.Effect<void> | undefined;
  }>;
  /**
-  * @since 4.0.0
+  * Represents optional client protocol hooks that run when a transport connects
+@@ -279,4 +311,4 @@ declare const ConnectionHooks_base: Context.ServiceClass<ConnectionHooks, "effec
+ export declare class ConnectionHooks extends ConnectionHooks_base {
+ }
+ export {};
+-//# sourceMappingURL=RpcClient.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=RpcClient.d.ts.map
 diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
-index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c676319421 100644
+index 811a8a8..f9cf2eb 100644
 --- a/dist/unstable/rpc/RpcClient.js
 +++ b/dist/unstable/rpc/RpcClient.js
-@@ -42,6 +42,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -46,6 +46,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
    const services = yield* Effect.context();
    const scope = Context.get(services, Scope.Scope);
    const entries = new Map();
@@ -63,7 +70,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
    let isShutdown = false;
    yield* Scope.addFinalizer(scope, Effect.withFiber(parent => {
      isShutdown = true;
-@@ -79,6 +80,11 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -83,6 +84,11 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
        return Effect.interrupt;
      }
      const id = generateRequestId();
@@ -75,7 +82,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
      const send = middleware(message => options.onFromClient({
        message,
        context,
-@@ -96,7 +102,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -100,7 +106,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
        headers: Headers.merge(parentFiber.getRef(CurrentHeaders), headers)
      });
      if (discard) {
@@ -84,7 +91,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
      }
      let fiber;
      return Effect.onInterrupt(Effect.callback(resume => {
-@@ -114,7 +120,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -118,7 +124,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
          }
        };
        entries.set(id, entry);
@@ -93,7 +100,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
          captureStackTrace: false
        }) : identity, Effect.runForkWith(parentFiber.context));
        fiber.addObserver(exit => {
-@@ -123,8 +129,9 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -127,8 +133,9 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
          }
        });
      }), interruptors => {
@@ -104,7 +111,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
      });
    });
    const onStreamRequest = Effect.fnUntraced(function* (rpc, middleware, payload, headers, streamBufferSize, context) {
-@@ -136,11 +143,17 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -140,11 +147,17 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
      });
      const fiber = Fiber.getCurrent();
      const id = generateRequestId();
@@ -124,7 +131,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
      });
      const queue = yield* Queue.bounded(streamBufferSize);
      entries.set(id, {
-@@ -148,9 +161,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -152,9 +165,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
        rpc,
        queue,
        scope,
@@ -137,7 +144,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
        message,
        context,
        discard: false
-@@ -165,7 +179,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -169,7 +183,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
          sampled: span.sampled
        } : {}),
        headers: Headers.merge(fiber.getRef(CurrentHeaders), headers)
@@ -146,7 +153,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
        captureStackTrace: false
      }) : identity, Effect.catchCause(error => Queue.failCause(queue, error)), Effect.interruptible, Effect.forkIn(scope, {
        startImmediately: true
-@@ -195,7 +209,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -199,7 +213,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
        });
      };
    };
@@ -158,7 +165,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
      const parentFiber = Fiber.getCurrent();
      const fiber = options.onFromClient({
        message: {
-@@ -209,7 +226,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -213,7 +230,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
      fiber.addObserver(() => {
        resume(Effect.void);
      });
@@ -167,7 +174,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
    const write = message => {
      switch (message._tag) {
        case "Chunk":
-@@ -217,7 +234,13 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -221,7 +238,13 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
            const requestId = message.requestId;
            const entry = entries.get(requestId);
            if (!entry || entry._tag !== "Queue") return Effect.void;
@@ -182,7 +189,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
              message: {
                _tag: "Ack",
                requestId: message.requestId
-@@ -232,11 +255,18 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+@@ -236,11 +259,18 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
            const entry = entries.get(requestId);
            if (!entry) return Effect.void;
            entries.delete(requestId);
@@ -204,7 +211,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
          }
        case "Defect":
          {
-@@ -530,7 +560,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -568,7 +598,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
    const requestClientMap = new Map();
    const write = yield* socket.writer;
    let parser = serialization.makeUnsafe();
@@ -213,7 +220,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
    let currentError;
    const onOpen = Effect.suspend(() => {
      currentError = undefined;
-@@ -550,8 +580,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -588,8 +618,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
            body: () => {
              const response = responses[i++];
              if (response._tag === "Pong") {
@@ -223,7 +230,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
              }
              if ("requestId" in response) {
                const clientId = requestClientMap.get(response.requestId);
-@@ -579,12 +608,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -617,12 +646,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
        }
      }, {
        onOpen
@@ -238,7 +245,7 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
    }).pipe(Effect.flatMap(() => Effect.fail(new Socket.SocketError({
      reason: new Socket.SocketCloseError({
        code: 1000
-@@ -626,20 +655,20 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -664,20 +693,20 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
    };
  }));
  const defaultRetryPolicy = /*#__PURE__*/Schedule.exponential(500, 1.5).pipe(/*#__PURE__*/Schedule.either(/*#__PURE__*/Schedule.spaced(5000)));
@@ -263,8 +270,8 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
    }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
    return {
      timeout: latch.await,
-@@ -773,6 +802,11 @@ export const makeProtocolWorker = options => Protocol.make(Effect.fnUntraced(fun
-  * @category protocol
+@@ -820,6 +849,11 @@ export const makeProtocolWorker = options => Protocol.make(Effect.fnUntraced(fun
+  * @since 4.0.0
   */
  export const layerProtocolWorker = /*#__PURE__*/flow(makeProtocolWorker, /*#__PURE__*/Layer.effect(Protocol));
 +/**
@@ -273,5 +280,12 @@ index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c6
 + */
 +export class RequestHooks extends /*#__PURE__*/Context.Service()("effect/rpc/RpcClient/RequestHooks") {}
  /**
-  * @since 4.0.0
-  * @category ConnectionHooks
+  * Represents optional client protocol hooks that run when a transport connects
+  * and disconnects.
+@@ -835,4 +869,4 @@ export const layerProtocolWorker = /*#__PURE__*/flow(makeProtocolWorker, /*#__PU
+ export class ConnectionHooks extends /*#__PURE__*/Context.Service()("effect/rpc/RpcClient/ConnectionHooks") {}
+ // internal
+ const decodeDefect = /*#__PURE__*/Schema.decodeSync(Schema.Defect);
+-//# sourceMappingURL=RpcClient.js.map
+\ No newline at end of file
++//# sourceMappingURL=RpcClient.js.map
