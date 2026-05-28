@@ -2,6 +2,7 @@ import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serve
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -143,11 +144,7 @@ export const layer = Layer.effect(
         return existing.value;
       }
 
-      let token = "";
-      while (token.length < 48) {
-        token += (yield* crypto.randomUUIDv4).replace(/-/g, "");
-      }
-      token = token.slice(0, 48);
+      const token = Encoding.encodeHex(yield* crypto.randomBytes(24));
       yield* Ref.set(tokenRef, Option.some(token));
       return token;
     });
