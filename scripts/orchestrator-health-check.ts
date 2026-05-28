@@ -332,8 +332,9 @@ async function checkConvex(config: HealthCheckConfig): Promise<ReadonlyArray<Che
       : {}),
   };
   const events = await runCommand(
-    "bunx",
+    "bun",
     [
+      "x",
       "convex",
       "run",
       "--prod",
