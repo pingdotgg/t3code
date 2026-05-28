@@ -1,9 +1,28 @@
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
-import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
+import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { isElectron } from "../env";
 import { cn } from "~/lib/utils";
 
+export function shouldShowNoActiveThreadSidebarTrigger({
+  isMobile,
+  open,
+  openMobile,
+}: {
+  isMobile: boolean;
+  open: boolean;
+  openMobile: boolean;
+}): boolean {
+  return isMobile ? !openMobile : !open;
+}
+
 export function NoActiveThreadState() {
+  const { isMobile, open, openMobile } = useSidebar();
+  const showSidebarTrigger = shouldShowNoActiveThreadSidebarTrigger({
+    isMobile,
+    open,
+    openMobile,
+  });
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
@@ -16,12 +35,13 @@ export function NoActiveThreadState() {
           )}
         >
           {isElectron ? (
-            <span className="text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
-              No active thread
-            </span>
+            <div className="flex min-w-0 items-center gap-2 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+              {showSidebarTrigger ? <SidebarTrigger className="size-7 shrink-0" /> : null}
+              <span className="truncate text-xs text-muted-foreground/50">No active thread</span>
+            </div>
           ) : (
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+              {showSidebarTrigger ? <SidebarTrigger className="size-7 shrink-0" /> : null}
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
                 No active thread
               </span>
