@@ -6,7 +6,6 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,93 +20,87 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
-async function seedReadModel(): Promise<OrchestrationReadModel> {
+const seedReadModel = Effect.gen(function* () {
   const now = "2026-01-01T00:00:00.000Z";
   const initial = createEmptyReadModel(now);
-  const withProject = await Effect.runPromise(
-    projectEvent(initial, {
-      sequence: 1,
-      eventId: asEventId("evt-project-create"),
-      aggregateKind: "project",
-      aggregateId: asProjectId("project-delete"),
-      type: "project.created",
-      occurredAt: now,
-      commandId: asCommandId("cmd-project-create"),
-      causationEventId: null,
-      correlationId: asCommandId("cmd-project-create"),
-      metadata: {},
-      payload: {
-        projectId: asProjectId("project-delete"),
-        title: "Project Delete",
-        workspaceRoot: "/tmp/project-delete",
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: now,
-        updatedAt: now,
-      },
-    }),
-  );
+  const withProject = yield* projectEvent(initial, {
+    sequence: 1,
+    eventId: asEventId("evt-project-create"),
+    aggregateKind: "project",
+    aggregateId: asProjectId("project-delete"),
+    type: "project.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-project-create"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-project-create"),
+    metadata: {},
+    payload: {
+      projectId: asProjectId("project-delete"),
+      title: "Project Delete",
+      workspaceRoot: "/tmp/project-delete",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
 
-  const withFirstThread = await Effect.runPromise(
-    projectEvent(withProject, {
-      sequence: 2,
-      eventId: asEventId("evt-thread-create-1"),
-      aggregateKind: "thread",
-      aggregateId: asThreadId("thread-delete-1"),
-      type: "thread.created",
-      occurredAt: now,
-      commandId: asCommandId("cmd-thread-create-1"),
-      causationEventId: null,
-      correlationId: asCommandId("cmd-thread-create-1"),
-      metadata: {},
-      payload: {
-        threadId: asThreadId("thread-delete-1"),
-        projectId: asProjectId("project-delete"),
-        title: "Thread Delete 1",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-        updatedAt: now,
+  const withFirstThread = yield* projectEvent(withProject, {
+    sequence: 2,
+    eventId: asEventId("evt-thread-create-1"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-1"),
+    type: "thread.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-create-1"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-create-1"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-1"),
+      projectId: asProjectId("project-delete"),
+      title: "Thread Delete 1",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
       },
-    }),
-  );
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
 
-  return Effect.runPromise(
-    projectEvent(withFirstThread, {
-      sequence: 3,
-      eventId: asEventId("evt-thread-create-2"),
-      aggregateKind: "thread",
-      aggregateId: asThreadId("thread-delete-2"),
-      type: "thread.created",
-      occurredAt: now,
-      commandId: asCommandId("cmd-thread-create-2"),
-      causationEventId: null,
-      correlationId: asCommandId("cmd-thread-create-2"),
-      metadata: {},
-      payload: {
-        threadId: asThreadId("thread-delete-2"),
-        projectId: asProjectId("project-delete"),
-        title: "Thread Delete 2",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-        updatedAt: now,
+  return yield* projectEvent(withFirstThread, {
+    sequence: 3,
+    eventId: asEventId("evt-thread-create-2"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-2"),
+    type: "thread.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-create-2"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-create-2"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-2"),
+      projectId: asProjectId("project-delete"),
+      title: "Thread Delete 2",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
       },
-    }),
-  );
-}
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+});
 
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
@@ -146,7 +139,7 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
-      const readModel = yield* Effect.promise(() => seedReadModel());
+      const readModel = yield* seedReadModel;
       const error = yield* Effect.flip(
         decideOrchestrationCommand({
           command: {
@@ -163,7 +156,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
 
   it.effect("reuses thread.delete semantics when force-deleting a non-empty project", () =>
     Effect.gen(function* () {
-      const readModel = yield* Effect.promise(() => seedReadModel());
+      const readModel = yield* seedReadModel;
       const projectDeleteCommand: Extract<OrchestrationCommand, { type: "project.delete" }> = {
         type: "project.delete",
         commandId: asCommandId("cmd-project-delete-force"),
