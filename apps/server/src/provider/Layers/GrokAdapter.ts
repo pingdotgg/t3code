@@ -38,7 +38,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import { type AcpSessionRuntimeShape } from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -116,20 +116,27 @@ function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
   return { sessionId: raw.sessionId.trim() };
 }
 
+function selectPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string | undefined {
+  const kind =
+    decision === "acceptForSession"
+      ? "allow_always"
+      : decision === "accept"
+        ? "allow_once"
+        : "reject_once";
+  const option = request.options.find((entry) => entry.kind === kind);
+  return option?.optionId.trim() || undefined;
+}
+
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
-  const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
-  if (typeof allowAlwaysOption?.optionId === "string" && allowAlwaysOption.optionId.trim()) {
-    return allowAlwaysOption.optionId.trim();
-  }
-
-  const allowOnceOption = request.options.find((option) => option.kind === "allow_once");
-  if (typeof allowOnceOption?.optionId === "string" && allowOnceOption.optionId.trim()) {
-    return allowOnceOption.optionId.trim();
-  }
-
-  return undefined;
+  return (
+    selectPermissionOptionId(request, "acceptForSession") ??
+    selectPermissionOptionId(request, "accept")
+  );
 }
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
@@ -221,7 +228,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           },
           threadId,
         );
-      });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to write native Grok notification log.", {
+            cause,
+            threadId,
+            method,
+          }),
+        ),
+      );
 
     const emitPlanUpdate = (
       ctx: GrokSessionContext,
@@ -399,14 +414,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       decision: resolved,
                     }),
                   );
+                  const selectedOptionId =
+                    resolved === "cancel" ? undefined : selectPermissionOptionId(params, resolved);
                   return {
-                    outcome:
-                      resolved === "cancel"
-                        ? ({ outcome: "cancelled" } as const)
-                        : {
-                            outcome: "selected" as const,
-                            optionId: acpPermissionOutcome(resolved),
-                          },
+                    outcome: selectedOptionId
+                      ? {
+                          outcome: "selected" as const,
+                          optionId: selectedOptionId,
+                        }
+                      : ({ outcome: "cancelled" } as const),
                   };
                 }),
               ),

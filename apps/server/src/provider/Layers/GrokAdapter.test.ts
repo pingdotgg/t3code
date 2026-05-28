@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
+  ApprovalRequestId,
   GrokSettings,
   ProviderDriverKind,
   ThreadId,
@@ -61,12 +62,21 @@ async function waitForFileContent(filePath: string, attempts = 40): Promise<stri
   return readAttempt(attempts);
 }
 
+async function readJsonLines(filePath: string) {
+  const raw = await readFile(filePath, "utf8");
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-adapter-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const makeTestAdapter = (binaryPath: string) =>
-  makeGrokAdapter(decodeGrokSettings({ binaryPath })).pipe(Effect.orDie);
+const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
+  makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
@@ -209,6 +219,96 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       assert.equal(error._tag, "ProviderAdapterValidationError");
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("responds to ACP approvals using provider-supplied option ids", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-custom-approval-option-id");
+      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "grok-acp-")));
+      const requestLogPath = path.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_ALLOW_ONCE_OPTION_ID: "agent-defined-approval-id",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "request.opened"
+          ? adapter.respondToRequest(
+              threadId,
+              ApprovalRequestId.make(String(event.requestId)),
+              "accept",
+            )
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* adapter.sendTurn({ threadId, input: "approve this", attachments: [] });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            !("method" in entry) &&
+            typeof entry.result === "object" &&
+            entry.result !== null &&
+            "outcome" in entry.result &&
+            typeof entry.result.outcome === "object" &&
+            entry.result.outcome !== null &&
+            "optionId" in entry.result.outcome &&
+            entry.result.outcome.optionId === "agent-defined-approval-id",
+        ),
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("continues streaming events when native notification logging fails", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-native-log-failure");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        nativeEventLogger: {
+          filePath: "memory://grok-native-events",
+          write: (record: unknown) =>
+            typeof record === "object" &&
+            record !== null &&
+            "event" in record &&
+            typeof record.event === "object" &&
+            record.event !== null &&
+            "kind" in record.event &&
+            record.event.kind === "notification"
+              ? Effect.die(new Error("native log write failed"))
+              : Effect.void,
+          close: () => Effect.void,
+        },
+      });
+      const contentDelta = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "content.delta" ? Deferred.succeed(contentDelta, undefined) : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "keep streaming", attachments: [] });
+      yield* Deferred.await(contentDelta);
+
+      yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
   );

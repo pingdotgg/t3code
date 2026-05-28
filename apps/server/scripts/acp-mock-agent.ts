@@ -21,6 +21,11 @@ const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const permissionOptionIds = {
+  allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
+  allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
+  rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
+};
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
@@ -423,9 +428,13 @@ const program = Effect.gen(function* () {
             ],
           },
           options: [
-            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-            { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
-            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+            {
+              optionId: permissionOptionIds.allowAlways,
+              name: "Allow always",
+              kind: "allow_always",
+            },
+            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
           ],
         });
 
