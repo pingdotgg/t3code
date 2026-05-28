@@ -6,6 +6,7 @@ import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tool
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 import { Atom } from "effect/unstable/reactivity";
 
+import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
   pasteComposerClipboard,
@@ -14,7 +15,6 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, type QueuedThreadMessage } from "../lib/threadActivity";
-import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "../state/atom-registry";
 import { getEnvironmentClient } from "./environment-session-registry";
 import type { ConnectedEnvironmentSummary } from "../state/remote-runtime-types";
@@ -356,15 +356,15 @@ export function useThreadComposerState() {
       return;
     }
 
-    const createdAt = new Date().toISOString();
+    const metadata = makeQueuedMessageMetadata();
     enqueueQueuedMessage({
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
-      messageId: MessageId.make(uuidv4()),
-      commandId: CommandId.make(uuidv4()),
+      messageId: MessageId.make(metadata.messageId),
+      commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      createdAt,
+      createdAt: metadata.createdAt,
     });
     clearDraft(threadKey);
   }, [draftAttachmentsByThreadKey, draftMessageByThreadKey, selectedThreadShell]);

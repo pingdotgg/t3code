@@ -1,5 +1,8 @@
 import {
   type AuthBearerBootstrapResult,
+  AuthAccessTokenType,
+  type AuthDpopAccessTokenResult,
+  AuthRemoteSessionScope,
   type AuthClientSession,
   type AuthBootstrapResult,
   type AuthPairingCredentialResult,
@@ -7,6 +10,8 @@ import {
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -27,7 +32,9 @@ import {
   SessionCredentialError,
   SessionCredentialService,
 } from "../Services/SessionCredentialService.ts";
+import { ServerSecretStore } from "../Services/ServerSecretStore.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
+import { verifyRequestDpopProof } from "../dpop.ts";
 
 type BootstrapExchangeResult = {
   readonly response: AuthBootstrapResult;
@@ -35,6 +42,7 @@ type BootstrapExchangeResult = {
 };
 
 const AUTHORIZATION_PREFIX = "Bearer ";
+const DPOP_AUTHORIZATION_PREFIX = "DPoP ";
 const WEBSOCKET_TOKEN_QUERY_PARAM = "wsToken";
 
 export function toBootstrapExchangeAuthError(cause: BootstrapCredentialError): AuthError {
@@ -62,11 +70,22 @@ function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string 
   return token.length > 0 ? token : null;
 }
 
+function parseDpopToken(request: HttpServerRequest.HttpServerRequest): string | null {
+  const header = request.headers["authorization"];
+  if (typeof header !== "string" || !header.startsWith(DPOP_AUTHORIZATION_PREFIX)) {
+    return null;
+  }
+  const token = header.slice(DPOP_AUTHORIZATION_PREFIX.length).trim();
+  return token.length > 0 ? token : null;
+}
+
 export const makeServerAuth = Effect.gen(function* () {
   const policy = yield* ServerAuthPolicy;
   const bootstrapCredentials = yield* BootstrapCredentialService;
   const authControlPlane = yield* AuthControlPlane;
   const sessions = yield* SessionCredentialService;
+  const secretStore = yield* ServerSecretStore;
+  const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
 
   const authenticateToken = (token: string): Effect.Effect<AuthenticatedSession, AuthError> =>
@@ -84,6 +103,7 @@ export const makeServerAuth = Effect.gen(function* () {
         method: session.method,
         role: session.role,
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
       })),
       Effect.mapError(
         (cause) =>
@@ -98,7 +118,8 @@ export const makeServerAuth = Effect.gen(function* () {
   const authenticateRequest = (request: HttpServerRequest.HttpServerRequest) => {
     const cookieToken = request.cookies[sessions.cookieName];
     const bearerToken = parseBearerToken(request);
-    const credential = cookieToken ?? bearerToken;
+    const dpopToken = parseDpopToken(request);
+    const credential = cookieToken ?? bearerToken ?? dpopToken;
     if (!credential) {
       return Effect.fail(
         new AuthError({
@@ -107,7 +128,38 @@ export const makeServerAuth = Effect.gen(function* () {
         }),
       );
     }
-    return authenticateToken(credential);
+    return authenticateToken(credential).pipe(
+      Effect.flatMap((session) => {
+        if (session.proofKeyThumbprint) {
+          if (!dpopToken || credential !== dpopToken) {
+            return Effect.fail(
+              new AuthError({
+                message: "DPoP-bound access token requires DPoP authorization.",
+                status: 401,
+              }),
+            );
+          }
+          return verifyRequestDpopProof({
+            request,
+            expectedThumbprint: session.proofKeyThumbprint,
+            expectedAccessToken: dpopToken,
+          }).pipe(
+            Effect.provideService(ServerSecretStore, secretStore),
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.as(session),
+          );
+        }
+        if (dpopToken) {
+          return Effect.fail(
+            new AuthError({
+              message: "DPoP authorization requires a proof-bound access token.",
+              status: 401,
+            }),
+          );
+        }
+        return Effect.succeed(session);
+      }),
+    );
   };
 
   const getSessionState: ServerAuthShape["getSessionState"] = (request) =>
@@ -132,9 +184,10 @@ export const makeServerAuth = Effect.gen(function* () {
 
   const exchangeBootstrapCredential: ServerAuthShape["exchangeBootstrapCredential"] = (
     credential,
+    input,
     requestMetadata,
   ) =>
-    bootstrapCredentials.consume(credential).pipe(
+    bootstrapCredentials.consume(credential, input).pipe(
       Effect.mapError(toBootstrapExchangeAuthError),
       Effect.flatMap((grant) =>
         sessions
@@ -172,8 +225,8 @@ export const makeServerAuth = Effect.gen(function* () {
     );
 
   const exchangeBootstrapCredentialForBearerSession: ServerAuthShape["exchangeBootstrapCredentialForBearerSession"] =
-    (credential, requestMetadata) =>
-      bootstrapCredentials.consume(credential).pipe(
+    (credential, input, requestMetadata) =>
+      bootstrapCredentials.consume(credential, input).pipe(
         Effect.mapError(toBootstrapExchangeAuthError),
         Effect.flatMap((grant) =>
           sessions
@@ -205,6 +258,45 @@ export const makeServerAuth = Effect.gen(function* () {
               expiresAt: DateTime.toUtc(session.expiresAt),
               sessionToken: session.token,
             }) satisfies AuthBearerBootstrapResult,
+        ),
+      );
+
+  const exchangeBootstrapCredentialForDpopAccessToken: ServerAuthShape["exchangeBootstrapCredentialForDpopAccessToken"] =
+    (credential, input, requestMetadata) =>
+      bootstrapCredentials.consume(credential, input).pipe(
+        Effect.mapError(toBootstrapExchangeAuthError),
+        Effect.flatMap((grant) =>
+          sessions
+            .issue({
+              method: "dpop-access-token",
+              subject: grant.subject,
+              role: grant.role,
+              proofKeyThumbprint: input.proofKeyThumbprint,
+              ttl: Duration.hours(1),
+              client: {
+                ...requestMetadata,
+                ...(grant.label ? { label: grant.label } : {}),
+              },
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AuthError({
+                    message: "Failed to issue DPoP-bound access token.",
+                    cause,
+                  }),
+              ),
+            ),
+        ),
+        Effect.map(
+          (session) =>
+            ({
+              access_token: session.token,
+              issued_token_type: AuthAccessTokenType,
+              token_type: "DPoP",
+              expires_in: 3600,
+              scope: AuthRemoteSessionScope,
+            }) satisfies AuthDpopAccessTokenResult,
         ),
       );
 
@@ -378,6 +470,7 @@ export const makeServerAuth = Effect.gen(function* () {
     getSessionState,
     exchangeBootstrapCredential,
     exchangeBootstrapCredentialForBearerSession,
+    exchangeBootstrapCredentialForDpopAccessToken,
     issuePairingCredential,
     listPairingLinks,
     revokePairingLink,

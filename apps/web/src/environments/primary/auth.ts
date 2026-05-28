@@ -40,7 +40,7 @@ export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly role: "owner" | "client";
-  readonly method: "browser-session-cookie" | "bearer-session-token";
+  readonly method: "browser-session-cookie" | "bearer-session-token" | "dpop-access-token";
   readonly client: AuthClientMetadata;
   readonly issuedAt: string;
   readonly expiresAt: string;

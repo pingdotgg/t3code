@@ -31,11 +31,11 @@ const projectsSortOrder = Order.mapInput(
 
 const threadsSortOrder = Order.mapInput(
   Order.Struct({
-    activityAt: Order.flip(Order.Number),
+    activityAt: Order.flip(Order.String),
     environmentId: Order.String,
   }),
   (thread: EnvironmentScopedThreadShell) => ({
-    activityAt: new Date(thread.updatedAt ?? thread.createdAt).getTime(),
+    activityAt: thread.updatedAt ?? thread.createdAt,
     environmentId: thread.environmentId,
   }),
 );

@@ -10,6 +10,7 @@ export class SecretStoreError extends Data.TaggedError("SecretStoreError")<{
 export interface ServerSecretStoreShape {
   readonly get: (name: string) => Effect.Effect<Uint8Array | null, SecretStoreError>;
   readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
+  readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
   readonly getOrCreateRandom: (
     name: string,
     bytes: number,

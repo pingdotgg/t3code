@@ -48,13 +48,13 @@ function HostedStaticOnboardingState() {
                 Connect an environment to get started
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
-                Open a pairing link from your T3 Code desktop app or add a reachable backend
-                manually. Your saved environments stay in this browser.
+                Sign in to T3 Cloud to connect a linked environment through its managed tunnel, or
+                add a reachable backend manually.
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
-                <Button render={<a href="/settings/connections" />} size="sm">
+                <Button render={<a href="/settings/cloud" />} size="sm">
                   <PlusIcon className="size-4" />
-                  Add environment
+                  Open T3 Cloud
                 </Button>
               </div>
             </EmptyHeader>

@@ -100,6 +100,10 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   plugins: [
+    "expo-router",
+    "expo-secure-store",
+    ["@clerk/expo", { theme: "./clerk-theme.json" }],
+    "expo-web-browser",
     [
       "expo-camera",
       {
@@ -124,16 +128,36 @@ const config: ExpoConfig = {
       "expo-build-properties",
       {
         ios: {
-          deploymentTarget: "16.1",
+          deploymentTarget: "18.0",
         },
       },
     ],
-    "expo-secure-store",
-    "expo-router",
+    [
+      "expo-widgets",
+      {
+        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
+        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
+        enablePushNotifications: true,
+        widgets: [
+          {
+            name: "AgentActivity",
+            displayName: "Agent Activity",
+            description: "Shows the current state of active T3 Code agents.",
+            supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+          },
+        ],
+      },
+    ],
     "./plugins/withAndroidCleartextTraffic.cjs",
   ],
   extra: {
     appVariant: APP_VARIANT,
+    relay: {
+      url: process.env.T3_RELAY_URL ?? null,
+    },
+    clerk: {
+      publishableKey: process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
+    },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     },

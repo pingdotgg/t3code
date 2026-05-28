@@ -44,6 +44,7 @@ export interface AuthControlPlaneShape {
     readonly label?: string;
     readonly role?: SessionRole;
     readonly subject?: string;
+    readonly proofKeyThumbprint?: string;
   }) => Effect.Effect<IssuedPairingLink, AuthControlPlaneError>;
   readonly listPairingLinks: (input?: {
     readonly role?: SessionRole;

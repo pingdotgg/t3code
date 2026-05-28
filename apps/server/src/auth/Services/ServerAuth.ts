@@ -4,6 +4,7 @@ import type {
   AuthClientMetadata,
   AuthClientSession,
   AuthCreatePairingCredentialInput,
+  AuthDpopAccessTokenResult,
   AuthPairingLink,
   AuthPairingCredentialResult,
   AuthSessionId,
@@ -25,11 +26,12 @@ export interface AuthenticatedSession {
   readonly method: ServerAuthSessionMethod;
   readonly role: SessionRole;
   readonly expiresAt?: DateTime.DateTime;
+  readonly proofKeyThumbprint?: string;
 }
 
 export class AuthError extends Data.TaggedError("AuthError")<{
   readonly message: string;
-  readonly status?: 400 | 401 | 403 | 500;
+  readonly status?: 400 | 401 | 403 | 409 | 500;
   readonly cause?: unknown;
 }> {}
 
@@ -40,6 +42,9 @@ export interface ServerAuthShape {
   ) => Effect.Effect<AuthSessionState, never>;
   readonly exchangeBootstrapCredential: (
     credential: string,
+    input: {
+      readonly proofKeyThumbprint?: string;
+    },
     requestMetadata: AuthClientMetadata,
   ) => Effect.Effect<
     {
@@ -50,8 +55,18 @@ export interface ServerAuthShape {
   >;
   readonly exchangeBootstrapCredentialForBearerSession: (
     credential: string,
+    input: {
+      readonly proofKeyThumbprint?: string;
+    },
     requestMetadata: AuthClientMetadata,
   ) => Effect.Effect<AuthBearerBootstrapResult, AuthError>;
+  readonly exchangeBootstrapCredentialForDpopAccessToken: (
+    credential: string,
+    input: {
+      readonly proofKeyThumbprint: string;
+    },
+    requestMetadata: AuthClientMetadata,
+  ) => Effect.Effect<AuthDpopAccessTokenResult, AuthError>;
   readonly issuePairingCredential: (
     input?: AuthCreatePairingCredentialInput & {
       readonly role?: SessionRole;

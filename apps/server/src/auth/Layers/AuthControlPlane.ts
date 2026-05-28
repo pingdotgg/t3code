@@ -50,6 +50,7 @@ export const makeAuthControlPlane = Effect.gen(function* () {
         subject: input?.subject ?? "one-time-token",
         ...(input?.ttl ? { ttl: input.ttl } : {}),
         ...(input?.label ? { label: input.label } : {}),
+        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
       });
       return {
         id: issued.id,

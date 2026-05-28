@@ -1,0 +1,34 @@
+{
+  "name": "t3code-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "smoke:apns": "bun run src/smoke/apnsDelivery.ts",
+    "smoke:managed-endpoint": "bun run src/smoke/managedEndpointConnect.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.4.13",
+    "@distilled.cloud/cloudflare": "^0.21.5",
+    "@effect/sql-pg": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "alchemy": "2.0.0-beta.44",
+    "drizzle-orm": "^1.0.0-rc.1",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260520.0",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "^8.15.6",
+    "drizzle-kit": "^1.0.0-rc.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

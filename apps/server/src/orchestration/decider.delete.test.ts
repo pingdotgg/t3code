@@ -10,15 +10,19 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vitest";
 
-import { decideOrchestrationCommand } from "./decider.ts";
+import { decideOrchestrationCommand as decideOrchestrationCommandEffect } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const decideOrchestrationCommand = (
+  input: Parameters<typeof decideOrchestrationCommandEffect>[0],
+) => decideOrchestrationCommandEffect(input).pipe(Effect.provide(NodeServices.layer));
 
 async function seedReadModel(): Promise<OrchestrationReadModel> {
   const now = "2026-01-01T00:00:00.000Z";

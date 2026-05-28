@@ -42,6 +42,7 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+import { AgentAwarenessRelayLive } from "./relay/Layers/AgentAwarenessRelay.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
@@ -65,6 +66,7 @@ import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts
 import {
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
+  authDpopTokenRouteLayer,
   authClientsRevokeOthersRouteLayer,
   authClientsRevokeRouteLayer,
   authClientsRouteLayer,
@@ -74,6 +76,16 @@ import {
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
 } from "./auth/http.ts";
+import {
+  cloudEnvironmentHealthRouteLayer,
+  cloudLinkStateRouteLayer,
+  cloudUnlinkRouteLayer,
+  cloudLinkProofRouteLayer,
+  cloudMintCredentialRouteLayer,
+  cloudRelayConfigRouteLayer,
+  cloudT3MintCredentialRouteLayer,
+} from "./cloud/http.ts";
+import { CloudManagedEndpointRuntimeLive } from "./cloud/ManagedEndpointRuntime.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -146,6 +158,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(AgentAwarenessRelayLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -283,6 +296,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
   Layer.provideMerge(AuthLayerLive),
+  Layer.provideMerge(ServerSecretStoreLive),
+  Layer.provideMerge(CloudManagedEndpointRuntimeLive),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
@@ -303,6 +318,7 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 export const makeRoutesLayer = Layer.mergeAll(
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
+  authDpopTokenRouteLayer,
   authClientsRevokeOthersRouteLayer,
   authClientsRevokeRouteLayer,
   authClientsRouteLayer,
@@ -311,6 +327,13 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingCredentialRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
+  cloudLinkStateRouteLayer,
+  cloudUnlinkRouteLayer,
+  cloudLinkProofRouteLayer,
+  cloudEnvironmentHealthRouteLayer,
+  cloudMintCredentialRouteLayer,
+  cloudRelayConfigRouteLayer,
+  cloudT3MintCredentialRouteLayer,
   attachmentsRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
@@ -417,7 +440,7 @@ export const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
-      Layer.provideMerge(RuntimeServicesLive),
+      Layer.provide(RuntimeServicesLive),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),

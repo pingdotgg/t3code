@@ -84,6 +84,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       const pairingCredential = yield* serverAuth.issuePairingCredential();
       const exchanged = yield* serverAuth.exchangeBootstrapCredential(
         pairingCredential.credential,
+        {},
         requestMetadata,
       );
       const verified = yield* serverAuth.authenticateHttpRequest(
@@ -108,7 +109,11 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
         listedPairingLinks.some((pairingLink) => pairingLink.subject === "owner-bootstrap"),
       ).toBe(false);
 
-      const exchanged = yield* serverAuth.exchangeBootstrapCredential(token ?? "", requestMetadata);
+      const exchanged = yield* serverAuth.exchangeBootstrapCredential(
+        token ?? "",
+        {},
+        requestMetadata,
+      );
       const verified = yield* serverAuth.authenticateHttpRequest(
         makeCookieRequest(exchanged.sessionToken),
       );
@@ -124,6 +129,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
 
       const ownerExchange = yield* serverAuth.exchangeBootstrapCredential(
         "desktop-bootstrap-token",
+        {},
         requestMetadata,
       );
       const ownerSession = yield* serverAuth.authenticateHttpRequest(
@@ -135,6 +141,7 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       const listedPairingLinks = yield* serverAuth.listPairingLinks();
       const clientExchange = yield* serverAuth.exchangeBootstrapCredential(
         pairingCredential.credential,
+        {},
         {
           ...requestMetadata,
           deviceType: "mobile",

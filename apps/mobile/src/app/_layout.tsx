@@ -20,12 +20,15 @@ import {
 } from "../state/use-remote-environment-registry";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
+import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
+import { useAgentNotificationNavigation } from "../features/agent-awareness/notificationNavigation";
 
 function AppNavigator() {
   const { isLoadingSavedConnection } = useRemoteEnvironmentState();
   const colorScheme = useColorScheme();
   const statusBarBg = useCSSVariable("--color-status-bar");
   const sheetStyle = useResolveClassNames("bg-sheet");
+  useAgentNotificationNavigation();
 
   const newTaskScreenOptions = {
     contentStyle: sheetStyle,
@@ -66,6 +69,8 @@ function AppNavigator() {
             headerShadowVisible: false,
           }}
         />
+        <Stack.Screen name="settings" options={connectionSheetScreenOptions} />
+        <Stack.Screen name="cloud" options={connectionSheetScreenOptions} />
         <Stack.Screen name="connections" options={connectionSheetScreenOptions} />
         <Stack.Screen name="new" options={newTaskScreenOptions} />
         <Stack.Screen
@@ -91,14 +96,20 @@ export default function RootLayout() {
   useRemoteEnvironmentBootstrap();
 
   return (
-    <RegistryContext value={appAtomRegistry}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <KeyboardProvider statusBarTranslucent>
-          <SafeAreaProvider>
-            {fontsLoaded ? <AppNavigator /> : <LoadingScreen message="Loading remote workspace…" />}
-          </SafeAreaProvider>
-        </KeyboardProvider>
-      </GestureHandlerRootView>
-    </RegistryContext>
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <CloudAuthProvider>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <KeyboardProvider statusBarTranslucent>
+            <SafeAreaProvider>
+              {fontsLoaded ? (
+                <AppNavigator />
+              ) : (
+                <LoadingScreen message="Loading remote workspace…" />
+              )}
+            </SafeAreaProvider>
+          </KeyboardProvider>
+        </GestureHandlerRootView>
+      </CloudAuthProvider>
+    </RegistryContext.Provider>
   );
 }

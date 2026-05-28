@@ -1,23 +1,40 @@
 import {
+  AuthAccessTokenType,
   type AuthBearerBootstrapResult,
   AuthBootstrapInput,
   AuthCreatePairingCredentialInput,
+  AuthDpopTokenExchangeRequest,
+  AuthEnvironmentBootstrapTokenType,
+  AuthRemoteSessionScope,
+  AuthTokenExchangeGrantType,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
+import { oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse, UrlParams } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
+import { requestAbsoluteUrl, verifyRequestDpopProof } from "./dpop.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
 
+const credentialResponseHeaders = {
+  ...browserApiCorsHeaders,
+  "cache-control": "no-store",
+  pragma: "no-cache",
+} as const;
+
 export const respondToAuthError = (error: AuthError) =>
   Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const usesDpop =
+      request.originalUrl.startsWith("/api/auth/token") ||
+      request.headers.authorization?.startsWith("DPoP ") === true;
     if ((error.status ?? 500) >= 500) {
       yield* Effect.logError("auth route failed", {
         message: error.message,
@@ -28,7 +45,13 @@ export const respondToAuthError = (error: AuthError) =>
       {
         error: error.message,
       },
-      { status: error.status ?? 500, headers: browserApiCorsHeaders },
+      {
+        status: error.status ?? 500,
+        headers: {
+          ...browserApiCorsHeaders,
+          ...(error.status === 401 && usesDpop ? { "www-authenticate": "DPoP" } : {}),
+        },
+      },
     );
   });
 
@@ -41,7 +64,7 @@ export const authSessionRouteLayer = HttpRouter.add(
     const session = yield* serverAuth.getSessionState(request);
     return HttpServerResponse.jsonUnsafe(session, {
       status: 200,
-      headers: browserApiCorsHeaders,
+      headers: credentialResponseHeaders,
     });
   }),
 );
@@ -80,14 +103,24 @@ export const authBootstrapRouteLayer = HttpRouter.add(
           }),
       ),
     );
+    const proofKeyThumbprint =
+      request.headers.dpop || payload.proofKeyThumbprint
+        ? yield* verifyRequestDpopProof({
+            request,
+            ...(payload.proofKeyThumbprint
+              ? { expectedThumbprint: payload.proofKeyThumbprint }
+              : {}),
+          })
+        : undefined;
     const result = yield* serverAuth.exchangeBootstrapCredential(
       payload.credential,
+      proofKeyThumbprint ? { proofKeyThumbprint } : {},
       deriveAuthClientMetadata({ request }),
     );
 
     return yield* HttpServerResponse.jsonUnsafe(result.response, {
       status: 200,
-      headers: browserApiCorsHeaders,
+      headers: credentialResponseHeaders,
     }).pipe(
       HttpServerResponse.setCookie(sessions.cookieName, result.sessionToken, {
         expires: DateTime.toDate(result.response.expiresAt),
@@ -115,13 +148,66 @@ export const authBearerBootstrapRouteLayer = HttpRouter.add(
           }),
       ),
     );
+    const proofKeyThumbprint =
+      request.headers.dpop || payload.proofKeyThumbprint
+        ? yield* verifyRequestDpopProof({
+            request,
+            ...(payload.proofKeyThumbprint
+              ? { expectedThumbprint: payload.proofKeyThumbprint }
+              : {}),
+          })
+        : undefined;
     const result = yield* serverAuth.exchangeBootstrapCredentialForBearerSession(
       payload.credential,
+      proofKeyThumbprint ? { proofKeyThumbprint } : {},
       deriveAuthClientMetadata({ request }),
     );
     return HttpServerResponse.jsonUnsafe(result satisfies AuthBearerBootstrapResult, {
       status: 200,
-      headers: browserApiCorsHeaders,
+      headers: credentialResponseHeaders,
+    });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
+
+export const authDpopTokenRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/token",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* ServerAuth;
+    const payload = yield* request.urlParamsBody.pipe(
+      Effect.map(UrlParams.toRecord),
+      Effect.flatMap(Schema.decodeUnknownEffect(AuthDpopTokenExchangeRequest)),
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Invalid token exchange payload.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
+    const resource = new URL(requestAbsoluteUrl(request)).origin;
+    if (
+      payload.grant_type !== AuthTokenExchangeGrantType ||
+      payload.subject_token_type !== AuthEnvironmentBootstrapTokenType ||
+      payload.requested_token_type !== AuthAccessTokenType ||
+      payload.resource !== resource ||
+      !oauthScopeSetEquals(payload.scope, [AuthRemoteSessionScope])
+    ) {
+      return yield* new AuthError({ message: "Unsupported token exchange request.", status: 400 });
+    }
+    const proofKeyThumbprint = yield* verifyRequestDpopProof({ request });
+    const result = yield* serverAuth.exchangeBootstrapCredentialForDpopAccessToken(
+      payload.subject_token,
+      { proofKeyThumbprint },
+      deriveAuthClientMetadata({ request }),
+    );
+    return HttpServerResponse.jsonUnsafe(result, {
+      status: 200,
+      headers: {
+        ...credentialResponseHeaders,
+      },
     });
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
@@ -136,7 +222,7 @@ export const authWebSocketTokenRouteLayer = HttpRouter.add(
     const result = yield* serverAuth.issueWebSocketToken(session);
     return HttpServerResponse.jsonUnsafe(result satisfies AuthWebSocketTokenResult, {
       status: 200,
-      headers: browserApiCorsHeaders,
+      headers: credentialResponseHeaders,
     });
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
@@ -181,7 +267,7 @@ export const authPairingCredentialRouteLayer = HttpRouter.add(
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
 
-const authenticateOwnerSession = Effect.gen(function* () {
+export const authenticateOwnerSession = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* ServerAuth;
   const session = yield* serverAuth.authenticateHttpRequest(request);

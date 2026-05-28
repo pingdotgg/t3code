@@ -26,7 +26,8 @@
     "T3CODE_OTLP_SERVICE_NAME",
     "APP_VERSION",
     "VITE_HOSTED_APP_URL",
-    "VITE_HOSTED_APP_CHANNEL"
+    "VITE_HOSTED_APP_CHANNEL",
+    "T3_RELAY_URL"
   ],
   "globalPassThroughEnv": ["PATHEXT"],
   "tasks": {

@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

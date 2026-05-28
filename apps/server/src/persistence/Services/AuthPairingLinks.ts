@@ -12,6 +12,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   role: Schema.Literals(["owner", "client"]),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -26,6 +27,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   role: Schema.Literals(["owner", "client"]),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -33,6 +35,7 @@ export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 
 export const ConsumeAuthPairingLinkInput = Schema.Struct({
   credential: Schema.String,
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });

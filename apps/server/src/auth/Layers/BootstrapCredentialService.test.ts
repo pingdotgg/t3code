@@ -87,6 +87,29 @@ it.layer(NodeServices.layer)("BootstrapCredentialServiceLive", (it) => {
     }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
   );
 
+  it.effect("requires the bound proof key thumbprint when present", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* BootstrapCredentialService;
+      const token = yield* bootstrapCredentials.issueOneTimeToken({
+        proofKeyThumbprint: "client-proof-key-thumbprint",
+      });
+
+      const missing = yield* Effect.flip(bootstrapCredentials.consume(token.credential));
+      const wrong = yield* Effect.flip(
+        bootstrapCredentials.consume(token.credential, {
+          proofKeyThumbprint: "other-proof-key-thumbprint",
+        }),
+      );
+      const consumed = yield* bootstrapCredentials.consume(token.credential, {
+        proofKeyThumbprint: "client-proof-key-thumbprint",
+      });
+
+      expect(missing.message).toContain("proof key mismatch");
+      expect(wrong.message).toContain("proof key mismatch");
+      expect(consumed.proofKeyThumbprint).toBe("client-proof-key-thumbprint");
+    }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
+  );
+
   it.effect("seeds the desktop bootstrap credential as a one-time grant", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* BootstrapCredentialService;

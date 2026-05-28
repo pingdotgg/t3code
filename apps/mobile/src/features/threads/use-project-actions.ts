@@ -13,9 +13,10 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { uuidv4 } from "../../lib/uuid";
 
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { uuidv4 } from "../../lib/uuid";
+import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { getEnvironmentClient } from "../../state/environment-session-registry";
 import { environmentRuntimeManager } from "../../state/use-environment-runtime";
 import { vcsRefManager } from "../../state/use-vcs-refs";
@@ -93,8 +94,9 @@ export function useProjectActions() {
         return null;
       }
 
-      const threadId = ThreadId.make(uuidv4());
-      const createdAt = new Date().toISOString();
+      const metadata = makeTurnCommandMetadata();
+      const threadId = ThreadId.make(metadata.threadId);
+      const createdAt = metadata.createdAt;
       const initialMessageText = input.initialMessageText.trim();
       const nextTitle = deriveThreadTitleFromPrompt(input.initialMessageText);
 
@@ -109,10 +111,10 @@ export function useProjectActions() {
 
       await client.orchestration.dispatchCommand({
         type: "thread.turn.start",
-        commandId: CommandId.make(uuidv4()),
+        commandId: CommandId.make(metadata.commandId),
         threadId,
         message: {
-          messageId: MessageId.make(uuidv4()),
+          messageId: MessageId.make(metadata.messageId),
           role: "user",
           text: initialMessageText,
           attachments: input.initialAttachments,
@@ -137,13 +139,13 @@ export function useProjectActions() {
                 prepareWorktree: {
                   projectCwd: input.project.workspaceRoot,
                   baseBranch: input.branch!,
-                  branch: buildTemporaryWorktreeBranchName(),
+                  branch: buildTemporaryWorktreeBranchName(uuidv4),
                 },
                 runSetupScript: true,
               }
             : {}),
         },
-        createdAt: new Date().toISOString(),
+        createdAt,
       });
 
       await refreshRemoteData([input.project.environmentId]);

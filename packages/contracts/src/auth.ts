@@ -62,10 +62,13 @@ export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
  *   app after bootstrap/pairing
  * - `bearer-session-token`: token-based session suitable for non-cookie or
  *   non-browser clients
+ * - `dpop-access-token`: proof-of-possession token used by managed relay
+ *   connections and accepted only with a matching DPoP proof
  */
 export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",
   "bearer-session-token",
+  "dpop-access-token",
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
@@ -102,6 +105,7 @@ export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
 export const AuthBootstrapInput = Schema.Struct({
   credential: TrimmedNonEmptyString,
+  proofKeyThumbprint: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthBootstrapInput = typeof AuthBootstrapInput.Type;
 
@@ -121,6 +125,34 @@ export const AuthBearerBootstrapResult = Schema.Struct({
   sessionToken: TrimmedNonEmptyString,
 });
 export type AuthBearerBootstrapResult = typeof AuthBearerBootstrapResult.Type;
+
+export const AuthTokenExchangeGrantType =
+  "urn:ietf:params:oauth:grant-type:token-exchange" as const;
+export const AuthAccessTokenType = "urn:ietf:params:oauth:token-type:access_token" as const;
+export const AuthEnvironmentBootstrapTokenType =
+  "urn:t3:params:oauth:token-type:environment-bootstrap" as const;
+export const AuthRemoteSessionScope = "remote:session" as const;
+export const AuthDpopAccessTokenScope = Schema.Literal(AuthRemoteSessionScope);
+export type AuthDpopAccessTokenScope = typeof AuthDpopAccessTokenScope.Type;
+
+export const AuthDpopTokenExchangeRequest = Schema.Struct({
+  grant_type: Schema.Literal(AuthTokenExchangeGrantType),
+  subject_token: TrimmedNonEmptyString,
+  subject_token_type: Schema.Literal(AuthEnvironmentBootstrapTokenType),
+  requested_token_type: Schema.Literal(AuthAccessTokenType),
+  resource: TrimmedNonEmptyString,
+  scope: TrimmedNonEmptyString,
+});
+export type AuthDpopTokenExchangeRequest = typeof AuthDpopTokenExchangeRequest.Type;
+
+export const AuthDpopAccessTokenResult = Schema.Struct({
+  access_token: TrimmedNonEmptyString,
+  issued_token_type: Schema.Literal(AuthAccessTokenType),
+  token_type: Schema.Literal("DPoP"),
+  expires_in: Schema.Int.check(Schema.isGreaterThan(0)),
+  scope: TrimmedNonEmptyString,
+});
+export type AuthDpopAccessTokenResult = typeof AuthDpopAccessTokenResult.Type;
 
 export const AuthWebSocketTokenResult = Schema.Struct({
   token: TrimmedNonEmptyString,

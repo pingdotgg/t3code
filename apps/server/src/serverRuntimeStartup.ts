@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -188,12 +189,16 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
       if (Option.isNone(existingProject)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
-        nextProjectId = ProjectId.make(crypto.randomUUID());
+        nextProjectId = ProjectId.make(
+          yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+        );
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
         yield* orchestrationEngine.dispatch({
           type: "project.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(
+            yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+          ),
           projectId: nextProjectId,
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
@@ -210,10 +215,14 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
       if (Option.isNone(existingThreadId)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const createdThreadId = ThreadId.make(crypto.randomUUID());
+        const createdThreadId = ThreadId.make(
+          yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+        );
         yield* orchestrationEngine.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(
+            yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+          ),
           threadId: createdThreadId,
           projectId: nextProjectId,
           title: "New thread",
@@ -286,6 +295,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
+  const crypto = yield* Crypto.Crypto;
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
@@ -358,7 +368,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         runStartupPhase(
           "welcome.autobootstrap",
           Effect.gen(function* () {
-            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets;
+            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+            );
             if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
               return;
             }

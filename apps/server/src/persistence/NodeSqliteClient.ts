@@ -252,14 +252,11 @@ export const layerConfig = (
   config: Config.Wrap<SqliteClientConfig>,
 ): Layer.Layer<Client.SqlClient, Config.ConfigError> =>
   Layer.effectContext(
-    Config.unwrap(config)
-      .asEffect()
-      .pipe(
-        Effect.flatMap(make),
-        Effect.map((client) =>
-          Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client)),
-        ),
-      ),
+    Effect.gen(function* () {
+      const options = yield* Config.unwrap(config);
+      const client = yield* make(options);
+      return Context.make(SqliteClient, client).pipe(Context.add(Client.SqlClient, client));
+    }),
   ).pipe(Layer.provide(Reactivity.layer));
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient> =>

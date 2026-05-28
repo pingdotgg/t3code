@@ -6,21 +6,26 @@
       "apps/*",
       "oxlint-plugin-t3code",
       "packages/*",
+      "infra/*",
       "scripts"
     ],
     "catalog": {
-      "effect": "4.0.0-beta.59",
-      "@effect/atom-react": "4.0.0-beta.59",
-      "@effect/openapi-generator": "4.0.0-beta.59",
-      "@effect/platform-bun": "4.0.0-beta.59",
-      "@effect/platform-node": "4.0.0-beta.59",
-      "@effect/platform-node-shared": "4.0.0-beta.59",
-      "@effect/sql-sqlite-bun": "4.0.0-beta.59",
-      "@effect/vitest": "4.0.0-beta.59",
+      "effect": "4.0.0-beta.73",
+      "@effect/atom-react": "4.0.0-beta.73",
+      "@effect/openapi-generator": "4.0.0-beta.73",
+      "@effect/platform-bun": "4.0.0-beta.73",
+      "@effect/platform-node": "4.0.0-beta.73",
+      "@effect/platform-node-shared": "4.0.0-beta.73",
+      "@effect/sql-pg": "4.0.0-beta.73",
+      "@effect/sql-sqlite-bun": "4.0.0-beta.73",
+      "@effect/vitest": "4.0.0-beta.73",
       "@effect/language-service": "0.84.2",
+      "@noble/curves": "1.9.1",
+      "@noble/hashes": "1.8.0",
       "@pierre/diffs": "1.1.20",
       "@types/bun": "^1.3.11",
       "@types/node": "^24.10.13",
+      "jose": "6.2.2",
       "tsdown": "^0.20.3",
       "typescript": "^5.7.3",
       "vitest": "^4.0.0"
@@ -72,13 +77,14 @@
     "vitest": "catalog:"
   },
   "overrides": {
-    "@effect/atom-react": "catalog:",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/platform-node-shared": "catalog:",
-    "@effect/sql-sqlite-bun": "catalog:",
-    "@effect/vitest": "catalog:",
-    "effect": "catalog:",
+    "@effect/atom-react": "4.0.0-beta.73",
+    "@effect/platform-bun": "4.0.0-beta.73",
+    "@effect/platform-node": "4.0.0-beta.73",
+    "@effect/platform-node-shared": "4.0.0-beta.73",
+    "@effect/sql-pg": "4.0.0-beta.73",
+    "@effect/sql-sqlite-bun": "4.0.0-beta.73",
+    "@effect/vitest": "4.0.0-beta.73",
+    "effect": "4.0.0-beta.73",
     "vite": "^8.0.0"
   },
   "engines": {
@@ -92,7 +98,7 @@
     ]
   },
   "patchedDependencies": {
-    "effect@4.0.0-beta.59": "patches/effect@4.0.0-beta.59.patch",
+    "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
     "expo-dev-launcher@55.0.28": "patches/expo-dev-launcher@55.0.28.patch",
     "react-native-nitro-modules@0.35.4": "patches/react-native-nitro-modules@0.35.4.patch",
     "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch"

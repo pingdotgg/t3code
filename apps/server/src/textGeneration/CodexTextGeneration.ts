@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -79,10 +78,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     content: string,
   ): Effect.Effect<string, TextGenerationError, Scope.Scope> => {
     return Effect.gen(function* () {
-      const tempFileId = yield* Random.nextUUIDv4;
       return yield* fileSystem
         .makeTempFileScoped({
-          prefix: `t3code-${prefix}-${process.pid}-${tempFileId}.tmp`,
+          prefix: `t3code-${prefix}-${process.pid}-`,
         })
         .pipe(Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)));
     }).pipe(

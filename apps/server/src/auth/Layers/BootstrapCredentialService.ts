@@ -1,4 +1,5 @@
 import type { AuthPairingLink } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -39,17 +40,19 @@ const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 
-const generatePairingToken = (): string => {
-  const randomBytes = crypto.getRandomValues(new Uint8Array(PAIRING_TOKEN_LENGTH));
-
-  return Array.from(randomBytes, (value) => PAIRING_TOKEN_ALPHABET[value & 31]).join("");
-};
-
 export const makeBootstrapCredentialService = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const pairingLinks = yield* AuthPairingLinkRepository;
+  const crypto = yield* Crypto.Crypto;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
+  const generatePairingToken = crypto
+    .randomBytes(PAIRING_TOKEN_LENGTH)
+    .pipe(
+      Effect.map((bytes) =>
+        Array.from(bytes, (value) => PAIRING_TOKEN_ALPHABET[value & 31]).join(""),
+      ),
+    );
 
   const invalidBootstrapCredentialError = (message: string) =>
     new BootstrapCredentialError({
@@ -141,8 +144,8 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
   const issueOneTimeToken: BootstrapCredentialServiceShape["issueOneTimeToken"] = (input) =>
     Effect.gen(function* () {
-      const id = crypto.randomUUID();
-      const credential = generatePairingToken();
+      const id = yield* crypto.randomUUIDv4;
+      const credential = yield* generatePairingToken;
       const ttl = input?.ttl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES;
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
@@ -150,6 +153,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         id,
         credential,
         ...(input?.label ? { label: input.label } : {}),
+        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         expiresAt,
       };
       yield* pairingLinks.create({
@@ -159,6 +163,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
         role: input?.role ?? "client",
         subject: input?.subject ?? "one-time-token",
         label: input?.label ?? null,
+        proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
       });
@@ -174,7 +179,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       return issued;
     }).pipe(Effect.mapError(toBootstrapCredentialError("Failed to issue pairing credential.")));
 
-  const consume: BootstrapCredentialServiceShape["consume"] = (credential) =>
+  const consume: BootstrapCredentialServiceShape["consume"] = (credential, input) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const seededResult: ConsumeResult = yield* Ref.modify(
@@ -205,6 +210,17 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
             ];
           }
 
+          if (grant.proofKeyThumbprint && grant.proofKeyThumbprint !== input?.proofKeyThumbprint) {
+            return [
+              {
+                _tag: "error",
+                reason: "not-found",
+                error: invalidBootstrapCredentialError("Bootstrap credential proof key mismatch."),
+              },
+              next,
+            ];
+          }
+
           const remainingUses = grant.remainingUses;
           if (typeof remainingUses === "number") {
             if (remainingUses <= 1) {
@@ -225,6 +241,9 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
                 role: grant.role,
                 subject: grant.subject,
                 ...(grant.label ? { label: grant.label } : {}),
+                ...(grant.proofKeyThumbprint
+                  ? { proofKeyThumbprint: grant.proofKeyThumbprint }
+                  : {}),
                 expiresAt: grant.expiresAt,
               } satisfies BootstrapGrant,
             },
@@ -242,6 +261,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
       const consumed = yield* pairingLinks.consumeAvailable({
         credential,
+        proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         consumedAt: now,
         now,
       });
@@ -253,6 +273,9 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
           role: consumed.value.role,
           subject: consumed.value.subject,
           ...(consumed.value.label ? { label: consumed.value.label } : {}),
+          ...(consumed.value.proofKeyThumbprint
+            ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
+            : {}),
           expiresAt: consumed.value.expiresAt,
         } satisfies BootstrapGrant;
       }
@@ -274,6 +297,13 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
       if (DateTime.isGreaterThanOrEqualTo(now, matching.value.expiresAt)) {
         return yield* invalidBootstrapCredentialError("Bootstrap credential expired.");
+      }
+
+      if (
+        matching.value.proofKeyThumbprint !== null &&
+        matching.value.proofKeyThumbprint !== input?.proofKeyThumbprint
+      ) {
+        return yield* invalidBootstrapCredentialError("Bootstrap credential proof key mismatch.");
       }
 
       return yield* invalidBootstrapCredentialError("Bootstrap credential is no longer available.");

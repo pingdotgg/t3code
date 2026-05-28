@@ -10,13 +10,17 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vitest";
 import * as Effect from "effect/Effect";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { decideOrchestrationCommand } from "./decider.ts";
+import { decideOrchestrationCommand as decideOrchestrationCommandEffect } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const decideOrchestrationCommand = (
+  input: Parameters<typeof decideOrchestrationCommandEffect>[0],
+) => decideOrchestrationCommandEffect(input).pipe(Effect.provide(NodeServices.layer));
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {

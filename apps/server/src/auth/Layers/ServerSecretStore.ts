@@ -1,5 +1,4 @@
-import * as Crypto from "node:crypto";
-
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -18,6 +17,7 @@ export const makeServerSecretStore = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  const crypto = yield* Crypto.Crypto;
 
   yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
@@ -52,30 +52,38 @@ export const makeServerSecretStore = Effect.gen(function* () {
 
   const set: ServerSecretStoreShape["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
-    const tempPath = `${secretPath}.${Crypto.randomUUID()}.tmp`;
     return Effect.gen(function* () {
-      yield* fileSystem.writeFile(tempPath, value);
-      yield* fileSystem.chmod(tempPath, 0o600);
-      yield* fileSystem.rename(tempPath, secretPath);
-      yield* fileSystem.chmod(secretPath, 0o600);
-    }).pipe(
-      Effect.catch((cause) =>
-        fileSystem.remove(tempPath).pipe(
-          Effect.ignore,
-          Effect.flatMap(() =>
-            Effect.fail(
-              new SecretStoreError({
-                message: `Failed to persist secret ${name}.`,
-                cause,
-              }),
+      const tempPath = `${secretPath}.${yield* crypto.randomUUIDv4}.tmp`;
+      yield* Effect.gen(function* () {
+        yield* fileSystem.writeFile(tempPath, value);
+        yield* fileSystem.chmod(tempPath, 0o600);
+        yield* fileSystem.rename(tempPath, secretPath);
+        yield* fileSystem.chmod(secretPath, 0o600);
+      }).pipe(
+        Effect.catch((cause) =>
+          fileSystem.remove(tempPath).pipe(
+            Effect.ignore,
+            Effect.flatMap(() =>
+              Effect.fail(
+                new SecretStoreError({
+                  message: `Failed to persist secret ${name}.`,
+                  cause,
+                }),
+              ),
             ),
           ),
         ),
+      );
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof SecretStoreError
+          ? cause
+          : new SecretStoreError({ message: `Failed to persist secret ${name}.`, cause }),
       ),
     );
   };
 
-  const create: ServerSecretStoreShape["set"] = (name, value) => {
+  const create: ServerSecretStoreShape["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -105,9 +113,12 @@ export const makeServerSecretStore = Effect.gen(function* () {
           return Effect.succeed(existing);
         }
 
-        const generated = Crypto.randomBytes(bytes);
-        return create(name, generated).pipe(
-          Effect.as(Uint8Array.from(generated)),
+        return crypto.randomBytes(bytes).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SecretStoreError({ message: `Failed to generate secret ${name}.`, cause }),
+          ),
+          Effect.flatMap((generated) => create(name, generated).pipe(Effect.as(generated))),
           Effect.catchTag("SecretStoreError", (error) =>
             isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists"
               ? get(name).pipe(
@@ -144,6 +155,7 @@ export const makeServerSecretStore = Effect.gen(function* () {
   return {
     get,
     set,
+    create,
     getOrCreateRandom,
     remove,
   } satisfies ServerSecretStoreShape;

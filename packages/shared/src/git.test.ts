@@ -55,7 +55,11 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 
 describe("isTemporaryWorktreeBranch", () => {
   it("matches the generated temporary worktree refName format", () => {
-    expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
+    expect(
+      isTemporaryWorktreeBranch(
+        buildTemporaryWorktreeBranchName(() => "deadbeef-dead-4eef-8ead-deadbeefdead"),
+      ),
+    ).toBe(true);
   });
 
   it("matches generated temporary worktree refs", () => {

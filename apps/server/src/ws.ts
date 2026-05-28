@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -200,8 +201,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const sessions = yield* SessionCredentialService;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
-      const serverCommandId = (tag: string) =>
-        CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+      const crypto = yield* Crypto.Crypto;
+      const serverCommandId = Effect.fn("ws.serverCommandId")(function* (tag: string) {
+        const id = yield* crypto.randomUUIDv4;
+        return CommandId.make(`server:${tag}:${id}`);
+      });
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -217,20 +221,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         readonly payload: Record<string, unknown>;
         readonly tone: "info" | "error";
       }) =>
-        orchestrationEngine.dispatch({
-          type: "thread.activity.append",
-          commandId: serverCommandId("setup-script-activity"),
-          threadId: input.threadId,
-          activity: {
-            id: EventId.make(crypto.randomUUID()),
-            tone: input.tone,
-            kind: input.kind,
-            summary: input.summary,
-            payload: input.payload,
-            turnId: null,
+        Effect.gen(function* () {
+          const [commandId, activityId] = yield* Effect.all([
+            serverCommandId("setup-script-activity"),
+            crypto.randomUUIDv4.pipe(Effect.map(EventId.make)),
+          ]);
+          return yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId,
+            threadId: input.threadId,
+            activity: {
+              id: activityId,
+              tone: input.tone,
+              kind: input.kind,
+              summary: input.summary,
+              payload: input.payload,
+              turnId: null,
+              createdAt: input.createdAt,
+            },
             createdAt: input.createdAt,
-          },
-          createdAt: input.createdAt,
+          });
         });
 
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
@@ -375,13 +385,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const cleanupCreatedThread = () =>
             createdThread
-              ? orchestrationEngine
-                  .dispatch({
+              ? Effect.gen(function* () {
+                  const commandId = yield* serverCommandId("bootstrap-thread-delete");
+                  return yield* orchestrationEngine.dispatch({
                     type: "thread.delete",
-                    commandId: serverCommandId("bootstrap-thread-delete"),
+                    commandId,
                     threadId: command.threadId,
-                  })
-                  .pipe(Effect.ignoreCause({ log: true }))
+                  });
+                }).pipe(Effect.ignoreCause({ log: true }))
               : Effect.void;
 
           const recordSetupScriptLaunchFailure = (input: {
@@ -502,9 +513,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
+              const commandId = yield* serverCommandId("bootstrap-thread-create");
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
-                commandId: serverCommandId("bootstrap-thread-create"),
+                commandId,
                 threadId: command.threadId,
                 projectId: bootstrap.createThread.projectId,
                 title: bootstrap.createThread.title,
@@ -526,9 +538,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
+              const commandId = yield* serverCommandId("bootstrap-thread-meta-update");
               yield* orchestrationEngine.dispatch({
                 type: "thread.meta.update",
-                commandId: serverCommandId("bootstrap-thread-meta-update"),
+                commandId,
                 threadId: command.threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,

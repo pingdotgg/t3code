@@ -1,9 +1,11 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -15,7 +17,6 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { createHash } from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -49,10 +50,6 @@ const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
-
-function reviewDiffHash(diff: string): string {
-  return createHash("sha256").update(diff).digest("hex");
-}
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
@@ -642,6 +639,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig;
+  const crypto = yield* Crypto.Crypto;
 
   const executeRaw: GitVcsDriver.GitVcsDriverShape["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -1771,6 +1769,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null;
     const baseDiff = baseResult?.stdout ?? "";
+    const hashDiff = (diff: string) =>
+      crypto.digest("SHA-256", new TextEncoder().encode(diff)).pipe(
+        Effect.map(Encoding.encodeHex),
+        Effect.mapError(
+          toGitCommandError(
+            {
+              operation: "GitVcsDriver.getReviewDiffPreview.hash",
+              cwd: input.cwd,
+              args: [],
+            },
+            "failed to hash review diff.",
+          ),
+        ),
+      );
+    const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
+      hashDiff(dirtyDiff),
+      hashDiff(baseDiff),
+    ]);
 
     const sources: ReviewDiffPreviewSource[] = [
       {
@@ -1780,7 +1796,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         baseRef: "HEAD",
         headRef: null,
         diff: dirtyDiff,
-        diffHash: reviewDiffHash(dirtyDiff),
+        diffHash: dirtyDiffHash,
         truncated: dirtyTrackedResult.stdoutTruncated || dirtyUntracked.truncated,
       },
       {
@@ -1790,7 +1806,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         baseRef,
         headRef: branch ?? "HEAD",
         diff: baseDiff,
-        diffHash: reviewDiffHash(baseDiff),
+        diffHash: baseDiffHash,
         truncated: baseResult?.stdoutTruncated ?? false,
       },
     ];

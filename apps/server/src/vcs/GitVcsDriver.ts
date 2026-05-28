@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -353,6 +352,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const crypto = yield* Crypto.Crypto;
+  const randomUUIDv4 = crypto.randomUUIDv4.pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to generate Git checkpoint identifier.", { cause }),
+    ),
+    Effect.catch(() => Effect.interrupt),
+  );
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -609,7 +615,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${randomUUID()}`);
+      const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${yield* randomUUIDv4}`);
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,

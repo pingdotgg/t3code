@@ -18,6 +18,7 @@ const mockWaitForSavedEnvironmentRegistryHydration = vi.fn();
 const mockListSavedEnvironmentRecords = vi.fn();
 const mockGetSavedEnvironmentRecord = vi.fn();
 const mockReadSavedEnvironmentBearerToken = vi.fn();
+const mockReadSavedEnvironmentCredential = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockGetPrimaryKnownEnvironment = vi.hoisted(() => vi.fn());
 const mockFetchRemoteSessionState = vi.fn();
@@ -35,7 +36,7 @@ vi.mock("../primary", () => ({
 }));
 
 vi.mock("../../lib/runtime", () => ({
-  remoteHttpRuntime: {
+  webRuntime: {
     runPromise: mockRemoteHttpRunPromise,
   },
 }));
@@ -46,6 +47,7 @@ vi.mock("./catalog", () => ({
   listSavedEnvironmentRecords: mockListSavedEnvironmentRecords,
   persistSavedEnvironmentRecord: vi.fn(),
   readSavedEnvironmentBearerToken: mockReadSavedEnvironmentBearerToken,
+  readSavedEnvironmentCredential: mockReadSavedEnvironmentCredential,
   removeSavedEnvironmentBearerToken: vi.fn(),
   useSavedEnvironmentRegistryStore: {
     subscribe: mockSavedEnvironmentRegistrySubscribe,
@@ -65,6 +67,7 @@ vi.mock("./catalog", () => ({
   },
   waitForSavedEnvironmentRegistryHydration: mockWaitForSavedEnvironmentRegistryHydration,
   writeSavedEnvironmentBearerToken: vi.fn(),
+  writeSavedEnvironmentCredential: vi.fn(),
 }));
 
 vi.mock("./connection", () => ({
@@ -301,6 +304,10 @@ describe("retainThreadDetailSubscription", () => {
     mockListSavedEnvironmentRecords.mockReturnValue([]);
     mockGetSavedEnvironmentRecord.mockReturnValue(null);
     mockReadSavedEnvironmentBearerToken.mockResolvedValue(null);
+    mockReadSavedEnvironmentCredential.mockImplementation(async () => {
+      const token = await mockReadSavedEnvironmentBearerToken();
+      return token ? { version: 1, method: "bearer", token } : null;
+    });
     mockFetchRemoteSessionState.mockResolvedValue({
       authenticated: true,
       role: "client",

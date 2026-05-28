@@ -20,6 +20,7 @@ export interface IssuedSession {
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.DateTime;
   readonly role: SessionRole;
+  readonly proofKeyThumbprint?: string;
 }
 
 export interface VerifiedSession {
@@ -30,6 +31,7 @@ export interface VerifiedSession {
   readonly expiresAt?: DateTime.DateTime;
   readonly subject: string;
   readonly role: SessionRole;
+  readonly proofKeyThumbprint?: string;
 }
 
 export type SessionCredentialChange =
@@ -55,6 +57,7 @@ export interface SessionCredentialServiceShape {
     readonly method?: ServerAuthSessionMethod;
     readonly role?: SessionRole;
     readonly client?: AuthClientMetadata;
+    readonly proofKeyThumbprint?: string;
   }) => Effect.Effect<IssuedSession, SessionCredentialError>;
   readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
   readonly issueWebSocketToken: (
