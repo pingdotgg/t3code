@@ -36,6 +36,7 @@ import { TerminalManagerLive } from "./terminal/Layers/Manager.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup.ts";
+import { TailscaleServeRuntime, TailscaleServeRuntimeLive } from "./tailscaleServeRuntime.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -352,9 +353,11 @@ export const makeServerLayer = Layer.unwrap(
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
+              const tailscaleServeRuntime = yield* TailscaleServeRuntime;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
+                yield* tailscaleServeRuntime.markUnavailable;
                 return null;
               }
 
@@ -365,6 +368,7 @@ export const makeServerLayer = Layer.unwrap(
                 localHost: "127.0.0.1",
               }).pipe(
                 Effect.as({ localPort, servePort: config.tailscaleServePort }),
+                Effect.tap(() => tailscaleServeRuntime.markConfigured),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -372,11 +376,16 @@ export const makeServerLayer = Layer.unwrap(
                   }),
                 ),
                 Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
+                  tailscaleServeRuntime.markUnavailable.pipe(
+                    Effect.andThen(
+                      Effect.logWarning("Failed to configure Tailscale Serve", {
+                        cause,
+                        localPort,
+                        servePort: config.tailscaleServePort,
+                      }),
+                    ),
+                    Effect.as(null),
+                  ),
                 ),
               );
             }),
@@ -411,6 +420,7 @@ export const makeServerLayer = Layer.unwrap(
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
+      Layer.provideMerge(TailscaleServeRuntimeLive),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),

@@ -1,11 +1,13 @@
 import { networkInterfaces } from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
+import { buildTailscaleHttpsBaseUrl, resolveTailscaleHttpsBaseUrl } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import { ServerConfig } from "./config.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { TailscaleServeRuntime } from "./tailscaleServeRuntime.ts";
 
 export interface HeadlessServeAccessInfo {
   readonly connectionString: string;
@@ -77,6 +79,41 @@ export const resolveHeadlessConnectionString = (
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
 };
 
+export const resolveAdvertisedStartupBaseUrl = (input: {
+  readonly httpBaseUrl: string;
+  readonly tailscaleServeEnabled: boolean;
+  readonly tailscaleServePort: number;
+  readonly tailscaleServeHost: string | undefined;
+}) => {
+  if (!input.tailscaleServeEnabled) {
+    return Effect.succeed(input.httpBaseUrl);
+  }
+
+  return Effect.gen(function* () {
+    const tailscaleServeRuntime = yield* TailscaleServeRuntime;
+    if (!(yield* tailscaleServeRuntime.awaitConfigured)) {
+      return input.httpBaseUrl;
+    }
+
+    const explicitTailscaleHost = input.tailscaleServeHost?.trim();
+    if (explicitTailscaleHost) {
+      return buildTailscaleHttpsBaseUrl({
+        magicDnsName: explicitTailscaleHost,
+        servePort: input.tailscaleServePort,
+      });
+    }
+
+    return yield* resolveTailscaleHttpsBaseUrl({ servePort: input.tailscaleServePort }).pipe(
+      Effect.catch((cause) =>
+        Effect.logDebug("failed to resolve tailscale https startup url", { cause }).pipe(
+          Effect.as(null),
+        ),
+      ),
+      Effect.map((tailscaleBaseUrl) => tailscaleBaseUrl ?? input.httpBaseUrl),
+    );
+  });
+};
+
 export const resolveListeningPort = (address: unknown, fallbackPort: number): number => {
   if (
     typeof address === "object" &&
@@ -138,11 +175,17 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+  const advertisedBaseUrl = yield* resolveAdvertisedStartupBaseUrl({
+    httpBaseUrl: connectionString,
+    tailscaleServeEnabled: serverConfig.tailscaleServeEnabled,
+    tailscaleServePort: serverConfig.tailscaleServePort,
+    tailscaleServeHost: serverConfig.tailscaleServeHost,
+  });
   const issued = yield* serverAuth.issuePairingCredential({ role: "owner" });
 
   return {
-    connectionString,
+    connectionString: advertisedBaseUrl,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
+    pairingUrl: buildPairingUrl(advertisedBaseUrl, issued.credential),
   } satisfies HeadlessServeAccessInfo;
 });

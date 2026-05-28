@@ -1,13 +1,60 @@
 import { assert, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildPairingUrl,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
+  resolveAdvertisedStartupBaseUrl,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
   resolveListeningPort,
 } from "./startupAccess.ts";
+import { TailscaleServeRuntime } from "./tailscaleServeRuntime.ts";
+
+const encoder = new TextEncoder();
+
+function mockHandle(result: {
+  readonly stdout?: string;
+  readonly stderr?: string;
+  readonly code?: number;
+}) {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+    stderr: Stream.make(encoder.encode(result.stderr ?? "")),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+}
+
+function mockSpawnerLayer(result: {
+  readonly stdout?: string;
+  readonly stderr?: string;
+  readonly code?: number;
+}) {
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => Effect.succeed(mockHandle(result))),
+  );
+}
+
+const mockTailscaleServeRuntimeLayer = (configured: boolean) =>
+  Layer.succeed(TailscaleServeRuntime, {
+    awaitConfigured: Effect.succeed(configured),
+    markConfigured: Effect.void,
+    markUnavailable: Effect.void,
+  });
 
 it("prefers localhost when no explicit host is configured", () => {
   expect(resolveHeadlessConnectionHost(undefined)).toBe("localhost");
@@ -51,6 +98,87 @@ it("prefers the actual bound port when an http server address is available", () 
   expect(resolveListeningPort("pipe", 3773)).toBe(3773);
   expect(resolveListeningPort(null, 3773)).toBe(3773);
 });
+
+it.effect("uses an explicit Tailscale Serve host for the advertised startup base URL", () =>
+  Effect.gen(function* () {
+    const baseUrl = yield* resolveAdvertisedStartupBaseUrl({
+      httpBaseUrl: "http://192.168.1.42:3773",
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 443,
+      tailscaleServeHost: "desktop.tail.ts.net",
+    }).pipe(
+      Effect.provide(Layer.mergeAll(mockSpawnerLayer({}), mockTailscaleServeRuntimeLayer(true))),
+    );
+
+    expect(baseUrl).toBe("https://desktop.tail.ts.net/");
+  }),
+);
+
+it.effect(
+  "resolves the advertised startup base URL from Tailscale status when no host is set",
+  () =>
+    Effect.gen(function* () {
+      const baseUrl = yield* resolveAdvertisedStartupBaseUrl({
+        httpBaseUrl: "http://192.168.1.42:3773",
+        tailscaleServeEnabled: true,
+        tailscaleServePort: 8443,
+        tailscaleServeHost: undefined,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockSpawnerLayer({
+              stdout: `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100"]}}`,
+            }),
+            mockTailscaleServeRuntimeLayer(true),
+          ),
+        ),
+      );
+
+      expect(baseUrl).toBe("https://desktop.tail.ts.net:8443/");
+    }),
+);
+
+it.effect("falls back to the HTTP startup base URL when Tailscale status cannot be resolved", () =>
+  Effect.gen(function* () {
+    const baseUrl = yield* resolveAdvertisedStartupBaseUrl({
+      httpBaseUrl: "http://192.168.1.42:3773",
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 443,
+      tailscaleServeHost: undefined,
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          mockSpawnerLayer({ code: 1, stderr: "not running" }),
+          mockTailscaleServeRuntimeLayer(true),
+        ),
+      ),
+    );
+
+    expect(baseUrl).toBe("http://192.168.1.42:3773");
+  }),
+);
+
+it.effect("falls back to HTTP when Tailscale Serve setup did not complete", () =>
+  Effect.gen(function* () {
+    const baseUrl = yield* resolveAdvertisedStartupBaseUrl({
+      httpBaseUrl: "http://192.168.1.42:3773",
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 443,
+      tailscaleServeHost: "desktop.tail.ts.net",
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          mockSpawnerLayer({
+            stdout: `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100"]}}`,
+          }),
+          mockTailscaleServeRuntimeLayer(false),
+        ),
+      ),
+    );
+
+    expect(baseUrl).toBe("http://192.168.1.42:3773");
+  }),
+);
 
 it("builds a pairing URL that embeds the token in the hash", () => {
   expect(buildPairingUrl("http://192.168.1.42:3773", "PAIRCODE")).toBe(

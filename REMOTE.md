@@ -89,8 +89,17 @@ For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
 npx t3 serve --tailscale-serve
 ```
 
-By default this configures Tailscale Serve on HTTPS port 443 and advertises
-`https://machine.tailnet.ts.net/`. Advanced users can choose a different HTTPS port:
+By default this configures Tailscale Serve on HTTPS port 443, discovers the machine's MagicDNS
+name, and advertises `https://machine.tailnet.ts.net/`. If MagicDNS discovery is unavailable, the
+CLI falls back to the normal headless pairing URL.
+
+Use `--tailscale-serve-host` when the advertised HTTPS host should be fixed instead of discovered:
+
+```bash
+npx t3 serve --tailscale-serve --tailscale-serve-host machine.tailnet.ts.net
+```
+
+Advanced users can also choose a different HTTPS port:
 
 ```bash
 npx t3 serve --tailscale-serve --tailscale-serve-port 8443

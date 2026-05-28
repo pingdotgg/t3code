@@ -75,6 +75,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -92,6 +93,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
                   T3CODE_LOG_WS_EVENTS: "true",
+                  T3CODE_TAILSCALE_SERVE_HOST: "env-tailnet.example.ts.net",
                 },
               }),
             ),
@@ -118,6 +120,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: "env-tailnet.example.ts.net",
       });
     }),
   );
@@ -141,6 +144,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(true),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
+          tailscaleServeHost: Option.some("cli-tailnet.example.ts.net"),
         },
         Option.some("Debug"),
       ).pipe(
@@ -158,6 +162,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "false",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
                   T3CODE_LOG_WS_EVENTS: "false",
+                  T3CODE_TAILSCALE_SERVE_HOST: "ignored-env-tailnet.example.ts.net",
                 },
               }),
             ),
@@ -184,6 +189,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        tailscaleServeHost: "cli-tailnet.example.ts.net",
       });
     }),
   );
@@ -215,6 +221,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -253,6 +260,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: undefined,
       });
     }),
   );
@@ -290,6 +298,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -327,6 +336,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: undefined,
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
     }),
@@ -353,6 +363,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -412,6 +423,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -452,6 +464,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: undefined,
       });
     }),
   );
@@ -488,6 +501,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -521,6 +535,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: undefined,
       });
     }),
   );
@@ -545,6 +560,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          tailscaleServeHost: Option.none(),
         },
         Option.none(),
         {
@@ -584,6 +600,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tailscaleServeHost: undefined,
       });
     }),
   );
