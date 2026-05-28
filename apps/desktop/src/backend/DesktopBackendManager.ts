@@ -116,7 +116,7 @@ export interface DesktopBackendManagerShape {
 export class DesktopBackendManager extends Context.Service<
   DesktopBackendManager,
   DesktopBackendManagerShape
->()("t3/desktop/BackendManager") {}
+>()("@t3tools/desktop/backend/DesktopBackendManager") {}
 
 const { logWarning: logBackendManagerWarning, logError: logBackendManagerError } =
   DesktopObservability.makeComponentLogger("desktop-backend-manager");

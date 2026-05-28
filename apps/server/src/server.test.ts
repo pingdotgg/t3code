@@ -37,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -52,6 +53,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vitest";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const encodeJsonRequestBody = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
@@ -795,6 +797,7 @@ const bootstrapBrowserSession = (
 ) =>
   Effect.gen(function* () {
     const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap");
+    const requestBody = yield* encodeJsonRequestBody({ credential });
     const response = yield* Effect.promise(() =>
       fetch(bootstrapUrl, {
         method: "POST",
@@ -802,9 +805,7 @@ const bootstrapBrowserSession = (
           "content-type": "application/json",
           ...options?.headers,
         },
-        body: JSON.stringify({
-          credential,
-        }),
+        body: requestBody,
       }),
     );
     const body = (yield* Effect.promise(() => response.json())) as {
@@ -827,6 +828,7 @@ const bootstrapBearerSession = (
 ) =>
   Effect.gen(function* () {
     const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap/bearer");
+    const requestBody = yield* encodeJsonRequestBody({ credential });
     const response = yield* Effect.promise(() =>
       fetch(bootstrapUrl, {
         method: "POST",
@@ -834,9 +836,7 @@ const bootstrapBearerSession = (
           "content-type": "application/json",
           ...options?.headers,
         },
-        body: JSON.stringify({
-          credential,
-        }),
+        body: requestBody,
       }),
     );
     const body = (yield* Effect.promise(() => response.json())) as {
@@ -1358,6 +1358,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }>;
 
       const revokeUrl = yield* getHttpServerUrl("/api/auth/pairing-links/revoke");
+      const revokeBody = yield* encodeJsonRequestBody({ id: createdBody.id });
       const revokeResponse = yield* Effect.promise(() =>
         fetch(revokeUrl, {
           method: "POST",
@@ -1365,7 +1366,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cookie: ownerCookie,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ id: createdBody.id }),
+          body: revokeBody,
         }),
       );
       const revokedBootstrap = yield* bootstrapBrowserSession(createdBody.credential);
@@ -1421,6 +1422,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
       const pairingTokenUrl = yield* getHttpServerUrl("/api/auth/pairing-token");
+      const ownerPairingBodyInput = yield* encodeJsonRequestBody({
+        label: "Julius iPhone",
+      });
       const ownerPairingResponse = yield* Effect.promise(() =>
         fetch(pairingTokenUrl, {
           method: "POST",
@@ -1428,9 +1432,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cookie: ownerCookie,
             "content-type": "application/json",
           },
-          body: JSON.stringify({
-            label: "Julius iPhone",
-          }),
+          body: ownerPairingBodyInput,
         }),
       );
       const ownerPairingBody = (yield* Effect.promise(() => ownerPairingResponse.json())) as {
@@ -1556,6 +1558,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isDefined(pairedSessionId);
 
       const revokeUrl = yield* getHttpServerUrl("/api/auth/clients/revoke");
+      const revokeBody = yield* encodeJsonRequestBody({ sessionId: pairedSessionId });
       const revokeResponse = yield* Effect.promise(() =>
         fetch(revokeUrl, {
           method: "POST",
@@ -1563,7 +1566,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cookie: ownerCookie,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ sessionId: pairedSessionId }),
+          body: revokeBody,
         }),
       );
       const pairedClientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {

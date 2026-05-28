@@ -30,7 +30,11 @@
           "unknownInEffectCatch": "error",
           "strictBooleanExpressions": "off",
           "preferSchemaOverJson": "error",
-          "schemaSyncInEffect": "error"
+          "schemaSyncInEffect": "error",
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off"
         }
       }
     ]
