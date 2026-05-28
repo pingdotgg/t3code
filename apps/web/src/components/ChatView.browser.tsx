@@ -1916,6 +1916,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           activeTerminalId: "default",
           terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
           activeTerminalGroupId: "group-default",
+          terminalNamesById: {},
         },
       },
       terminalLaunchContextByThreadKey: {

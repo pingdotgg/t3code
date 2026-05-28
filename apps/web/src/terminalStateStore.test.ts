@@ -80,6 +80,7 @@ describe("terminalStateStore actions", () => {
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
+      terminalNamesById: {},
     });
   });
 
@@ -211,6 +212,7 @@ describe("terminalStateStore actions", () => {
           activeTerminalId: "default",
           terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
           activeTerminalGroupId: "group-default",
+          terminalNamesById: {},
         },
       },
     });
@@ -392,5 +394,116 @@ describe("terminalStateStore actions", () => {
     store.clearTerminalState(THREAD_REF);
 
     expect(useTerminalStateStore.getState()).toBe(before);
+  });
+
+  it("renames a terminal and clears the name when called with an empty string", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.renameTerminal(THREAD_REF, "terminal-2", "dev server");
+
+    let terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalNamesById).toEqual({ "terminal-2": "dev server" });
+
+    store.renameTerminal(THREAD_REF, "terminal-2", "  ");
+    terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalNamesById).toEqual({});
+  });
+
+  it("trims whitespace and ignores rename for unknown terminals", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.renameTerminal(THREAD_REF, "terminal-2", "  tests  ");
+    store.renameTerminal(THREAD_REF, "missing-terminal", "ignored");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalNamesById).toEqual({ "terminal-2": "tests" });
+  });
+
+  it("clears the custom name when closing the renamed terminal", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_REF, "terminal-2");
+    store.renameTerminal(THREAD_REF, "terminal-2", "dev server");
+    store.closeTerminal(THREAD_REF, "terminal-2");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalState.terminalNamesById).toEqual({});
+    expect(terminalState.terminalIds).toEqual(["default"]);
+  });
+
+  it("renames a terminal group and survives splits", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.renameTerminalGroup(THREAD_REF, "group-terminal-2", "backend");
+
+    let terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    const renamedGroup = terminalState.terminalGroups.find(
+      (group) => group.id === "group-terminal-2",
+    );
+    expect(renamedGroup?.name).toBe("backend");
+
+    store.splitTerminal(THREAD_REF, "terminal-3");
+    terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    const groupAfterSplit = terminalState.terminalGroups.find(
+      (group) => group.id === "group-terminal-2",
+    );
+    expect(groupAfterSplit?.name).toBe("backend");
+    expect(groupAfterSplit?.terminalIds).toEqual(["terminal-2", "terminal-3"]);
+  });
+
+  it("clears the group name when called with a null value", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.renameTerminalGroup(THREAD_REF, "group-terminal-2", "backend");
+    store.renameTerminalGroup(THREAD_REF, "group-terminal-2", null);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadKey,
+      THREAD_REF,
+    );
+    const group = terminalState.terminalGroups.find((g) => g.id === "group-terminal-2");
+    expect(group?.name).toBeUndefined();
+  });
+
+  it("migrates v2 persisted terminal state without terminalNamesById", () => {
+    const migrated = migratePersistedTerminalStateStoreState(
+      {
+        terminalStateByThreadKey: {
+          [scopedThreadKey(THREAD_REF)]: {
+            terminalOpen: true,
+            terminalHeight: 320,
+            terminalIds: ["default", "terminal-2"],
+            runningTerminalIds: [],
+            activeTerminalId: "terminal-2",
+            terminalGroups: [
+              { id: "group-default", terminalIds: ["default", "terminal-2"] },
+            ],
+            activeTerminalGroupId: "group-default",
+          },
+        },
+      },
+      2,
+    );
+
+    expect(
+      migrated.terminalStateByThreadKey?.[scopedThreadKey(THREAD_REF)]?.terminalNamesById,
+    ).toEqual({});
   });
 });

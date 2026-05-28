@@ -469,6 +469,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const storeNewTerminal = useTerminalStateStore((state) => state.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((state) => state.closeTerminal);
+  const storeRenameTerminal = useTerminalStateStore((state) => state.renameTerminal);
+  const storeRenameTerminalGroup = useTerminalStateStore((state) => state.renameTerminalGroup);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = useMemo(() => {
@@ -560,6 +562,20 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [bumpFocusRequestId, storeCloseTerminal, terminalState.terminalIds.length, threadId, threadRef],
   );
 
+  const renameTerminal = useCallback(
+    (terminalId: string, name: string | null) => {
+      storeRenameTerminal(threadRef, terminalId, name);
+    },
+    [storeRenameTerminal, threadRef],
+  );
+
+  const renameTerminalGroup = useCallback(
+    (groupId: string, name: string | null) => {
+      storeRenameTerminalGroup(threadRef, groupId, name);
+    },
+    [storeRenameTerminalGroup, threadRef],
+  );
+
   const handleAddTerminalContext = useCallback(
     (selection: TerminalContextSelection) => {
       if (!visible) {
@@ -588,6 +604,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalState.terminalGroups}
         activeTerminalGroupId={terminalState.activeTerminalGroupId}
+        terminalNamesById={terminalState.terminalNamesById}
         focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
         onSplitTerminal={splitTerminal}
         onNewTerminal={createNewTerminal}
@@ -597,6 +614,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
+        onRenameTerminal={renameTerminal}
+        onRenameTerminalGroup={renameTerminalGroup}
         onHeightChange={setTerminalHeight}
         onAddTerminalContext={handleAddTerminalContext}
       />

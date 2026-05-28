@@ -30,6 +30,7 @@ export type ProjectScript = ContractProjectScript;
 export interface ThreadTerminalGroup {
   id: string;
   terminalIds: string[];
+  name?: string;
 }
 
 export interface ChatImageAttachment {

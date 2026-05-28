@@ -1,5 +1,12 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import {
+  Pencil,
+  Plus,
+  SquareSplitHorizontal,
+  TerminalSquare,
+  Trash2,
+  XIcon,
+} from "lucide-react";
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -810,6 +817,7 @@ interface ThreadTerminalDrawerProps {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
+  terminalNamesById: Record<string, string>;
   focusRequestId: number;
   onSplitTerminal: () => void;
   onNewTerminal: () => void;
@@ -818,6 +826,8 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onRenameTerminal: (terminalId: string, name: string | null) => void;
+  onRenameTerminalGroup: (groupId: string, name: string | null) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
@@ -852,6 +862,78 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+interface TerminalRenameInputProps {
+  initialValue: string;
+  defaultValue: string;
+  ariaLabel: string;
+  className?: string;
+  onCommit: (name: string | null) => void;
+  onCancel: () => void;
+}
+
+function TerminalRenameInput({
+  initialValue,
+  defaultValue,
+  ariaLabel,
+  className,
+  onCommit,
+  onCancel,
+}: TerminalRenameInputProps) {
+  const [value, setValue] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  const commit = useCallback(() => {
+    const trimmed = value.trim();
+    if (trimmed === initialValue.trim()) {
+      onCancel();
+      return;
+    }
+    if (trimmed.length === 0) {
+      onCommit(null);
+      return;
+    }
+    if (trimmed === defaultValue) {
+      onCommit(null);
+      return;
+    }
+    onCommit(trimmed);
+  }, [defaultValue, initialValue, onCancel, onCommit, value]);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      aria-label={ariaLabel}
+      className={
+        className ??
+        "min-w-0 flex-1 rounded bg-background px-1 py-0 text-[11px] text-foreground outline-none ring-1 ring-border focus:ring-ring"
+      }
+      onChange={(event) => setValue(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={commit}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      placeholder={defaultValue}
+    />
+  );
+}
+
 export default function ThreadTerminalDrawer({
   threadRef,
   threadId,
@@ -864,6 +946,7 @@ export default function ThreadTerminalDrawer({
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
+  terminalNamesById,
   focusRequestId,
   onSplitTerminal,
   onNewTerminal,
@@ -872,6 +955,8 @@ export default function ThreadTerminalDrawer({
   closeShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
+  onRenameTerminal,
+  onRenameTerminalGroup,
   onHeightChange,
   onAddTerminalContext,
   keybindings,
@@ -935,10 +1020,16 @@ export default function ThreadTerminalDrawer({
         terminalGroup.id.trim().length > 0
           ? terminalGroup.id.trim()
           : `group-${nextTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID}`;
-      nextGroups.push({
+      const trimmedGroupName =
+        typeof terminalGroup.name === "string" ? terminalGroup.name.trim() : "";
+      const nextGroup: ThreadTerminalGroup = {
         id: assignUniqueGroupId(baseGroupId),
         terminalIds: nextTerminalIds,
-      });
+      };
+      if (trimmedGroupName.length > 0) {
+        nextGroup.name = trimmedGroupName;
+      }
+      nextGroups.push(nextGroup);
     }
 
     for (const terminalId of normalizedTerminalIds) {
@@ -984,10 +1075,39 @@ export default function ThreadTerminalDrawer({
   const terminalLabelById = useMemo(
     () =>
       new Map(
+        normalizedTerminalIds.map((terminalId, index) => {
+          const customName = terminalNamesById?.[terminalId]?.trim();
+          if (customName && customName.length > 0) {
+            return [terminalId, customName];
+          }
+          return [terminalId, `Terminal ${index + 1}`];
+        }),
+      ),
+    [normalizedTerminalIds, terminalNamesById],
+  );
+  const defaultTerminalLabelById = useMemo(
+    () =>
+      new Map(
         normalizedTerminalIds.map((terminalId, index) => [terminalId, `Terminal ${index + 1}`]),
       ),
     [normalizedTerminalIds],
   );
+  const groupDisplayLabel = useCallback(
+    (group: ThreadTerminalGroup, groupIndex: number): string => {
+      const customName = typeof group.name === "string" ? group.name.trim() : "";
+      if (customName.length > 0) return customName;
+      return group.terminalIds.length > 1 ? `Split ${groupIndex + 1}` : `Terminal ${groupIndex + 1}`;
+    },
+    [],
+  );
+  const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (editingTerminalId && !normalizedTerminalIds.includes(editingTerminalId)) {
+      setEditingTerminalId(null);
+    }
+  }, [editingTerminalId, normalizedTerminalIds]);
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1261,23 +1381,76 @@ export default function ThreadTerminalDrawer({
                   const groupActiveTerminalId = isGroupActive
                     ? resolvedActiveTerminalId
                     : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+                  const isEditingGroup = editingGroupId === terminalGroup.id;
+                  const defaultGroupName =
+                    terminalGroup.terminalIds.length > 1
+                      ? `Split ${groupIndex + 1}`
+                      : `Terminal ${groupIndex + 1}`;
+                  const groupName = groupDisplayLabel(terminalGroup, groupIndex);
+                  const renameGroupLabel = `Rename ${groupName}`;
 
                   return (
                     <div key={terminalGroup.id} className="pb-0.5">
                       {showGroupHeaders && (
-                        <button
-                          type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                        <div
+                          className={`group flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
                             isGroupActive
                               ? "bg-accent/70 text-foreground"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                           }`}
-                          onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
                         >
-                          {terminalGroup.terminalIds.length > 1
-                            ? `Split ${groupIndex + 1}`
-                            : `Terminal ${groupIndex + 1}`}
-                        </button>
+                          {isEditingGroup ? (
+                            <TerminalRenameInput
+                              initialValue={groupName}
+                              defaultValue={defaultGroupName}
+                              ariaLabel={`Rename ${defaultGroupName}`}
+                              className="min-w-0 flex-1 rounded bg-background px-1 py-0 text-[10px] uppercase tracking-[0.08em] text-foreground outline-none ring-1 ring-border focus:ring-ring"
+                              onCommit={(name) => {
+                                onRenameTerminalGroup(terminalGroup.id, name);
+                                setEditingGroupId(null);
+                              }}
+                              onCancel={() => setEditingGroupId(null)}
+                            />
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-center text-left"
+                                onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
+                              >
+                                <span className="truncate">{groupName}</span>
+                              </button>
+                              <Popover>
+                                <PopoverTrigger
+                                  openOnHover
+                                  render={
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setEditingTerminalId(null);
+                                        setEditingGroupId(terminalGroup.id);
+                                      }}
+                                      aria-label={renameGroupLabel}
+                                    />
+                                  }
+                                >
+                                  <Pencil className="size-2.5" />
+                                </PopoverTrigger>
+                                <PopoverPopup
+                                  tooltipStyle
+                                  side="bottom"
+                                  sideOffset={6}
+                                  align="center"
+                                  className="pointer-events-none select-none"
+                                >
+                                  {renameGroupLabel}
+                                </PopoverPopup>
+                              </Popover>
+                            </>
+                          )}
+                        </div>
                       )}
 
                       <div
@@ -1285,9 +1458,15 @@ export default function ThreadTerminalDrawer({
                       >
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
+                          const terminalLabel =
+                            terminalLabelById.get(terminalId) ?? "Terminal";
+                          const defaultTerminalLabel =
+                            defaultTerminalLabelById.get(terminalId) ?? "Terminal";
+                          const closeTerminalLabel = `Close ${terminalLabel}${
+                            isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
+                          }`;
+                          const renameTerminalLabel = `Rename ${terminalLabel}`;
+                          const isEditingTerminal = editingTerminalId === terminalId;
                           return (
                             <div
                               key={terminalId}
@@ -1300,41 +1479,85 @@ export default function ThreadTerminalDrawer({
                               {showGroupHeaders && (
                                 <span className="text-[10px] text-muted-foreground/80">└</span>
                               )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
-                              >
-                                <TerminalSquare className="size-3 shrink-0" />
-                                <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
-                                </span>
-                              </button>
-                              {normalizedTerminalIds.length > 1 && (
-                                <Popover>
-                                  <PopoverTrigger
-                                    openOnHover
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => onCloseTerminal(terminalId)}
-                                        aria-label={closeTerminalLabel}
-                                      />
-                                    }
-                                  >
-                                    <XIcon className="size-2.5" />
-                                  </PopoverTrigger>
-                                  <PopoverPopup
-                                    tooltipStyle
-                                    side="bottom"
-                                    sideOffset={6}
-                                    align="center"
-                                    className="pointer-events-none select-none"
-                                  >
-                                    {closeTerminalLabel}
-                                  </PopoverPopup>
-                                </Popover>
+                              {isEditingTerminal ? (
+                                <>
+                                  <TerminalSquare className="size-3 shrink-0" />
+                                  <TerminalRenameInput
+                                    initialValue={terminalLabel}
+                                    defaultValue={defaultTerminalLabel}
+                                    ariaLabel={`Rename ${defaultTerminalLabel}`}
+                                    onCommit={(name) => {
+                                      onRenameTerminal(terminalId, name);
+                                      setEditingTerminalId(null);
+                                    }}
+                                    onCancel={() => setEditingTerminalId(null)}
+                                  />
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                                  onClick={() => onActiveTerminalChange(terminalId)}
+                                >
+                                  <TerminalSquare className="size-3 shrink-0" />
+                                  <span className="truncate">{terminalLabel}</span>
+                                </button>
+                              )}
+                              {!isEditingTerminal && normalizedTerminalIds.length > 1 && (
+                                <>
+                                  <Popover>
+                                    <PopoverTrigger
+                                      openOnHover
+                                      render={
+                                        <button
+                                          type="button"
+                                          className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setEditingGroupId(null);
+                                            setEditingTerminalId(terminalId);
+                                          }}
+                                          aria-label={renameTerminalLabel}
+                                        />
+                                      }
+                                    >
+                                      <Pencil className="size-2.5" />
+                                    </PopoverTrigger>
+                                    <PopoverPopup
+                                      tooltipStyle
+                                      side="bottom"
+                                      sideOffset={6}
+                                      align="center"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {renameTerminalLabel}
+                                    </PopoverPopup>
+                                  </Popover>
+                                  <Popover>
+                                    <PopoverTrigger
+                                      openOnHover
+                                      render={
+                                        <button
+                                          type="button"
+                                          className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                                          onClick={() => onCloseTerminal(terminalId)}
+                                          aria-label={closeTerminalLabel}
+                                        />
+                                      }
+                                    >
+                                      <XIcon className="size-2.5" />
+                                    </PopoverTrigger>
+                                    <PopoverPopup
+                                      tooltipStyle
+                                      side="bottom"
+                                      sideOffset={6}
+                                      align="center"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {closeTerminalLabel}
+                                    </PopoverPopup>
+                                  </Popover>
+                                </>
                               )}
                             </div>
                           );
