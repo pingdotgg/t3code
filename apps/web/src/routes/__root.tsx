@@ -4,11 +4,18 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
+  redirect,
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
+
+import {
+  getPairingTokenFromUrl,
+  stripPairingTokenFromUrl as stripPairingTokenUrl,
+} from "../pairingUrl";
+import { consumePendingPairingToken, savePendingPairingToken } from "../pendingPairingToken";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -67,6 +74,24 @@ export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
   beforeLoad: async ({ location }) => {
+    if (location.pathname === "/m") {
+      const incomingUrl = new URL(window.location.href);
+      const incomingToken = getPairingTokenFromUrl(incomingUrl);
+      if (incomingToken) {
+        savePendingPairingToken(incomingToken);
+        const stripped = stripPairingTokenUrl(incomingUrl);
+        window.history.replaceState({}, document.title, stripped.toString());
+      }
+    } else if (location.pathname === "/") {
+      const pending = consumePendingPairingToken();
+      if (pending) {
+        throw redirect({
+          to: "/pair",
+          search: { token: pending } as Record<string, string>,
+        });
+      }
+    }
+
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {

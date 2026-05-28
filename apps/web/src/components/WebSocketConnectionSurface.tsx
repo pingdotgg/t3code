@@ -4,6 +4,7 @@ import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLat
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
+  resetWsReconnectBackoff,
   setBrowserOnlineStatus,
   type WsConnectionStatus,
   type WsConnectionUiState,
@@ -208,15 +209,25 @@ export function WebSocketConnectionCoordinator() {
     const handleFocus = () => {
       triggerAutoReconnect("focus");
     };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const currentStatus = getWsConnectionStatus();
+      if (getWsConnectionUiState(currentStatus) !== "connected") {
+        resetWsReconnectBackoff();
+        triggerAutoReconnect("focus");
+      }
+    };
 
     syncBrowserOnlineStatus();
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", syncBrowserOnlineStatus);
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", syncBrowserOnlineStatus);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 

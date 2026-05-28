@@ -99,6 +99,7 @@ import {
 } from "../threadRoutes";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { ConnectionStatusPill } from "./mobile/ConnectionStatusPill";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
 import {
@@ -2482,7 +2483,10 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
       {wordmark}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
+    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+      {wordmark}
+      <ConnectionStatusPill />
+    </SidebarHeader>
   );
 });
 

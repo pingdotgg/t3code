@@ -98,6 +98,7 @@ import {
 import { useUiStateStore } from "~/uiStateStore";
 import { resolveServerConfigVersionMismatch } from "~/versionSkew";
 import { useServerConfig } from "~/rpc/serverState";
+import { MobileAccessSection } from "../mobile/MobileAccessSection";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
@@ -438,7 +439,7 @@ function selectPairingEndpoint(
   );
 }
 
-function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
+export function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.id.startsWith("tailscale-magicdns:");
 }
 
@@ -466,7 +467,7 @@ function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
   return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
 }
 
-function resolveAdvertisedEndpointPairingUrl(
+export function resolveAdvertisedEndpointPairingUrl(
   endpoint: AdvertisedEndpoint,
   credential: string,
 ): string {
@@ -2468,6 +2469,16 @@ export function ConnectionsSettings() {
               renderDisabledNetworkAccessRow()
             )}
           </SettingsSection>
+
+          {desktopBridge ? (
+            <MobileAccessSection
+              endpoints={visibleDesktopAdvertisedEndpoints}
+              isTailscaleServeEnabled={desktopServerExposureState?.tailscaleServeEnabled ?? false}
+              isUpdating={isUpdatingTailscaleServe}
+              onEnable={handleStartTailscaleServeSetup}
+              onDisable={handleStartTailscaleServeDisable}
+            />
+          ) : null}
 
           {isLocalBackendRemotelyReachable ? (
             <SettingsSection

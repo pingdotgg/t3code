@@ -1,5 +1,7 @@
+import type { AdvertisedEndpoint } from "@t3tools/contracts";
+
 import { buildHostedPairingUrl } from "../../hostedPairing";
-import { setPairingTokenOnUrl } from "../../pairingUrl";
+import { setPairingTokenAsQueryOnUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 
 export function resolveDesktopPairingUrl(endpointUrl: string, credential: string): string {
   const url = new URL(endpointUrl);
@@ -17,4 +19,17 @@ export function resolveHostedPairingUrl(endpointUrl: string, credential: string)
     host: endpointUrl,
     token: credential,
   });
+}
+
+export function resolveMobileBootstrapUrl(endpointUrl: string, credential: string): string {
+  const url = new URL(endpointUrl);
+  url.pathname = "/m";
+  return setPairingTokenAsQueryOnUrl(url, credential).toString();
+}
+
+export function resolveAdvertisedEndpointMobileBootstrapUrl(
+  endpoint: AdvertisedEndpoint,
+  credential: string,
+): string {
+  return resolveMobileBootstrapUrl(endpoint.httpBaseUrl, credential);
 }

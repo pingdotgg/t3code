@@ -31,3 +31,10 @@ export function setPairingTokenOnUrl(url: URL, credential: string): URL {
   next.hash = new URLSearchParams([[PAIRING_TOKEN_PARAM, credential]]).toString();
   return next;
 }
+
+export function setPairingTokenAsQueryOnUrl(url: URL, credential: string): URL {
+  const next = new URL(url.toString());
+  next.hash = "";
+  next.searchParams.set(PAIRING_TOKEN_PARAM, credential);
+  return next;
+}

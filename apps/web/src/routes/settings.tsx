@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
+import { ConnectionStatusBanner } from "../components/mobile/ConnectionStatusBanner";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
@@ -90,6 +91,7 @@ function SettingsContentLayout() {
           </div>
         )}
 
+        <ConnectionStatusBanner />
         <div key={restoreSignal} className="min-h-0 flex flex-1 flex-col">
           <Outlet />
         </div>

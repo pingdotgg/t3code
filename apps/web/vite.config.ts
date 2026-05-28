@@ -3,6 +3,7 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
@@ -68,6 +69,33 @@ export default defineConfig({
       presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
+    VitePWA({
+      registerType: "autoUpdate",
+      manifest: false,
+      devOptions: { enabled: false },
+      workbox: {
+        // The main SPA bundle is large; raise the precache size limit so the
+        // shell is available offline once installed.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/api/, /^\/\.well-known/, /^\/attachments/],
+        runtimeCaching: [
+          {
+            urlPattern: /^.*\/(api|\.well-known|attachments)\//,
+            handler: "NetworkFirst",
+            options: { cacheName: "t3-api", networkTimeoutSeconds: 5 },
+          },
+          {
+            urlPattern: /\/assets\/.+\.[a-f0-9]{8}\./,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "t3-assets",
+              expiration: { maxAgeSeconds: 2592000 },
+            },
+          },
+        ],
+      },
+    }),
   ],
   optimizeDeps: {
     include: [
@@ -88,10 +116,18 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  preview: {
+    // Allow access from any Tailscale magic DNS hostname so the production
+    // build can be tested over the tailnet (e.g. https://<host>.ts.net).
+    allowedHosts: [".ts.net"],
+  },
   server: {
     host,
     port,
     strictPort: true,
+    // Mirror the preview config so the dev server can also be reached via
+    // Tailscale during development.
+    allowedHosts: [".ts.net"],
     ...(devProxyTarget
       ? {
           proxy: {

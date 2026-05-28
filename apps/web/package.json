@@ -59,6 +59,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
     "vite": "^8.0.0",
+    "vite-plugin-pwa": "^1.3.0",
     "vitest": "catalog:",
     "vitest-browser-react": "^2.0.5"
   }
