@@ -77,6 +77,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
 } from "../../logicalProject";
+import { flushResumeDiagnostics, recordResumeDiagnostic } from "./resumeDiagnostics";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
   readCachedEnvironmentState,
@@ -172,10 +173,7 @@ let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
 let lastBrowserHiddenAt: number | null = null;
 let lastBrowserResumeReconcileAt = Number.NEGATIVE_INFINITY;
-let pendingNotificationThreadReconcile: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-} | null = null;
+const pendingNotificationThreadReconcileKeys = new Set<string>();
 
 // Thread detail subscription cache policy:
 // - Active consumers keep a subscription retained via refCount.
@@ -199,9 +197,15 @@ const CONNECTION_HEALTH_RECOVERY_RECONNECT_TIMEOUT_MS = 15_000;
 const BROWSER_RESUME_RECONCILE_COOLDOWN_MS = 2_000;
 const BROWSER_RESUME_RECONCILE_TIMEOUT_MS = 1_500;
 const BROWSER_RESUME_HEARTBEAT_TICK_MS = 15_000;
+const BROWSER_RESUME_LONG_BACKGROUND_MS = 5_000;
 const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
+
+interface BrowserResumeReconcileOptions {
+  readonly hiddenDurationMs: number | null;
+  readonly forceReconnect: boolean;
+}
 
 function createDeferredPromise<T>() {
   let resolve: ((value: T) => void) | null = null;
@@ -249,6 +253,23 @@ function withTimeout<T>(
       },
     );
   });
+}
+
+function getBrowserHiddenDuration(now: number): number | null {
+  return lastBrowserHiddenAt === null ? null : Math.max(0, now - lastBrowserHiddenAt);
+}
+
+function makeBrowserResumeReconcileOptions(
+  reason: string,
+  hiddenDurationMs: number | null,
+): BrowserResumeReconcileOptions {
+  return {
+    hiddenDurationMs,
+    forceReconnect:
+      reason !== "heartbeat-tick" &&
+      hiddenDurationMs !== null &&
+      hiddenDurationMs > BROWSER_RESUME_LONG_BACKGROUND_MS,
+  };
 }
 
 async function waitForConfigSnapshot(
@@ -833,11 +854,38 @@ function refreshActiveThreadDetailsForEnvironment(
   environmentId: EnvironmentId,
   reason: string,
 ): void {
+  let iterated = 0;
+  let reconciled = 0;
   for (const entry of threadDetailSubscriptions.values()) {
-    if (entry.environmentId !== environmentId) continue;
-    if (entry.activeRefCount === 0) continue;
+    if (entry.environmentId !== environmentId) {
+      continue;
+    }
+    iterated += 1;
+    const shouldReconcile = entry.activeRefCount > 0;
+    recordResumeDiagnostic("thread-detail-refresh-entry", {
+      reason,
+      env: environmentId,
+      data: {
+        threadId: entry.threadId,
+        refCount: entry.refCount,
+        activeRefCount: entry.activeRefCount,
+        reconciled: shouldReconcile,
+      },
+    });
+    if (!shouldReconcile) {
+      continue;
+    }
+    reconciled += 1;
     requestThreadDetailReconcile(entry.environmentId, entry.threadId, reason);
   }
+  recordResumeDiagnostic("thread-detail-refresh", {
+    reason,
+    env: environmentId,
+    data: {
+      iterated,
+      reconciled,
+    },
+  });
 }
 
 function shouldRefreshRetainedThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry) {
@@ -2424,34 +2472,100 @@ function stopActiveService() {
 async function reconcileEnvironmentConnectionAfterBrowserResume(
   connection: EnvironmentConnection,
   reason: string,
+  options: BrowserResumeReconcileOptions,
 ): Promise<void> {
   const environmentId = connection.environmentId;
+  const startedAt = Date.now();
   // The periodic heartbeat-tick is a liveness check; only user-visible
   // resume events should force a detail refresh on the no-gap branch,
   // otherwise we'd churn the active thread every tick.
   const isUserResumeReason = reason !== "heartbeat-tick";
+  const heartbeatFresh = connection.client.isHeartbeatFresh();
+
+  recordResumeDiagnostic("browser-resume-reconcile-start", {
+    reason,
+    env: environmentId,
+    data: {
+      heartbeatFresh,
+      forceReconnect: options.forceReconnect,
+      hiddenDurationMs: options.hiddenDurationMs,
+    },
+  });
+
+  const reconnectAfterResume = async (
+    branch: string,
+    refreshReason = `browser-resume:reconnect:${reason}`,
+  ) => {
+    const reconnectStartedAt = Date.now();
+    try {
+      await connection.reconnect();
+      recordResumeDiagnostic("browser-resume-reconcile-branch", {
+        reason,
+        env: environmentId,
+        data: {
+          branch,
+          elapsedMs: Date.now() - startedAt,
+          reconnectElapsedMs: Date.now() - reconnectStartedAt,
+        },
+      });
+      refreshActiveThreadDetailsForEnvironment(environmentId, refreshReason);
+    } catch (error) {
+      recordResumeDiagnostic("browser-resume-reconcile-error", {
+        reason,
+        env: environmentId,
+        data: {
+          branch,
+          elapsedMs: Date.now() - startedAt,
+          reconnectElapsedMs: Date.now() - reconnectStartedAt,
+          error: formatUnknownError(error),
+        },
+      });
+      throw error;
+    }
+  };
 
   // Fast path: if the heartbeat pong is stale, the underlying socket is
   // almost certainly dead (common on iOS PWA after backgrounding, where
   // the JS `WebSocket` may still report OPEN even though TCP is gone).
   // Skip the probe round-trip and reconnect immediately so thread detail
   // subscriptions re-attach on the new session.
-  if (!connection.client.isHeartbeatFresh()) {
+  if (options.forceReconnect) {
+    console.warn("Environment resumed after a long browser background; reconnecting", {
+      environmentId,
+      reason,
+      hiddenDurationMs: options.hiddenDurationMs,
+    });
+    await reconnectAfterResume("long-background");
+    return;
+  }
+
+  if (!heartbeatFresh) {
     console.warn("Environment heartbeat stale on browser resume; reconnecting", {
       environmentId,
       reason,
     });
-    await connection.reconnect();
-    refreshActiveThreadDetailsForEnvironment(environmentId, `browser-resume:reconnect:${reason}`);
+    await reconnectAfterResume("stale-heartbeat");
     return;
   }
 
   const currentSequence = readLastAppliedProjectionVersion(environmentId)?.sequence;
   if (currentSequence === undefined) {
+    recordResumeDiagnostic("browser-resume-reconcile-branch", {
+      reason,
+      env: environmentId,
+      data: {
+        branch: "no-local-sequence",
+        elapsedMs: Date.now() - startedAt,
+      },
+    });
     return;
   }
 
+  let step: "probeSync" | "replayEvents" | null = null;
+  let stepStartedAt = 0;
   try {
+    step = "probeSync";
+    stepStartedAt = Date.now();
     const syncProbe = await withTimeout(
       connection.client.orchestration.probeSync({
         clientSequence: currentSequence,
@@ -2459,12 +2573,40 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
       BROWSER_RESUME_RECONCILE_TIMEOUT_MS,
       () => new Error("Browser resume reconciliation timed out."),
     );
+    recordResumeDiagnostic("browser-resume-probe", {
+      reason,
+      env: environmentId,
+      data: {
+        elapsedMs: Date.now() - stepStartedAt,
+        clientSequence: currentSequence,
+        serverSequence: syncProbe.serverSequence,
+        behind: syncProbe.behind,
+      },
+    });
     if (readEnvironmentConnection(environmentId) !== connection) {
+      recordResumeDiagnostic("browser-resume-reconcile-branch", {
+        reason,
+        env: environmentId,
+        data: {
+          branch: "stale-connection-after-probe",
+          elapsedMs: Date.now() - startedAt,
+        },
+      });
       return;
     }
     const latestSequenceAfterProbe =
       readLastAppliedProjectionVersion(environmentId)?.sequence ?? currentSequence;
     if (!syncProbe.behind || syncProbe.serverSequence <= latestSequenceAfterProbe) {
+      recordResumeDiagnostic("browser-resume-reconcile-branch", {
+        reason,
+        env: environmentId,
+        data: {
+          branch: "up-to-date",
+          elapsedMs: Date.now() - startedAt,
+          serverSequence: syncProbe.serverSequence,
+          latestSequenceAfterProbe,
+        },
+      });
       if (isUserResumeReason) {
         refreshActiveThreadDetailsForEnvironment(
           environmentId,
@@ -2474,6 +2616,8 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
       return;
     }
 
+    step = "replayEvents";
+    stepStartedAt = Date.now();
     const replayedEvents = await withTimeout(
       connection.client.orchestration.replayEvents({
         fromSequenceExclusive: latestSequenceAfterProbe,
@@ -2481,7 +2625,24 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
       BROWSER_RESUME_RECONCILE_TIMEOUT_MS,
       () => new Error("Browser resume replay timed out."),
     );
+    recordResumeDiagnostic("browser-resume-replay", {
+      reason,
+      env: environmentId,
+      data: {
+        elapsedMs: Date.now() - stepStartedAt,
+        fromSequenceExclusive: latestSequenceAfterProbe,
+        eventCount: replayedEvents.length,
+      },
+    });
     if (readEnvironmentConnection(environmentId) !== connection) {
+      recordResumeDiagnostic("browser-resume-reconcile-branch", {
+        reason,
+        env: environmentId,
+        data: {
+          branch: "stale-connection-after-replay",
+          elapsedMs: Date.now() - startedAt,
+        },
+      });
       return;
     }
 
@@ -2499,20 +2660,51 @@ async function reconcileEnvironmentConnectionAfterBrowserResume(
     if (highestReplayedSequence > recoveredSequence) {
       queueProjectionRecovery(environmentId, highestReplayedSequence);
     }
+    recordResumeDiagnostic("browser-resume-reconcile-branch", {
+      reason,
+      env: environmentId,
+      data: {
+        branch: "replay",
+        elapsedMs: Date.now() - startedAt,
+        recoveredSequence,
+        highestReplayedSequence,
+        eventCount: replayedEvents.length,
+      },
+    });
     refreshActiveThreadDetailsForEnvironment(environmentId, `browser-resume:replay:${reason}`);
   } catch (error) {
     if (readEnvironmentConnection(environmentId) !== connection) {
+      recordResumeDiagnostic("browser-resume-reconcile-branch", {
+        reason,
+        env: environmentId,
+        data: {
+          branch: "stale-connection-after-error",
+          elapsedMs: Date.now() - startedAt,
+          step,
+          stepElapsedMs: step === null ? null : Date.now() - stepStartedAt,
+        },
+      });
       return;
     }
 
+    recordResumeDiagnostic("browser-resume-reconcile-error", {
+      reason,
+      env: environmentId,
+      data: {
+        branch: "probe-or-replay-error",
+        elapsedMs: Date.now() - startedAt,
+        step,
+        stepElapsedMs: step === null ? null : Date.now() - stepStartedAt,
+        error: formatUnknownError(error),
+      },
+    });
     console.warn("Environment reconciliation after browser resume failed; reconnecting", {
       environmentId,
       reason,
       error: formatUnknownError(error),
     });
-    await connection.reconnect();
-    refreshActiveThreadDetailsForEnvironment(
-      environmentId,
+    await reconnectAfterResume(
+      "reconnect-after-error",
       `browser-resume:reconnect-after-error:${reason}`,
     );
   }
@@ -2644,21 +2836,43 @@ function queueEnvironmentActiveThreadProjectionReconciliation(
 function queueEnvironmentBrowserResumeReconciliation(
   connection: EnvironmentConnection,
   reason: string,
+  options: BrowserResumeReconcileOptions,
 ): void {
   const environmentId = connection.environmentId;
   if (browserResumeReconciliationByEnvironment.has(environmentId)) {
+    recordResumeDiagnostic("browser-resume-queue", {
+      reason,
+      env: environmentId,
+      data: {
+        action: "coalesced",
+        forceReconnect: options.forceReconnect,
+        hiddenDurationMs: options.hiddenDurationMs,
+      },
+    });
     return;
   }
 
-  const promise = reconcileEnvironmentConnectionAfterBrowserResume(connection, reason).catch(
-    (error) => {
-      console.warn("Environment reconnect after browser resume failed", {
-        environmentId,
-        reason,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  recordResumeDiagnostic("browser-resume-queue", {
+    reason,
+    env: environmentId,
+    data: {
+      action: "scheduled",
+      forceReconnect: options.forceReconnect,
+      hiddenDurationMs: options.hiddenDurationMs,
     },
-  );
+  });
+
+  const promise = reconcileEnvironmentConnectionAfterBrowserResume(
+    connection,
+    reason,
+    options,
+  ).catch((error) => {
+    console.warn("Environment reconnect after browser resume failed", {
+      environmentId,
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 
   browserResumeReconciliationByEnvironment.set(environmentId, promise);
   void promise.finally(() => {
@@ -2668,15 +2882,30 @@ function queueEnvironmentBrowserResumeReconciliation(
   });
 }
 
-function reconcileEnvironmentConnectionsAfterBrowserResume(reason: string): void {
+function reconcileEnvironmentConnectionsAfterBrowserResume(
+  reason: string,
+  options: BrowserResumeReconcileOptions = makeBrowserResumeReconcileOptions(reason, null),
+): void {
   const now = Date.now();
+  if (options.forceReconnect) {
+    lastBrowserResumeReconcileAt = Number.NEGATIVE_INFINITY;
+  }
   if (now - lastBrowserResumeReconcileAt < BROWSER_RESUME_RECONCILE_COOLDOWN_MS) {
+    recordResumeDiagnostic("browser-resume-queue", {
+      reason,
+      data: {
+        action: "cooldown-suppressed",
+        elapsedSinceLastMs: now - lastBrowserResumeReconcileAt,
+        forceReconnect: options.forceReconnect,
+        hiddenDurationMs: options.hiddenDurationMs,
+      },
+    });
     return;
   }
   lastBrowserResumeReconcileAt = now;
 
   for (const connection of environmentConnections.values()) {
-    queueEnvironmentBrowserResumeReconciliation(connection, reason);
+    queueEnvironmentBrowserResumeReconciliation(connection, reason, options);
   }
 }
 
@@ -2684,14 +2913,17 @@ function consumePendingNotificationThreadReconcile(
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ): boolean {
-  if (
-    pendingNotificationThreadReconcile?.environmentId === environmentId &&
-    pendingNotificationThreadReconcile.threadId === threadId
-  ) {
-    pendingNotificationThreadReconcile = null;
-    return true;
-  }
-  return false;
+  const key = getThreadDetailSubscriptionKey(environmentId, threadId);
+  const consumed = pendingNotificationThreadReconcileKeys.delete(key);
+  recordResumeDiagnostic("notification-thread-reconcile-consume", {
+    env: environmentId,
+    data: {
+      threadId,
+      consumed,
+      pendingCount: pendingNotificationThreadReconcileKeys.size,
+    },
+  });
+  return consumed;
 }
 
 export function reconcileAfterNotificationClick(target: NotificationNavigationTarget): void {
@@ -2702,18 +2934,37 @@ export function reconcileAfterNotificationClick(target: NotificationNavigationTa
   // the per-env coalescing in queueEnvironmentBrowserResumeReconciliation
   // still drops this call — that's fine, because the in-flight one is
   // doing the same work for the same reason.
+  const now = Date.now();
+  const hiddenDurationMs = getBrowserHiddenDuration(now);
+  const options = makeBrowserResumeReconcileOptions("notification-click", hiddenDurationMs);
+  recordResumeDiagnostic("notification-click", {
+    reason: "notification-click",
+    ...(target.kind === "thread" ? { env: target.environmentId } : {}),
+    data: {
+      target,
+      hiddenDurationMs,
+      forceReconnect: options.forceReconnect,
+    },
+  });
   lastBrowserResumeReconcileAt = Number.NEGATIVE_INFINITY;
-  reconcileEnvironmentConnectionsAfterBrowserResume("notification-click");
+  reconcileEnvironmentConnectionsAfterBrowserResume("notification-click", options);
 
   if (target.kind === "thread") {
     // The thread route hasn't mounted yet, so its detail subscription
     // doesn't exist. Stash the target so the next matching
     // retainActiveThreadDetailSubscription call forces an immediate
     // reconcile, even on the no-events-replayed branch.
-    pendingNotificationThreadReconcile = {
-      environmentId: target.environmentId,
-      threadId: target.threadId,
-    };
+    pendingNotificationThreadReconcileKeys.add(
+      getThreadDetailSubscriptionKey(target.environmentId, target.threadId),
+    );
+    recordResumeDiagnostic("notification-thread-reconcile-pending", {
+      reason: "notification-click",
+      env: target.environmentId,
+      data: {
+        threadId: target.threadId,
+        pendingCount: pendingNotificationThreadReconcileKeys.size,
+      },
+    });
   }
 }
 
@@ -2723,47 +2974,129 @@ function subscribeBrowserResumeReconnects(): () => void {
   }
 
   const handleVisibilityChange = () => {
+    const now = Date.now();
     if (document.visibilityState === "hidden") {
-      lastBrowserHiddenAt = Date.now();
+      lastBrowserHiddenAt = now;
+      recordResumeDiagnostic("browser-event", {
+        reason: "visibilitychange:hidden",
+        data: {
+          visibilityState: document.visibilityState,
+        },
+      });
+      flushResumeDiagnostics();
       return;
     }
     if (document.visibilityState === "visible" && lastBrowserHiddenAt !== null) {
+      const hiddenDurationMs = getBrowserHiddenDuration(now);
+      const options = makeBrowserResumeReconcileOptions("visibilitychange", hiddenDurationMs);
+      recordResumeDiagnostic("browser-event", {
+        reason: "visibilitychange:visible",
+        data: {
+          visibilityState: document.visibilityState,
+          hiddenDurationMs,
+          forceReconnect: options.forceReconnect,
+        },
+      });
       lastBrowserHiddenAt = null;
-      reconcileEnvironmentConnectionsAfterBrowserResume("visibilitychange");
+      reconcileEnvironmentConnectionsAfterBrowserResume("visibilitychange", options);
     }
   };
 
   const handlePageHide = () => {
     lastBrowserHiddenAt = Date.now();
+    recordResumeDiagnostic("browser-event", {
+      reason: "pagehide",
+      data: {
+        visibilityState: document.visibilityState,
+      },
+    });
+    flushResumeDiagnostics();
   };
 
   const handlePageShow = (event: PageTransitionEvent) => {
+    const now = Date.now();
     const hadPriorBackgroundSignal = lastBrowserHiddenAt !== null;
     const shouldReconcile =
       event.persisted || hadPriorBackgroundSignal || hasRetainedThreadDetailSubscription();
+    const hiddenDurationMs = hadPriorBackgroundSignal ? getBrowserHiddenDuration(now) : null;
     lastBrowserHiddenAt = null;
+    recordResumeDiagnostic("browser-event", {
+      reason: event.persisted
+        ? "pageshow:bfcache"
+        : hadPriorBackgroundSignal
+          ? "pageshow"
+          : "pageshow:visible",
+      data: {
+        persisted: event.persisted,
+        hadPriorBackgroundSignal,
+        shouldReconcile,
+        hiddenDurationMs,
+      },
+    });
     if (shouldReconcile) {
+      const reason = event.persisted
+        ? "pageshow:bfcache"
+        : hadPriorBackgroundSignal
+          ? "pageshow"
+          : "pageshow:visible";
       reconcileEnvironmentConnectionsAfterBrowserResume(
-        event.persisted
-          ? "pageshow:bfcache"
-          : hadPriorBackgroundSignal
-            ? "pageshow"
-            : "pageshow:visible",
+        reason,
+        makeBrowserResumeReconcileOptions(reason, hiddenDurationMs),
       );
     }
   };
 
   const handleWindowFocus = () => {
     if (document.visibilityState !== "visible") {
+      recordResumeDiagnostic("browser-event", {
+        reason: "focus:hidden",
+        data: {
+          visibilityState: document.visibilityState,
+        },
+      });
       return;
     }
+    const now = Date.now();
     const hadPriorBackgroundSignal = lastBrowserHiddenAt !== null;
     if (!hadPriorBackgroundSignal && !hasRetainedThreadDetailSubscription()) {
+      recordResumeDiagnostic("browser-event", {
+        reason: "focus:ignored",
+        data: {
+          hadPriorBackgroundSignal,
+          retainedThreadDetail: false,
+        },
+      });
       return;
     }
+    const hiddenDurationMs = hadPriorBackgroundSignal ? getBrowserHiddenDuration(now) : null;
     lastBrowserHiddenAt = null;
+    const reason = hadPriorBackgroundSignal ? "focus" : "focus:visible";
+    const options = makeBrowserResumeReconcileOptions(reason, hiddenDurationMs);
+    recordResumeDiagnostic("browser-event", {
+      reason,
+      data: {
+        hadPriorBackgroundSignal,
+        hiddenDurationMs,
+        forceReconnect: options.forceReconnect,
+      },
+    });
+    reconcileEnvironmentConnectionsAfterBrowserResume(reason, options);
+  };
+
+  const handleHeartbeatTick = () => {
+    recordResumeDiagnostic("browser-event", {
+      reason: "heartbeat-tick",
+      data: {
+        visibilityState: document.visibilityState,
+        hiddenDurationMs: getBrowserHiddenDuration(Date.now()),
+      },
+    });
+    if (document.visibilityState !== "visible") {
+      return;
+    }
     reconcileEnvironmentConnectionsAfterBrowserResume(
-      hadPriorBackgroundSignal ? "focus" : "focus:visible",
+      "heartbeat-tick",
+      makeBrowserResumeReconcileOptions("heartbeat-tick", null),
     );
   };
 
@@ -2773,12 +3106,10 @@ function subscribeBrowserResumeReconnects(): () => void {
   // 5s active-thread probe — and that probe doesn't run on views with
   // no retained thread (sidebar/home). Reuse the browser-resume path
   // so the cooldown and per-environment queueing apply unchanged.
-  const heartbeatTickIntervalId = setInterval(() => {
-    if (document.visibilityState !== "visible") {
-      return;
-    }
-    reconcileEnvironmentConnectionsAfterBrowserResume("heartbeat-tick");
-  }, BROWSER_RESUME_HEARTBEAT_TICK_MS);
+  const heartbeatTickIntervalId = setInterval(
+    handleHeartbeatTick,
+    BROWSER_RESUME_HEARTBEAT_TICK_MS,
+  );
 
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("pagehide", handlePageHide);
@@ -3078,7 +3409,7 @@ export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
   lastBrowserHiddenAt = null;
   lastBrowserResumeReconcileAt = Number.NEGATIVE_INFINITY;
-  pendingNotificationThreadReconcile = null;
+  pendingNotificationThreadReconcileKeys.clear();
   browserResumeReconciliationByEnvironment.clear();
   activeThreadProjectionReconciliationByEnvironment.clear();
   lastAppliedProjectionVersionByEnvironment.clear();

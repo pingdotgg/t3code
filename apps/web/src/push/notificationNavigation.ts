@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { reconcileAfterNotificationClick } from "../environments/runtime/service";
+import { recordResumeDiagnostic } from "../environments/runtime/resumeDiagnostics";
 import type { AppRouter } from "../router";
 import type { DraftId } from "../composerDraftStore";
 
@@ -144,12 +145,30 @@ export function installServiceWorkerNotificationNavigation(router: AppRouter): (
       return;
     }
 
+    recordResumeDiagnostic("notification-navigation-message", {
+      reason: "service-worker-message",
+      data: {
+        url: event.data.url,
+        openedAt: event.data.openedAt,
+      },
+    });
     const target = parseNotificationNavigationTarget(event.data.url);
     if (target === null) {
+      recordResumeDiagnostic("notification-navigation-target", {
+        reason: "parse-failed",
+        data: {
+          url: event.data.url,
+        },
+      });
       return;
     }
 
     lastNotificationNavigationTarget = target;
+    recordResumeDiagnostic("notification-navigation-target", {
+      reason: "parsed",
+      ...(target.kind === "thread" ? { env: target.environmentId } : {}),
+      data: { target },
+    });
     reconcileAfterNotificationClick(target);
     void navigateToNotificationTarget(router, target);
   };

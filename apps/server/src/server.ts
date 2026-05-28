@@ -80,6 +80,7 @@ import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import { webResumeDiagnosticsRouteLayer } from "./diagnostics/WebResumeLog.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { WebPushSubscriptionRepositoryLive } from "./persistence/Layers/WebPushSubscriptions.ts";
 import { WebPushNotificationReactorLive } from "./push/Layers/WebPushNotificationReactor.ts";
@@ -323,6 +324,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
+  webResumeDiagnosticsRouteLayer,
   workspaceGitImageRouteLayer,
   workspaceImageRouteLayer,
   staticAndDevRouteLayer,

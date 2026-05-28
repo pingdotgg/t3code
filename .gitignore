@@ -11,6 +11,7 @@ packages/*/dist
 .env.local
 build/
 .logs/
+.diagnostics/
 release/
 release-mock/
 .t3
