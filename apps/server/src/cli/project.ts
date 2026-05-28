@@ -5,6 +5,7 @@ import {
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -57,6 +58,16 @@ type ProjectCliDispatchCommand = Extract<
 class ProjectCommandError extends Data.TaggedError("ProjectCommandError")<{
   readonly message: string;
 }> {}
+
+const projectCommandUuid = Crypto.Crypto.pipe(
+  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.mapError(
+    () =>
+      new ProjectCommandError({
+        message: "Failed to generate a project command identifier.",
+      }),
+  ),
+);
 
 const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePathsLive,
@@ -260,7 +271,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   }) => Effect.Effect<
     string,
     Error,
-    FileSystem.FileSystem | HttpClient.HttpClient | Path.Path | WorkspacePaths
+    Crypto.Crypto | FileSystem.FileSystem | HttpClient.HttpClient | Path.Path | WorkspacePaths
   >,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -343,10 +354,10 @@ const projectAddCommand = Command.make("add", {
         }
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
-        const projectId = ProjectId.make(crypto.randomUUID());
+        const projectId = ProjectId.make(yield* projectCommandUuid);
         yield* dispatch({
           type: "project.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* projectCommandUuid),
           projectId,
           title,
           workspaceRoot,
@@ -384,7 +395,7 @@ const projectRemoveCommand = Command.make("remove", {
         });
         yield* dispatch({
           type: "project.delete",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* projectCommandUuid),
           projectId: project.id,
         });
         return `Removed project ${project.id} (${project.title}).`;
@@ -424,7 +435,7 @@ const projectRenameCommand = Command.make("rename", {
 
         yield* dispatch({
           type: "project.meta.update",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* projectCommandUuid),
           projectId: project.id,
           title: nextTitle,
         });
