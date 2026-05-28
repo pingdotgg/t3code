@@ -1408,8 +1408,9 @@ export default function ChatView(props: ChatViewProps) {
     if (previewUrls.length === 0) return;
 
     const previousPreviewUrls = attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
+    const nextPreviewUrlSet = new Set(previewUrls);
     for (const previewUrl of previousPreviewUrls) {
-      if (!previewUrls.includes(previewUrl)) {
+      if (!nextPreviewUrlSet.has(previewUrl)) {
         revokeBlobPreviewUrl(previewUrl);
       }
     }

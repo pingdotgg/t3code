@@ -13,6 +13,17 @@ export function toSortableTimestamp(iso: string | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function getFirstSortableTimestamp(...values: Array<string | null | undefined>): number | null {
+  for (const value of values) {
+    const timestamp = toSortableTimestamp(value ?? undefined);
+    if (timestamp !== null) {
+      return timestamp;
+    }
+  }
+
+  return null;
+}
+
 function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
   if (thread.latestUserMessageAt) {
     return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
@@ -34,7 +45,7 @@ function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
     return latestUserMessageTimestamp;
   }
 
-  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+  return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
 export function getThreadSortTimestamp(
@@ -42,7 +53,9 @@ export function getThreadSortTimestamp(
   sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (sortOrder === "created_at") {
-    return toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+    return (
+      getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
+    );
   }
   return getLatestUserMessageTimestamp(thread);
 }

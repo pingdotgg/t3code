@@ -44,6 +44,23 @@ describe("contextWindow", () => {
     expect(snapshot).toBeNull();
   });
 
+  it("keeps valid zero-usage snapshots", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 0,
+        maxTokens: 100_000,
+      }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 0,
+      maxTokens: 100_000,
+      remainingTokens: 100_000,
+      usedPercentage: 0,
+      remainingPercentage: 100,
+    });
+  });
+
   it("formats compact token counts", () => {
     expect(formatContextWindowTokens(999)).toBe("999");
     expect(formatContextWindowTokens(1400)).toBe("1.4k");
