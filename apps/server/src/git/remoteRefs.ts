@@ -1,8 +1,12 @@
 export function parseRemoteNamesInGitOrder(stdout: string): ReadonlyArray<string> {
-  return stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const remoteNames: Array<string> = [];
+  for (const line of stdout.split("\n")) {
+    const remoteName = line.trim();
+    if (remoteName.length > 0) {
+      remoteNames.push(remoteName);
+    }
+  }
+  return remoteNames;
 }
 
 export function parseRemoteNames(stdout: string): ReadonlyArray<string> {

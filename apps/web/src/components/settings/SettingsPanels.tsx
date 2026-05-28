@@ -14,8 +14,10 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import * as Result from "effect/Result";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
   canCheckForUpdate,
@@ -1143,7 +1145,12 @@ export function ProviderSettingsPanel() {
     nextFavoriteModels: ReadonlyArray<string>,
   ) => {
     const favoriteModels = [
-      ...new Set(nextFavoriteModels.map((slug) => slug.trim()).filter((slug) => slug.length > 0)),
+      ...new Set(
+        Arr.filterMap(nextFavoriteModels, (slug) => {
+          const trimmedSlug = slug.trim();
+          return trimmedSlug.length > 0 ? Result.succeed(trimmedSlug) : Result.failVoid;
+        }),
+      ),
     ];
     updateSettings({
       favorites: [
@@ -1249,9 +1256,9 @@ export function ProviderSettingsPanel() {
             hiddenModels: [],
             modelOrder: [],
           };
-          const favoriteModels = (settings.favorites ?? [])
-            .filter((favorite) => favorite.provider === row.instanceId)
-            .map((favorite) => favorite.model);
+          const favoriteModels = Arr.filterMap(settings.favorites ?? [], (favorite) =>
+            favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
+          );
           const resetLabel = driverOption?.label ?? String(row.driver);
           const headerAction =
             row.isDefault && row.isDirty ? (
@@ -1369,21 +1376,30 @@ export function ArchivedThreadsPanel() {
       })),
     );
 
-    return [...projectsByEnvironmentAndId.values()]
-      .map((project) => ({
-        project,
-        threads: threads
-          .filter(
-            (thread) =>
-              thread.projectId === project.id && thread.environmentId === project.environmentId,
-          )
-          .toSorted((left, right) => {
+    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
+    const groups: Array<{
+      readonly project: (typeof archivedProjects)[number];
+      readonly threads: Array<(typeof threads)[number]>;
+    }> = [];
+    for (const project of archivedProjects) {
+      const projectThreads: Array<(typeof threads)[number]> = [];
+      for (const thread of threads) {
+        if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
+          projectThreads.push(thread);
+        }
+      }
+      if (projectThreads.length > 0) {
+        groups.push({
+          project,
+          threads: projectThreads.toSorted((left, right) => {
             const leftKey = left.archivedAt ?? left.createdAt;
             const rightKey = right.archivedAt ?? right.createdAt;
             return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
           }),
-      }))
-      .filter((group) => group.threads.length > 0);
+        });
+      }
+    }
+    return groups;
   }, [archivedSnapshots]);
 
   const handleArchivedThreadContextMenu = useCallback(

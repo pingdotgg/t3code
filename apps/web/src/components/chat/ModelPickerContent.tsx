@@ -272,8 +272,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       // ignoring sidebar selection so account-scoped searches can find a
       // model before the user chooses a specific instance rail item.
       if (props.lockedProvider !== null) {
-        return rankedMatches
-          .filter((rankedModel) => matchesLockedProvider(rankedModel.model))
+        const lockedProviderMatches: Array<(typeof rankedMatches)[number]> = [];
+        for (const rankedModel of rankedMatches) {
+          if (matchesLockedProvider(rankedModel.model)) {
+            lockedProviderMatches.push(rankedModel);
+          }
+        }
+        return lockedProviderMatches
           .toSorted((a, b) => {
             const scoreDelta = a.score - b.score;
             if (scoreDelta !== 0) {

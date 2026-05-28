@@ -7,11 +7,14 @@ export function buildInlineTerminalContextText(
     header: string;
   }>,
 ): string {
-  return contexts
-    .map((context) => context.header.trim())
-    .filter((header) => header.length > 0)
-    .map(formatInlineTerminalContextLabel)
-    .join(" ");
+  const labels: Array<string> = [];
+  for (const context of contexts) {
+    const header = context.header.trim();
+    if (header.length > 0) {
+      labels.push(formatInlineTerminalContextLabel(header));
+    }
+  }
+  return labels.join(" ");
 }
 
 export function formatInlineTerminalContextLabel(header: string): string {

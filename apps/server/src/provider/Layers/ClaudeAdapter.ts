@@ -245,9 +245,13 @@ function toProcessError(
 function normalizeClaudeStreamMessages(
   cause: Cause.Cause<{ readonly message: string }>,
 ): ReadonlyArray<string> {
-  const errors = Cause.prettyErrors(cause)
-    .map((error) => error.message.trim())
-    .filter((message) => message.length > 0);
+  const errors: Array<string> = [];
+  for (const error of Cause.prettyErrors(cause)) {
+    const message = error.message.trim();
+    if (message.length > 0) {
+      errors.push(message);
+    }
+  }
   if (errors.length > 0) {
     return errors;
   }

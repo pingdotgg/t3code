@@ -32,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -538,9 +539,11 @@ const makeKeybindings = Effect.gen(function* () {
         return;
       }
 
-      const matchingDefaults = DEFAULT_KEYBINDINGS.filter((defaultRule) =>
-        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule)),
-      ).map((rule) => rule.command);
+      const matchingDefaults = Array.filterMap(DEFAULT_KEYBINDINGS, (defaultRule) =>
+        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule))
+          ? Result.succeed(defaultRule.command)
+          : Result.failVoid,
+      );
       if (matchingDefaults.length > 0) {
         yield* Effect.logWarning("default keybinding rule already defined in user config", {
           path: keybindingsConfigPath,

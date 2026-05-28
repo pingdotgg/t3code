@@ -381,22 +381,23 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const triggerLabel =
-    descriptors
-      .map((descriptor) => {
-        if (ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id) {
-          return "Ultrathink";
-        }
-        if (descriptor.type === "boolean") {
-          if (descriptor.id === "fastMode") {
-            return descriptor.currentValue === true ? "Fast" : "Normal";
-          }
-          return `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`;
-        }
-        return getProviderOptionCurrentLabel(descriptor);
-      })
-      .filter((label): label is string => typeof label === "string" && label.length > 0)
-      .join(" · ") || "";
+  const triggerLabels: Array<string> = [];
+  for (const descriptor of descriptors) {
+    const label =
+      ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
+        ? "Ultrathink"
+        : descriptor.type === "boolean"
+          ? descriptor.id === "fastMode"
+            ? descriptor.currentValue === true
+              ? "Fast"
+              : "Normal"
+            : `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          : getProviderOptionCurrentLabel(descriptor);
+    if (typeof label === "string" && label.length > 0) {
+      triggerLabels.push(label);
+    }
+  }
+  const triggerLabel = triggerLabels.join(" · ");
 
   const isCodexStyle = provider === "codex";
 

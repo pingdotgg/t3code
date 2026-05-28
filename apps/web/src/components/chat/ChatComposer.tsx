@@ -1323,9 +1323,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
         const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
-        const fallbackPersistedIds = fallbackPersistedAttachments
-          .map((attachment) => attachment.id)
-          .filter((id) => currentImageIds.has(id));
+        const fallbackPersistedIds: Array<string> = [];
+        for (const attachment of fallbackPersistedAttachments) {
+          if (currentImageIds.has(attachment.id)) {
+            fallbackPersistedIds.push(attachment.id);
+          }
+        }
         const fallbackPersistedIdSet = new Set(fallbackPersistedIds);
         const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
           fallbackPersistedIdSet.has(attachment.id),

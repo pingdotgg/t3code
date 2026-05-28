@@ -22,9 +22,13 @@ function normalizeCommandValue(value: unknown): string | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const parts = value
-    .map((entry) => asTrimmedString(entry))
-    .filter((entry): entry is string => entry !== undefined);
+  const parts: string[] = [];
+  for (const entry of value) {
+    const part = asTrimmedString(entry);
+    if (part !== undefined) {
+      parts.push(part);
+    }
+  }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 

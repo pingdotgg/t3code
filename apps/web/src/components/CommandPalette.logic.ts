@@ -1,5 +1,7 @@
 import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -252,23 +254,18 @@ export function filterCommandPaletteGroups(input: {
   }
 
   return searchableGroups.flatMap((group) => {
-    const items = group.items
-      .map((item, index) => {
-        const haystack = normalizeSearchText(item.searchTerms.join(" "));
-        if (!haystack.includes(normalizedQuery)) {
-          return null;
-        }
+    const items = Arr.filterMap(group.items, (item, index) => {
+      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      if (!haystack.includes(normalizedQuery)) {
+        return Result.failVoid;
+      }
 
-        return {
-          item,
-          index,
-          rank: rankCommandPaletteItemMatch(item, normalizedQuery),
-        };
-      })
-      .filter(
-        (entry): entry is { item: (typeof group.items)[number]; index: number; rank: number } =>
-          entry !== null,
-      )
+      return Result.succeed({
+        item,
+        index,
+        rank: rankCommandPaletteItemMatch(item, normalizedQuery),
+      });
+    })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
       .map((entry) => entry.item);
 

@@ -1,11 +1,12 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
 function titleCaseWords(value: string): string {
-  return value
-    .split(/[\s:_-]+/)
-    .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  const words: string[] = [];
+  for (const segment of value.split(/[\s:_-]+/)) {
+    if (segment.length === 0) continue;
+    words.push(segment.charAt(0).toUpperCase() + segment.slice(1));
+  }
+  return words.join(" ");
 }
 
 function normalizePathSeparators(pathValue: string): string {

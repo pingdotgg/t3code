@@ -127,19 +127,18 @@ export function buildTerminalContextPreviewTitle(
   if (contexts.length === 0) {
     return null;
   }
-  const previews = contexts
-    .map((context) => {
-      const normalized = normalizeTerminalContextSelection(context);
-      if (!normalized) {
-        return null;
-      }
-      const preview = previewTerminalContextText(normalized.text);
-      return preview.length > 0
+  const previewParts: string[] = [];
+  for (const context of contexts) {
+    const normalized = normalizeTerminalContextSelection(context);
+    if (!normalized) continue;
+    const preview = previewTerminalContextText(normalized.text);
+    previewParts.push(
+      preview.length > 0
         ? `${formatTerminalContextLabel(normalized)}\n${preview}`
-        : formatTerminalContextLabel(normalized);
-    })
-    .filter((value): value is string => value !== null)
-    .join("\n\n");
+        : formatTerminalContextLabel(normalized),
+    );
+  }
+  const previews = previewParts.join("\n\n");
   return previews.length > 0 ? previews : null;
 }
 
@@ -152,9 +151,13 @@ function buildTerminalContextBodyLines(selection: TerminalContextSelection): str
 export function buildTerminalContextBlock(
   contexts: ReadonlyArray<TerminalContextSelection>,
 ): string {
-  const normalizedContexts = contexts
-    .map((context) => normalizeTerminalContextSelection(context))
-    .filter((context): context is TerminalContextSelection => context !== null);
+  const normalizedContexts: TerminalContextSelection[] = [];
+  for (const context of contexts) {
+    const normalized = normalizeTerminalContextSelection(context);
+    if (normalized !== null) {
+      normalizedContexts.push(normalized);
+    }
+  }
   if (normalizedContexts.length === 0) {
     return "";
   }

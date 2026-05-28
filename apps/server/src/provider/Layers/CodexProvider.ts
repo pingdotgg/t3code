@@ -319,16 +319,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
-  codexSettings.customModels
-    .map((model) => model.trim())
-    .filter((model, index, models) => model.length > 0 && models.indexOf(model) === index)
-    .map((model) => ({
-      slug: model,
-      name: model,
-      isCustom: true,
-      capabilities: null,
-    }));
+const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
+  const models = new Set<string>();
+  for (const model of codexSettings.customModels) {
+    const trimmed = model.trim();
+    if (trimmed.length > 0) {
+      models.add(trimmed);
+    }
+  }
+  return Array.from(models, (model) => ({
+    slug: model,
+    name: model,
+    isCustom: true,
+    capabilities: null,
+  }));
+};
 
 const makePendingCodexProvider = (
   codexSettings: CodexSettings,

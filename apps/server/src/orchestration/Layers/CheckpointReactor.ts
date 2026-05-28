@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type CheckpointRef,
   EventId,
   MessageId,
   type ProjectId,
@@ -701,9 +702,12 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const staleCheckpointRefs = thread.checkpoints
-      .filter((checkpoint) => checkpoint.checkpointTurnCount > event.payload.turnCount)
-      .map((checkpoint) => checkpoint.checkpointRef);
+    const staleCheckpointRefs: Array<CheckpointRef> = [];
+    for (const checkpoint of thread.checkpoints) {
+      if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
+        staleCheckpointRefs.push(checkpoint.checkpointRef);
+      }
+    }
 
     if (staleCheckpointRefs.length > 0) {
       yield* checkpointStore.deleteCheckpointRefs({

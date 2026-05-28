@@ -317,11 +317,13 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
 }
 
 function toTitleCaseWords(value: string): string {
-  return value
-    .split(/[\s_-]+/g)
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
+  const parts: Array<string> = [];
+  for (const part of value.split(/[\s_-]+/g)) {
+    if (part.length > 0) {
+      parts.push(part[0]!.toUpperCase() + part.slice(1).toLowerCase());
+    }
+  }
+  return parts.join(" ");
 }
 
 function claudeSubscriptionLabel(subscriptionType: string | undefined): string | undefined {

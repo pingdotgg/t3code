@@ -92,18 +92,17 @@ function selectProviderContext(
     readonly url: string;
   }>,
 ): SourceControlProvider.SourceControlProviderContext | null {
-  const candidates = remotes
-    .map((remote) => {
-      const provider = detectSourceControlProviderFromRemoteUrl(remote.url);
-      return provider
-        ? {
-            provider,
-            remoteName: remote.name,
-            remoteUrl: remote.url,
-          }
-        : null;
-    })
-    .filter((value): value is SourceControlProvider.SourceControlProviderContext => value !== null);
+  const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
+  for (const remote of remotes) {
+    const provider = detectSourceControlProviderFromRemoteUrl(remote.url);
+    if (provider) {
+      candidates.push({
+        provider,
+        remoteName: remote.name,
+        remoteUrl: remote.url,
+      });
+    }
+  }
 
   return (
     candidates.find((candidate) => candidate.remoteName === "origin") ??
