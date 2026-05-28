@@ -137,7 +137,7 @@ export function useProjectActions() {
                 prepareWorktree: {
                   projectCwd: input.project.workspaceRoot,
                   baseBranch: input.branch!,
-                  branch: buildTemporaryWorktreeBranchName(),
+                  branch: buildTemporaryWorktreeBranchName(uuidv4),
                 },
                 runSetupScript: true,
               }

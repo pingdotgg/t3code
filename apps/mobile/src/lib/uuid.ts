@@ -1,4 +1,3 @@
-import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
+import * as Crypto from "expo-crypto";
 
-export const uuidv4 = () => Effect.runSync(Random.nextUUIDv4);
+export const uuidv4 = () => Crypto.randomUUID();
