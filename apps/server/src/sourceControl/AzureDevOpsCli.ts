@@ -94,7 +94,7 @@ export interface AzureDevOpsCliShape {
 }
 
 export class AzureDevOpsCli extends Context.Service<AzureDevOpsCli, AzureDevOpsCliShape>()(
-  "t3/source-control/AzureDevOpsCli",
+  "t3/sourceControl/AzureDevOpsCli",
 ) {}
 
 function errorText(error: VcsError | unknown): string {

@@ -53,7 +53,7 @@ export interface DesktopSshRemoteApiShape {
 export class DesktopSshRemoteApi extends Context.Service<
   DesktopSshRemoteApi,
   DesktopSshRemoteApiShape
->()("t3/desktop/SshRemoteApi") {}
+>()("@t3tools/desktop/ssh/DesktopSshRemoteApi") {}
 
 const decodeExecutionEnvironmentDescriptor = Schema.decodeUnknownEffect(
   ExecutionEnvironmentDescriptor,

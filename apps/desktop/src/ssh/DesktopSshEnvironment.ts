@@ -68,7 +68,7 @@ export interface DesktopSshEnvironmentShape {
 export class DesktopSshEnvironment extends Context.Service<
   DesktopSshEnvironment,
   DesktopSshEnvironmentShape
->()("t3/desktop/SshEnvironment") {}
+>()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliPackageSpec?: () => string;

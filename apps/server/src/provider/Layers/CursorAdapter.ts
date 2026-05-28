@@ -97,7 +97,7 @@ export interface CursorAdapterLiveOptions {
    * Selections are honored when `modelSelection.instanceId` matches this value.
    * Defaults to the legacy built-in instance id (`cursor`).
    */
-  readonly instanceId?: typeof ProviderInstanceId.Type;
+  readonly instanceId?: ProviderInstanceId;
   /**
    * Optional per-session settings resolver. When provided the adapter yields
    * this effect at the start of every session and uses the result instead of

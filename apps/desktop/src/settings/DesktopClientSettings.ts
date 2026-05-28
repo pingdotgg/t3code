@@ -49,7 +49,7 @@ export interface DesktopClientSettingsShape {
 export class DesktopClientSettings extends Context.Service<
   DesktopClientSettings,
   DesktopClientSettingsShape
->()("t3/desktop/ClientSettings") {}
+>()("@t3tools/desktop/settings/DesktopClientSettings") {}
 
 const readClientSettings = (
   fileSystem: FileSystem.FileSystem,

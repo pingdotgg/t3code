@@ -275,7 +275,7 @@ export interface DesktopServerExposureShape {
 export class DesktopServerExposure extends Context.Service<
   DesktopServerExposure,
   DesktopServerExposureShape
->()("t3/desktop/ServerExposure") {}
+>()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
 export interface DesktopNetworkInterfacesServiceShape {
   readonly read: Effect.Effect<DesktopNetworkInterfaces>;
@@ -284,7 +284,7 @@ export interface DesktopNetworkInterfacesServiceShape {
 export class DesktopNetworkInterfacesService extends Context.Service<
   DesktopNetworkInterfacesService,
   DesktopNetworkInterfacesServiceShape
->()("t3/desktop/ServerExposure/NetworkInterfaces") {}
+>()("@t3tools/desktop/backend/DesktopServerExposure/DesktopNetworkInterfacesService") {}
 
 interface RuntimeState {
   readonly requestedMode: DesktopServerExposureMode;

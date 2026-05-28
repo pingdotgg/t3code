@@ -100,7 +100,7 @@ export interface DesktopUpdatesShape {
 }
 
 export class DesktopUpdates extends Context.Service<DesktopUpdates, DesktopUpdatesShape>()(
-  "t3/desktop/Updates",
+  "@t3tools/desktop/updates/DesktopUpdates",
 ) {}
 
 const {

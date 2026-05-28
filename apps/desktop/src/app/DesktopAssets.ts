@@ -18,7 +18,7 @@ export interface DesktopAssetsShape {
 }
 
 export class DesktopAssets extends Context.Service<DesktopAssets, DesktopAssetsShape>()(
-  "t3/desktop/Assets",
+  "@t3tools/desktop/app/DesktopAssets",
 ) {}
 
 const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(function* (

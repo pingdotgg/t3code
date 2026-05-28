@@ -21,7 +21,7 @@ export interface DesktopApplicationMenuShape {
 export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenu,
   DesktopApplicationMenuShape
->()("t3/desktop/ApplicationMenu") {}
+>()("@t3tools/desktop/window/DesktopApplicationMenu") {}
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates

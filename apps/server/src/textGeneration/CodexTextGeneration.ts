@@ -76,24 +76,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     operation: string,
     prefix: string,
     content: string,
-  ): Effect.Effect<string, TextGenerationError, Scope.Scope> => {
-    return Effect.gen(function* () {
-      return yield* fileSystem
-        .makeTempFileScoped({
-          prefix: `t3code-${prefix}-${process.pid}-`,
-        })
-        .pipe(Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)));
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: `Failed to write temp file`,
-            cause,
-          }),
-      ),
-    );
-  };
+  ): Effect.Effect<string, TextGenerationError, Scope.Scope> =>
+    fileSystem
+      .makeTempFileScoped({
+        prefix: `t3code-${prefix}-${process.pid}-`,
+      })
+      .pipe(
+        Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: `Failed to write temp file`,
+              cause,
+            }),
+        ),
+      );
 
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));

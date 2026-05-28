@@ -58,8 +58,10 @@ export const orchestrationSnapshotRouteLayer = HttpRouter.add(
       status: 200,
     });
   }).pipe(
-    Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
-    Effect.catchTag("OrchestrationGetSnapshotError", respondToOrchestrationHttpError),
+    Effect.catchTags({
+      OrchestrationDispatchCommandError: respondToOrchestrationHttpError,
+      OrchestrationGetSnapshotError: respondToOrchestrationHttpError,
+    }),
   ),
 );
 

@@ -33,7 +33,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "generate": "bun run scripts/generate.ts"
   },
@@ -41,11 +41,10 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@effect/language-service": "catalog:",
     "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "typescript": "catalog:",
+    "@types/node": "catalog:",
     "vitest": "catalog:"
   }
 }

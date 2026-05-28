@@ -43,7 +43,7 @@ export interface DesktopBackendOutputLogShape {
 export class DesktopBackendOutputLog extends Context.Service<
   DesktopBackendOutputLog,
   DesktopBackendOutputLogShape
->()("t3/desktop/BackendOutputLog") {}
+>()("@t3tools/desktop/app/DesktopObservability/DesktopBackendOutputLog") {}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

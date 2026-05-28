@@ -29,12 +29,12 @@ export type AcpIncomingNotification =
   | {
       readonly _tag: "SessionUpdate";
       readonly method: typeof CLIENT_METHODS.session_update;
-      readonly params: typeof AcpSchema.SessionNotification.Type;
+      readonly params: AcpSchema.SessionNotification;
     }
   | {
       readonly _tag: "ElicitationComplete";
       readonly method: typeof CLIENT_METHODS.session_elicitation_complete;
-      readonly params: typeof AcpSchema.ElicitationCompleteNotification.Type;
+      readonly params: AcpSchema.ElicitationCompleteNotification;
     }
   | {
       readonly _tag: "ExtNotification";

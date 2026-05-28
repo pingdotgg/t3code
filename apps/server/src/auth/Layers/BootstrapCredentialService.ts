@@ -1,4 +1,5 @@
 import type { AuthPairingLink } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -46,6 +47,7 @@ const generatePairingToken = (): string => {
 };
 
 export const makeBootstrapCredentialService = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig;
   const pairingLinks = yield* AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
@@ -141,7 +143,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
   const issueOneTimeToken: BootstrapCredentialServiceShape["issueOneTimeToken"] = (input) =>
     Effect.gen(function* () {
-      const id = crypto.randomUUID();
+      const id = yield* crypto.randomUUIDv4;
       const credential = generatePairingToken();
       const ttl = input?.ttl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES;
       const now = yield* DateTime.now;

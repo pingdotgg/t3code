@@ -50,7 +50,7 @@ export interface ProviderEventLoggersShape {
 export class ProviderEventLoggers extends Context.Service<
   ProviderEventLoggers,
   ProviderEventLoggersShape
->()("t3/provider/ProviderEventLoggers") {}
+>()("t3/provider/Layers/ProviderEventLoggers") {}
 
 /**
  * Constant value used by tests / boot layers that want to opt out of native

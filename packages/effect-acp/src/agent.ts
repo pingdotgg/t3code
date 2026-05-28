@@ -207,7 +207,9 @@ export interface AcpAgentShape {
   ) => Effect.Effect<void>;
 }
 
-export class AcpAgent extends Context.Service<AcpAgent, AcpAgentShape>()("effect-acp/AcpAgent") {}
+export class AcpAgent extends Context.Service<AcpAgent, AcpAgentShape>()(
+  "effect-acp/agent/AcpAgent",
+) {}
 
 interface AcpCoreAgentRequestHandlers {
   initialize?: (

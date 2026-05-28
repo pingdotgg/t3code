@@ -89,7 +89,7 @@ export interface DesktopAppSettingsShape {
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   DesktopAppSettingsShape
->()("t3/desktop/AppSettings") {}
+>()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
   return {

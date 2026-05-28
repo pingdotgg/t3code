@@ -52,7 +52,7 @@ export interface ElectronProtocolShape {
 }
 
 export class ElectronProtocol extends Context.Service<ElectronProtocol, ElectronProtocolShape>()(
-  "t3/desktop/electron/Protocol",
+  "@t3tools/desktop/electron/ElectronProtocol",
 ) {}
 
 export function normalizeDesktopProtocolPathname(rawPath: string): Option.Option<string> {

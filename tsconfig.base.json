@@ -35,6 +35,7 @@
           "globalErrorInEffectFailure": "error",
           "unknownInEffectCatch": "error",
           "strictBooleanExpressions": "off",
+          "lazyEffect": "off",
           "preferSchemaOverJson": "error",
           "schemaSyncInEffect": "error",
           "cryptoRandomUUID": "error",
@@ -47,7 +48,9 @@
           "globalRandom": "error",
           "globalRandomInEffect": "error",
           "globalTimers": "error",
-          "globalTimersInEffect": "error"
+          "globalTimersInEffect": "error",
+          "globalFetch": "error",
+          "globalFetchInEffect": "error"
         }
       }
     ]
