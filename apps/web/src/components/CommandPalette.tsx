@@ -1323,8 +1323,12 @@ function OpenCommandPaletteDialog() {
   }
 
   function completeBrowsePathFromTab(): boolean {
-    if (!isBrowsing || relativePathNeedsActiveProject || isBrowsePending) {
+    if (!isBrowsing || relativePathNeedsActiveProject) {
       return false;
+    }
+
+    if (isBrowsePending) {
+      return true;
     }
 
     const completion = resolveBrowseTabCompletion({
@@ -1467,7 +1471,7 @@ function OpenCommandPaletteDialog() {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (event.key === "Tab" && completeBrowsePathFromTab()) {
+    if (event.key === "Tab" && !event.shiftKey && completeBrowsePathFromTab()) {
       event.preventDefault();
       return;
     }

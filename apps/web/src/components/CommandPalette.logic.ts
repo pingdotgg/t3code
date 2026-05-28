@@ -108,8 +108,7 @@ export function resolveBrowseTabCompletion(input: {
     return { _tag: "replaceLeaf", leaf: prefix };
   }
 
-  const firstEntry = input.filteredEntries[0];
-  return firstEntry ? { _tag: "enterDirectory", name: firstEntry.name } : null;
+  return null;
 }
 
 export function filterBrowseEntries(input: {

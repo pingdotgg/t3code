@@ -191,6 +191,17 @@ describe("resolveBrowseTabCompletion", () => {
     ).toEqual({ _tag: "replaceLeaf", leaf: "Project" });
   });
 
+  it("does not enter an arbitrary directory for ambiguous matches", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: [browseEntry("Projects"), browseEntry("Packages")],
+        browseFilterQuery: "p",
+        highlightedEntry: null,
+        exactEntry: null,
+      }),
+    ).toBeNull();
+  });
+
   it("prefers the highlighted directory over common-prefix completion", () => {
     const projects = browseEntry("Projects");
     expect(
