@@ -184,11 +184,13 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
-  return Object.fromEntries(
-    Object.entries(attributes)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [key, normalizeJsonValue(value)]),
-  );
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value !== undefined) {
+      entries.push([key, normalizeJsonValue(value)]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["exit"] {

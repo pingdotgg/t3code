@@ -96,15 +96,24 @@ export function unknownAuth(detail?: string): SourceControlProviderAuth {
 }
 
 export function combinedAuthOutput(input: SourceControlAuthProbeInput): string {
-  return [input.stdout, input.stderr].filter((entry) => entry.trim().length > 0).join("\n");
+  const parts: string[] = [];
+  for (const entry of [input.stdout, input.stderr]) {
+    if (entry.trim().length > 0) {
+      parts.push(entry);
+    }
+  }
+  return parts.join("\n");
 }
 
 function sanitizedAuthLines(text: string): ReadonlyArray<string> {
-  return text
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .filter((entry) => !/^[-\s]*token(?:\s+scopes?)?:/iu.test(entry));
+  const lines: string[] = [];
+  for (const entry of text.split(/\r?\n/)) {
+    const line = entry.trim();
+    if (line.length === 0) continue;
+    if (/^[-\s]*token(?:\s+scopes?)?:/iu.test(line)) continue;
+    lines.push(line);
+  }
+  return lines;
 }
 
 export function firstSafeAuthLine(text: string): string | undefined {
