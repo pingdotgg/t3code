@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -31,6 +31,10 @@ interface CommentEditorState {
   quote: string;
   annotationId?: string;
   comment: string;
+  position?: {
+    x: number;
+    y: number;
+  };
 }
 
 interface PlanReviewPanelProps {
@@ -78,6 +82,13 @@ function getSelectionActionPosition(range: Range): { x: number; y: number } | nu
   };
 }
 
+function getCommentEditorPosition(position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.max(12, Math.min(window.innerWidth - 372, position.x - 272)),
+    y: Math.max(12, Math.min(window.innerHeight - 260, position.y)),
+  };
+}
+
 export const PlanReviewPanel = memo(function PlanReviewPanel({
   proposedPlan,
   markdownCwd,
@@ -87,6 +98,7 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
   onBack,
 }: PlanReviewPanelProps) {
   const markdownRootRef = useRef<HTMLDivElement>(null);
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionActionState | null>(null);
   const [commentEditor, setCommentEditor] = useState<CommentEditorState | null>(null);
   const displayedPlanMarkdown = useMemo(
@@ -153,10 +165,20 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
       mode: "create",
       quote: selectionAction.quote,
       comment: "",
+      position: getCommentEditorPosition(selectionAction),
     });
     setSelectionAction(null);
     window.getSelection()?.removeAllRanges();
   }, [selectionAction]);
+
+  useEffect(() => {
+    if (!commentEditor) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      commentTextareaRef.current?.focus();
+    });
+  }, [commentEditor?.annotationId, commentEditor?.mode]);
 
   const handleSaveComment = useCallback(() => {
     if (!commentEditor) {
@@ -216,6 +238,37 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
     [annotations, commentEditor?.annotationId, onAnnotationsChange],
   );
 
+  const commentEditorPanel = commentEditor ? (
+    <div className="rounded-lg border border-border/70 bg-background/95 p-3 shadow-lg">
+      <div className="mb-2 max-h-32 overflow-y-auto rounded-md border-l-2 border-blue-400/70 bg-blue-500/5 px-2.5 py-2 text-[12px] leading-relaxed text-muted-foreground">
+        {commentEditor.quote}
+      </div>
+      <Textarea
+        ref={commentTextareaRef}
+        value={commentEditor.comment}
+        onChange={(event) =>
+          setCommentEditor((existing) =>
+            existing ? { ...existing, comment: event.target.value } : existing,
+          )
+        }
+        placeholder="Add a comment"
+        size="sm"
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <Button size="xs" variant="outline" onClick={() => setCommentEditor(null)}>
+          Cancel
+        </Button>
+        <Button
+          size="xs"
+          onClick={handleSaveComment}
+          disabled={commentEditor.comment.trim().length === 0}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-card/50">
       <div className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
@@ -246,36 +299,6 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
       <ScrollArea className="min-h-0 flex-1">
         <div className="grid min-w-0 grid-cols-1 gap-3 p-3 2xl:grid-cols-[minmax(0,1fr)_18rem]">
           <div className="min-w-0 space-y-3">
-            {commentEditor ? (
-              <div className="rounded-lg border border-border/70 bg-background/80 p-3 shadow-xs">
-                <div className="mb-2 rounded-md border-l-2 border-blue-400/70 bg-blue-500/5 px-2.5 py-2 text-[12px] leading-relaxed text-muted-foreground">
-                  {commentEditor.quote}
-                </div>
-                <Textarea
-                  value={commentEditor.comment}
-                  onChange={(event) =>
-                    setCommentEditor((existing) =>
-                      existing ? { ...existing, comment: event.target.value } : existing,
-                    )
-                  }
-                  placeholder="Add a comment"
-                  size="sm"
-                />
-                <div className="mt-2 flex justify-end gap-2">
-                  <Button size="xs" variant="outline" onClick={() => setCommentEditor(null)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="xs"
-                    onClick={handleSaveComment}
-                    disabled={commentEditor.comment.trim().length === 0}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
             <div
               ref={markdownRootRef}
               data-testid="plan-review-markdown"
@@ -297,42 +320,27 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
             {annotations.length > 0 ? (
               <div className="space-y-2">
                 {annotations.map((annotation, index) => (
-                  <div
+                  <AnnotationCard
                     key={annotation.id}
-                    className="rounded-lg border border-border/60 bg-background/65 p-2.5"
-                  >
-                    <div className="mb-2 flex items-start justify-between gap-2">
-                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/12 text-[11px] font-semibold text-blue-400">
-                        {index + 1}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="Edit comment"
-                          onClick={() => handleEditAnnotation(annotation)}
-                          className="text-muted-foreground/50 hover:text-foreground"
-                        >
-                          <PencilIcon className="size-3.5" />
-                        </Button>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="Delete comment"
-                          onClick={() => handleDeleteAnnotation(annotation.id)}
-                          className="text-muted-foreground/50 hover:text-destructive-foreground"
-                        >
-                          <Trash2Icon className="size-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                    <blockquote className="border-l-2 border-blue-400/60 pl-2 text-[12px] leading-relaxed text-muted-foreground">
-                      {annotation.quote}
-                    </blockquote>
-                    <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/85">
-                      {annotation.comment}
-                    </p>
-                  </div>
+                    annotation={annotation}
+                    index={index}
+                    editing={commentEditor?.annotationId === annotation.id}
+                    commentValue={
+                      commentEditor?.annotationId === annotation.id ? commentEditor.comment : ""
+                    }
+                    textareaRef={commentTextareaRef}
+                    onCommentChange={(comment) =>
+                      setCommentEditor((existing) =>
+                        existing?.annotationId === annotation.id
+                          ? { ...existing, comment }
+                          : existing,
+                      )
+                    }
+                    onCancelEdit={() => setCommentEditor(null)}
+                    onSaveEdit={handleSaveComment}
+                    onEdit={() => handleEditAnnotation(annotation)}
+                    onDelete={() => handleDeleteAnnotation(annotation.id)}
+                  />
                 ))}
               </div>
             ) : (
@@ -356,8 +364,100 @@ export const PlanReviewPanel = memo(function PlanReviewPanel({
           Comment
         </Button>
       ) : null}
+      {commentEditor?.position ? (
+        <div
+          className="fixed z-50 w-[min(22rem,calc(100vw-1.5rem))]"
+          style={{ left: commentEditor.position.x, top: commentEditor.position.y }}
+        >
+          {commentEditorPanel}
+        </div>
+      ) : null}
     </div>
   );
 });
+
+interface AnnotationCardProps {
+  annotation: PlanReviewAnnotation;
+  index: number;
+  editing: boolean;
+  commentValue: string;
+  textareaRef: Ref<HTMLTextAreaElement>;
+  onCommentChange: (comment: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function AnnotationCard({
+  annotation,
+  index,
+  editing,
+  commentValue,
+  textareaRef,
+  onCommentChange,
+  onCancelEdit,
+  onSaveEdit,
+  onEdit,
+  onDelete,
+}: AnnotationCardProps) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/65 p-2.5">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/12 text-[11px] font-semibold text-blue-400">
+          {index + 1}
+        </span>
+        {editing ? null : (
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Edit comment"
+              onClick={onEdit}
+              className="text-muted-foreground/50 hover:text-foreground"
+            >
+              <PencilIcon className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Delete comment"
+              onClick={onDelete}
+              className="text-muted-foreground/50 hover:text-destructive-foreground"
+            >
+              <Trash2Icon className="size-3.5" />
+            </Button>
+          </div>
+        )}
+      </div>
+      <blockquote className="border-l-2 border-blue-400/60 pl-2 text-[12px] leading-relaxed text-muted-foreground">
+        {annotation.quote}
+      </blockquote>
+      {editing ? (
+        <div className="mt-2">
+          <Textarea
+            ref={textareaRef}
+            value={commentValue}
+            onChange={(event) => onCommentChange(event.target.value)}
+            placeholder="Add a comment"
+            size="sm"
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <Button size="xs" variant="outline" onClick={onCancelEdit}>
+              Cancel
+            </Button>
+            <Button size="xs" onClick={onSaveEdit} disabled={commentValue.trim().length === 0}>
+              Save
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/85">
+          {annotation.comment}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export type { PlanReviewPanelProps };
