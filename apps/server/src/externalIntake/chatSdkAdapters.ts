@@ -20,6 +20,10 @@ function slackAdapterConfig(): SlackAdapterConfig {
   };
 }
 
+export function isSlackChatSdkConfigured() {
+  return envValue("SLACK_SIGNING_SECRET") !== undefined;
+}
+
 function createChatCompatibleSlackAdapter(config: SlackAdapterConfig): Adapter {
   const adapter = createSlackAdapter(config);
   // Slack's runtime adapter satisfies Chat's interface. This proxy smooths over
@@ -45,7 +49,7 @@ export function createExternalChatSdkAdapters(input?: {
   readonly sources?: ReadonlySet<ExternalChatSdkSource>;
 }) {
   const sources = input?.sources ?? new Set<ExternalChatSdkSource>(["slack"]);
-  return sources.has("slack")
+  return sources.has("slack") && isSlackChatSdkConfigured()
     ? { slack: createChatCompatibleSlackAdapter(slackAdapterConfig()) }
     : {};
 }

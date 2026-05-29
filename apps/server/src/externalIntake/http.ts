@@ -6,6 +6,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import { ExternalIntake, type ExternalSlackNotificationLink } from "./ExternalIntake.ts";
 import { ExternalChat } from "./ExternalChat.ts";
+import { isSlackChatSdkConfigured } from "./chatSdkAdapters.ts";
 import { parseGitHubPullRequestMergedEvent } from "./github.ts";
 import { loadIntakeProfiles, type IntakeProjectProfile } from "./profiles.ts";
 import { slackThreadUrl, t3ThreadUrl } from "./slack.ts";
@@ -491,6 +492,9 @@ export const externalIntakeHealthRouteLayer = HttpRouter.add(
     return json({
       ok: true,
       environment: descriptor,
+      chatAdapters: {
+        slack: isSlackChatSdkConfigured(),
+      },
       slackWebhookUrl: `${baseUrl.replace(/\/$/, "")}/slack/webhook`,
       supportEmailWebhookUrl: `${baseUrl.replace(/\/$/, "")}/support-email/resend`,
       githubWebhookUrl: `${baseUrl.replace(/\/$/, "")}/github/webhook`,
