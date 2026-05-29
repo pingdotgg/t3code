@@ -158,6 +158,18 @@ function projectTitleFromWorkspace(workspaceRoot: string) {
   return segments.at(-1) ?? "Project";
 }
 
+function resolvedProfileProject(
+  profile: IntakeProjectProfile,
+  existing: Option.Option<ResolvedProject>,
+) {
+  return {
+    profile,
+    existing,
+    workspaceRoot: profile.workspaceRoot,
+    title: profile.title ?? projectTitleFromWorkspace(profile.workspaceRoot),
+  };
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -285,12 +297,7 @@ const makeExternalIntake = Effect.gen(function* () {
         const existing = yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(
           input.profile.workspaceRoot,
         );
-        return {
-          profile: input.profile,
-          existing,
-          workspaceRoot: input.profile.workspaceRoot,
-          title: input.profile.title ?? projectTitleFromWorkspace(input.profile.workspaceRoot),
-        };
+        return resolvedProfileProject(input.profile, existing);
       }
 
       const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
@@ -302,12 +309,7 @@ const makeExternalIntake = Effect.gen(function* () {
         const existing = yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(
           profile.workspaceRoot,
         );
-        return {
-          profile,
-          existing,
-          workspaceRoot: profile.workspaceRoot,
-          title: profile.title ?? projectTitleFromWorkspace(profile.workspaceRoot),
-        };
+        return resolvedProfileProject(profile, existing);
       }
 
       const mentionedProject = snapshot.projects.find((project) => {
@@ -336,6 +338,14 @@ const makeExternalIntake = Effect.gen(function* () {
           workspaceRoot: onlyProject.workspaceRoot,
           title: onlyProject.title,
         };
+      }
+
+      if (profiles.length === 1) {
+        const fallbackProfile = profiles[0]!;
+        const existing = yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(
+          fallbackProfile.workspaceRoot,
+        );
+        return resolvedProfileProject(fallbackProfile, existing);
       }
 
       throw new Error(

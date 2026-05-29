@@ -36,7 +36,7 @@ import {
   stripSlackClientAttribution,
   t3ThreadUrl,
 } from "./slack.ts";
-import { postableTaskStartedStatus } from "./postableReply.ts";
+import { postableReplyBody, postableTaskStartedStatus } from "./postableReply.ts";
 
 export class ExternalChatError extends Data.TaggedError("ExternalChatError")<{
   readonly message: string;
@@ -450,7 +450,29 @@ const makeExternalChat = Effect.gen(function* () {
         ...(initialPromptContext !== undefined ? { initialPromptContext } : {}),
       };
 
-      const result = yield* intake.handleMessage(intakeMessage);
+      const result = yield* intake.handleMessage(intakeMessage).pipe(
+        Effect.catch((error) =>
+          Effect.promise(() =>
+            input.thread.post(
+              postableReplyBody({
+                kind: "slack_thread",
+                body: [
+                  "I couldn't start a T3 task from this message.",
+                  "",
+                  `Reason: ${error.message}`,
+                ].join("\n"),
+              }),
+            ),
+          ).pipe(
+            Effect.ignoreCause({ log: true }),
+            Effect.as({
+              status: "ignored" as const,
+              reason: `intake_failed:${error.message}`,
+              reaction: undefined,
+            }),
+          ),
+        ),
+      );
       if (result.status === "created") {
         yield* Effect.promise(() =>
           input.thread.createSentMessageFromMessage(input.message).addReaction("eyes"),
