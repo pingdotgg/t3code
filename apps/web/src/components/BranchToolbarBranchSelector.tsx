@@ -2,7 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -17,9 +17,8 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
-import { useGitStatus } from "../lib/gitStatusState";
-import { newCommandId } from "../lib/utils";
-import { cn } from "../lib/utils";
+import { refreshGitStatus, useGitStatus } from "../lib/gitStatusState";
+import { cn, newCommandId } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useStore } from "../store";
@@ -30,6 +29,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveLocalCheckoutBranchMismatch,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
@@ -45,6 +45,7 @@ import {
   ComboboxTrigger,
 } from "./ui/combobox";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
@@ -199,6 +200,7 @@ export function BranchToolbarBranchSelector({
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
+  const branchPickerAnchorRef = useRef<HTMLDivElement | null>(null);
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
   const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
@@ -238,6 +240,12 @@ export function BranchToolbarBranchSelector({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    currentGitBranch,
+  });
+  const localCheckoutBranchMismatch = resolveLocalCheckoutBranchMismatch({
+    effectiveEnvMode,
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
@@ -311,6 +319,7 @@ export function BranchToolbarBranchSelector({
       await queryClient
         .invalidateQueries({ queryKey: gitQueryKeys.refs(environmentId, branchCwd) })
         .catch(() => undefined);
+      await refreshGitStatus({ environmentId, cwd: branchCwd }).catch(() => undefined);
     });
   };
 
@@ -401,6 +410,48 @@ export function BranchToolbarBranchSelector({
         );
       }
     });
+  };
+
+  const switchCheckoutToThreadBranch = () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeProjectCwd || !localCheckoutBranchMismatch || isBranchActionPending) {
+      return;
+    }
+
+    runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
+      setOptimisticBranch(localCheckoutBranchMismatch.threadBranch);
+      try {
+        const checkoutResult = await api.vcs.switchRef({
+          cwd: activeProjectCwd,
+          refName: localCheckoutBranchMismatch.threadBranch,
+        });
+        const nextBranchName = checkoutResult.refName ?? localCheckoutBranchMismatch.threadBranch;
+        setOptimisticBranch(nextBranchName);
+        setThreadBranch(nextBranchName, null);
+        setIsBranchMenuOpen(false);
+        onComposerFocusRequest?.();
+      } catch (error) {
+        setOptimisticBranch(previousBranch);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to switch checkout.",
+            description: toBranchActionErrorMessage(error),
+          }),
+        );
+      }
+    });
+  };
+
+  const useCurrentCheckoutForThread = () => {
+    if (!localCheckoutBranchMismatch || isBranchActionPending) {
+      return;
+    }
+
+    setThreadBranch(localCheckoutBranchMismatch.currentBranch, null);
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
   };
 
   useEffect(() => {
@@ -571,72 +622,153 @@ export function BranchToolbarBranchSelector({
   }
 
   return (
-    <Combobox
-      items={branchPickerItems}
-      filteredItems={filteredBranchPickerItems}
-      autoHighlight
-      virtualized={shouldVirtualizeBranchList}
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
-          return;
-        }
-        branchListRef.current?.scrollIndexIntoView?.({
-          index: eventDetails.index,
-          animated: false,
-        });
-      }}
-      onOpenChange={handleOpenChange}
-      open={isBranchMenuOpen}
-      value={resolvedActiveBranch}
+    <div
+      ref={branchPickerAnchorRef}
+      className="relative flex min-w-0 items-center justify-end ml-auto"
     >
-      <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className={cn("min-w-0 text-muted-foreground/70 hover:text-foreground/80", className)}
-        disabled={(isBranchesSearchPending && refs.length === 0) || isBranchActionPending}
+      {localCheckoutBranchMismatch ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1.5 top-1/2 z-10 flex size-4.5 -translate-y-1/2 items-center justify-center text-warning"
+        >
+          <GitBranchIcon className="size-3.5" />
+        </span>
+      ) : null}
+      <Combobox
+        items={branchPickerItems}
+        filteredItems={filteredBranchPickerItems}
+        autoHighlight
+        virtualized={shouldVirtualizeBranchList}
+        onItemHighlighted={(_value, eventDetails) => {
+          if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
+            return;
+          }
+          branchListRef.current?.scrollIndexIntoView?.({
+            index: eventDetails.index,
+            animated: false,
+          });
+        }}
+        onOpenChange={handleOpenChange}
+        open={isBranchMenuOpen}
+        value={resolvedActiveBranch}
       >
-        <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="shrink-0" />
-      </ComboboxTrigger>
-      <ComboboxPopup align="end" side="top" className="w-80">
-        <div className="border-b p-1">
-          <ComboboxInput
-            className="[&_input]:font-sans rounded-md"
-            inputClassName="ring-0"
-            placeholder="Search refs..."
-            showTrigger={false}
-            size="sm"
-            value={branchQuery}
-            onChange={(event) => setBranchQuery(event.target.value)}
-          />
-        </div>
-        <ComboboxEmpty>No refs found.</ComboboxEmpty>
-
-        {shouldVirtualizeBranchList ? (
-          <ComboboxListVirtualized>
-            <LegendList<string>
-              ref={branchListRef}
-              data={filteredBranchPickerItems}
-              keyExtractor={(item) => item}
-              renderItem={({ item, index }) => renderPickerItem(item, index)}
-              estimatedItemSize={28}
-              drawDistance={336}
-              onEndReached={() => {
-                if (hasNextPage && !isFetchingNextPage) {
-                  void fetchNextPage().catch(() => undefined);
-                }
-              }}
-              style={{ maxHeight: "14rem" }}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size="xs" />}
+          className={cn(
+            "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
+            localCheckoutBranchMismatch &&
+              "border-warning/35 bg-warning/10 pl-7 text-warning hover:bg-warning/15 hover:text-warning",
+            className,
+          )}
+          disabled={(isBranchesSearchPending && refs.length === 0) || isBranchActionPending}
+        >
+          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+          <ChevronDownIcon className="shrink-0" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="end" side="top" className="w-80 overflow-hidden">
+          {localCheckoutBranchMismatch ? (
+            <div className="space-y-1.5 border-b bg-warning/5 px-3 py-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <TriangleAlertIcon aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
+                <span className="font-medium text-foreground">Branches diverged</span>
+              </div>
+              <div className="space-y-0.5 text-[11px]">
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 text-muted-foreground">thread</span>
+                  <code className="min-w-0 flex-1 truncate text-foreground">
+                    {localCheckoutBranchMismatch.threadBranch}
+                  </code>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 text-warning/80">checkout</span>
+                  <code className="min-w-0 flex-1 truncate text-warning">
+                    {localCheckoutBranchMismatch.currentBranch}
+                  </code>
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className="h-7 flex-1 justify-center text-[11px]"
+                        disabled={isBranchActionPending}
+                        onClick={useCurrentCheckoutForThread}
+                      >
+                        Update thread
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top" align="center">
+                    Associate this thread with {localCheckoutBranchMismatch.currentBranch}
+                  </TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="h-7 flex-1 justify-center text-[11px] text-muted-foreground hover:text-foreground"
+                        disabled={isBranchActionPending}
+                        onClick={switchCheckoutToThreadBranch}
+                      >
+                        Switch checkout
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top" align="center">
+                    Checkout {localCheckoutBranchMismatch.threadBranch}
+                  </TooltipPopup>
+                </Tooltip>
+              </div>
+            </div>
+          ) : null}
+          <div className="border-b p-1">
+            <ComboboxInput
+              className="[&_input]:font-sans rounded-md"
+              inputClassName="ring-0"
+              placeholder="Search refs..."
+              showTrigger={false}
+              size="sm"
+              value={branchQuery}
+              onChange={(event) => setBranchQuery(event.target.value)}
             />
-          </ComboboxListVirtualized>
-        ) : (
-          <ComboboxList ref={setBranchListRef} className="max-h-56">
-            {filteredBranchPickerItems.map((itemValue, index) =>
-              renderPickerItem(itemValue, index),
-            )}
-          </ComboboxList>
-        )}
-        {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
-      </ComboboxPopup>
-    </Combobox>
+          </div>
+          <ComboboxEmpty>No refs found.</ComboboxEmpty>
+
+          {shouldVirtualizeBranchList ? (
+            <ComboboxListVirtualized>
+              <LegendList<string>
+                ref={branchListRef}
+                data={filteredBranchPickerItems}
+                keyExtractor={(item) => item}
+                renderItem={({ item, index }) => renderPickerItem(item, index)}
+                estimatedItemSize={28}
+                drawDistance={336}
+                onEndReached={() => {
+                  if (hasNextPage && !isFetchingNextPage) {
+                    void fetchNextPage().catch(() => undefined);
+                  }
+                }}
+                style={{ maxHeight: localCheckoutBranchMismatch ? "10rem" : "14rem" }}
+              />
+            </ComboboxListVirtualized>
+          ) : (
+            <ComboboxList
+              ref={setBranchListRef}
+              className={cn(localCheckoutBranchMismatch ? "max-h-40" : "max-h-56")}
+            >
+              {filteredBranchPickerItems.map((itemValue, index) =>
+                renderPickerItem(itemValue, index),
+              )}
+            </ComboboxList>
+          )}
+          {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+        </ComboboxPopup>
+      </Combobox>
+    </div>
   );
 }

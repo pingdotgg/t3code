@@ -29,6 +29,7 @@ const {
   invalidateGitQueriesSpy,
   refreshGitStatusSpy,
   runStackedActionMutateAsyncSpy,
+  serverThreadBranchRef,
   setDraftThreadContextSpy,
   setThreadBranchSpy,
   toastAddSpy,
@@ -42,6 +43,7 @@ const {
   invalidateGitQueriesSpy: vi.fn(() => Promise.resolve()),
   refreshGitStatusSpy: vi.fn(() => Promise.resolve(null)),
   runStackedActionMutateAsyncSpy: vi.fn(() => activeRunStackedActionDeferredRef.current.promise),
+  serverThreadBranchRef: { current: "feature/toast-scope" },
   setDraftThreadContextSpy: vi.fn(),
   setThreadBranchSpy: vi.fn(),
   toastAddSpy: vi.fn(() => "toast-1"),
@@ -209,7 +211,7 @@ vi.mock("~/store", () => ({
             ? {
                 [SHARED_THREAD_ID]: {
                   id: SHARED_THREAD_ID,
-                  branch: BRANCH_NAME,
+                  branch: serverThreadBranchRef.current,
                   worktreePath: null,
                 },
               }
@@ -230,7 +232,7 @@ vi.mock("~/store", () => ({
             ? {
                 [SHARED_THREAD_ID]: {
                   id: SHARED_THREAD_ID,
-                  branch: BRANCH_NAME,
+                  branch: serverThreadBranchRef.current,
                   worktreePath: null,
                 },
               }
@@ -287,6 +289,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     activeRunStackedActionDeferredRef.current = createDeferredPromise<never>();
     activeDraftThreadRef.current = null;
     hasServerThreadRef.current = true;
+    serverThreadBranchRef.current = BRANCH_NAME;
     document.body.innerHTML = "";
   });
 
@@ -432,6 +435,32 @@ describe("GitActionsControl thread-scoped progress toast", () => {
         },
       );
       expect(setThreadBranchSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("does not overwrite an existing server thread branch when the shared checkout differs", async () => {
+    serverThreadBranchRef.current = "feature/thread-branch";
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      await Promise.resolve();
+
+      expect(setThreadBranchSpy).not.toHaveBeenCalled();
+      expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
       host.remove();
