@@ -169,7 +169,11 @@ export function installServiceWorkerNotificationNavigation(router: AppRouter): (
       ...(target.kind === "thread" ? { env: target.environmentId } : {}),
       data: { target },
     });
-    reconcileAfterNotificationClick(target);
+    const openedAt =
+      event.data.openedAt !== undefined && Number.isFinite(event.data.openedAt)
+        ? event.data.openedAt
+        : undefined;
+    reconcileAfterNotificationClick(target, openedAt === undefined ? undefined : { openedAt });
     void navigateToNotificationTarget(router, target);
   };
 

@@ -159,7 +159,6 @@ describe("MessagesTimeline", () => {
     scrollToEndSpy.mockReset();
     getStateSpy.mockClear();
     vi.restoreAllMocks();
-    document.body.innerHTML = "";
   });
 
   it("renders activity rows instead of the empty placeholder when a thread has non-message timeline data", async () => {
@@ -437,10 +436,16 @@ describe("MessagesTimeline", () => {
     );
 
     try {
-      await expect.element(page.getByAltText("first.png")).toBeVisible();
-      await expect.element(page.getByAltText("second.png")).toBeVisible();
+      const firstImage = document.querySelector<HTMLImageElement>('img[alt="first.png"]');
+      const secondImage = document.querySelector<HTMLImageElement>('img[alt="second.png"]');
+      expect(firstImage?.getAttribute("src")).toBe("/attachments/image-1");
+      expect(secondImage?.getAttribute("src")).toBe("/attachments/image-2");
 
-      await page.getByRole("button", { name: "Preview second.png" }).click();
+      const secondPreviewButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Preview second.png"]',
+      );
+      expect(secondPreviewButton).not.toBeNull();
+      secondPreviewButton?.click();
 
       expect(onImageExpand).toHaveBeenCalledWith({
         images: [

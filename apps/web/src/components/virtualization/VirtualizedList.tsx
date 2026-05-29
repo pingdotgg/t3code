@@ -10,7 +10,11 @@ import {
   type ReactNode,
   type RefAttributes,
 } from "react";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import {
+  LegendList,
+  type LegendListRef,
+  type MaintainVisibleContentPositionConfig,
+} from "@legendapp/list/react";
 
 type RefBox<T> = { current: T };
 type VirtualizedListImperativeTarget = {
@@ -27,6 +31,11 @@ interface VirtualizedListDrawDistanceInput {
   readonly minOverscanItemCount: number | { top: number; bottom: number } | undefined;
 }
 
+const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = {
+  data: false,
+  size: true,
+} as const satisfies MaintainVisibleContentPositionConfig;
+
 export interface VirtualizedListState {
   readonly isAtEnd: boolean;
 }
@@ -34,21 +43,39 @@ export interface VirtualizedListState {
 export interface VirtualizedListHandle {
   getScrollableNode(): HTMLElement | null;
   getState(): VirtualizedListState;
-  scrollToEnd(options?: { animated?: boolean }): void;
-  scrollToOffset(options: { offset: number; animated?: boolean }): void;
-  scrollIndexIntoView(options: { index: number; animated?: boolean }): void;
+  scrollToEnd(options?: { animated?: boolean }): Promise<void>;
+  scrollToOffset(options: { offset: number; animated?: boolean }): Promise<void>;
+  scrollIndexIntoView(options: { index: number; animated?: boolean }): Promise<void>;
+}
+
+export interface VirtualizedListItemSizeChange<T> {
+  readonly size: number;
+  readonly previous: number;
+  readonly index: number;
+  readonly itemKey: string;
+  readonly itemData: T;
+}
+
+interface RawVirtualizedListItemSizeChange {
+  readonly size?: unknown;
+  readonly previous?: unknown;
+  readonly index?: unknown;
+  readonly itemKey?: unknown;
 }
 
 export interface VirtualizedListProps<T> {
   readonly data: readonly T[];
   readonly keyExtractor: (item: T, index: number) => Key;
+  readonly getItemType?: (item: T, index: number) => string | undefined;
   readonly renderItem: (args: { item: T; index: number }) => ReactNode;
   readonly estimatedItemSize?: number;
   readonly initialScrollAtEnd?: boolean;
   readonly maintainScrollAtEnd?: boolean | { animated?: boolean };
   readonly maintainScrollAtEndThreshold?: number;
+  readonly maintainVisibleContentPosition?: boolean | MaintainVisibleContentPositionConfig<T>;
   readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
   readonly onEndReached?: () => void;
+  readonly onItemSizeChanged?: (info: VirtualizedListItemSizeChange<T>) => void;
   readonly className?: string;
   readonly style?: CSSProperties;
   readonly ListHeaderComponent?: ReactNode;
@@ -93,15 +120,15 @@ export function createVirtualizedListHandle({
     scrollToEnd: (options) => {
       const scrollOptions =
         options?.animated === undefined ? undefined : { animated: options.animated };
-      void listRef.current?.scrollToEnd?.(scrollOptions);
+      return Promise.resolve(listRef.current?.scrollToEnd?.(scrollOptions));
     },
     scrollToOffset: ({ offset, animated }) => {
       const scrollOptions = animated === undefined ? { offset } : { offset, animated };
-      void listRef.current?.scrollToOffset?.(scrollOptions);
+      return Promise.resolve(listRef.current?.scrollToOffset?.(scrollOptions));
     },
     scrollIndexIntoView: ({ index, animated }) => {
       const scrollOptions = animated === undefined ? { index } : { index, animated };
-      void listRef.current?.scrollIndexIntoView?.(scrollOptions);
+      return Promise.resolve(listRef.current?.scrollIndexIntoView?.(scrollOptions));
     },
   };
 }
@@ -122,13 +149,16 @@ function VirtualizedListInner<T>(
   {
     data,
     keyExtractor,
+    getItemType,
     renderItem,
     estimatedItemSize,
     initialScrollAtEnd = false,
     maintainScrollAtEnd = false,
     maintainScrollAtEndThreshold,
+    maintainVisibleContentPosition = DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION,
     onIsAtEndChange,
     onEndReached,
+    onItemSizeChanged,
     className,
     style,
     ListHeaderComponent,
@@ -155,9 +185,54 @@ function VirtualizedListInner<T>(
     [keyExtractor],
   );
 
+  const handleGetItemType = useCallback(
+    (item: T, index: number) => getItemType?.(item, index),
+    [getItemType],
+  );
+
   const handleRenderItem = useCallback(
     ({ item, index }: { item: T; index: number }) => renderItem({ item, index }),
     [renderItem],
+  );
+
+  const handleItemSizeChanged = useCallback(
+    (info: RawVirtualizedListItemSizeChange) => {
+      if (!onItemSizeChanged) {
+        return;
+      }
+      if (typeof info.index !== "number" || !Number.isInteger(info.index)) {
+        return;
+      }
+      if (typeof info.size !== "number" || !Number.isFinite(info.size)) {
+        return;
+      }
+      if (typeof info.previous !== "number" || !Number.isFinite(info.previous)) {
+        return;
+      }
+      if (typeof info.itemKey !== "string") {
+        return;
+      }
+
+      const index = info.index;
+      const itemData = data[index];
+      if (itemData === undefined) {
+        return;
+      }
+
+      const itemKey = handleKeyExtractor(itemData, index);
+      if (itemKey !== info.itemKey) {
+        return;
+      }
+
+      onItemSizeChanged({
+        index,
+        itemData,
+        itemKey,
+        previous: info.previous,
+        size: info.size,
+      });
+    },
+    [data, handleKeyExtractor, onItemSizeChanged],
   );
 
   useImperativeHandle(
@@ -181,16 +256,18 @@ function VirtualizedListInner<T>(
       ref={listRef}
       data={data}
       keyExtractor={handleKeyExtractor}
+      {...(getItemType ? { getItemType: handleGetItemType } : {})}
       renderItem={handleRenderItem}
       initialScrollAtEnd={initialScrollAtEnd}
       maintainScrollAtEnd={maintainScrollAtEnd}
-      maintainVisibleContentPosition={{ data: false, size: true }}
+      maintainVisibleContentPosition={maintainVisibleContentPosition}
       onScroll={handleScroll}
       ListHeaderComponent={ListHeaderComponent ? <>{ListHeaderComponent}</> : null}
       ListFooterComponent={ListFooterComponent ? <>{ListFooterComponent}</> : null}
       {...(className !== undefined ? { className } : {})}
       {...(style !== undefined ? { style } : {})}
       {...(onEndReached ? { onEndReached: () => onEndReached() } : {})}
+      {...(onItemSizeChanged ? { onItemSizeChanged: handleItemSizeChanged } : {})}
       {...(dataTestId !== undefined ? { "data-testid": dataTestId } : {})}
       {...(estimatedItemSize !== undefined ? { estimatedItemSize } : {})}
       {...(maintainScrollAtEndThreshold !== undefined ? { maintainScrollAtEndThreshold } : {})}

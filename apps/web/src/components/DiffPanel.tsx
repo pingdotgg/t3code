@@ -1,8 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs";
-import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
+import { FileDiff, type FileDiffMetadata } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
 import type { TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -28,6 +27,7 @@ import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { resolvePathLinkTarget } from "../terminal-links";
 import {
+  buildOpenDiffSearch,
   parseDiffRouteSearch,
   stripDiffSearchParams,
   type DiffRouteSource,
@@ -38,7 +38,12 @@ import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
-import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  buildThreadRouteParams,
+  resolveThreadRouteTarget,
+  type ThreadRouteTarget,
+} from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -51,9 +56,18 @@ import {
   resolveWorkspaceGitImagePreviewUrl,
   resolveWorkspaceImagePreviewUrl,
 } from "../workspaceImagePreview";
+import { useComposerDraftStore } from "../composerDraftStore";
+import type { Thread } from "../types";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
+
+type DiffPanelThreadContext = Pick<
+  Thread,
+  "id" | "environmentId" | "projectId" | "worktreePath" | "turnDiffSummaries"
+> & {
+  routeTarget: ThreadRouteTarget;
+};
 
 const DIFF_PANEL_UNSAFE_CSS = `
 [data-diffs-header],
@@ -264,34 +278,85 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const routeThreadRef = useParams({
+  const routeTarget = useParams({
     strict: false,
-    select: (params) => resolveThreadRouteRef(params),
+    select: (params) => resolveThreadRouteTarget(params),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
+  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  const serverThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
   );
-  const activeProjectId = activeThread?.projectId ?? null;
+  const draftRouteSession = useComposerDraftStore((store) =>
+    routeDraftId ? store.getDraftSession(routeDraftId) : null,
+  );
+  const serverRouteDraftSession = useComposerDraftStore((store) =>
+    routeThreadRef ? store.getDraftSessionByRef(routeThreadRef) : null,
+  );
+  const activeDiffContext = useMemo<DiffPanelThreadContext | null>(() => {
+    if (!routeTarget) {
+      return null;
+    }
+
+    if (routeTarget.kind === "server") {
+      if (serverThread) {
+        return {
+          id: serverThread.id,
+          environmentId: serverThread.environmentId,
+          projectId: serverThread.projectId,
+          worktreePath: serverThread.worktreePath,
+          turnDiffSummaries: serverThread.turnDiffSummaries,
+          routeTarget,
+        };
+      }
+      if (serverRouteDraftSession) {
+        return {
+          id: serverRouteDraftSession.threadId,
+          environmentId: serverRouteDraftSession.environmentId,
+          projectId: serverRouteDraftSession.projectId,
+          worktreePath: serverRouteDraftSession.worktreePath,
+          turnDiffSummaries: [],
+          routeTarget,
+        };
+      }
+      return null;
+    }
+
+    if (!draftRouteSession) {
+      return null;
+    }
+    return {
+      id: draftRouteSession.threadId,
+      environmentId: draftRouteSession.environmentId,
+      projectId: draftRouteSession.projectId,
+      worktreePath: draftRouteSession.worktreePath,
+      turnDiffSummaries: [],
+      routeTarget,
+    };
+  }, [draftRouteSession, routeTarget, serverRouteDraftSession, serverThread]);
+  const activeThreadId =
+    activeDiffContext?.routeTarget.kind === "server" ? activeDiffContext.id : null;
+  const activeProjectId = activeDiffContext?.projectId ?? null;
   const activeProject = useStore((store) =>
-    activeThread && activeProjectId
+    activeDiffContext && activeProjectId
       ? selectProjectByRef(store, {
-          environmentId: activeThread.environmentId,
+          environmentId: activeDiffContext.environmentId,
           projectId: activeProjectId,
         })
       : undefined,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
+  const activeCwd = activeDiffContext?.worktreePath ?? activeProject?.cwd;
   const gitStatusQuery = useGitStatus({
-    environmentId: activeThread?.environmentId ?? null,
+    environmentId: activeDiffContext?.environmentId ?? null,
     cwd: activeCwd ?? null,
   });
   const previousGitStatusDataRef = useRef(gitStatusQuery.data);
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } = useTurnDiffSummaries(
+    activeDiffContext ?? undefined,
+  );
   const orderedTurnDiffSummaries = useMemo(
     () =>
       [...turnDiffSummaries].toSorted((left, right) => {
@@ -370,7 +435,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [isWorkingTreeSelection, orderedTurnDiffSummaries, selectedTurn]);
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
-      environmentId: activeThread?.environmentId ?? null,
+      environmentId: activeDiffContext?.environmentId ?? null,
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
@@ -381,7 +446,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
   const workingTreeDiffQuery = useQuery(
     gitWorkingTreeDiffQueryOptions({
-      environmentId: activeThread?.environmentId ?? null,
+      environmentId: activeDiffContext?.environmentId ?? null,
       cwd: activeCwd ?? null,
       target: selectedDiffSource,
       ignoreWhitespace: diffIgnoreWhitespace,
@@ -485,7 +550,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
       void openPathInPreferredEditorOrFilePreview({
         targetPath,
-        ...(activeThread?.environmentId ? { environmentId: activeThread.environmentId } : {}),
+        ...(activeDiffContext?.environmentId
+          ? { environmentId: activeDiffContext.environmentId }
+          : {}),
         ...(activeCwd ? { cwd: activeCwd, displayPath: filePath } : {}),
         returnTarget: {
           kind: "diff",
@@ -498,7 +565,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd, activeThread?.environmentId, selectedDiffSource, selectedTurn?.turnId],
+    [activeCwd, activeDiffContext?.environmentId, selectedDiffSource, selectedTurn?.turnId],
   );
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     setCollapsedDiffFileKeys((current) => {
@@ -513,10 +580,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, []);
 
   const selectTurn = (turnId: TurnId) => {
-    if (!activeThread) return;
+    if (!activeDiffContext) return;
+    if (activeDiffContext.routeTarget.kind === "draft") {
+      void navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(activeDiffContext.routeTarget.draftId),
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return { ...rest, diff: "1", diffTurnId: turnId };
+        },
+      });
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+      params: buildThreadRouteParams(activeDiffContext.routeTarget.threadRef),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1", diffTurnId: turnId };
@@ -524,33 +602,51 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     });
   };
   const selectWholeConversation = () => {
-    if (!activeThread) return;
+    if (!activeDiffContext) return;
+    if (activeDiffContext.routeTarget.kind === "draft") {
+      void navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(activeDiffContext.routeTarget.draftId),
+        search: (previous) => buildOpenDiffSearch(previous),
+      });
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
+      params: buildThreadRouteParams(activeDiffContext.routeTarget.threadRef),
+      search: (previous) => buildOpenDiffSearch(previous),
     });
   };
   const selectWorkingTreeDiff = (target: DiffRouteSource) => {
-    if (!activeThread) return;
+    if (!activeDiffContext) return;
+    if (activeDiffContext.routeTarget.kind === "draft") {
+      void navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(activeDiffContext.routeTarget.draftId),
+        search: (previous) => buildOpenDiffSearch(previous, { source: target }),
+      });
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffSource: target };
-      },
+      params: buildThreadRouteParams(activeDiffContext.routeTarget.threadRef),
+      search: (previous) => buildOpenDiffSearch(previous, { source: target }),
     });
   };
   const closeDiffPanel = () => {
-    if (!activeThread) return;
+    if (!activeDiffContext) return;
+    if (activeDiffContext.routeTarget.kind === "draft") {
+      void navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(activeDiffContext.routeTarget.draftId),
+        search: (previous) => stripDiffSearchParams(previous),
+      });
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: { diff: undefined },
+      params: buildThreadRouteParams(activeDiffContext.routeTarget.threadRef),
+      search: (previous) => stripDiffSearchParams(previous),
     });
   };
   const updateTurnStripScrollState = useCallback(() => {
@@ -862,7 +958,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
-      {!activeThread ? (
+      {!activeDiffContext ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
@@ -904,13 +1000,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 </div>
               )
             ) : renderablePatch.kind === "files" ? (
-              <Virtualizer
-                className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
+              <div className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2">
                 {renderableFiles.map((fileDiff) => {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
@@ -918,18 +1008,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const collapsed = collapsedDiffFileKeys.has(fileKey);
                   const imagePreviewObjectId = resolveFileDiffPreviewObjectId(fileDiff);
                   const imagePreviewUrl =
-                    activeThread?.environmentId &&
+                    activeDiffContext?.environmentId &&
                     activeCwd &&
                     isWorkspaceImagePreviewPath(filePath)
                       ? (resolveWorkspaceGitImagePreviewUrl({
-                          environmentId: activeThread.environmentId,
+                          environmentId: activeDiffContext.environmentId,
                           cwd: activeCwd,
                           relativePath: filePath,
                           objectId: imagePreviewObjectId,
                         }) ??
                         (fileDiff.type !== "deleted"
                           ? resolveWorkspaceImagePreviewUrl({
-                              environmentId: activeThread.environmentId,
+                              environmentId: activeDiffContext.environmentId,
                               cwd: activeCwd,
                               relativePath: filePath,
                             })
@@ -997,7 +1087,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     </div>
                   );
                 })}
-              </Virtualizer>
+              </div>
             ) : (
               <div className="h-full overflow-auto p-2">
                 <div className="space-y-2">

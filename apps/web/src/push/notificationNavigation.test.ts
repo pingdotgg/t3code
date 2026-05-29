@@ -117,10 +117,11 @@ describe("notificationNavigation", () => {
     const router = makeRouter();
 
     const cleanup = installServiceWorkerNotificationNavigation(router);
+    const openedAt = Date.now();
     serviceWorker.dispatch({
       type: "t3.notification-click",
       url: "/env-1/thread-1",
-      openedAt: Date.now(),
+      openedAt,
     });
 
     expect(router.navigate).toHaveBeenCalledWith({
@@ -137,11 +138,16 @@ describe("notificationNavigation", () => {
       threadId: "thread-1",
     });
     expect(reconcileSpy).toHaveBeenCalledTimes(1);
-    expect(reconcileSpy).toHaveBeenCalledWith({
-      kind: "thread",
-      environmentId: "env-1",
-      threadId: "thread-1",
-    });
+    expect(reconcileSpy).toHaveBeenCalledWith(
+      {
+        kind: "thread",
+        environmentId: "env-1",
+        threadId: "thread-1",
+      },
+      {
+        openedAt,
+      },
+    );
 
     cleanup();
     serviceWorker.dispatch({

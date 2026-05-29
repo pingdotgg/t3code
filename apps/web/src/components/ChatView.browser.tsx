@@ -103,6 +103,18 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
 const ADD_PROJECT_SUBMENU_PLACEHOLDER = "Enter path (e.g. ~/projects/my-app)";
+const LARGE_NEW_FILE_DIFF = [
+  "diff --git a/src/generated.txt b/src/generated.txt",
+  "new file mode 100644",
+  "index 0000000..1111111",
+  "--- /dev/null",
+  "+++ b/src/generated.txt",
+  "@@ -0,0 +1,220 @@",
+  ...Array.from(
+    { length: 220 },
+    (_, index) => `+newer-file-content-${String(index + 1).padStart(3, "0")}`,
+  ),
+].join("\n");
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -1299,6 +1311,9 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       ],
     };
   }
+  if (tag === WS_METHODS.vcsGetWorkingTreeDiff) {
+    return { diff: "" };
+  }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
@@ -1440,6 +1455,12 @@ async function waitForURL(
     { timeout: 8_000, interval: 16 },
   );
   return pathname;
+}
+
+function getDiffPanelShadowText(): string {
+  return Array.from(document.querySelectorAll<HTMLElement>(".diff-render-file diffs-container"))
+    .map((element) => element.shadowRoot?.textContent ?? "")
+    .join("\n");
 }
 
 async function waitForComposerEditor(): Promise<HTMLElement> {
@@ -5276,6 +5297,138 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         activeProvider: "codex",
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the diff panel to unstaged changes in a new draft thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-draft-diff-toggle-test" as MessageId,
+        targetText: "draft diff toggle test",
+      }),
+      resolveRpc: (body) =>
+        body._tag === WS_METHODS.vcsGetWorkingTreeDiff ? { diff: LARGE_NEW_FILE_DIFF } : undefined,
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const draftPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a draft thread before opening diff.",
+      );
+
+      await page.getByRole("button", { name: "Toggle diff panel" }).click();
+
+      await vi.waitFor(
+        () => {
+          const search = mounted.router.state.location.search as Record<string, unknown>;
+          expect(mounted.router.state.location.pathname).toBe(draftPath);
+          expect(search.diff).toBe("1");
+          expect(search.diffSource).toBe("unstaged");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await vi.waitFor(
+        () => {
+          const request = wsRequests.find(
+            (entry) => entry._tag === WS_METHODS.vcsGetWorkingTreeDiff,
+          );
+          expect(request).toMatchObject({
+            cwd: "/repo/project",
+            target: "unstaged",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const diffScroller = await waitForElement(
+        () => document.querySelector<HTMLElement>(".diff-render-surface"),
+        "Diff render surface did not mount.",
+      );
+      diffScroller.scrollTop = Math.max(0, diffScroller.scrollHeight - diffScroller.clientHeight);
+      diffScroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+      await vi.waitFor(
+        () => {
+          expect(getDiffPanelShadowText()).toContain("newer-file-content-220");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the diff panel to unstaged changes in an empty server thread", async () => {
+    const emptyThreadId = "thread-empty-diff-toggle-test" as ThreadId;
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-empty-server-diff-toggle-test" as MessageId,
+      targetText: "empty server diff toggle test",
+    });
+    const emptyThread = {
+      ...baseSnapshot.threads[0]!,
+      id: emptyThreadId,
+      title: "Empty diff thread",
+      latestTurn: null,
+      messages: [],
+      queuedTurns: [],
+      activities: [],
+      proposedPlans: [],
+      checkpoints: [],
+      session: null,
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: [emptyThread],
+      },
+      initialPath: serverThreadPath(emptyThreadId),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Toggle diff panel" }).click();
+
+      await vi.waitFor(
+        () => {
+          const search = mounted.router.state.location.search as Record<string, unknown>;
+          expect(search.diff).toBe("1");
+          expect(search.diffSource).toBe("unstaged");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the diff panel without forcing unstaged selection in an existing server thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-existing-server-diff-toggle-test" as MessageId,
+        targetText: "existing server diff toggle test",
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Toggle diff panel" }).click();
+
+      await vi.waitFor(
+        () => {
+          const search = mounted.router.state.location.search as Record<string, unknown>;
+          expect(search.diff).toBe("1");
+          expect(search.diffSource).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

@@ -7,6 +7,7 @@ import { DiffPanelLoadingState } from "../components/DiffPanelShell";
 import { ChatRightPanels } from "../components/chat/ChatRightPanels";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
+  buildOpenDiffSearch,
   type DiffRouteSearch,
   parseDiffRouteSearch,
   stripDiffSearchParams,
@@ -95,7 +96,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { diff: undefined },
+      search: (previous) => stripDiffSearchParams(previous),
     });
   }, [diffOpen, navigate, threadRef]);
   const openDiff = useCallback(() => {
@@ -107,12 +108,12 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
+      search: (previous) =>
+        buildOpenDiffSearch(previous, {
+          source: serverThread && !serverThreadStarted ? "unstaged" : undefined,
+        }),
     });
-  }, [markDiffOpened, navigate, threadRef]);
+  }, [markDiffOpened, navigate, serverThread, serverThreadStarted, threadRef]);
   const openFilePreview = useCallback(() => {
     reopenWorkspaceFilePanel();
   }, []);
@@ -130,9 +131,7 @@ function ChatThreadRouteView() {
           const rest = stripDiffSearchParams(previous);
           return returnTarget.diffSource
             ? {
-                ...rest,
-                diff: "1",
-                diffSource: returnTarget.diffSource,
+                ...buildOpenDiffSearch(previous, { source: returnTarget.diffSource }),
                 ...(returnTarget.diffFilePath ? { diffFilePath: returnTarget.diffFilePath } : {}),
               }
             : returnTarget.diffTurnId
@@ -154,6 +153,34 @@ function ChatThreadRouteView() {
       markRightPanelUsed("diff");
     }
   }, [diffOpen]);
+
+  useEffect(() => {
+    if (
+      !threadRef ||
+      !diffOpen ||
+      search.diffSource ||
+      search.diffTurnId ||
+      !serverThread ||
+      serverThreadStarted
+    ) {
+      return;
+    }
+
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      replace: true,
+      search: (previous) => buildOpenDiffSearch(previous, { source: "unstaged" }),
+    });
+  }, [
+    diffOpen,
+    navigate,
+    search.diffSource,
+    search.diffTurnId,
+    serverThread,
+    serverThreadStarted,
+    threadRef,
+  ]);
 
   useEffect(() => {
     if (filePanelOpen) {

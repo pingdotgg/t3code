@@ -1,10 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { ChatRightPanels } from "../components/chat/ChatRightPanels";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
-import { SidebarInset } from "../components/ui/sidebar";
+import { SidebarInset, useSidebar } from "../components/ui/sidebar";
+import {
+  buildOpenDiffSearch,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useMobileEdgeSwipe } from "../hooks/useMobileEdgeSwipe";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -25,7 +30,9 @@ import {
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
+  const { openMobile: leftSidebarOpenMobile } = useSidebar();
   const { draftId: rawDraftId } = Route.useParams();
+  const search = Route.useSearch();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const serverThread = useStore(
@@ -36,9 +43,28 @@ function DraftChatThreadRouteView() {
   );
   const serverThreadStarted = threadHasStarted(serverThread);
   const serverThreadHasSubmittedMessage = Boolean(serverThread && serverThread.messages.length > 0);
+  const diffOpen = search.diff === "1";
   const filePanel = useWorkspaceFilePanelState();
   const filePanelOpen = filePanel.open;
-  const shouldUseFileSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
+    draftId,
+    hasOpenedDiff: diffOpen,
+  }));
+  const hasOpenedDiff =
+    diffPanelMountState.draftId === draftId ? diffPanelMountState.hasOpenedDiff : diffOpen;
+  const markDiffOpened = useCallback(() => {
+    markRightPanelUsed("diff");
+    setDiffPanelMountState((previous) => {
+      if (previous.draftId === draftId && previous.hasOpenedDiff) {
+        return previous;
+      }
+      return {
+        draftId,
+        hasOpenedDiff: true,
+      };
+    });
+  }, [draftId]);
   const canonicalThreadRef = useMemo(
     () =>
       draftSession?.promotedTo
@@ -56,12 +82,60 @@ function DraftChatThreadRouteView() {
   const shouldNavigateToCanonicalThread = Boolean(
     canonicalThreadRef && (!draftSession?.promotedTo || serverThreadHasSubmittedMessage),
   );
+  const closeDiff = useCallback(() => {
+    if (!diffOpen) {
+      return;
+    }
+    void navigate({
+      to: "/draft/$draftId",
+      params: { draftId },
+      search: (previous) => stripDiffSearchParams(previous),
+    });
+  }, [diffOpen, draftId, navigate]);
+  const openDiff = useCallback(() => {
+    if (!draftSession) {
+      return;
+    }
+    markDiffOpened();
+    void navigate({
+      to: "/draft/$draftId",
+      params: { draftId },
+      search: (previous) => buildOpenDiffSearch(previous, { source: "unstaged" }),
+    });
+  }, [draftId, draftSession, markDiffOpened, navigate]);
   const openFilePanel = useCallback(() => {
     reopenWorkspaceFilePanel();
   }, []);
-  const returnFromFilePreview = useCallback((_target: WorkspaceFilePreviewDiffReturnTarget) => {
-    closeWorkspaceFilePreview();
-  }, []);
+  const returnFromFilePreview = useCallback(
+    (returnTarget: WorkspaceFilePreviewDiffReturnTarget) => {
+      closeWorkspaceFilePreview();
+      if (!draftSession) {
+        return;
+      }
+      markRightPanelUsed("diff");
+      void navigate({
+        to: "/draft/$draftId",
+        params: { draftId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return returnTarget.diffSource
+            ? {
+                ...buildOpenDiffSearch(previous, { source: returnTarget.diffSource }),
+                ...(returnTarget.diffFilePath ? { diffFilePath: returnTarget.diffFilePath } : {}),
+              }
+            : returnTarget.diffTurnId
+              ? {
+                  ...rest,
+                  diff: "1",
+                  diffTurnId: returnTarget.diffTurnId,
+                  ...(returnTarget.diffFilePath ? { diffFilePath: returnTarget.diffFilePath } : {}),
+                }
+              : buildOpenDiffSearch(previous, { source: "unstaged" });
+        },
+      });
+    },
+    [draftId, draftSession, navigate],
+  );
 
   useEffect(() => {
     if (!canonicalThreadRef || !shouldNavigateToCanonicalThread) {
@@ -70,9 +144,30 @@ function DraftChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(canonicalThreadRef),
+      search:
+        search.diff === "1"
+          ? {
+              diff: "1",
+              ...(search.diffSource
+                ? { diffSource: search.diffSource }
+                : search.diffTurnId
+                  ? {}
+                  : { diffSource: "unstaged" as const }),
+              ...(search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
+              ...(search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
+            }
+          : {},
       replace: true,
     });
-  }, [canonicalThreadRef, navigate, shouldNavigateToCanonicalThread]);
+  }, [
+    canonicalThreadRef,
+    navigate,
+    search.diff,
+    search.diffFilePath,
+    search.diffSource,
+    search.diffTurnId,
+    shouldNavigateToCanonicalThread,
+  ]);
 
   useEffect(() => {
     if (draftSession || canonicalThreadRef) {
@@ -82,11 +177,36 @@ function DraftChatThreadRouteView() {
   }, [canonicalThreadRef, draftSession, navigate]);
 
   useEffect(() => {
+    if (!draftSession || !diffOpen || search.diffSource || search.diffTurnId) {
+      return;
+    }
+
+    void navigate({
+      to: "/draft/$draftId",
+      params: { draftId },
+      replace: true,
+      search: (previous) => buildOpenDiffSearch(previous, { source: "unstaged" }),
+    });
+  }, [diffOpen, draftId, draftSession, navigate, search.diffSource, search.diffTurnId]);
+
+  useEffect(() => {
+    if (diffOpen) {
+      markRightPanelUsed("diff");
+    }
+  }, [diffOpen]);
+
+  useEffect(() => {
     if (filePanelOpen) {
       markRightPanelUsed("file");
     }
   }, [filePanelOpen]);
 
+  useRegisterRightPanel({
+    close: closeDiff,
+    enabled: draftSession !== null,
+    kind: "diff",
+    open: openDiff,
+  });
   useRegisterRightPanel({
     close: closeWorkspaceFilePreview,
     enabled: draftSession !== null,
@@ -95,7 +215,8 @@ function DraftChatThreadRouteView() {
   });
 
   useMobileEdgeSwipe({
-    enabled: shouldUseFileSheet && !filePanelOpen,
+    blockedByOpenPanelSide: "left",
+    enabled: shouldUseRightPanelSheet && !diffOpen && !filePanelOpen && !leftSidebarOpenMobile,
     onSwipe: openLastUsedRightPanel,
     side: "right",
     startArea: "screen",
@@ -104,7 +225,16 @@ function DraftChatThreadRouteView() {
 
   useMobileEdgeSwipe({
     action: "close",
-    enabled: shouldUseFileSheet && filePanelOpen,
+    enabled: shouldUseRightPanelSheet && diffOpen,
+    onSwipe: closeDiff,
+    side: "right",
+    startArea: "screen",
+    startSurface: "panel",
+  });
+
+  useMobileEdgeSwipe({
+    action: "close",
+    enabled: shouldUseRightPanelSheet && filePanelOpen,
     onSwipe: closeWorkspaceFilePreview,
     side: "right",
     startArea: "screen",
@@ -129,6 +259,7 @@ function DraftChatThreadRouteView() {
 
   const shouldRenderFilePanelContent =
     filePanelOpen || filePanel.target !== null || filePanel.explorerContext !== null;
+  const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
 
   return (
     <>
@@ -137,13 +268,21 @@ function DraftChatThreadRouteView() {
           draftId={draftId}
           environmentId={draftSession.environmentId}
           threadId={draftSession.threadId}
+          onDiffPanelOpen={markDiffOpened}
+          reserveTitleBarControlInset={shouldUseRightPanelSheet || !diffOpen}
           routeKind="draft"
         />
       </SidebarInset>
       <ChatRightPanels
+        diff={{
+          open: diffOpen,
+          onClose: closeDiff,
+          onOpen: openDiff,
+          renderContent: shouldRenderDiffContent,
+        }}
         fileOpen={filePanelOpen}
         renderFileContent={shouldRenderFilePanelContent}
-        useSheet={shouldUseFileSheet}
+        useSheet={shouldUseRightPanelSheet}
         onReturnFromFileToDiff={returnFromFilePreview}
       />
     </>
@@ -151,5 +290,6 @@ function DraftChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/draft/$draftId")({
+  validateSearch: (search) => parseDiffRouteSearch(search),
   component: DraftChatThreadRouteView,
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -131,6 +131,42 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+});
+
+describe("buildOpenDiffSearch", () => {
+  it("opens unstaged diff while stripping stale turn and file values", () => {
+    expect(
+      buildOpenDiffSearch(
+        {
+          diff: "1",
+          diffSource: "staged",
+          diffTurnId: "turn-1",
+          diffFilePath: "src/app.ts",
+          panel: "activity",
+        },
+        { source: "unstaged" },
+      ),
+    ).toEqual({
+      diff: "1",
+      diffSource: "unstaged",
+      panel: "activity",
+    });
+  });
+
+  it("opens the generic all-turns diff without a source", () => {
+    expect(
+      buildOpenDiffSearch({
+        diff: "1",
+        diffSource: "unstaged",
+        diffTurnId: "turn-1",
+        diffFilePath: "src/app.ts",
+        panel: "activity",
+      }),
+    ).toEqual({
+      diff: "1",
+      panel: "activity",
     });
   });
 });

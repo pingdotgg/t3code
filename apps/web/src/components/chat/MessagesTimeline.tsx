@@ -70,7 +70,12 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { VirtualizedList, type VirtualizedListHandle } from "../virtualization/VirtualizedList";
+import {
+  VirtualizedList,
+  type VirtualizedListHandle,
+  type VirtualizedListItemSizeChange,
+} from "../virtualization/VirtualizedList";
+import { recordTimelineResize } from "./timelineResizeDiagnostics";
 import {
   captureTimelineScrollAnchor,
   scheduleTimelineScrollAnchorRestore,
@@ -109,6 +114,26 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const MAINTAIN_SCROLL_AT_END_ANIMATED = { animated: true } as const;
+const MAINTAIN_VISIBLE_CONTENT_POSITION_DATA_ANCHORED = {
+  data: true,
+  size: true,
+} as const;
+// Render the whole loaded conversation up front instead of a small moving window.
+// v3 has no per-item size estimate, so a row first measured *during* a scroll forces
+// a maintainVisibleContentPosition scroll correction (estimate 150px → real height,
+// up to ~2000px) — that on-scroll correction is the jank. By making the draw
+// distance larger than any realistic loaded page, every loaded row mounts and is
+// measured once when the thread opens (above the viewport while pinned to the
+// bottom), so scrolling afterwards never re-measures and never corrects. Rendering
+// is still capped by the loaded row count, which the "Older" control paginates, so
+// this is bounded. Trade-off: heavier initial render; dial down to a few thousand px
+// if opening very long threads feels slow.
+const TIMELINE_DRAW_DISTANCE_PX = 1_000_000;
+// First-paint size hint only — Legend List switches to the running average of
+// measured rows after the first render. Kept slightly under a typical assistant
+// message so we under- rather than over-estimate (per Legend List guidance), which
+// keeps the unmeasured-region estimate closer to reality than the old 90px.
+const TIMELINE_ESTIMATED_ROW_SIZE_PX = 150;
 
 /** Tracks which work entries have already been displayed, so the fade-in-down
  *  animation only plays the first time an entry appears — not on virtualization
@@ -221,6 +246,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     cancelScheduledLocalResizeRestore();
     onUserScrollIntent?.();
   }, [cancelScheduledLocalResizeRestore, onUserScrollIntent]);
+  const handleItemSizeChanged = useCallback(
+    (info: VirtualizedListItemSizeChange<MessagesTimelineRow>) => {
+      const delta = info.size - info.previous;
+      if (Math.abs(delta) < 1) {
+        return;
+      }
+      const role = info.itemData.kind === "message" ? `:${info.itemData.message.role}` : "";
+      const occurrence = recordTimelineResize({
+        kind: `${info.itemData.kind}${role}`,
+        key: info.itemKey,
+        index: info.index,
+        previous: info.previous,
+        size: info.size,
+      });
+      if (import.meta.env.DEV) {
+        console.log(
+          `[timeline-resize] #${occurrence} ${info.itemData.kind}${role} ` +
+            `${Math.round(info.previous)}→${Math.round(info.size)} ` +
+            `Δ${delta >= 0 ? "+" : ""}${Math.round(delta)} idx=${info.index} key=${info.itemKey}`,
+        );
+      }
+    },
+    [],
+  );
   const handleBeforePlanExpandedChange = useCallback(() => {
     const anchor = captureTimelineScrollAnchor(listRef.current);
     onUserScrollIntent?.();
@@ -380,12 +429,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             ref={listRef}
             data={rows}
             keyExtractor={keyExtractor}
+            getItemType={getTimelineRowItemType}
             renderItem={renderItem}
-            estimatedItemSize={90}
+            estimatedItemSize={TIMELINE_ESTIMATED_ROW_SIZE_PX}
+            increaseViewportBy={TIMELINE_DRAW_DISTANCE_PX}
             initialScrollAtEnd
             maintainScrollAtEnd={MAINTAIN_SCROLL_AT_END_ANIMATED}
             maintainScrollAtEndThreshold={0.1}
+            maintainVisibleContentPosition={MAINTAIN_VISIBLE_CONTENT_POSITION_DATA_ANCHORED}
             onIsAtEndChange={onIsAtEndChange}
+            onItemSizeChanged={handleItemSizeChanged}
             className="h-full overflow-x-hidden overscroll-y-contain"
             style={{ height: "100%" }}
             data-testid="messages-timeline-list"
@@ -400,6 +453,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
+}
+
+function getTimelineRowItemType(item: MessagesTimelineRow) {
+  if (item.kind === "message") {
+    return `message:${item.message.role}`;
+  }
+  return item.kind;
 }
 
 function timelineRowAnchorId(row: MessagesTimelineRow): string | undefined {

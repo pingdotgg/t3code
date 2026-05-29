@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { inferCheckpointTurnCountByTurnId } from "../session-logic";
 import type { Thread } from "../types";
 
-export function useTurnDiffSummaries(activeThread: Thread | undefined) {
+export function useTurnDiffSummaries(activeThread: Pick<Thread, "turnDiffSummaries"> | undefined) {
   const turnDiffSummaries = useMemo(() => {
     if (!activeThread) {
       return [];

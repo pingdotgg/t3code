@@ -23,6 +23,7 @@ const RESUME_DIAGNOSTICS_FLUSH_DELAY_MS = 1_500;
 let entries: ResumeDiagnosticEntry[] | null = null;
 let pendingEntries: ResumeDiagnosticEntry[] = [];
 let flushTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let entriesDirty = false;
 
 function getStorage(): Storage | null {
   if (typeof window === "undefined") {
@@ -89,6 +90,14 @@ function persistEntries(nextEntries: ResumeDiagnosticEntry[]): void {
   }
 }
 
+function persistEntriesIfDirty(): void {
+  if (!entriesDirty) {
+    return;
+  }
+  persistEntries(ensureEntries());
+  entriesDirty = false;
+}
+
 function clearFlushTimer(): void {
   if (flushTimeoutId !== null) {
     clearTimeout(flushTimeoutId);
@@ -149,12 +158,13 @@ export function recordResumeDiagnostic(kind: string, payload: ResumeDiagnosticPa
     currentEntries.splice(0, currentEntries.length - RESUME_DIAGNOSTICS_LIMIT);
   }
   pendingEntries.push(entry);
-  persistEntries(currentEntries);
+  entriesDirty = true;
   scheduleFlush();
 }
 
 export function flushResumeDiagnostics(): void {
   clearFlushTimer();
+  persistEntriesIfDirty();
   if (pendingEntries.length === 0) {
     return;
   }

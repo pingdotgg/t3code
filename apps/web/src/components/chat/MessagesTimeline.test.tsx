@@ -23,6 +23,7 @@ vi.mock("../virtualization/VirtualizedList", () => {
     renderItem: (args: { item: { id: string }; index: number }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
+    maintainVisibleContentPosition?: unknown;
     ref?: Ref<VirtualizedListHandle>;
     "data-testid"?: string;
   }) => {
@@ -188,6 +189,10 @@ describe("MessagesTimeline", () => {
     expect(getLatestVirtualizedListProps().firstItemIndex).toBeUndefined();
     expect(getLatestVirtualizedListProps().onStartReached).toBeUndefined();
     expect(getLatestVirtualizedListProps().onVisibleRangeChange).toBeUndefined();
+    expect(getLatestVirtualizedListProps().maintainVisibleContentPosition).toEqual({
+      data: true,
+      size: true,
+    });
   });
 
   it("shows the older-page control as busy while loading history", () => {

@@ -44,7 +44,11 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  buildOpenDiffSearch,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -203,6 +207,7 @@ import {
   shouldShowThreadDetailLoading,
   shouldWriteThreadErrorToCurrentServerThread,
   shouldIgnoreInterruptClick,
+  threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1828,13 +1833,33 @@ export default function ChatView(props: ChatViewProps) {
     [keybindings, nonTerminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
+    if (routeKind === "server" && !isServerThread) {
       return;
     }
     if (!diffOpen) {
       closeWorkspaceFilePreview();
       onDiffPanelOpen?.();
     }
+
+    const openDiffSource =
+      routeKind === "draft" || (isServerThread && activeThread && !threadHasStarted(activeThread))
+        ? "unstaged"
+        : undefined;
+    const search = (previous: Record<string, unknown>) =>
+      diffOpen
+        ? stripDiffSearchParams(previous)
+        : buildOpenDiffSearch(previous, { source: openDiffSource });
+
+    if (routeKind === "draft" && draftId) {
+      void navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(draftId),
+        replace: true,
+        search,
+      });
+      return;
+    }
+
     void navigate({
       to: "/$environmentId/$threadId",
       params: {
@@ -1842,12 +1867,19 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
       },
       replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
-      },
+      search,
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [
+    activeThread,
+    diffOpen,
+    draftId,
+    environmentId,
+    isServerThread,
+    navigate,
+    onDiffPanelOpen,
+    routeKind,
+    threadId,
+  ]);
 
   const envLocked = Boolean(
     activeThread &&

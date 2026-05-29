@@ -9,7 +9,7 @@ import { createRef, forwardRef, useImperativeHandle, useMemo, useRef, useState }
 import { flushSync } from "react-dom";
 import type { VirtualizedListHandle } from "../virtualization/VirtualizedList";
 import { page } from "vitest/browser";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render } from "vitest-browser-react";
 
 import type { TimelineEntry } from "../../session-logic";
@@ -18,6 +18,7 @@ import {
   captureTimelinePrependScrollSnapshot,
   captureTimelineScrollAnchor,
   restoreTimelinePrependScrollSnapshot,
+  scheduleTimelinePrependScrollSnapshotRestore,
   type TimelineScrollAnchor,
 } from "./timelineScrollAnchor";
 
@@ -102,6 +103,26 @@ function scrollElementDistanceFromBottom(scrollableNode: HTMLElement): number {
   return maxScrollTop - scrollableNode.scrollTop;
 }
 
+async function waitForStableScrollSnapshot(snapshot: () => ScrollSnapshot): Promise<void> {
+  let previous = snapshot();
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await waitForLayout();
+    const next = snapshot();
+    const isStable =
+      Math.abs(next.scrollTop - previous.scrollTop) < 1 &&
+      next.scrollHeight === previous.scrollHeight &&
+      next.firstRenderedRowId === previous.firstRenderedRowId &&
+      next.lastRenderedRowId === previous.lastRenderedRowId;
+
+    if (isStable) {
+      return;
+    }
+
+    previous = next;
+  }
+}
+
 async function waitForLayout(): Promise<void> {
   await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
   await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -180,6 +201,10 @@ const TimelineHarness = forwardRef<TimelineHarnessHandle>(function TimelineHarne
         });
         if (snapshot) {
           restoreTimelinePrependScrollSnapshot(listRef.current, snapshot);
+          scheduleTimelinePrependScrollSnapshotRestore({
+            listRef,
+            snapshot,
+          });
         }
       },
       mergeTailSnapshot: () => {
@@ -311,10 +336,6 @@ function TimelineFixture({
 }
 
 describe("MessagesTimeline real virtualized timeline scrolling", () => {
-  afterEach(() => {
-    document.body.innerHTML = "";
-  });
-
   it("keeps the timeline pinned to the bottom when a row is appended", async () => {
     await page.viewport(1_000, 760);
     const harnessRef = createRef<TimelineHarnessHandle>();
@@ -347,7 +368,7 @@ describe("MessagesTimeline real virtualized timeline scrolling", () => {
     try {
       await waitForLayout();
       await harnessRef.current?.scrollToOffset(1_800);
-      await waitForLayout();
+      await waitForStableScrollSnapshot(() => harnessRef.current!.snapshot());
 
       const anchor = harnessRef.current?.captureAnchor();
       expect(anchor).not.toBeNull();
@@ -357,9 +378,14 @@ describe("MessagesTimeline real virtualized timeline scrolling", () => {
       harnessRef.current?.prependMessages();
       await waitForLayout();
 
-      const afterTop = harnessRef.current?.anchorElementTop(anchor?.anchorId ?? "");
-      expect(afterTop).not.toBeNull();
-      expect(Math.abs((afterTop ?? 0) - (beforeTop ?? 0))).toBeLessThan(24);
+      await expect
+        .poll(() => {
+          const afterTop = harnessRef.current?.anchorElementTop(anchor?.anchorId ?? "");
+          return afterTop === null || afterTop === undefined
+            ? Number.POSITIVE_INFINITY
+            : Math.abs(afterTop - (beforeTop ?? 0));
+        })
+        .toBeLessThan(24);
     } finally {
       await screen.unmount();
     }

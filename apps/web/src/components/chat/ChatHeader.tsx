@@ -11,6 +11,7 @@ import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import {
   DiffIcon,
+  DownloadIcon,
   EllipsisIcon,
   FolderTreeIcon,
   RefreshCwIcon,
@@ -30,6 +31,8 @@ import {
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Button } from "../ui/button";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { exportTimelineResizeDiagnostics } from "./timelineResizeDiagnostics";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -82,6 +85,38 @@ export function forceRefreshApp(): void {
   }
 
   window.location.reload();
+}
+
+function handleExportTimelineDiagnostics(): void {
+  void exportTimelineResizeDiagnostics()
+    .then((result) => {
+      if (result === "empty") {
+        toastManager.add({
+          type: "warning",
+          title: "No scroll diagnostics captured yet",
+          description: "Scroll through the conversation, then export again.",
+        });
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title:
+          result === "downloaded"
+            ? "Scroll diagnostics downloaded"
+            : result === "copied"
+              ? "Scroll diagnostics copied to clipboard"
+              : "Scroll diagnostics shared",
+      });
+    })
+    .catch((error: unknown) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not export scroll diagnostics",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        }),
+      );
+    });
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -299,6 +334,11 @@ export const ChatHeader = memo(function ChatHeader({
             <MenuItem onClick={forceRefreshApp}>
               <RefreshCwIcon aria-hidden="true" className="size-4" />
               Force refresh
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onClick={handleExportTimelineDiagnostics}>
+              <DownloadIcon aria-hidden="true" className="size-4" />
+              Export scroll diagnostics
             </MenuItem>
           </MenuPopup>
         </Menu>

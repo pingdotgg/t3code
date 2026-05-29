@@ -18,9 +18,18 @@ interface MockLegendListProps {
   readonly maintainVisibleContentPosition?: unknown;
   readonly onScroll?: () => void;
   readonly onEndReached?: () => void;
+  readonly onItemSizeChanged?: (info: MockItemSizeChange) => void;
   readonly estimatedItemSize?: number;
   readonly drawDistance?: number;
   readonly "data-testid"?: string;
+}
+
+interface MockItemSizeChange {
+  readonly size?: unknown;
+  readonly previous?: unknown;
+  readonly index?: unknown;
+  readonly itemKey?: unknown;
+  readonly itemData?: unknown;
 }
 
 vi.mock("@legendapp/list/react", () => ({
@@ -108,6 +117,22 @@ describe("VirtualizedList", () => {
     });
   });
 
+  it("allows maintainVisibleContentPosition to opt into data anchoring", () => {
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => item}
+        renderItem={({ item }) => item}
+        maintainVisibleContentPosition={{ data: true, size: true }}
+      />,
+    );
+
+    expect(getLatestLegendListProps().maintainVisibleContentPosition).toEqual({
+      data: true,
+      size: true,
+    });
+  });
+
   it("updates at-end state through the imperative handle state source", () => {
     const onIsAtEndChange = vi.fn();
     renderToStaticMarkup(
@@ -132,7 +157,7 @@ describe("VirtualizedList", () => {
     expect(handle.getState()).toEqual({ isAtEnd: true });
   });
 
-  it("maps imperative methods to LegendList scroll methods", () => {
+  it("maps imperative methods to LegendList scroll methods", async () => {
     const scrollToEnd = vi.fn();
     const scrollToOffset = vi.fn();
     const scrollIndexIntoView = vi.fn();
@@ -152,10 +177,10 @@ describe("VirtualizedList", () => {
 
     expect(handle.getScrollableNode()).toBe(scrollableNode);
 
-    handle.scrollToEnd({ animated: false });
-    handle.scrollToEnd({ animated: true });
-    handle.scrollToOffset({ offset: 0, animated: false });
-    handle.scrollIndexIntoView({ index: 10, animated: false });
+    await handle.scrollToEnd({ animated: false });
+    await handle.scrollToEnd({ animated: true });
+    await handle.scrollToOffset({ offset: 0, animated: false });
+    await handle.scrollIndexIntoView({ index: 10, animated: false });
 
     expect(scrollToEnd).toHaveBeenNthCalledWith(1, { animated: false });
     expect(scrollToEnd).toHaveBeenNthCalledWith(2, { animated: true });
@@ -176,6 +201,123 @@ describe("VirtualizedList", () => {
 
     getLatestLegendListProps().onEndReached?.();
     expect(onEndReached).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards valid item size changes with normalized row data", () => {
+    const onItemSizeChanged = vi.fn();
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha", "beta"]}
+        keyExtractor={(item) => `item-${item}`}
+        renderItem={({ item }) => item}
+        onItemSizeChanged={onItemSizeChanged}
+      />,
+    );
+
+    getLatestLegendListProps().onItemSizeChanged?.({
+      index: 1,
+      itemData: undefined,
+      itemKey: "item-beta",
+      previous: 90,
+      size: 150,
+    });
+
+    expect(onItemSizeChanged).toHaveBeenCalledWith({
+      index: 1,
+      itemData: "beta",
+      itemKey: "item-beta",
+      previous: 90,
+      size: 150,
+    });
+  });
+
+  it("ignores item size changes without a valid index", () => {
+    const onItemSizeChanged = vi.fn();
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => `item-${item}`}
+        renderItem={({ item }) => item}
+        onItemSizeChanged={onItemSizeChanged}
+      />,
+    );
+
+    getLatestLegendListProps().onItemSizeChanged?.({
+      itemKey: "item-alpha",
+      previous: 90,
+      size: 150,
+    });
+
+    expect(onItemSizeChanged).not.toHaveBeenCalled();
+  });
+
+  it("ignores item size changes for out-of-range indices", () => {
+    const onItemSizeChanged = vi.fn();
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => `item-${item}`}
+        renderItem={({ item }) => item}
+        onItemSizeChanged={onItemSizeChanged}
+      />,
+    );
+
+    getLatestLegendListProps().onItemSizeChanged?.({
+      index: 1,
+      itemKey: "item-alpha",
+      previous: 90,
+      size: 150,
+    });
+
+    expect(onItemSizeChanged).not.toHaveBeenCalled();
+  });
+
+  it("ignores item size changes with stale item keys", () => {
+    const onItemSizeChanged = vi.fn();
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => `item-${item}`}
+        renderItem={({ item }) => item}
+        onItemSizeChanged={onItemSizeChanged}
+      />,
+    );
+
+    getLatestLegendListProps().onItemSizeChanged?.({
+      index: 0,
+      itemKey: "item-beta",
+      previous: 90,
+      size: 150,
+    });
+
+    expect(onItemSizeChanged).not.toHaveBeenCalled();
+  });
+
+  it("ignores item size changes with non-finite sizes", () => {
+    const onItemSizeChanged = vi.fn();
+    renderToStaticMarkup(
+      <VirtualizedList
+        data={["alpha"]}
+        keyExtractor={(item) => `item-${item}`}
+        renderItem={({ item }) => item}
+        onItemSizeChanged={onItemSizeChanged}
+      />,
+    );
+
+    getLatestLegendListProps().onItemSizeChanged?.({
+      index: 0,
+      itemKey: "item-alpha",
+      previous: Number.NaN,
+      size: 150,
+    });
+    getLatestLegendListProps().onItemSizeChanged?.({
+      index: 0,
+      itemKey: "item-alpha",
+      previous: 90,
+      size: Number.POSITIVE_INFINITY,
+    });
+
+    expect(onItemSizeChanged).not.toHaveBeenCalled();
   });
 
   it("maps overscan props to LegendList drawDistance", () => {
