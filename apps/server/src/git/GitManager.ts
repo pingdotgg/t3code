@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -532,32 +531,39 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const sourceControlProviders = yield* SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+  const crypto = yield* Crypto.Crypto;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettingsService;
+  const randomUUIDv4 = crypto.randomUUIDv4.pipe(
+    Effect.mapError((cause) =>
+      gitManagerError("randomUUIDv4", "Failed to generate Git operation identifier.", cause),
+    ),
+  );
 
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
     options?: GitRunStackedActionOptions,
-  ) => {
-    const actionId = options?.actionId ?? randomUUID();
-    const reporter = options?.progressReporter;
+  ) =>
+    (options?.actionId === undefined ? randomUUIDv4 : Effect.succeed(options.actionId)).pipe(
+      Effect.map((actionId) => {
+        const reporter = options?.progressReporter;
+        const emit = (event: GitActionProgressPayload) =>
+          reporter
+            ? reporter.publish({
+                actionId,
+                cwd: input.cwd,
+                action: input.action,
+                ...event,
+              } as GitActionProgressEvent)
+            : Effect.void;
 
-    const emit = (event: GitActionProgressPayload) =>
-      reporter
-        ? reporter.publish({
-            actionId,
-            cwd: input.cwd,
-            action: input.action,
-            ...event,
-          } as GitActionProgressEvent)
-        : Effect.void;
-
-    return {
-      actionId,
-      emit,
-    };
-  };
+        return {
+          actionId,
+          emit,
+        };
+      }),
+    );
 
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
@@ -1301,7 +1307,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       modelSelection,
     });
 
-    const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+    const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${yield* randomUUIDv4}.md`);
     yield* fileSystem
       .writeFileString(bodyFile, generated.body)
       .pipe(
@@ -1591,7 +1597,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
 
   const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
-      const progress = createProgressEmitter(input, options);
+      const progress = yield* createProgressEmitter(input, options);
       const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
 
       const runAction = Effect.fn("runStackedAction.runAction")(function* (): Effect.fn.Return<

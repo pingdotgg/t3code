@@ -1459,10 +1459,12 @@ async function syncSavedEnvironmentConnections(
   records: ReadonlyArray<SavedEnvironmentRecord>,
 ): Promise<void> {
   const expectedEnvironmentIds = new Set(records.map((record) => record.environmentId));
-  const staleEnvironmentIds = [...environmentConnections.values()]
-    .filter((connection) => connection.kind === "saved")
-    .map((connection) => connection.environmentId)
-    .filter((environmentId) => !expectedEnvironmentIds.has(environmentId));
+  const staleEnvironmentIds: EnvironmentId[] = [];
+  for (const connection of environmentConnections.values()) {
+    if (connection.kind !== "saved") continue;
+    if (expectedEnvironmentIds.has(connection.environmentId)) continue;
+    staleEnvironmentIds.push(connection.environmentId);
+  }
 
   await Promise.all(
     staleEnvironmentIds.map((environmentId) => disconnectSavedEnvironment(environmentId)),

@@ -221,9 +221,13 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         return null;
       }
 
-      const listedPaths = [...listedFiles.paths]
-        .map((entry) => toPosixPath(entry))
-        .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+      const listedPaths: Array<string> = [];
+      for (const rawEntry of listedFiles.paths) {
+        const entry = toPosixPath(rawEntry);
+        if (entry.length > 0 && !isPathInIgnoredDirectory(entry)) {
+          listedPaths.push(entry);
+        }
+      }
       const filePaths = yield* vcs.driver.filterIgnoredPaths(cwd, listedPaths).pipe(
         Effect.map((paths) => [...paths]),
         Effect.catch(() => filterVcsIgnoredPaths(cwd, listedPaths)),
@@ -456,21 +460,23 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
+      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      for (const dirent of dirents) {
+        if (
+          dirent.isDirectory() &&
+          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
+          (showHidden || !dirent.name.startsWith("."))
+        ) {
+          entries.push({
+            name: dirent.name,
+            fullPath: path.join(parentPath, dirent.name),
+          });
+        }
+      }
 
       return {
         parentPath,
-        entries: dirents
-          .filter(
-            (dirent) =>
-              dirent.isDirectory() &&
-              dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-              (showHidden || !dirent.name.startsWith(".")),
-          )
-          .map((dirent) => ({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          }))
-          .toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
       };
     },
   );
