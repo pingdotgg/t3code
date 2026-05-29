@@ -10,6 +10,7 @@ export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;
   readonly label?: string;
+  readonly accessibilityLabel?: string;
   readonly onPress?: () => void;
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
@@ -55,7 +56,13 @@ export function ControlPill(props: {
   );
 
   return (
-    <Pressable onPress={props.onPress} disabled={props.disabled} className={containerClassName}>
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      accessibilityRole="button"
+      onPress={props.onPress}
+      disabled={props.disabled}
+      className={containerClassName}
+    >
       {props.iconNode ? (
         <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
       ) : props.icon ? (

@@ -2,8 +2,15 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, View, useColorScheme, useWindowDimensions } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  type TextInput as NativeTextInput,
+  View,
+  useColorScheme,
+  useWindowDimensions,
+} from "react-native";
 import {
   KeyboardAvoidingView,
   KeyboardStickyView,
@@ -44,8 +51,8 @@ import {
 
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
 const REVIEW_COMMENT_ACTION_HEIGHT = 44;
-const REVIEW_COMMENT_ACTION_TOP_PADDING = 12;
-const REVIEW_COMMENT_CONTENT_ACTION_GAP = 12;
+const REVIEW_COMMENT_ACTION_TOP_PADDING = 8;
+const REVIEW_COMMENT_CONTENT_ACTION_GAP = 0;
 
 export function ReviewCommentComposerSheet() {
   const router = useRouter();
@@ -64,6 +71,7 @@ export function ReviewCommentComposerSheet() {
   >({});
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const inputRef = useRef<NativeTextInput>(null);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
 
   const selectedLines = useMemo(
@@ -93,6 +101,9 @@ export function ReviewCommentComposerSheet() {
   const actionBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 18);
   const actionBarHeight =
     REVIEW_COMMENT_ACTION_TOP_PADDING + REVIEW_COMMENT_ACTION_HEIGHT + actionBottomPadding;
+  const keepInputFocused = useCallback(() => {
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {
@@ -253,12 +264,14 @@ export function ReviewCommentComposerSheet() {
                   <View className="flex-1 px-4 pt-3.5">
                     <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1 }}>
                       <TextInput
+                        ref={inputRef}
                         autoFocus
                         multiline
                         placeholder="Leave a comment..."
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
+                        onBlur={keepInputFocused}
                         className="h-full flex-1 border-0 bg-transparent px-0 py-0 font-sans text-[15px]"
                         style={{ flex: 1 }}
                       />
@@ -289,14 +302,18 @@ export function ReviewCommentComposerSheet() {
       {target ? (
         <KeyboardStickyView style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
           <View
-            className="flex-row items-center gap-3 bg-sheet px-5 pt-3"
+            className="flex-row items-center gap-3 bg-sheet px-5 pt-2"
             style={{ paddingBottom: actionBottomPadding }}
           >
-            <ControlPill icon="plus" onPress={() => void handlePickImages()} />
+            <ControlPill
+              accessibilityLabel="Add image"
+              icon="plus"
+              onPress={() => void handlePickImages()}
+            />
             <View className="flex-1" />
             <ControlPill
+              accessibilityLabel="Comment"
               icon="arrow.up"
-              label="Comment"
               variant="primary"
               disabled={!canSubmit}
               onPress={() => {
