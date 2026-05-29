@@ -8,6 +8,11 @@ import { ExternalIntake, type ExternalSlackNotificationLink } from "./ExternalIn
 import { ExternalChat } from "./ExternalChat.ts";
 import { slackChatSdkConfigStatus } from "./chatSdkAdapters.ts";
 import { parseGitHubPullRequestMergedEvent } from "./github.ts";
+import {
+  postablePullRequestMerged,
+  postableReplyBody,
+  postableTaskStartedStatus,
+} from "./postableReply.ts";
 import { loadIntakeProfiles, type IntakeProjectProfile } from "./profiles.ts";
 import { slackThreadUrl, t3ThreadUrl } from "./slack.ts";
 import { ExternalIntegrationRepository } from "../persistence/Services/ExternalIntegrations.ts";
@@ -321,7 +326,10 @@ export const supportEmailWebhookRouteLayer = HttpRouter.add(
       const posted = yield* externalChat.postToChannel({
         source: "slack",
         channelId: slackChannelId,
-        text: `Support email received: ${email.subject ?? "(no subject)"}\nFrom: ${email.from ?? "unknown"}`,
+        message: postableReplyBody({
+          kind: "slack_thread",
+          body: `Support email received: ${email.subject ?? "(no subject)"}\nFrom: ${email.from ?? "unknown"}`,
+        }),
       });
       notificationSlackLink = {
         externalThreadId: posted.externalThreadId,
@@ -371,7 +379,10 @@ export const supportEmailWebhookRouteLayer = HttpRouter.add(
             .postToThread({
               source: "slack",
               externalThreadId: notificationSlackLink.externalThreadId,
-              text: `Open T3: ${threadUrl}`,
+              message: postableTaskStartedStatus({
+                kind: "slack_thread",
+                t3ThreadUrl: threadUrl,
+              }),
             })
             .pipe(Effect.ignoreCause({ log: true }));
         }
@@ -449,7 +460,11 @@ export const githubWebhookRouteLayer = HttpRouter.add(
       const posted = yield* externalChat.postToThread({
         source: "slack",
         externalThreadId: link.externalThreadId,
-        text: `PR was merged: ${merged.url}${merged.title ? `\n${merged.title}` : ""}`,
+        message: postablePullRequestMerged({
+          kind: "slack_thread",
+          pullRequestUrl: merged.url,
+          title: merged.title,
+        }),
       });
       yield* repository.upsertDeliveryReceipt({
         source: "github",

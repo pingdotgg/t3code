@@ -9,6 +9,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ExternalIntegrationRepository } from "../persistence/Services/ExternalIntegrations.ts";
 import { ExternalChat } from "./ExternalChat.ts";
 import { extractGitHubPullRequests } from "./github.ts";
+import { postableReplyBody } from "./postableReply.ts";
 
 type AssistantMessageEvent = Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
@@ -62,7 +63,10 @@ const make = Effect.gen(function* () {
           .postToThread({
             source: "slack",
             externalThreadId: link.externalThreadId,
-            text: event.payload.text,
+            message: postableReplyBody({
+              kind: "slack_thread",
+              body: event.payload.text,
+            }),
           })
           .pipe(
             Effect.catch((error) =>

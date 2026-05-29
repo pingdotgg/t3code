@@ -1,4 +1,11 @@
-import { Chat, type Attachment, type Message, type MessageContext, type Thread } from "chat";
+import {
+  Chat,
+  type Attachment,
+  type Message,
+  type MessageContext,
+  type PostableMessage,
+  type Thread,
+} from "chat";
 import type { SlackEvent } from "@chat-adapter/slack";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -20,6 +27,7 @@ import {
   stripSlackClientAttribution,
   t3ThreadUrl,
 } from "./slack.ts";
+import { postableTaskStartedStatus } from "./postableReply.ts";
 
 export class ExternalChatError extends Data.TaggedError("ExternalChatError")<{
   readonly message: string;
@@ -31,12 +39,12 @@ export interface ExternalChatShape {
   readonly postToThread: (input: {
     readonly source: "slack";
     readonly externalThreadId: string;
-    readonly text: string;
+    readonly message: PostableMessage;
   }) => Effect.Effect<{ readonly externalMessageId: string }, ExternalChatError>;
   readonly postToChannel: (input: {
     readonly source: "slack";
     readonly channelId: string;
-    readonly text: string;
+    readonly message: PostableMessage;
   }) => Effect.Effect<
     {
       readonly externalThreadId: string;
@@ -204,9 +212,14 @@ const makeExternalChat = Effect.gen(function* () {
           t3ThreadId: String(result.t3ThreadId),
         });
         if (threadUrl !== undefined) {
-          yield* Effect.promise(() => input.thread.post(`Started a T3 thread: ${threadUrl}`)).pipe(
-            Effect.ignoreCause({ log: true }),
-          );
+          yield* Effect.promise(() =>
+            input.thread.post(
+              postableTaskStartedStatus({
+                kind: "slack_thread",
+                t3ThreadUrl: threadUrl,
+              }),
+            ),
+          ).pipe(Effect.ignoreCause({ log: true }));
         }
       } else if (result.status === "ignored" && result.reaction !== undefined) {
         yield* Effect.promise(() =>
@@ -272,7 +285,9 @@ const makeExternalChat = Effect.gen(function* () {
     Effect.tryPromise({
       try: async () => {
         await bot.initialize();
-        const posted = await bot.thread(slackChatThreadId(input.externalThreadId)).post(input.text);
+        const posted = await bot
+          .thread(slackChatThreadId(input.externalThreadId))
+          .post(input.message);
         return { externalMessageId: posted.id };
       },
       catch: toExternalChatError,
@@ -283,7 +298,7 @@ const makeExternalChat = Effect.gen(function* () {
       try: async () => {
         await bot.initialize();
         const channel = bot.channel(`slack:${input.channelId}`);
-        const posted = await channel.post(input.text);
+        const posted = await channel.post(input.message);
         return {
           externalThreadId: slackExternalThreadId({
             channelId: input.channelId,
