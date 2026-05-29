@@ -3,7 +3,7 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
+import { Deferred } from "effect";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

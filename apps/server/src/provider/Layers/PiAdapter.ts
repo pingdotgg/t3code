@@ -12,6 +12,7 @@ import {
   type ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -126,6 +127,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   options?: PiAdapterOptions,
 ) {
   const serverConfig = yield* ServerConfig;
+  const crypto = yield* Crypto.Crypto;
+  const randomUUIDv4 = crypto.randomUUIDv4.pipe(Effect.orDie);
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, PiSessionContext>();
   const boundInstanceId = options?.instanceId;
@@ -142,7 +145,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     readonly raw?: unknown;
   }) {
     return {
-      eventId: EventId.make(crypto.randomUUID()),
+      eventId: EventId.make(yield* randomUUIDv4),
       provider: PROVIDER,
       ...(boundInstanceId ? { providerInstanceId: boundInstanceId } : {}),
       threadId: input.threadId,
@@ -413,7 +416,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         context.piSession.setThinkingLevel(thinkingLevel);
       }
 
-      const turnId = TurnId.make(crypto.randomUUID());
+      const turnId = TurnId.make(yield* randomUUIDv4);
       context.activeTurnId = turnId;
       context.session = {
         ...context.session,

@@ -9,6 +9,7 @@
  * @module provider/Drivers/PiDriver
  */
 import { PiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -36,7 +37,7 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   packageName: "@earendil-works/pi-coding-agent",
 });
 
-export type PiDriverEnv = ServerConfig;
+export type PiDriverEnv = Crypto.Crypto | ServerConfig;
 
 const withInstanceIdentity =
   (input: {
