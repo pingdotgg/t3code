@@ -68,6 +68,7 @@ export interface ExternalIntakeMessage {
   readonly attachments?: readonly UploadChatAttachment[] | undefined;
   readonly url?: string | undefined;
   readonly receivedAt: string;
+  readonly initialPromptContext?: string | undefined;
   readonly profile?: IntakeProjectProfile | undefined;
   readonly projectHintText?: string | undefined;
   readonly slack?:
@@ -207,44 +208,46 @@ function buildInitialPrompt(input: ExternalIntakeMessage) {
     profile?.supportEmail?.agentPrompt ?? envValue("SUPPORT_EMAIL_AGENT_PROMPT");
 
   if (input.source === "support_email") {
-    const sourceContext = (supportAgentPrompt ?? DEFAULT_SUPPORT_EMAIL_AGENT_PROMPT).trim();
-    const agentPrompt = [TASK_INTAKE_AGENT_PROMPT, sourceContext]
-      .filter((part) => part.length > 0)
-      .join("\n\n");
-    return [
-      ["<triage_prompt>", supportPrompt, "</triage_prompt>"].join("\n"),
-      ["<agent_prompt>", agentPrompt, "</agent_prompt>"].join("\n"),
-      "",
-      "User request:",
-      input.text,
-    ].join("\n");
+    return buildTaskIntakeInitialPrompt(input, {
+      agentPrompt: supportAgentPrompt ?? DEFAULT_SUPPORT_EMAIL_AGENT_PROMPT,
+      triagePrompt: supportPrompt,
+    });
   }
 
-  const genericAgentPrompt = [
-    "- Work in the prepared worktree for this thread.",
-    "- If you make code changes, create a pull request and include the PR URL in your final response.",
-    "- Keep replies concise and include links to external artifacts you create.",
-  ].join("\n");
+  return buildTaskIntakeInitialPrompt(input, {
+    ...(input.initialPromptContext !== undefined
+      ? { agentPrompt: input.initialPromptContext }
+      : {}),
+  });
+}
 
-  return [
-    `External request source: ${input.source}`,
-    `Title: ${input.title}`,
-    ...(input.url !== undefined ? [`External URL: ${input.url}`] : []),
-    "",
-    genericAgentPrompt,
-    "",
-    "Request:",
-    input.text,
-  ].join("\n");
+function buildTaskIntakeInitialPrompt(
+  input: ExternalIntakeMessage,
+  options: {
+    readonly agentPrompt?: string | undefined;
+    readonly triagePrompt?: string | undefined;
+  } = {},
+) {
+  const relayPrompt = buildTaskIntakeRelayPrompt(input);
+  const triagePrompt = options.triagePrompt?.trim();
+  const sourceContext = options.agentPrompt?.trim();
+  const agentPrompt = [TASK_INTAKE_AGENT_PROMPT, sourceContext]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join("\n\n");
+  const promptSections = [
+    ...(triagePrompt ? [["<triage_prompt>", triagePrompt, "</triage_prompt>"].join("\n")] : []),
+    ["<agent_prompt>", agentPrompt, "</agent_prompt>"].join("\n"),
+  ];
+  return [...promptSections, "", "User request:", relayPrompt].join("\n");
+}
+
+function buildTaskIntakeRelayPrompt(input: ExternalIntakeMessage) {
+  const text = input.text.trim();
+  return text.length > 0 ? text : "(empty message body)";
 }
 
 function buildFollowUpPrompt(input: ExternalIntakeMessage) {
-  return [
-    `Follow-up from ${input.source}.`,
-    ...(input.url !== undefined ? [`External URL: ${input.url}`] : []),
-    "",
-    input.text,
-  ].join("\n");
+  return buildTaskIntakeRelayPrompt(input);
 }
 
 function mapUnknownToError(cause: unknown) {

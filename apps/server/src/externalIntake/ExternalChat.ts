@@ -143,6 +143,70 @@ function titleFromText(text: string, fallback: string) {
   return (firstLine ?? fallback).slice(0, 120);
 }
 
+function messageTimestamp(message: Message) {
+  return message.metadata.dateSent.getTime();
+}
+
+function messageAuthorLabel(message: Message) {
+  return (
+    message.author.fullName.trim() ||
+    message.author.userName.trim() ||
+    message.author.userId.trim() ||
+    "Someone"
+  );
+}
+
+function formatContextMessage(message: Message) {
+  const text = messageTextWithAttachments(message);
+  if (text.length === 0) return null;
+  return `${messageAuthorLabel(message)}: ${text}`;
+}
+
+async function collectSlackThreadContext(
+  thread: Thread,
+  triggerMessage: Message,
+  options: {
+    readonly maxMessages?: number;
+    readonly maxChars?: number;
+  } = {},
+) {
+  const maxMessages = options.maxMessages ?? 30;
+  const maxChars = options.maxChars ?? 8_000;
+  const triggerTime = messageTimestamp(triggerMessage);
+  const priorMessages: Message[] = [];
+
+  for await (const message of thread.messages) {
+    if (message.id === triggerMessage.id) continue;
+    if (message.author.isMe === true || message.author.isBot === true) continue;
+    if (messageTimestamp(message) > triggerTime) continue;
+    priorMessages.push(message);
+    if (priorMessages.length >= maxMessages) break;
+  }
+
+  const lines = priorMessages
+    .toSorted((left, right) => messageTimestamp(left) - messageTimestamp(right))
+    .map(formatContextMessage)
+    .filter((line): line is string => line !== null);
+
+  if (lines.length === 0) return undefined;
+
+  const context = lines.join("\n\n");
+  return context.length > maxChars ? context.slice(0, maxChars).trimEnd() : context;
+}
+
+function buildSlackInitialPromptContext(input: { readonly slackThreadContext?: string }) {
+  const context = input.slackThreadContext?.trim();
+  if (!context) return undefined;
+  return [
+    "- This task was started from a Slack thread where Vevin was invoked.",
+    "- Use the prior Slack thread context below to interpret the user request.",
+    "",
+    "Prior Slack thread context:",
+    "",
+    context,
+  ].join("\n");
+}
+
 function optionCreatedAt<T extends { readonly createdAt: string }>(
   option: Option.Option<T>,
   fallback: string,
@@ -190,6 +254,22 @@ const makeExternalChat = Effect.gen(function* () {
         updatedAt: now,
       });
 
+      const existingLink = yield* repository.getThreadLink({
+        source: "slack",
+        externalThreadId: ref.externalThreadId,
+      });
+      const isSlackThreadReply =
+        ref.raw.thread_ts !== undefined && ref.raw.thread_ts !== (ref.raw.ts ?? input.message.id);
+      const slackThreadContext =
+        Option.isNone(existingLink) && input.message.isMention === true && isSlackThreadReply
+          ? yield* Effect.tryPromise(() =>
+              collectSlackThreadContext(input.thread, input.message),
+            ).pipe(Effect.orElseSucceed(() => undefined))
+          : undefined;
+      const initialPromptContext = buildSlackInitialPromptContext(
+        slackThreadContext === undefined ? {} : { slackThreadContext },
+      );
+
       const intakeMessage: ExternalIntakeMessage = {
         source: "slack",
         externalThreadId: ref.externalThreadId,
@@ -205,6 +285,7 @@ const makeExternalChat = Effect.gen(function* () {
           botUserId: process.env.SLACK_BOT_USER_ID,
           botUserName: process.env.SLACK_BOT_USERNAME,
         },
+        ...(initialPromptContext !== undefined ? { initialPromptContext } : {}),
       };
 
       const result = yield* intake.handleMessage(intakeMessage);
