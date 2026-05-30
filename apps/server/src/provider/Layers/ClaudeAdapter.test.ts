@@ -44,7 +44,7 @@ const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonS
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
-  "test/ClaudeAdapter",
+  "t3/provider/Layers/ClaudeAdapter.test/ClaudeAdapter",
 ) {}
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {

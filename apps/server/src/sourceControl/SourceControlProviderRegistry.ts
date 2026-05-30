@@ -51,7 +51,7 @@ export interface SourceControlProviderRegistryShape {
 export class SourceControlProviderRegistry extends Context.Service<
   SourceControlProviderRegistry,
   SourceControlProviderRegistryShape
->()("t3/source-control/SourceControlProviderRegistry") {}
+>()("t3/sourceControl/SourceControlProviderRegistry") {}
 
 function unsupportedProvider(
   kind: SourceControlProviderKind,

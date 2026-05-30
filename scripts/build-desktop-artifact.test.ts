@@ -53,13 +53,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           electron: "41.5.0",
         },
         {
-          "@effect/platform-node": "4.0.0-beta.59",
-          effect: "4.0.0-beta.59",
+          "@effect/platform-node": "4.0.0-beta.73",
+          effect: "4.0.0-beta.73",
         },
       ),
       {
-        "@effect/platform-node": "4.0.0-beta.59",
-        effect: "4.0.0-beta.59",
+        "@effect/platform-node": "4.0.0-beta.73",
+        effect: "4.0.0-beta.73",
       },
     );
   });

@@ -1,6 +1,9 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
-import { extractJsonObject } from "./schemaJson.ts";
+import { extractJsonObject, fromLenientJson } from "./schemaJson.ts";
+
+const decodeLenientJson = Schema.decodeUnknownSync(fromLenientJson(Schema.Unknown));
 
 describe("schemaJson helpers", () => {
   it("extracts a balanced JSON object from surrounding text", () => {
@@ -27,5 +30,22 @@ Done.`),
 
   it("returns trimmed input when no JSON object starts", () => {
     expect(extractJsonObject("  no structured output  ")).toBe("no structured output");
+  });
+
+  it("decodes JSON with comments and trailing commas", () => {
+    expect(
+      decodeLenientJson(`{
+        // Comments are valid in settings files.
+        "enabled": true,
+        "values": [1, 2,],
+      }`),
+    ).toEqual({
+      enabled: true,
+      values: [1, 2],
+    });
+  });
+
+  it("rejects malformed JSON after lenient preprocessing", () => {
+    expect(() => decodeLenientJson('{ "enabled": true,, }')).toThrow();
   });
 });

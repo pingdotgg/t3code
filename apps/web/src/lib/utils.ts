@@ -1,8 +1,7 @@
 import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
+import * as Encoding from "effect/Encoding";
 import { twMerge } from "tailwind-merge";
-import * as Random from "effect/Random";
-import * as Effect from "effect/Effect";
 import { DraftId } from "../composerDraftStore";
 
 export function cn(...inputs: CxOptions) {
@@ -21,11 +20,12 @@ export function isLinuxPlatform(platform: string): boolean {
   return /linux/i.test(platform);
 }
 
+export function randomHex(byteLength: number): string {
+  return Encoding.encodeHex(globalThis.crypto.getRandomValues(new Uint8Array(byteLength)));
+}
+
 export function randomUUID(): string {
-  if (typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return Effect.runSync(Random.nextUUIDv4);
+  return globalThis.crypto.randomUUID();
 }
 
 export const newCommandId = (): CommandId => CommandId.make(randomUUID());

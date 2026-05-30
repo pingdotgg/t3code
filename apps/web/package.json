@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test:browser:install": "playwright install --with-deps chromium"
@@ -43,7 +43,6 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@effect/language-service": "catalog:",
     "@rolldown/plugin-babel": "^0.2.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
@@ -57,7 +56,6 @@
     "msw": "2.12.11",
     "playwright": "^1.58.2",
     "tailwindcss": "^4.0.0",
-    "typescript": "catalog:",
     "vite": "^8.0.0",
     "vitest": "catalog:",
     "vitest-browser-react": "^2.0.5"

@@ -1,4 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
+// @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

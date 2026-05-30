@@ -63,7 +63,14 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 
 describe("isTemporaryWorktreeBranch", () => {
   it("matches the generated temporary worktree refName format", () => {
-    expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
+    expect(
+      isTemporaryWorktreeBranch(
+        buildTemporaryWorktreeBranchName((byteLength) => {
+          expect(byteLength).toBe(4);
+          return "DEADBEEF";
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("matches generated temporary worktree refs", () => {

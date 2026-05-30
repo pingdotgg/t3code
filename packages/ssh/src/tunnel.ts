@@ -1753,10 +1753,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
 });
 
+/**
+ * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,
   SshEnvironmentManagerShape
->()("@t3tools/ssh/SshEnvironmentManager") {
+>()("@t3tools/ssh/tunnel/SshEnvironmentManager") {
   static readonly layer = (options: SshEnvironmentManagerOptions = {}) =>
     Layer.effect(SshEnvironmentManager, makeSshEnvironmentManager(options));
 }

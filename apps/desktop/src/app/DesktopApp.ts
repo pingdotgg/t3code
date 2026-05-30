@@ -1,8 +1,8 @@
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -30,7 +30,8 @@ const DISABLED_CHROMIUM_OVERSCROLL_FEATURES = [
   "TouchpadOverscrollHistoryNavigation",
 ] as const;
 
-const makeDesktopRunId = Random.nextUUIDv4.pipe(
+const makeDesktopRunId = Crypto.Crypto.pipe(
+  Effect.flatMap((crypto) => crypto.randomUUIDv4),
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 

@@ -62,7 +62,7 @@ export interface DesktopWindowShape {
 }
 
 export class DesktopWindow extends Context.Service<DesktopWindow, DesktopWindowShape>()(
-  "t3/desktop/Window",
+  "@t3tools/desktop/window/DesktopWindow",
 ) {}
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =

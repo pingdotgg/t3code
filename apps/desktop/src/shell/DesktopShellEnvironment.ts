@@ -26,7 +26,7 @@ export interface DesktopShellEnvironmentShape {
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   DesktopShellEnvironmentShape
->()("t3/desktop/ShellEnvironment") {}
+>()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
