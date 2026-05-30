@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -36,12 +37,6 @@ export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.orElseSucceed(() => "unavailable"),
 );
 
-function taggedErrorName(error: unknown): string {
-  return typeof error === "object" && error !== null && "_tag" in error
-    ? String(error._tag)
-    : typeof error;
-}
-
 export function annotateEnvironmentRequest(endpoint: string) {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -53,7 +48,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
         ? Effect.logWarning("environment api request failed", {
             endpoint,
             traceId,
-            errorTag: taggedErrorName(exit.cause),
+            errorTag: causeErrorTag(exit.cause),
             cause: exit.cause,
           })
         : Effect.void,
