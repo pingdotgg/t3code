@@ -5,9 +5,9 @@ email, and GitHub webhooks. This document explains the server-native
 orchestrator path: what runs, what gets stored, how projects are selected, and
 which environment variables configure it.
 
-The current implementation lives in `apps/server/src/externalIntake`. The old
-`apps/orchestrator` Convex package is historical migration code only; it is not
-part of the live request path.
+The implementation lives in `apps/server/src/externalIntake`. There is no
+separate orchestrator service; the same `apps/server` process owns the intake
+routes, local repos, worktrees, and provider sessions.
 
 ## Mental Model
 

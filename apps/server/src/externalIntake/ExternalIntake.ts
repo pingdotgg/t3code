@@ -120,7 +120,7 @@ const DEFAULT_MODEL_SELECTION = {
   options: [{ id: "fastMode", value: true }],
 } as const satisfies ModelSelection;
 
-const TASK_INTAKE_AGENT_PROMPT = [
+const EXTERNAL_INTAKE_AGENT_PROMPT = [
   "System context and operating rules:",
   "You are the coding agent behind an internal task intake agent that lets team members request product and code work from Slack and other intake sources. The requester will only see selected relayed responses, so keep responses clear, concrete, and include important URLs when they become available.",
   "",
@@ -243,29 +243,29 @@ function buildInitialPrompt(input: ExternalIntakeMessage) {
     profile?.supportEmail?.agentPrompt ?? envValue("SUPPORT_EMAIL_AGENT_PROMPT");
 
   if (input.source === "support_email") {
-    return buildTaskIntakeInitialPrompt(input, {
+    return buildExternalIntakeInitialPrompt(input, {
       agentPrompt: supportAgentPrompt ?? DEFAULT_SUPPORT_EMAIL_AGENT_PROMPT,
       triagePrompt: supportPrompt,
     });
   }
 
-  return buildTaskIntakeInitialPrompt(
+  return buildExternalIntakeInitialPrompt(
     input,
     input.initialPromptContext !== undefined ? { agentPrompt: input.initialPromptContext } : {},
   );
 }
 
-function buildTaskIntakeInitialPrompt(
+function buildExternalIntakeInitialPrompt(
   input: ExternalIntakeMessage,
   options: {
     readonly agentPrompt?: string | undefined;
     readonly triagePrompt?: string | undefined;
   } = {},
 ) {
-  const relayPrompt = buildTaskIntakeRelayPrompt(input);
+  const relayPrompt = buildExternalIntakeRelayPrompt(input);
   const triagePrompt = options.triagePrompt?.trim();
   const sourceContext = options.agentPrompt?.trim();
-  const agentPrompt = [TASK_INTAKE_AGENT_PROMPT, sourceContext]
+  const agentPrompt = [EXTERNAL_INTAKE_AGENT_PROMPT, sourceContext]
     .filter((part): part is string => part !== undefined && part.length > 0)
     .join("\n\n");
   const promptSections = [
@@ -275,7 +275,7 @@ function buildTaskIntakeInitialPrompt(
   return [...promptSections, "", "User request:", relayPrompt].join("\n");
 }
 
-function buildTaskIntakeRelayPrompt(input: ExternalIntakeMessage) {
+function buildExternalIntakeRelayPrompt(input: ExternalIntakeMessage) {
   const text = input.text.trim();
   if (text.length > 0) return text;
 
@@ -285,7 +285,7 @@ function buildTaskIntakeRelayPrompt(input: ExternalIntakeMessage) {
 }
 
 function buildFollowUpPrompt(input: ExternalIntakeMessage) {
-  return buildTaskIntakeRelayPrompt(input);
+  return buildExternalIntakeRelayPrompt(input);
 }
 
 function mapUnknownToError(cause: unknown) {
