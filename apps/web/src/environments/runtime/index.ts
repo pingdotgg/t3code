@@ -27,4 +27,5 @@ export {
   resetEnvironmentServiceForTests,
   startEnvironmentConnectionService,
   subscribeEnvironmentConnections,
+  subscribeProviderInvalidations,
 } from "./service";

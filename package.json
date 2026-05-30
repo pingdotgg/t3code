@@ -44,6 +44,7 @@
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",
+    "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
     "fmt": "oxfmt",
@@ -92,7 +93,9 @@
     ]
   },
   "patchedDependencies": {
-    "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch"
+    "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+    "react-native-nitro-modules@0.35.4": "patches/react-native-nitro-modules@0.35.4.patch",
+    "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch"
   },
   "trustedDependencies": [
     "node-pty",

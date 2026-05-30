@@ -14,7 +14,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
-import type { WsRpcClient } from "./wsRpcClient";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
 
 export type ServerConfigUpdateSource = ServerConfigStreamEvent["type"];

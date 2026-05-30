@@ -30,10 +30,13 @@ const STREAM_METHODS = new Set<string>([
   ORCHESTRATION_WS_METHODS.subscribeShell,
   ORCHESTRATION_WS_METHODS.subscribeThread,
   WS_METHODS.gitRunStackedAction,
+  WS_METHODS.terminalAttach,
   WS_METHODS.subscribeVcsStatus,
   WS_METHODS.subscribeTerminalEvents,
+  WS_METHODS.subscribeTerminalMetadata,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeAuthAccess,
 ]);
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());

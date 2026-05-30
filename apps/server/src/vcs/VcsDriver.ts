@@ -7,6 +7,8 @@ import type {
   VcsInitInput,
   VcsListRemotesResult,
   VcsListWorkspaceFilesResult,
+  ReviewDiffPreviewInput,
+  ReviewDiffPreviewResult,
   VcsRepositoryIdentity,
 } from "@t3tools/contracts";
 import { CheckpointRef } from "@t3tools/contracts";
@@ -67,6 +69,9 @@ export interface VcsDriverShape {
     relativePaths: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyArray<string>, VcsError>;
   readonly initRepository: (input: VcsInitInput) => Effect.Effect<void, VcsError>;
+  readonly getDiffPreview?: (
+    input: ReviewDiffPreviewInput,
+  ) => Effect.Effect<ReviewDiffPreviewResult, VcsError>;
 }
 
 export class VcsDriver extends Context.Service<VcsDriver, VcsDriverShape>()("t3/vcs/VcsDriver") {}

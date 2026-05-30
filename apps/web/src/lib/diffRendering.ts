@@ -1,3 +1,6 @@
+import { parsePatchFiles } from "@pierre/diffs";
+import type { FileDiffMetadata } from "@pierre/diffs/react";
+
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
@@ -36,4 +39,74 @@ export function buildPatchCacheKey(patch: string, scope = "diff-panel"): string 
     SECONDARY_HASH_MULTIPLIER,
   ).toString(36);
   return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+}
+
+export type RenderablePatch =
+  | {
+      kind: "files";
+      files: FileDiffMetadata[];
+    }
+  | {
+      kind: "raw";
+      text: string;
+      reason: string;
+    };
+
+export function getRenderablePatch(
+  patch: string | undefined,
+  cacheScope = "diff-panel",
+): RenderablePatch | null {
+  if (!patch) return null;
+  const normalizedPatch = patch.trim();
+  if (normalizedPatch.length === 0) return null;
+
+  try {
+    const parsedPatches = parsePatchFiles(
+      normalizedPatch,
+      buildPatchCacheKey(normalizedPatch, cacheScope),
+    );
+    const files = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
+    if (files.length > 0) {
+      return { kind: "files", files };
+    }
+
+    return {
+      kind: "raw",
+      text: normalizedPatch,
+      reason: "Unsupported diff format. Showing raw patch.",
+    };
+  } catch {
+    return {
+      kind: "raw",
+      text: normalizedPatch,
+      reason: "Failed to parse patch. Showing raw patch.",
+    };
+  }
+}
+
+export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
+  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
+  if (raw.startsWith("a/") || raw.startsWith("b/")) {
+    return raw.slice(2);
+  }
+  return raw;
+}
+
+export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
+  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
+}
+
+export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
+  switch (fileDiff.type) {
+    case "new":
+      return "text-[var(--diffs-addition-base)]";
+    case "deleted":
+      return "text-[var(--diffs-deletion-base)]";
+    case "change":
+    case "rename-pure":
+    case "rename-changed":
+      return "text-[var(--diffs-modified-base)]";
+    default:
+      return "text-muted-foreground/80";
+  }
 }

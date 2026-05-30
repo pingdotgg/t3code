@@ -1,0 +1,58 @@
+included:
+  - ios/T3Code
+  - modules/t3-terminal/ios
+  - modules/t3-review-diff/ios
+
+excluded:
+  - ios/Pods
+  - ios/build
+  - modules/t3-terminal/Vendor
+
+reporter: xcode
+
+disabled_rules:
+  - file_length
+  - function_body_length
+  - identifier_name
+  - line_length
+  - lower_acl_than_parent
+  - modifier_order
+  - trailing_comma
+  - type_body_length
+
+opt_in_rules:
+  - array_init
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - enum_case_associated_values_count
+  - fallthrough
+  - fatal_error_message
+  - first_where
+  - flatmap_over_map_reduce
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - last_where
+  - legacy_multiple
+  - legacy_random
+  - operator_usage_whitespace
+  - overridden_super_call
+  - prefer_self_type_over_type_of_self
+  - private_action
+  - private_outlet
+  - prohibited_super_call
+  - reduce_into
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - static_operator
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - vertical_parameter_alignment_on_call
+  - yoda_condition

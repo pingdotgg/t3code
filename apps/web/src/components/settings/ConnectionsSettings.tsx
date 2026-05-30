@@ -17,6 +17,7 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { WsRpcClient } from "@t3tools/client-runtime";
 import * as DateTime from "effect/DateTime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -82,7 +83,6 @@ import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
-import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import {
   type SavedEnvironmentRecord,
   type SavedEnvironmentRuntimeState,

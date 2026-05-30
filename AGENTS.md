@@ -3,6 +3,7 @@
 ## Task Completion Requirements
 
 - All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
+  - If changing native mobile code, `bun lint:mobile` must also pass.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
 ## Project Snapshot

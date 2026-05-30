@@ -1,0 +1,17 @@
+{
+  "name": "@t3tools/mobile-terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "T3TerminalModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.t3terminal.T3TerminalModule"
+      ]
+    }
+  }
+}
