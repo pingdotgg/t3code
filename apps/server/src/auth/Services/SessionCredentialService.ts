@@ -88,4 +88,4 @@ export interface SessionCredentialServiceShape {
 export class SessionCredentialService extends Context.Service<
   SessionCredentialService,
   SessionCredentialServiceShape
->()("t3/auth/Services/SessionCredentialService") {}
+>()("salchi/auth/Services/SessionCredentialService") {}

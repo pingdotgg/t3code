@@ -295,6 +295,20 @@ function toMessage(cause: unknown, fallback: string): string {
   return fallback;
 }
 
+function decodeUnknownJsonText(value: string, fallback: string): Effect.Effect<unknown, string> {
+  const result = decodeUnknownJsonStringExit(value);
+  return Exit.isSuccess(result)
+    ? Effect.succeed(result.value)
+    : Effect.fail(toMessage(result.cause, fallback));
+}
+
+function encodeUnknownJsonText(value: unknown, fallback: string): Effect.Effect<string, string> {
+  const result = encodeUnknownJsonStringExit(value);
+  return Exit.isSuccess(result)
+    ? Effect.succeed(result.value)
+    : Effect.fail(toMessage(result.cause, fallback));
+}
+
 function asUnknownRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -416,6 +430,7 @@ async function defaultFetchClaudeOAuthUsage(input: {
   readonly accessToken: string;
   readonly environment: NodeJS.ProcessEnv;
 }): Promise<unknown> {
+  // @effect-diagnostics-next-line globalFetch:off - This default callback is a Promise boundary for Claude OAuth usage probes.
   const response = await fetch(CLAUDE_OAUTH_USAGE_URL, {
     headers: {
       "Content-Type": "application/json",
@@ -447,9 +462,13 @@ function toProcessError(
 function normalizeClaudeStreamMessages(
   cause: Cause.Cause<{ readonly message: string }>,
 ): ReadonlyArray<string> {
-  const errors = Cause.prettyErrors(cause)
-    .map((error) => error.message.trim())
-    .filter((message) => message.length > 0);
+  const errors: Array<string> = [];
+  for (const error of Cause.prettyErrors(cause)) {
+    const message = error.message.trim();
+    if (message.length > 0) {
+      errors.push(message);
+    }
+  }
   if (errors.length > 0) {
     return errors;
   }
@@ -1334,10 +1353,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(text) as unknown,
-      catch: (cause) => toMessage(cause, "Failed to parse Claude credentials."),
-    }).pipe(Effect.catch(() => Effect.void));
+    const parsed = yield* decodeUnknownJsonText(text, "Failed to parse Claude credentials.").pipe(
+      Effect.catch(() => Effect.void),
+    );
     return parseClaudeOAuthCredentials(parsed);
   });
 
@@ -1351,19 +1369,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const scopes =
       credentials.scopes.length > 0 ? credentials.scopes : [...CLAUDE_OAUTH_DEFAULT_SCOPES];
+    const body = yield* encodeUnknownJsonText(
+      {
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: CLAUDE_OAUTH_CLIENT_ID,
+        scope: scopes.join(" "),
+      },
+      "Failed to encode Claude OAuth refresh request.",
+    );
     const response = yield* Effect.tryPromise({
       try: () =>
+        // @effect-diagnostics-next-line globalFetchInEffect:off - Claude OAuth token refresh is isolated at this Promise boundary.
         fetch(CLAUDE_OAUTH_TOKEN_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-            client_id: CLAUDE_OAUTH_CLIENT_ID,
-            scope: scopes.join(" "),
-          }),
+          body,
           signal: AbortSignal.timeout(Duration.toMillis(CLAUDE_USAGE_REFRESH_TIMEOUT)),
         }),
       catch: (cause) => toMessage(cause, "Claude OAuth token refresh failed."),
@@ -1468,10 +1491,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(text) as unknown,
-      catch: (cause) => toMessage(cause, "Failed to parse Claude statusline usage."),
-    }).pipe(Effect.catch(() => Effect.void));
+    const parsed = yield* decodeUnknownJsonText(
+      text,
+      "Failed to parse Claude statusline usage.",
+    ).pipe(Effect.catch(() => Effect.void));
     const record = asUnknownRecord(parsed);
     return record?.rate_limits ?? record?.rateLimits;
   });

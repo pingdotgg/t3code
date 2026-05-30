@@ -108,4 +108,6 @@ export interface ProjectionThreadQueuedTurnRepositoryShape {
 export class ProjectionThreadQueuedTurnRepository extends Context.Service<
   ProjectionThreadQueuedTurnRepository,
   ProjectionThreadQueuedTurnRepositoryShape
->()("t3/persistence/Services/ProjectionThreadQueuedTurns/ProjectionThreadQueuedTurnRepository") {}
+>()(
+  "salchi/persistence/Services/ProjectionThreadQueuedTurns/ProjectionThreadQueuedTurnRepository",
+) {}

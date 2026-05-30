@@ -1,3 +1,5 @@
+import "../index.css";
+
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { ThreadId, type VcsStatusResult } from "@t3tools/contracts";
 import { useState } from "react";
@@ -272,6 +274,7 @@ vi.mock("~/store", () => {
 
 import { useGitActionRunner } from "./useGitActionRunner";
 import SourceControlPanel from "./SourceControlPanel";
+import { __resetSourceControlPanelStateForTests } from "../sourceControlPanelState";
 import {
   __readWorkspaceFilePanelStateForTests,
   __resetWorkspaceFilePanelStateForTests,
@@ -310,6 +313,12 @@ function Harness() {
 function findButtonByText(text: string): HTMLButtonElement | null {
   return (Array.from(document.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(text),
+  ) ?? null) as HTMLButtonElement | null;
+}
+
+function findButtonByExactText(text: string): HTMLButtonElement | null {
+  return (Array.from(document.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === text,
   ) ?? null) as HTMLButtonElement | null;
 }
 
@@ -357,11 +366,19 @@ function createPanelStatus(input?: {
 
 async function renderPanel() {
   const host = document.createElement("div");
+  host.style.height = "320px";
+  host.style.width = "720px";
   document.body.append(host);
   const screen = await render(<SourceControlPanel onClose={() => undefined} />, {
     container: host,
   });
   return { host, screen };
+}
+
+function getSourceControlScrollViewport(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    '[data-testid="source-control-scroll"] [data-slot="scroll-area-viewport"]',
+  );
 }
 
 describe("SourceControlPanel git action runner", () => {
@@ -371,6 +388,7 @@ describe("SourceControlPanel git action runner", () => {
     activeRunStackedActionDeferredRef.current = createDeferredPromise<never>();
     currentGitStatusRef.current = createPanelStatus();
     hasServerThreadRef.current = true;
+    __resetSourceControlPanelStateForTests();
     __resetWorkspaceFilePanelStateForTests();
     document.body.innerHTML = "";
   });
@@ -448,6 +466,102 @@ describe("SourceControlPanel git action runner", () => {
     } finally {
       await screen.unmount();
       host.remove();
+    }
+  });
+
+  it("restores the source control scroll position after returning from a file preview", async () => {
+    currentGitStatusRef.current = createPanelStatus({
+      unstagedFiles: Array.from({ length: 40 }, (_, index) => ({
+        path: `docs/file-${String(index).padStart(2, "0")}.ts`,
+        status: "modified",
+        insertions: 1,
+        deletions: 0,
+      })),
+    });
+    const firstRender = await renderPanel();
+
+    try {
+      await vi.waitFor(() => {
+        expect(getSourceControlScrollViewport()).not.toBeNull();
+      });
+      const viewport = getSourceControlScrollViewport();
+      expect(viewport).not.toBeNull();
+      viewport!.scrollTop = 180;
+      viewport!.dispatchEvent(new Event("scroll"));
+      await vi.waitFor(() => {
+        expect(viewport!.scrollTop).toBe(180);
+      });
+
+      findButtonByText("file-08.ts")?.click();
+      expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
+        open: true,
+        view: "preview",
+        returnTarget: { kind: "source-control" },
+      });
+    } finally {
+      await firstRender.screen.unmount();
+      firstRender.host.remove();
+    }
+
+    const secondRender = await renderPanel();
+    try {
+      await vi.waitFor(() => {
+        expect(getSourceControlScrollViewport()?.scrollTop).toBe(180);
+      });
+    } finally {
+      await secondRender.screen.unmount();
+      secondRender.host.remove();
+    }
+  });
+
+  it("restores source control view mode and collapsed folders after returning from a file preview", async () => {
+    currentGitStatusRef.current = createPanelStatus({
+      unstagedFiles: [
+        { path: "docs/keep.ts", status: "modified", insertions: 1, deletions: 0 },
+        { path: "src/app.ts", status: "modified", insertions: 1, deletions: 0 },
+      ],
+    });
+    const firstRender = await renderPanel();
+
+    try {
+      await vi.waitFor(() => {
+        expect(findButtonByExactText("src")).not.toBeNull();
+      });
+      findButtonByExactText("src")?.click();
+      await vi.waitFor(() => {
+        expect(findButtonByText("app.ts")).toBeNull();
+      });
+
+      document.querySelector<HTMLButtonElement>('button[aria-label="View as list"]')?.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('button[aria-label="View as tree"]')).not.toBeNull();
+      });
+
+      findButtonByText("docs/keep.ts")?.click();
+      expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
+        open: true,
+        view: "preview",
+        returnTarget: { kind: "source-control" },
+      });
+    } finally {
+      await firstRender.screen.unmount();
+      firstRender.host.remove();
+    }
+
+    const secondRender = await renderPanel();
+    try {
+      await vi.waitFor(() => {
+        expect(document.querySelector('button[aria-label="View as tree"]')).not.toBeNull();
+      });
+
+      document.querySelector<HTMLButtonElement>('button[aria-label="View as tree"]')?.click();
+      await vi.waitFor(() => {
+        expect(findButtonByExactText("src")).not.toBeNull();
+      });
+      expect(findButtonByText("app.ts")).toBeNull();
+    } finally {
+      await secondRender.screen.unmount();
+      secondRender.host.remove();
     }
   });
 

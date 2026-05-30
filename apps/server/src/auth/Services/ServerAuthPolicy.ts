@@ -7,5 +7,5 @@ export interface ServerAuthPolicyShape {
 }
 
 export class ServerAuthPolicy extends Context.Service<ServerAuthPolicy, ServerAuthPolicyShape>()(
-  "t3/auth/Services/ServerAuthPolicy",
+  "salchi/auth/Services/ServerAuthPolicy",
 ) {}

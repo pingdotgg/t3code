@@ -133,7 +133,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
  * ServerConfig - Service tag for server runtime configuration.
  */
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
-  "t3/config/ServerConfig",
+  "salchi/config/ServerConfig",
 ) {
   static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
     Layer.effect(

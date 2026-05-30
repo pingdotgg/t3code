@@ -64,7 +64,7 @@ export interface SourceControlDiscoveryShape {
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   SourceControlDiscoveryShape
->()("t3/sourceControl/SourceControlDiscovery") {}
+>()("salchi/sourceControl/SourceControlDiscovery") {}
 
 export const layer = Layer.effect(
   SourceControlDiscovery,

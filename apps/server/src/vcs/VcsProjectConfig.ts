@@ -38,7 +38,7 @@ export interface VcsProjectConfigShape {
 }
 
 export class VcsProjectConfig extends Context.Service<VcsProjectConfig, VcsProjectConfigShape>()(
-  "t3/vcs/VcsProjectConfig",
+  "salchi/vcs/VcsProjectConfig",
 ) {}
 
 function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto" {

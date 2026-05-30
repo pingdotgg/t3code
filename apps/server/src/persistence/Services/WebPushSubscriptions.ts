@@ -73,4 +73,4 @@ export interface WebPushSubscriptionRepositoryShape {
 export class WebPushSubscriptionRepository extends Context.Service<
   WebPushSubscriptionRepository,
   WebPushSubscriptionRepositoryShape
->()("t3/persistence/Services/WebPushSubscriptions/WebPushSubscriptionRepository") {}
+>()("salchi/persistence/Services/WebPushSubscriptions/WebPushSubscriptionRepository") {}

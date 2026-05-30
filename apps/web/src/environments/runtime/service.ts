@@ -198,8 +198,7 @@ type BrowserResumeShellBootstrapTimeoutClearReason =
   | "heartbeat-probe-current"
   | "heartbeat-replay-recovered"
   | "thread-detail-reconcile"
-  | "forced-reconnect-success"
-  | "health-recovery-reconnected";
+  | "forced-reconnect-success";
 
 interface RecoveredEventBatchOptions {
   readonly preserveShellFields?: boolean;
@@ -1016,8 +1015,6 @@ function queueEnvironmentConnectionHealthRecovery(
       }
       recovery.failureCount = 0;
       recovery.nextAllowedAt = Date.now() + CONNECTION_HEALTH_RECOVERY_COOLDOWN_MS;
-      clearBrowserResumeShellBootstrapTimeout(environmentId, "health-recovery-reconnected");
-      refreshThreadDetailsOnHealthyConnection(environmentId, "health-recovery:reconnected");
     } catch (error) {
       if (readEnvironmentConnection(environmentId) !== connection) {
         return;
@@ -1312,7 +1309,7 @@ function refreshPendingNotificationThreadDetailsForEnvironment(
     }
 
     reconciled += 1;
-    scheduleThreadDetailReconcile(entry, reason, { bypassCooldown: true });
+    scheduleThreadDetailReconcile(entry, reason);
   }
 
   if (iterated > 0) {
@@ -1326,45 +1323,6 @@ function refreshPendingNotificationThreadDetailsForEnvironment(
       },
     });
   }
-}
-
-function refreshThreadDetailsOnHealthyConnection(
-  environmentId: EnvironmentId,
-  reason: string,
-): void {
-  const connection = readEnvironmentConnection(environmentId);
-  if (!connection) {
-    return;
-  }
-  hydratePendingNotificationThreadReconciles(Date.now());
-  const retainedBlockReason = getPendingNotificationThreadReconcileRetainBlockReason(environmentId);
-  if (retainedBlockReason !== null) {
-    return;
-  }
-
-  let pendingCount = 0;
-  let activeRefCount = 0;
-  for (const pending of pendingNotificationThreadReconcileKeys.values()) {
-    if (pending.environmentId === environmentId) {
-      pendingCount += 1;
-    }
-  }
-  for (const entry of threadDetailSubscriptions.values()) {
-    if (entry.environmentId === environmentId && entry.activeRefCount > 0) {
-      activeRefCount += 1;
-    }
-  }
-
-  recordResumeDiagnostic("notification-thread-reconcile-healthy-redrive", {
-    reason,
-    env: environmentId,
-    data: {
-      pendingCount,
-      activeRefCount,
-    },
-  });
-  refreshPendingNotificationThreadDetailsForEnvironment(environmentId, reason);
-  refreshActiveThreadDetailsForEnvironment(environmentId, reason);
 }
 
 function shouldRefreshRetainedThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry) {
@@ -1450,19 +1408,7 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
   return true;
 }
 
-function shouldCooldownThreadDetailReconcileReason(reason: string): boolean {
-  return (
-    reason === "projection-behind" ||
-    reason === "heartbeat-tick:healthy" ||
-    reason === "health-recovery:reconnected"
-  );
-}
-
-function scheduleThreadDetailReconcile(
-  entry: ThreadDetailSubscriptionEntry,
-  reason: string,
-  options: { readonly bypassCooldown?: boolean } = {},
-): void {
+function scheduleThreadDetailReconcile(entry: ThreadDetailSubscriptionEntry, reason: string): void {
   if (entry.activeRefCount <= 0) {
     entry.reconcileOnNextActiveRetain = true;
     return;
@@ -1470,8 +1416,7 @@ function scheduleThreadDetailReconcile(
 
   const now = Date.now();
   if (
-    !options.bypassCooldown &&
-    shouldCooldownThreadDetailReconcileReason(reason) &&
+    reason === "projection-behind" &&
     entry.lastActiveDetailReconcileAt !== null &&
     now - entry.lastActiveDetailReconcileAt < THREAD_DETAIL_ACTIVE_RECONCILE_COOLDOWN_MS
   ) {
@@ -1526,28 +1471,12 @@ async function runThreadDetailReconcile(
       return;
     }
     applyThreadDetailReconcileResult(entry, result);
-    entry.reconcileOnNextActiveRetain = false;
-    deletePendingNotificationThreadReconcile(
-      getThreadDetailSubscriptionKey(entry.environmentId, entry.threadId),
-    );
     refreshPendingNotificationThreadDetailsAfterHealthyBrowserResume(
       entry.environmentId,
       "thread-detail-reconcile",
       "notification-click:post-thread-detail-reconcile",
     );
   } catch (error) {
-    recordResumeDiagnostic("thread-detail-reconcile-failed", {
-      reason,
-      env: entry.environmentId,
-      data: {
-        threadId: entry.threadId,
-        pendingNotificationTarget: hasPendingNotificationThreadReconcile(
-          entry.environmentId,
-          entry.threadId,
-        ),
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
     console.warn("Thread detail reconcile failed", {
       environmentId: entry.environmentId,
       threadId: entry.threadId,
@@ -1645,10 +1574,7 @@ function scheduleThreadDetailReconcileToCurrentProjectionIfBehind(
   );
 }
 
-function reconcileActiveThreadDetailSubscription(
-  entry: ThreadDetailSubscriptionEntry,
-  options: { readonly forceThreadDetailReconcile?: boolean } = {},
-): void {
+function reconcileActiveThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): void {
   const connection = readEnvironmentConnection(entry.environmentId);
   if (connection) {
     if (connection.client.isHeartbeatFresh()) {
@@ -1658,12 +1584,7 @@ function reconcileActiveThreadDetailSubscription(
         connection,
         "active-thread-detail-stale-heartbeat",
       );
-      return;
     }
-  }
-  if (options.forceThreadDetailReconcile) {
-    scheduleThreadDetailReconcile(entry, "active-pending-notification");
-    return;
   }
   scheduleThreadDetailReconcileToCurrentProjectionIfBehind(entry);
 }
@@ -1717,27 +1638,6 @@ function reconcileActiveNonIdleThreadDetail(
   scheduleThreadDetailReconcile(entry, "active-non-idle");
 }
 
-function reconcileOwedActiveThreadDetail(entry: ThreadDetailSubscriptionEntry, now: number): void {
-  if (
-    !entry.reconcileOnNextActiveRetain &&
-    !hasPendingNotificationThreadReconcile(entry.environmentId, entry.threadId)
-  ) {
-    return;
-  }
-
-  const lastReconcileAt = entry.lastActiveDetailReconcileAt ?? entry.lastAccessedAt;
-  const requiredElapsed =
-    entry.lastActiveDetailReconcileAt === null
-      ? THREAD_DETAIL_ACTIVE_RECONCILE_FIRST_PING_MS
-      : THREAD_DETAIL_ACTIVE_RECONCILE_COOLDOWN_MS;
-  if (now - lastReconcileAt < requiredElapsed) {
-    return;
-  }
-
-  entry.lastActiveDetailReconcileAt = now;
-  reconcileActiveThreadDetailSubscription(entry, { forceThreadDetailReconcile: true });
-}
-
 function reconcileThreadDetailSubscriptionActiveReconcileState(
   entry: ThreadDetailSubscriptionEntry,
 ): void {
@@ -1768,7 +1668,6 @@ function reconcileThreadDetailSubscriptionActiveReconcileState(
       reconcileActiveThreadDetailSubscription(currentEntry);
       reconcileActiveNonIdleThreadDetail(currentEntry, now);
     }
-    reconcileOwedActiveThreadDetail(currentEntry, now);
   }, THREAD_DETAIL_ACTIVE_RECONCILE_INTERVAL_MS);
 }
 
@@ -1942,8 +1841,6 @@ function retainThreadDetailSubscriptionInternal(
         existing.reconcileOnNextActiveRetain = true;
         scheduleThreadDetailReconcile(existing, "active-retain");
         existing.reconcileOnNextActiveRetain = false;
-      } else if (hasPendingNotificationThreadReconcile(environmentId, threadId)) {
-        existing.reconcileOnNextActiveRetain = true;
       } else if (
         !wasActive &&
         (existing.latestDetailSequence !== null || existing.reconcileOnNextActiveRetain)
@@ -2001,8 +1898,6 @@ function retainThreadDetailSubscriptionInternal(
     entry.reconcileOnNextActiveRetain = true;
     scheduleThreadDetailReconcile(entry, "active-retain");
     entry.reconcileOnNextActiveRetain = false;
-  } else if (options.active && hasPendingNotificationThreadReconcile(environmentId, threadId)) {
-    entry.reconcileOnNextActiveRetain = true;
   }
   reconcileThreadDetailSubscriptionEvictionState(entry);
   evictIdleThreadDetailSubscriptionsToCapacity();
@@ -3001,10 +2896,12 @@ async function syncSavedEnvironmentConnections(
   }
 
   const expectedEnvironmentIds = new Set(records.map((record) => record.environmentId));
-  const staleEnvironmentIds = [...environmentConnections.values()]
-    .filter((connection) => connection.kind === "saved")
-    .map((connection) => connection.environmentId)
-    .filter((environmentId) => !expectedEnvironmentIds.has(environmentId));
+  const staleEnvironmentIds: EnvironmentId[] = [];
+  for (const connection of environmentConnections.values()) {
+    if (connection.kind !== "saved") continue;
+    if (expectedEnvironmentIds.has(connection.environmentId)) continue;
+    staleEnvironmentIds.push(connection.environmentId);
+  }
 
   await Promise.all(
     staleEnvironmentIds.map((environmentId) => disconnectSavedEnvironment(environmentId)),
@@ -3623,16 +3520,6 @@ function reconcileEnvironmentConnectionsAfterBrowserResume(
   }
 }
 
-function hasPendingNotificationThreadReconcile(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-): boolean {
-  hydratePendingNotificationThreadReconciles(Date.now());
-  return pendingNotificationThreadReconcileKeys.has(
-    getThreadDetailSubscriptionKey(environmentId, threadId),
-  );
-}
-
 function consumePendingNotificationThreadReconcile(
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -3845,9 +3732,6 @@ function subscribeBrowserResumeReconnects(): () => void {
       "heartbeat-tick",
       makeBrowserResumeReconcileOptions("heartbeat-tick", null),
     );
-    for (const environmentId of environmentConnections.keys()) {
-      refreshThreadDetailsOnHealthyConnection(environmentId, "heartbeat-tick:healthy");
-    }
   };
 
   // Top-level liveness tick. Visibility/pageshow/focus only fire on

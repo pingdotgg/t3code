@@ -246,7 +246,9 @@ it.effect("decodes internal attachment add commands for assistant images", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
 
-    assert.strictEqual(parsed.type, "thread.message.attachments.add");
+    if (parsed.type !== "thread.message.attachments.add") {
+      assert.fail(`Expected thread.message.attachments.add command, received ${parsed.type}.`);
+    }
     assert.strictEqual(parsed.role, "assistant");
     assert.strictEqual(parsed.attachments[0]?.id, "thread-1-attachment-1");
   }),
@@ -358,7 +360,9 @@ it.effect("decodes queued turn commands", () =>
       createdAt: "2026-01-01T00:00:02.000Z",
     });
 
-    assert.strictEqual(queued.type, "thread.turn.queue");
+    if (queued.type !== "thread.turn.queue") {
+      assert.fail(`Expected thread.turn.queue command, received ${queued.type}.`);
+    }
     assert.strictEqual(queued.modelSelection?.instanceId, "codex");
     assert.strictEqual(cancel.type, "thread.queued-turn.cancel");
     assert.strictEqual(dispatch.type, "thread.queued-turn.dispatch");

@@ -36,5 +36,5 @@ export interface WebPushServiceShape {
 }
 
 export class WebPushService extends Context.Service<WebPushService, WebPushServiceShape>()(
-  "t3/push/Services/WebPushService",
+  "salchi/push/Services/WebPushService",
 ) {}

@@ -91,7 +91,7 @@ export interface GitWorkflowServiceShape {
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
   GitWorkflowServiceShape
->()("t3/git/GitWorkflowService") {}
+>()("salchi/git/GitWorkflowService") {}
 
 const unsupportedGitWorkflow = (operation: string, cwd: string, detail: string) =>
   new GitManagerError({

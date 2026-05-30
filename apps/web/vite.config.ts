@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Vite config runs in Node and resolves local brand asset files.
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";

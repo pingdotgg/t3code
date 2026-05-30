@@ -77,5 +77,5 @@ export interface ProviderRegistryShape {
 }
 
 export class ProviderRegistry extends Context.Service<ProviderRegistry, ProviderRegistryShape>()(
-  "t3/provider/Services/ProviderRegistry",
+  "salchi/provider/Services/ProviderRegistry",
 ) {}

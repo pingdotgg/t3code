@@ -20,16 +20,19 @@ const TestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-normalizer-attachments-",
 }).pipe(Layer.provideMerge(WorkspacePathsLive), Layer.provideMerge(NodeServices.layer));
 
+let nextImageUploadCommandId = 0;
+
 function imageUploadCommand(
   dataUrl: string,
   type: "thread.turn.start" | "thread.turn.queue" = "thread.turn.start",
 ): ClientOrchestrationCommand {
+  const nextId = nextImageUploadCommandId++;
   return {
     type,
-    commandId: CommandId.make(`cmd-${crypto.randomUUID()}`),
+    commandId: CommandId.make(`cmd-${nextId}`),
     threadId: ThreadId.make("thread-normalizer"),
     message: {
-      messageId: MessageId.make(`message-${crypto.randomUUID()}`),
+      messageId: MessageId.make(`message-${nextId}`),
       role: "user",
       text: "see image",
       attachments: [

@@ -560,15 +560,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           projectionPendingApprovalRepository.listByThreadId({ threadId }),
         ]);
 
-      const latestUserMessageAt =
-        [
-          ...messages
-            .filter((message) => message.role === "user")
-            .map((message) => message.createdAt),
-          ...queuedTurns.map((queuedTurn) => queuedTurn.createdAt),
-        ]
-          .toSorted()
-          .at(-1) ?? null;
+      let latestUserMessageAt: string | null = null;
+      for (const message of messages) {
+        if (
+          message.role === "user" &&
+          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
+        ) {
+          latestUserMessageAt = message.createdAt;
+        }
+      }
+      for (const queuedTurn of queuedTurns) {
+        if (latestUserMessageAt === null || queuedTurn.createdAt > latestUserMessageAt) {
+          latestUserMessageAt = queuedTurn.createdAt;
+        }
+      }
 
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",

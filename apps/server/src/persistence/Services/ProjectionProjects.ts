@@ -78,4 +78,4 @@ export interface ProjectionProjectRepositoryShape {
 export class ProjectionProjectRepository extends Context.Service<
   ProjectionProjectRepository,
   ProjectionProjectRepositoryShape
->()("t3/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}
+>()("salchi/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}

@@ -46,4 +46,4 @@ export interface CheckpointDiffQueryShape {
 export class CheckpointDiffQuery extends Context.Service<
   CheckpointDiffQuery,
   CheckpointDiffQueryShape
->()("t3/checkpointing/Services/CheckpointDiffQuery") {}
+>()("salchi/checkpointing/Services/CheckpointDiffQuery") {}

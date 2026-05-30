@@ -50,7 +50,7 @@ export interface ProcessResourceMonitorShape {
 export class ProcessResourceMonitor extends Context.Service<
   ProcessResourceMonitor,
   ProcessResourceMonitorShape
->()("t3/diagnostics/ProcessResourceMonitor") {}
+>()("salchi/diagnostics/ProcessResourceMonitor") {}
 
 function dateTimeFromMillis(ms: number): DateTime.Utc {
   return DateTime.makeUnsafe(ms);

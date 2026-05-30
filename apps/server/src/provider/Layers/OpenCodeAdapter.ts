@@ -1366,12 +1366,15 @@ export function makeOpenCodeAdapter(
           }),
         ).pipe(Effect.mapError(toRequestError));
 
-        const turns = (messages.data ?? [])
-          .filter((entry) => entry.info.role === "assistant")
-          .map((entry) => ({
-            id: TurnId.make(entry.info.id),
-            items: [entry.info, ...entry.parts],
-          }));
+        const turns: Array<OpenCodeTurnSnapshot> = [];
+        for (const entry of messages.data ?? []) {
+          if (entry.info.role === "assistant") {
+            turns.push({
+              id: TurnId.make(entry.info.id),
+              items: [entry.info, ...entry.parts],
+            });
+          }
+        }
 
         return {
           threadId,

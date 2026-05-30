@@ -20,9 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-// ==============================
 // Definitions
-// ==============================
 
 export { ExternalLauncherError };
 export type { LaunchEditorInput };
@@ -257,12 +255,10 @@ export interface ExternalLauncherShape {
  * ExternalLauncher - Service tag for browser/editor launch operations.
  */
 export class ExternalLauncher extends Context.Service<ExternalLauncher, ExternalLauncherShape>()(
-  "t3/process/externalLauncher",
+  "salchi/process/externalLauncher",
 ) {}
 
-// ==============================
 // Implementations
-// ==============================
 
 export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,

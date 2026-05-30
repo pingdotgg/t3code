@@ -24,7 +24,7 @@ export interface ServerLifecycleEventsShape {
 export class ServerLifecycleEvents extends Context.Service<
   ServerLifecycleEvents,
   ServerLifecycleEventsShape
->()("t3/serverLifecycleEvents") {}
+>()("salchi/serverLifecycleEvents") {}
 
 export const ServerLifecycleEventsLive = Layer.effect(
   ServerLifecycleEvents,

@@ -17,7 +17,16 @@ import {
   RefreshCwIcon,
   SparklesIcon,
 } from "lucide-react";
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { openWorkspaceFilePreview } from "../workspaceFilePreview";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -26,8 +35,14 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { useTheme } from "../hooks/useTheme";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import {
+  readSourceControlPanelScrollTop,
+  recordSourceControlPanelCollapsedDirs,
+  recordSourceControlPanelScrollTop,
+  recordSourceControlPanelViewMode,
+  sourceControlPanelScrollKey,
   useSetSourceControlCommitMessage,
   useSourceControlPanelState,
+  useSourceControlPanelWorkspaceViewState,
 } from "../sourceControlPanelState";
 import {
   buildMenuItems,
@@ -110,13 +125,62 @@ function pullDisabledReason(input: {
   return null;
 }
 
+function getSourceControlScrollViewport(root: HTMLElement | null): HTMLElement | null {
+  return root?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null;
+}
+
+function useSourceControlScrollRestoration(input: {
+  layoutKey: string;
+  rootRef: RefObject<HTMLElement | null>;
+  workspaceKey: string | null;
+}): void {
+  useLayoutEffect(() => {
+    const workspaceKey = input.workspaceKey;
+    if (!workspaceKey) {
+      return;
+    }
+
+    const viewport = getSourceControlScrollViewport(input.rootRef.current);
+    if (!viewport) {
+      return;
+    }
+
+    const restoreScrollTop = () => {
+      viewport.scrollTop = readSourceControlPanelScrollTop(workspaceKey);
+    };
+    restoreScrollTop();
+
+    const frameId = window.requestAnimationFrame(restoreScrollTop);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [input.layoutKey, input.rootRef, input.workspaceKey]);
+
+  useEffect(() => {
+    const workspaceKey = input.workspaceKey;
+    if (!workspaceKey) {
+      return;
+    }
+
+    const viewport = getSourceControlScrollViewport(input.rootRef.current);
+    if (!viewport) {
+      return;
+    }
+
+    const recordScrollTop = () => {
+      recordSourceControlPanelScrollTop(workspaceKey, viewport.scrollTop);
+    };
+    viewport.addEventListener("scroll", recordScrollTop, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", recordScrollTop);
+    };
+  }, [input.rootRef, input.workspaceKey]);
+}
+
 export default function SourceControlPanel({ mode = "sidebar", onClose }: SourceControlPanelProps) {
   const { commitMessage } = useSourceControlPanelState();
   const setCommitMessage = useSetSourceControlCommitMessage();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
-  const [viewMode, setViewMode] = useState<"tree" | "list">("tree");
-  const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(() => new Set());
+  const scrollRootRef = useRef<HTMLDivElement>(null);
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<SourceControlSection>>(
     () => new Set(),
   );
@@ -204,6 +268,30 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
   const unstagedFilePaths = useMemo(() => unstagedFiles.map((file) => file.path), [unstagedFiles]);
   const insertions = gitStatus?.workingTree.insertions ?? 0;
   const deletions = gitStatus?.workingTree.deletions ?? 0;
+  const scrollWorkspaceKey = useMemo(
+    () => sourceControlPanelScrollKey({ environmentId, cwd }),
+    [cwd, environmentId],
+  );
+  const workspaceViewState = useSourceControlPanelWorkspaceViewState(scrollWorkspaceKey);
+  const viewMode = workspaceViewState.viewMode;
+  const collapsedDirs = workspaceViewState.collapsedDirs;
+  const scrollLayoutKey = useMemo(
+    () =>
+      [
+        scrollWorkspaceKey,
+        viewMode,
+        hasSplitWorkingTree ? "split" : "combined",
+        stagedFilePaths.join("\0"),
+        unstagedFilePaths.join("\0"),
+      ].join("\u0001"),
+    [hasSplitWorkingTree, scrollWorkspaceKey, stagedFilePaths, unstagedFilePaths, viewMode],
+  );
+
+  useSourceControlScrollRestoration({
+    layoutKey: scrollLayoutKey,
+    rootRef: scrollRootRef,
+    workspaceKey: scrollWorkspaceKey,
+  });
 
   const buildTree = useCallback(
     (sectionFiles: typeof files): SourceControlTreeNode[] => {
@@ -234,17 +322,18 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
     void refreshGitStatus({ environmentId, cwd }).catch(() => undefined);
   }, [environmentId, cwd]);
 
-  const toggleDir = useCallback((path: string) => {
-    setCollapsedDirs((previous) => {
-      const next = new Set(previous);
+  const toggleDir = useCallback(
+    (path: string) => {
+      const next = new Set(collapsedDirs);
       if (next.has(path)) {
         next.delete(path);
       } else {
         next.add(path);
       }
-      return next;
-    });
-  }, []);
+      recordSourceControlPanelCollapsedDirs(scrollWorkspaceKey, next);
+    },
+    [collapsedDirs, scrollWorkspaceKey],
+  );
 
   const toggleSection = useCallback((section: SourceControlSection) => {
     setCollapsedSections((previous) => {
@@ -412,7 +501,12 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
                     variant="ghost"
                     aria-label={viewMode === "tree" ? "View as list" : "View as tree"}
                     className="text-muted-foreground/60 hover:text-foreground/80"
-                    onClick={() => setViewMode((value) => (value === "tree" ? "list" : "tree"))}
+                    onClick={() =>
+                      recordSourceControlPanelViewMode(
+                        scrollWorkspaceKey,
+                        viewMode === "tree" ? "list" : "tree",
+                      )
+                    }
                   />
                 }
               >
@@ -629,52 +723,54 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
           </div>
         )}
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="p-1.5">
-            {hasChanges ? (
-              <div className="space-y-0.5">
-                <SourceControlSectionTree
-                  section="staged"
-                  label="Staged Changes"
-                  tree={stagedTree}
-                  viewMode={viewMode}
-                  fileCount={stagedFiles.length}
-                  filePaths={stagedFilePaths}
-                  collapsed={collapsedSections.has("staged")}
-                  collapsedDirs={collapsedDirs}
-                  resolvedTheme={resolvedTheme}
-                  actionDisabled={isGitActionRunning || isStageOperationRunning}
-                  onToggleSection={toggleSection}
-                  onToggleDir={toggleDir}
-                  onSectionAction={unstageFiles}
-                  onFileAction={(path) => unstageFiles([path])}
-                  onOpenFilePreview={handleOpenFilePreview}
-                />
-                <SourceControlSectionTree
-                  section="unstaged"
-                  label="Changes"
-                  tree={unstagedTree}
-                  viewMode={viewMode}
-                  fileCount={unstagedFiles.length}
-                  filePaths={unstagedFilePaths}
-                  collapsed={collapsedSections.has("unstaged")}
-                  collapsedDirs={collapsedDirs}
-                  resolvedTheme={resolvedTheme}
-                  actionDisabled={isGitActionRunning || isStageOperationRunning}
-                  onToggleSection={toggleSection}
-                  onToggleDir={toggleDir}
-                  onSectionAction={stageFiles}
-                  onFileAction={(path) => stageFiles([path])}
-                  onOpenFilePreview={handleOpenFilePreview}
-                />
-              </div>
-            ) : (
-              <p className="px-1.5 py-6 text-center text-xs text-muted-foreground/60">
-                No changes detected.
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+        <div ref={scrollRootRef} className="min-h-0 flex-1">
+          <ScrollArea className="h-full min-h-0" data-testid="source-control-scroll">
+            <div className="p-1.5">
+              {hasChanges ? (
+                <div className="space-y-0.5">
+                  <SourceControlSectionTree
+                    section="staged"
+                    label="Staged Changes"
+                    tree={stagedTree}
+                    viewMode={viewMode}
+                    fileCount={stagedFiles.length}
+                    filePaths={stagedFilePaths}
+                    collapsed={collapsedSections.has("staged")}
+                    collapsedDirs={collapsedDirs}
+                    resolvedTheme={resolvedTheme}
+                    actionDisabled={isGitActionRunning || isStageOperationRunning}
+                    onToggleSection={toggleSection}
+                    onToggleDir={toggleDir}
+                    onSectionAction={unstageFiles}
+                    onFileAction={(path) => unstageFiles([path])}
+                    onOpenFilePreview={handleOpenFilePreview}
+                  />
+                  <SourceControlSectionTree
+                    section="unstaged"
+                    label="Changes"
+                    tree={unstagedTree}
+                    viewMode={viewMode}
+                    fileCount={unstagedFiles.length}
+                    filePaths={unstagedFilePaths}
+                    collapsed={collapsedSections.has("unstaged")}
+                    collapsedDirs={collapsedDirs}
+                    resolvedTheme={resolvedTheme}
+                    actionDisabled={isGitActionRunning || isStageOperationRunning}
+                    onToggleSection={toggleSection}
+                    onToggleDir={toggleDir}
+                    onSectionAction={stageFiles}
+                    onFileAction={(path) => stageFiles([path])}
+                    onOpenFilePreview={handleOpenFilePreview}
+                  />
+                </div>
+              ) : (
+                <p className="px-1.5 py-6 text-center text-xs text-muted-foreground/60">
+                  No changes detected.
+                </p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
 
         {hasChanges ? (
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/50 px-3 py-1.5 font-mono text-[11px]">

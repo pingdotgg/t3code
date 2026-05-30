@@ -9,4 +9,4 @@ export interface WebPushNotificationReactorShape {
 export class WebPushNotificationReactor extends Context.Service<
   WebPushNotificationReactor,
   WebPushNotificationReactorShape
->()("t3/push/Services/WebPushNotificationReactor") {}
+>()("salchi/push/Services/WebPushNotificationReactor") {}

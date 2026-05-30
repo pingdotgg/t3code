@@ -40,7 +40,7 @@ export interface VcsProcessShape {
 }
 
 export class VcsProcess extends Context.Service<VcsProcess, VcsProcessShape>()(
-  "t3/vcs/VcsProcess",
+  "salchi/vcs/VcsProcess",
 ) {}
 
 const DEFAULT_TIMEOUT_MS = 30_000;

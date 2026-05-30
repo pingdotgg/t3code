@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Order from "effect/Order";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -170,12 +172,13 @@ describe("observability", () => {
           }
           yield* sink.close();
 
-          const matchingFiles = (yield* fileSystem.readDirectory(tempDir))
-            .filter(
+          const matchingFiles = Arr.sort(
+            (yield* fileSystem.readDirectory(tempDir)).filter(
               (entry) =>
                 entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
-            )
-            .toSorted();
+            ),
+            Order.String,
+          );
 
           assert.equal(
             matchingFiles.some((entry) => entry === "shared.trace.ndjson.1"),
