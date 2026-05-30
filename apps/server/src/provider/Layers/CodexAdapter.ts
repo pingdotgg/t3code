@@ -190,6 +190,11 @@ function normalizeCodexTokenUsage(
   };
 }
 
+function normalizeNonNegativeInt(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
+}
+
 function toTurnStatus(
   value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"] | "cancelled",
 ): "completed" | "failed" | "cancelled" | "interrupted" {
@@ -738,6 +743,46 @@ function mapToRuntimeEvents(
         payload: {
           usage: normalizedUsage,
         },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/updated") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalUpdatedNotification, event.payload);
+    const objective = trimText(payload?.goal.objective);
+    if (!payload || !objective) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          objective,
+          status: payload.goal.status,
+          tokensUsed: normalizeNonNegativeInt(payload.goal.tokensUsed),
+          tokenBudget:
+            payload.goal.tokenBudget == null
+              ? null
+              : normalizeNonNegativeInt(payload.goal.tokenBudget),
+          timeUsedSeconds: normalizeNonNegativeInt(payload.goal.timeUsedSeconds),
+          createdAtEpochMsOrSeconds: payload.goal.createdAt,
+          updatedAtEpochMsOrSeconds: payload.goal.updatedAt,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/cleared") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalClearedNotification, event.payload);
+    if (!payload) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.cleared",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {},
       },
     ];
   }
@@ -1556,6 +1601,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const sendGoalRequest: NonNullable<CodexAdapterShape["sendGoalRequest"]> = (threadId, request) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.sendGoalRequest(request)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/goal", cause),
+      ),
+    );
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -1680,6 +1735,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    sendGoalRequest,
     readThread,
     rollbackThread,
     respondToRequest,

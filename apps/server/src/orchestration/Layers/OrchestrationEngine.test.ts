@@ -152,6 +152,7 @@ describe("OrchestrationEngine", () => {
           activities: [],
           checkpoints: [],
           session: null,
+          goal: null,
         },
       ],
     };

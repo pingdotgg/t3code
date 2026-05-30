@@ -83,6 +83,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    goal: null,
     ...overrides,
   };
 }
@@ -128,6 +129,7 @@ function makeState(thread: Thread): AppState {
         updatedAt: thread.updatedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        goal: thread.goal,
       },
     },
     threadSessionById: {

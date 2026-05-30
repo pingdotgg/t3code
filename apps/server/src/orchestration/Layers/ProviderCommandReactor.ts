@@ -52,6 +52,7 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
+      | "thread.goal-requested"
       | "thread.session-stop-requested";
   }
 >;
@@ -209,6 +210,7 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
+      | "provider.goal.request.failed"
       | "provider.session.stop.failed";
     readonly summary: string;
     readonly detail: string;
@@ -825,6 +827,55 @@ const make = Effect.gen(function* () {
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });
 
+  const processGoalRequested = Effect.fn("processGoalRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.goal-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const recoverGoalRequestFailure = (cause: Cause.Cause<unknown>) =>
+      appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.goal.request.failed",
+        summary: "Provider goal request failed",
+        detail: formatFailureDetail(cause),
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+
+    const ready = yield* ensureSessionForThread(
+      event.payload.threadId,
+      event.payload.createdAt,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) => recoverGoalRequestFailure(cause).pipe(Effect.as(false))),
+    );
+    if (!ready) {
+      return;
+    }
+
+    if (!providerService.sendGoalRequest) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.goal.request.failed",
+        summary: "Provider goal request failed",
+        detail: "The active provider service does not support goal requests.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+
+    yield* providerService
+      .sendGoalRequest({
+        threadId: event.payload.threadId,
+        request: event.payload.request,
+      })
+      .pipe(Effect.catchCause(recoverGoalRequestFailure));
+  });
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -975,6 +1026,9 @@ const make = Effect.gen(function* () {
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
+      case "thread.goal-requested":
+        yield* processGoalRequested(event);
+        return;
       case "thread.approval-response-requested":
         yield* processApprovalResponseRequested(event);
         return;
@@ -1008,6 +1062,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.goal-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"

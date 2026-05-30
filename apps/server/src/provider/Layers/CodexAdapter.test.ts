@@ -15,6 +15,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type ThreadGoalRequest,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -87,6 +88,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     (_turnId?: TurnId): Promise<void> => Promise.resolve(undefined),
   );
 
+  public readonly sendGoalRequestImpl = vi.fn(
+    (_request: ThreadGoalRequest): Promise<void> => Promise.resolve(undefined),
+  );
+
   public readonly readThreadImpl = vi.fn(
     (): Promise<CodexThreadSnapshot> =>
       Promise.resolve({
@@ -133,6 +138,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   interruptTurn(turnId?: TurnId) {
     return Effect.promise(() => this.interruptTurnImpl(turnId));
+  }
+
+  sendGoalRequest(request: ThreadGoalRequest) {
+    return Effect.promise(() => this.sendGoalRequestImpl(request));
   }
 
   readThread = Effect.promise(() => this.readThreadImpl());

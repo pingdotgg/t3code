@@ -6,6 +6,7 @@ import type {
   RepositoryIdentity,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  OrchestrationThreadGoal,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -115,6 +116,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  goal: OrchestrationThreadGoal | null;
 }
 
 export interface ThreadShell {
@@ -132,6 +134,7 @@ export interface ThreadShell {
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  goal: OrchestrationThreadGoal | null;
 }
 
 export interface ThreadTurnState {
@@ -156,6 +159,7 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  goal: OrchestrationThreadGoal | null;
 }
 
 export interface ThreadSession {

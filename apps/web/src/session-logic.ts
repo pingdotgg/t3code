@@ -59,6 +59,7 @@ export interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  activityKind?: OrchestrationThreadActivity["kind"];
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -118,6 +119,13 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
+    }
+  | {
+      id: string;
+      kind: "goal";
+      createdAt: string;
+      label: string;
+      detail?: string;
     };
 
 export function formatDuration(durationMs: number): string {
@@ -484,7 +492,13 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (latestTurnId && activity.turnId !== latestTurnId) continue;
+    if (
+      latestTurnId &&
+      activity.turnId !== latestTurnId &&
+      !isThreadLevelTimelineActivity(activity)
+    ) {
+      continue;
+    }
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
@@ -493,8 +507,12 @@ export function deriveWorkLogEntries(
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries).map(
-    ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
+    ({ collapseKey: _collapseKey, toolCallId: _toolCallId, ...entry }) => entry,
   );
+}
+
+function isThreadLevelTimelineActivity(activity: OrchestrationThreadActivity): boolean {
+  return activity.kind === "goal.updated" || activity.kind === "goal.cleared";
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -1179,12 +1197,23 @@ export function deriveTimelineEntries(
     createdAt: proposedPlan.createdAt,
     proposedPlan,
   }));
-  const workRows: TimelineEntry[] = workEntries.map((entry) => ({
-    id: entry.id,
-    kind: "work",
-    createdAt: entry.createdAt,
-    entry,
-  }));
+  const workRows: TimelineEntry[] = workEntries.map((entry) => {
+    if (entry.activityKind === "goal.updated" || entry.activityKind === "goal.cleared") {
+      return {
+        id: entry.id,
+        kind: "goal",
+        createdAt: entry.createdAt,
+        label: entry.label,
+        ...(entry.detail ? { detail: entry.detail } : {}),
+      };
+    }
+    return {
+      id: entry.id,
+      kind: "work",
+      createdAt: entry.createdAt,
+      entry,
+    };
+  });
   return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );

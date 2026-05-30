@@ -40,6 +40,7 @@ const baseThread: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+  goal: null,
 };
 
 describe("applyThreadDetailEvent", () => {
