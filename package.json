@@ -34,8 +34,6 @@
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:local-cloudflare": "node scripts/local-cloudflare-dev.ts",
     "health:orchestrator": "node scripts/orchestrator-health-check.ts",
-    "server:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-t3code-server.ps1",
-    "server:update:safe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rebuild-t3code-production-safe.ps1",
     "auth:seed-owner-pairing": "node scripts/seed-owner-pairing-token.ts",
     "dev:web": "node scripts/dev-runner.ts dev:web",
     "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
