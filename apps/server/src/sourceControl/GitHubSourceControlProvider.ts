@@ -8,6 +8,7 @@ import {
   type ChangeRequest,
   type ChangeRequestState,
 } from "@t3tools/contracts";
+import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitHubPullRequests from "./gitHubPullRequests.ts";
@@ -47,6 +48,12 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
   };
+}
+
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  return parseGitHubRepositoryNameWithOwnerFromRemoteUrl(context?.remoteUrl ?? null) ?? undefined;
 }
 
 function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
@@ -97,10 +104,12 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
 
   const listChangeRequests: SourceControlProvider.SourceControlProviderShape["listChangeRequests"] =
     (input) => {
+      const repository = repositoryFromContext(input.context);
       if (input.state === "open") {
         return github
           .listOpenPullRequests({
             cwd: input.cwd,
+            ...(repository ? { repository } : {}),
             headSelector: input.headSelector,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
@@ -117,6 +126,7 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
           args: [
             "pr",
             "list",
+            ...(repository ? ["--repo", repository] : []),
             "--head",
             input.headSelector,
             "--state",
@@ -164,21 +174,31 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
     listChangeRequests,
-    getChangeRequest: (input) =>
-      github.getPullRequest(input).pipe(
-        Effect.map(toChangeRequest),
-        Effect.mapError((error) => providerError("getChangeRequest", error)),
-      ),
-    createChangeRequest: (input) =>
-      github
+    getChangeRequest: (input) => {
+      const repository = repositoryFromContext(input.context);
+      return github
+        .getPullRequest({
+          ...input,
+          ...(repository ? { repository } : {}),
+        })
+        .pipe(
+          Effect.map(toChangeRequest),
+          Effect.mapError((error) => providerError("getChangeRequest", error)),
+        );
+    },
+    createChangeRequest: (input) => {
+      const repository = repositoryFromContext(input.context);
+      return github
         .createPullRequest({
           cwd: input.cwd,
+          ...(repository ? { repository } : {}),
           baseBranch: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
           bodyFile: input.bodyFile,
         })
-        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error))),
+        .pipe(Effect.mapError((error) => providerError("createChangeRequest", error)));
+    },
     getRepositoryCloneUrls: (input) =>
       github
         .getRepositoryCloneUrls(input)
@@ -187,14 +207,24 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
       github
         .createRepository(input)
         .pipe(Effect.mapError((error) => providerError("createRepository", error))),
-    getDefaultBranch: (input) =>
-      github
-        .getDefaultBranch(input)
-        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error))),
-    checkoutChangeRequest: (input) =>
-      github
-        .checkoutPullRequest(input)
-        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
+    getDefaultBranch: (input) => {
+      const repository = repositoryFromContext(input.context);
+      return github
+        .getDefaultBranch({
+          ...input,
+          ...(repository ? { repository } : {}),
+        })
+        .pipe(Effect.mapError((error) => providerError("getDefaultBranch", error)));
+    },
+    checkoutChangeRequest: (input) => {
+      const repository = repositoryFromContext(input.context);
+      return github
+        .checkoutPullRequest({
+          ...input,
+          ...(repository ? { repository } : {}),
+        })
+        .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error)));
+    },
   });
 });
 
