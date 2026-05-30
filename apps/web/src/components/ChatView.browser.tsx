@@ -397,6 +397,7 @@ function createSnapshotForTargetUser(options: {
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        goal: null,
         session: {
           threadId: THREAD_ID,
           status: options.sessionStatus ?? "ready",
@@ -463,6 +464,7 @@ function addThreadToSnapshot(
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        goal: null,
         session: {
           threadId,
           status: "ready",
@@ -497,6 +499,7 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    goal: thread.goal,
   };
 }
 
@@ -797,6 +800,7 @@ function createSnapshotWithSecondaryProject(options?: {
           activities: [],
           proposedPlans: [],
           checkpoints: [],
+          goal: null,
           session: {
             threadId: "thread-secondary-project" as ThreadId,
             status: "ready",
@@ -829,6 +833,7 @@ function createSnapshotWithSecondaryProject(options?: {
           activities: [],
           proposedPlans: [],
           checkpoints: [],
+          goal: null,
           session: {
             threadId: ARCHIVED_SECONDARY_THREAD_ID,
             status: "ready",

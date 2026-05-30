@@ -47,7 +47,9 @@ import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
+  parseComposerGoalSlashCommand,
   parseStandaloneComposerSlashCommand,
+  validateComposerGoalSlashCommand,
 } from "../composer-logic";
 import {
   deriveCompletionDividerBeforeEntryId,
@@ -142,6 +144,7 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
+import { formatGoalStatusToastDescription, goalStatusToastTitle } from "../goalPresentation";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../terminalSessionState";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -209,6 +212,21 @@ type EnvironmentUnavailableState = {
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+function showGoalStatusToast(goal: Thread["goal"]): void {
+  if (!goal) {
+    toastManager.add({
+      type: "info",
+      title: "No active goal",
+    });
+    return;
+  }
+  toastManager.add({
+    type: "info",
+    title: goalStatusToastTitle(goal),
+    description: formatGoalStatusToastDescription(goal),
+  });
+}
 
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
   return useStore(
@@ -1540,7 +1558,12 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
+  const planSidebarLabel =
+    sidebarProposedPlan || interactionMode === "plan"
+      ? "Plan"
+      : activeThread?.goal
+        ? "Goal"
+        : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -2895,6 +2918,112 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       return;
     }
+    const goalSlashCommand =
+      ctxSelectedProvider === "codex" &&
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0
+        ? parseComposerGoalSlashCommand(trimmed)
+        : null;
+    if (goalSlashCommand) {
+      const goalValidationError = validateComposerGoalSlashCommand(trimmed);
+      if (goalValidationError) {
+        setThreadError(activeThread.id, goalValidationError);
+        return;
+      }
+      if (!activeProject) {
+        return;
+      }
+      if (!isServerThread && goalSlashCommand.kind !== "set") {
+        setThreadError(activeThread.id, "Enter a goal objective to start a thread with /goal.");
+        return;
+      }
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const createdAt = new Date().toISOString();
+      const title =
+        goalSlashCommand.kind === "set" ? truncate(goalSlashCommand.objective) : activeThread.title;
+      const threadCreateModelSelection = createModelSelection(
+        ctxSelectedModelSelection.instanceId,
+        ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+        ctxSelectedModelSelection.options,
+      );
+      await (async () => {
+        if (!isServerThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: activeThread.id,
+            projectId: activeProject.id,
+            title,
+            modelSelection: threadCreateModelSelection,
+            runtimeMode,
+            interactionMode,
+            branch: activeThreadBranch,
+            worktreePath: activeThread.worktreePath,
+            createdAt: activeThread.createdAt,
+          });
+        } else {
+          if (activeThread.messages.length === 0 && goalSlashCommand.kind === "set") {
+            await api.orchestration.dispatchCommand({
+              type: "thread.meta.update",
+              commandId: newCommandId(),
+              threadId: activeThread.id,
+              title,
+            });
+          }
+          await persistThreadSettingsForNextTurn({
+            threadId: activeThread.id,
+            createdAt,
+            ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
+            runtimeMode,
+            interactionMode,
+          });
+        }
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.goal.request",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          request: goalSlashCommand,
+          createdAt,
+        });
+        if (goalSlashCommand.kind === "status") {
+          showGoalStatusToast(activeThread.goal);
+        }
+
+        if (!isServerThread) {
+          await waitForStartedServerThread(
+            scopeThreadRef(activeThread.environmentId, activeThread.id),
+          );
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: activeThread.id,
+            },
+          });
+        }
+      })().catch((err: unknown) => {
+        promptRef.current = promptForSend;
+        setComposerDraftPrompt(composerDraftTarget, promptForSend);
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+          prompt: promptForSend,
+          detectTrigger: true,
+        });
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to send goal command.",
+        );
+      });
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      return;
+    }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -3134,6 +3263,57 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  const onSubmitGoalCommand = useCallback(
+    async (commandText: "/goal pause" | "/goal resume" | "/goal clear") => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const goalSlashCommand = parseComposerGoalSlashCommand(commandText);
+      if (!goalSlashCommand) return;
+      const messageCreatedAt = new Date().toISOString();
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.goal.request",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          request: goalSlashCommand,
+          createdAt: messageCreatedAt,
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to send goal command.",
+          );
+        });
+
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      resetLocalDispatch,
+      setThreadError,
+    ],
+  );
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
@@ -3860,6 +4040,7 @@ export default function ChatView(props: ChatViewProps) {
                   activeProposedPlan={activeProposedPlan}
                   activePlan={activePlan as { turnId?: TurnId } | null}
                   sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
+                  activeGoal={activeThread.goal !== null}
                   planSidebarLabel={planSidebarLabel}
                   planSidebarOpen={planSidebarOpen}
                   runtimeMode={runtimeMode}
@@ -3951,6 +4132,11 @@ export default function ChatView(props: ChatViewProps) {
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
+            activeGoal={activeThread.goal}
+            goalCommandDisabled={
+              isSendBusy || isConnecting || Boolean(activeEnvironmentUnavailable)
+            }
+            onSubmitGoalCommand={onSubmitGoalCommand}
             label={planSidebarLabel}
             environmentId={environmentId}
             markdownCwd={gitCwd ?? undefined}
@@ -3985,6 +4171,11 @@ export default function ChatView(props: ChatViewProps) {
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
+            activeGoal={activeThread.goal}
+            goalCommandDisabled={
+              isSendBusy || isConnecting || Boolean(activeEnvironmentUnavailable)
+            }
+            onSubmitGoalCommand={onSubmitGoalCommand}
             label={planSidebarLabel}
             environmentId={environmentId}
             markdownCwd={gitCwd ?? undefined}

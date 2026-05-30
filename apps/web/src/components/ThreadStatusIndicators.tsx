@@ -1,6 +1,6 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import { CloudIcon, GitPullRequestIcon, TargetIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
@@ -12,6 +12,7 @@ import { type AppState, selectProjectByRef, useStore } from "../store";
 import { useThreadRunningTerminalIds } from "../terminalSessionState";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
+import { goalStatusToastTitle } from "../goalPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -93,6 +94,19 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+function goalStatusColorClass(status: NonNullable<SidebarThreadSummary["goal"]>["status"]): string {
+  switch (status) {
+    case "active":
+      return "text-emerald-600 dark:text-emerald-300/90";
+    case "paused":
+      return "text-amber-600 dark:text-amber-300/90";
+    case "budgetLimited":
+      return "text-orange-600 dark:text-orange-300/90";
+    case "complete":
+      return "text-blue-600 dark:text-blue-300/90";
+  }
+}
+
 export function ThreadStatusLabel({
   status,
   compact = false,
@@ -163,7 +177,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     },
   });
 
-  if (!prStatus && !threadStatus) {
+  if (!prStatus && !threadStatus && !thread.goal) {
     return null;
   }
 
@@ -182,6 +196,23 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
             <ChangeRequestStatusIcon className="size-3" />
           </TooltipTrigger>
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {thread.goal ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={goalStatusToastTitle(thread.goal)}
+                className={`inline-flex items-center justify-center ${goalStatusColorClass(thread.goal.status)}`}
+              />
+            }
+          >
+            <TargetIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {goalStatusToastTitle(thread.goal)}: {thread.goal.objective}
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

@@ -416,6 +416,7 @@ export interface ChatComposerProps {
   activeProposedPlan: Thread["proposedPlans"][number] | null;
   activePlan: { turnId?: TurnId } | null;
   sidebarProposedPlan: { turnId?: TurnId } | null;
+  activeGoal: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
 
@@ -514,6 +515,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProposedPlan,
     activePlan,
     sidebarProposedPlan,
+    activeGoal,
     planSidebarLabel,
     planSidebarOpen,
     runtimeMode,
@@ -877,6 +879,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: "Switch this thread back to normal build mode",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const hasProviderGoalSlashCommand = (selectedProviderStatus?.slashCommands ?? []).some(
+        (command) => command.name.toLowerCase() === "goal",
+      );
+      const codexGoalCommandItems =
+        selectedProvider === ProviderDriverKind.make("codex") && !hasProviderGoalSlashCommand
+          ? ([
+              {
+                id: "slash:goal",
+                type: "slash-command",
+                command: "goal",
+                label: "/goal",
+                description: "Set, view, pause, resume, or clear a task goal",
+              },
+            ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>)
+          : [];
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({
           id: `provider-slash-command:${selectedProvider}:${command.name}`,
@@ -888,7 +905,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
       );
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...codexGoalCommandItems,
+        ...providerSlashCommandItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
@@ -950,7 +971,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+  const showPlanSidebarToggle = Boolean(
+    activePlan || sidebarProposedPlan || activeGoal || planSidebarOpen,
+  );
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1497,6 +1520,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (applied) {
             setComposerHighlightedItemId(null);
             setIsComposerModelPickerOpen(true);
+          }
+          return;
+        }
+        if (item.command === "goal") {
+          const replacement = "/goal ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
           }
           return;
         }

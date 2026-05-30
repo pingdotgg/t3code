@@ -2,7 +2,13 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "goal";
+export const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
+
+export type ComposerGoalSlashCommand =
+  | { kind: "status" }
+  | { kind: "control"; action: "pause" | "resume" | "clear" }
+  | { kind: "set"; objective: string };
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -257,7 +263,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): Exclude<ComposerSlashCommand, "model" | "goal"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
@@ -265,6 +271,36 @@ export function parseStandaloneComposerSlashCommand(
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
   return "default";
+}
+
+export function parseComposerGoalSlashCommand(text: string): ComposerGoalSlashCommand | null {
+  const trimmed = text.trim();
+  if (!/^\/goal(?:\s|$)/i.test(trimmed)) {
+    return null;
+  }
+
+  const body = trimmed.slice("/goal".length).trim();
+  if (body.length === 0) {
+    return { kind: "status" };
+  }
+
+  const normalizedBody = body.toLowerCase();
+  if (normalizedBody === "pause" || normalizedBody === "resume" || normalizedBody === "clear") {
+    return { kind: "control", action: normalizedBody };
+  }
+
+  return { kind: "set", objective: body };
+}
+
+export function validateComposerGoalSlashCommand(text: string): string | null {
+  const parsed = parseComposerGoalSlashCommand(text);
+  if (parsed?.kind !== "set") {
+    return null;
+  }
+  if (parsed.objective.length > CODEX_GOAL_OBJECTIVE_MAX_CHARS) {
+    return `Goal objective must be ${CODEX_GOAL_OBJECTIVE_MAX_CHARS.toLocaleString()} characters or fewer.`;
+  }
+  return null;
 }
 
 export function replaceTextRange(

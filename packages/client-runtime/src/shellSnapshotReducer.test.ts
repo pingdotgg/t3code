@@ -41,6 +41,7 @@ const stubThread = {
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
   session: null,
+  goal: null,
 } as const;
 
 describe("applyShellStreamEvent", () => {

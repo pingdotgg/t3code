@@ -9,6 +9,7 @@ import {
   CheckpointRef,
   isToolLifecycleItemType,
   ThreadId,
+  type OrchestrationThreadGoal,
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -20,6 +21,7 @@ import {
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,12 +49,16 @@ interface AssistantSegmentState {
   activeMessageId: MessageId | null;
 }
 
+type GoalActivityState = Pick<OrchestrationThreadGoal, "objective" | "status">;
+
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
+const GOAL_ACTIVITY_STATE_BY_THREAD_CACHE_CAPACITY = 10_000;
+const GOAL_ACTIVITY_STATE_BY_THREAD_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
@@ -166,6 +172,39 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+function epochMsOrSecondsToIso(value: number, fallbackIso: string): string {
+  const milliseconds = Math.abs(value) < 10_000_000_000 ? value * 1_000 : value;
+  if (!Number.isFinite(milliseconds)) {
+    return fallbackIso;
+  }
+  return Option.match(DateTime.make(milliseconds), {
+    onNone: () => fallbackIso,
+    onSome: DateTime.formatIso,
+  });
+}
+
+function goalUpdatedActivitySummary(
+  previousGoal: GoalActivityState | null | undefined,
+  goal: Extract<ProviderRuntimeEvent, { type: "thread.goal.updated" }>["payload"],
+): string | null {
+  if (previousGoal?.objective === goal.objective && previousGoal.status === goal.status) {
+    return null;
+  }
+  if (!previousGoal || previousGoal.objective !== goal.objective) {
+    return "Goal set";
+  }
+  switch (goal.status) {
+    case "active":
+      return previousGoal.status === "paused" ? "Goal resumed" : null;
+    case "paused":
+      return "Goal paused";
+    case "budgetLimited":
+      return "Goal budget limited";
+    case "complete":
+      return "Goal complete";
+  }
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -264,6 +303,7 @@ function requestKindFromCanonicalRequestType(
 
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
+  context?: { readonly previousGoal?: GoalActivityState | null },
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
@@ -532,6 +572,50 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "thread.goal.updated": {
+      const summary = goalUpdatedActivitySummary(context?.previousGoal, event.payload);
+      if (summary === null) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "goal.updated",
+          summary,
+          payload: {
+            status: event.payload.status,
+            detail: truncateDetail(event.payload.objective),
+            objective: event.payload.objective,
+            tokensUsed: event.payload.tokensUsed,
+            tokenBudget: event.payload.tokenBudget,
+            timeUsedSeconds: event.payload.timeUsedSeconds,
+          },
+          turnId: null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "thread.goal.cleared": {
+      if (!context?.previousGoal) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "goal.cleared",
+          summary: "Goal cleared",
+          payload: {},
+          turnId: null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
@@ -642,6 +726,12 @@ const make = Effect.gen(function* () {
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
+  });
+
+  const goalActivityStateByThreadId = yield* Cache.make<ThreadId, GoalActivityState>({
+    capacity: GOAL_ACTIVITY_STATE_BY_THREAD_CACHE_CAPACITY,
+    timeToLive: GOAL_ACTIVITY_STATE_BY_THREAD_TTL,
+    lookup: () => Effect.die(new Error("goal activity state should be read through getOption")),
   });
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
@@ -1579,6 +1669,33 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (event.type === "thread.goal.updated") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.update",
+          commandId: yield* providerCommandId(event, "thread-goal-update"),
+          threadId: thread.id,
+          goal: {
+            objective: event.payload.objective,
+            status: event.payload.status,
+            tokensUsed: event.payload.tokensUsed,
+            tokenBudget: event.payload.tokenBudget,
+            timeUsedSeconds: event.payload.timeUsedSeconds,
+            createdAt: epochMsOrSecondsToIso(event.payload.createdAtEpochMsOrSeconds, now),
+            updatedAt: epochMsOrSecondsToIso(event.payload.updatedAtEpochMsOrSeconds, now),
+          },
+          createdAt: now,
+        });
+      }
+
+      if (event.type === "thread.goal.cleared") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.clear",
+          commandId: yield* providerCommandId(event, "thread-goal-clear"),
+          threadId: thread.id,
+          createdAt: now,
+        });
+      }
+
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         const checkpointContext = turnId
@@ -1616,7 +1733,21 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event);
+      const previousGoalForActivity = Option.getOrElse(
+        yield* Cache.getOption(goalActivityStateByThreadId, thread.id),
+        () => thread.goal,
+      );
+      const activities = runtimeEventToActivities(event, {
+        previousGoal: previousGoalForActivity,
+      });
+      if (event.type === "thread.goal.updated") {
+        yield* Cache.set(goalActivityStateByThreadId, thread.id, {
+          objective: event.payload.objective,
+          status: event.payload.status,
+        });
+      } else if (event.type === "thread.goal.cleared") {
+        yield* Cache.invalidate(goalActivityStateByThreadId, thread.id);
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
