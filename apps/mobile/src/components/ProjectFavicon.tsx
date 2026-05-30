@@ -5,6 +5,7 @@ import { useThemeColor } from "../lib/useThemeColor";
 
 /* ─── Favicon cache (matches web pattern) ────────────────────────────── */
 const loadedFaviconUrls = new Set<string>();
+const PROJECT_FAVICON_URL_VERSION = "github-repo-image-v1";
 
 /* ─── Component ──────────────────────────────────────────────────────── */
 export function ProjectFavicon(props: {
@@ -19,7 +20,7 @@ export function ProjectFavicon(props: {
 
   const faviconUrl =
     props.httpBaseUrl && props.workspaceRoot
-      ? `${props.httpBaseUrl}/api/project-favicon?cwd=${encodeURIComponent(props.workspaceRoot)}`
+      ? `${props.httpBaseUrl}/api/project-favicon?cwd=${encodeURIComponent(props.workspaceRoot)}&v=${PROJECT_FAVICON_URL_VERSION}`
       : null;
 
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>

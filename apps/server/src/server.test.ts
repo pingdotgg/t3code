@@ -116,6 +116,11 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import {
+  ProcessRunner,
+  layer as ProcessRunnerLive,
+  type ProcessRunnerShape,
+} from "./processRunner.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -340,6 +345,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    processRunner?: Partial<ProcessRunnerShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -737,6 +743,13 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provideMerge(
+        options?.layers?.processRunner
+          ? Layer.mock(ProcessRunner)({
+              ...options.layers.processRunner,
+            })
+          : ProcessRunnerLive,
+      ),
       Layer.provide(layerConfig),
     );
 
@@ -1012,6 +1025,111 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.include(yield* response.text, 'data-fallback="project-favicon"');
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves GitHub owner avatar metadata resolved through gh", () =>
+    Effect.gen(function* () {
+      const imageBytes = new Uint8Array([137, 80, 78, 71]);
+      const imageServer = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const NodeHttp = await import("node:http");
+
+          return await new Promise<{
+            readonly close: () => Promise<void>;
+            readonly url: string;
+          }>((resolve, reject) => {
+            const server = NodeHttp.createServer((_request, response) => {
+              response.statusCode = 200;
+              response.setHeader("content-type", "image/png");
+              response.setHeader("content-length", String(imageBytes.byteLength));
+              response.end(Buffer.from(imageBytes));
+            });
+
+            server.on("error", reject);
+            server.listen(0, "127.0.0.1", () => {
+              const address = server.address();
+              if (!address || typeof address === "string") {
+                reject(new Error("Expected TCP image server address"));
+                return;
+              }
+
+              resolve({
+                url: `http://127.0.0.1:${address.port}/avatar.png`,
+                close: () =>
+                  new Promise<void>((resolveClose, rejectClose) => {
+                    server.close((error) => {
+                      if (error) {
+                        rejectClose(error);
+                        return;
+                      }
+                      resolveClose();
+                    });
+                  }),
+              });
+            });
+          });
+        }),
+        ({ close }) => Effect.promise(close),
+      );
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      const projectDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-project-favicon-github-",
+      });
+
+      yield* buildAppUnderTest({
+        layers: {
+          repositoryIdentityResolver: {
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/pingdotgg/t3code",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:pingdotgg/t3code.git",
+                },
+                provider: "github",
+                owner: "pingdotgg",
+                name: "t3code",
+                rootPath: projectDir,
+              }),
+          },
+          processRunner: {
+            run: () =>
+              Effect.succeed({
+                stdout: JSON.stringify({
+                  data: {
+                    repository: {
+                      openGraphImageUrl: "https://opengraph.githubassets.com/hash/pingdotgg/t3code",
+                      owner: {
+                        avatarUrl: imageServer.url,
+                      },
+                    },
+                  },
+                }),
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.get(
+        `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}&v=github-repo-image-v1`,
+        {
+          headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
+          },
+        },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-type"], "image/png");
+      assert.deepEqual(Array.from(new Uint8Array(yield* response.arrayBuffer)), [...imageBytes]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
