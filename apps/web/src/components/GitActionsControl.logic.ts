@@ -201,6 +201,23 @@ export function resolveQuickAction(
     };
   }
 
+  if (isDiverged) {
+    return {
+      label: "Sync ref",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Branch has diverged from upstream. Rebase/merge first.",
+    };
+  }
+
+  if (isBehind) {
+    return {
+      label: "Pull",
+      disabled: false,
+      kind: "run_pull",
+    };
+  }
+
   if (hasChanges) {
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
@@ -251,23 +268,6 @@ export function resolveQuickAction(
       disabled: false,
       kind: "run_action",
       action: "create_pr",
-    };
-  }
-
-  if (isDiverged) {
-    return {
-      label: "Sync ref",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
-    };
-  }
-
-  if (isBehind) {
-    return {
-      label: "Pull",
-      disabled: false,
-      kind: "run_pull",
     };
   }
 
