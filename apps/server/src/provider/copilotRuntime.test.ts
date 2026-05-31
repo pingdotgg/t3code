@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { buildCopilotClientOptions } from "./copilotRuntime.ts";
+import { authSnapshotFromCopilotSdk, buildCopilotClientOptions } from "./copilotRuntime.ts";
 
 describe("buildCopilotClientOptions", () => {
   it("strips inherited COPILOT_CLI_PATH so the SDK uses the bundled CLI by default", () => {
@@ -46,5 +46,19 @@ describe("buildCopilotClientOptions", () => {
 
     assert.equal(options.cliPath, configuredBinaryPath);
     assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+  });
+
+  it("omits the generic signed-in user prefix from authenticated Copilot labels", () => {
+    const snapshot = authSnapshotFromCopilotSdk({
+      isAuthenticated: true,
+      authType: "user",
+      host: "https://github.com",
+      statusMessage: "octocat",
+      login: "octocat",
+    });
+
+    assert.equal(snapshot.auth.status, "authenticated");
+    assert.equal(snapshot.auth.type, "user");
+    assert.equal(snapshot.auth.label, "@octocat - github.com");
   });
 });
