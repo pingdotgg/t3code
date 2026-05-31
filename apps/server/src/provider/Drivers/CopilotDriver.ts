@@ -82,7 +82,8 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.never,
         haveSettingsChanged: () => false,
-        initialSnapshot: (settings) => stampIdentity(makePendingCopilotProvider(settings)),
+        initialSnapshot: (settings) =>
+          Effect.succeed(stampIdentity(makePendingCopilotProvider(settings))),
         checkProvider: checkCopilotProviderStatus({
           settings: effectiveConfig,
           cwd: serverConfig.cwd,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -9,7 +10,7 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Stream } from "effect";
+import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, vi } from "vitest";
 
 import { type ProviderRuntimeEvent, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
@@ -21,8 +22,8 @@ import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
-const waitForSdkEventQueue = () =>
-  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const waitForSdkEventQueue = () => Effect.promise(() => sleep(10).then(() => undefined));
 
 const runtimeMock = vi.hoisted(() => {
   const makeSession = () => ({
@@ -222,10 +223,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const emit = (event: SessionEvent) => config.onEvent?.(event);
         const resultText =
           "Task completed: **Architecture diagram prepared**\n\n```mermaid\nflowchart TD\n  Client --> Server\n```";
+        const timestamp = yield* nowIso;
 
         emit({
           id: "evt-copilot-turn-start",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "assistant.turn_start",
           data: {
@@ -234,7 +236,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-task-start",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "tool.execution_start",
           data: {
@@ -245,7 +247,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-task-complete",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "tool.execution_complete",
           data: {
@@ -258,7 +260,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-idle",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "session.idle",
           data: {
