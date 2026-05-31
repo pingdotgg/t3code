@@ -1,7 +1,7 @@
 import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 import * as Effect from "effect/Effect";
-import { joinBasePath, normalizeBasePath } from "@t3tools/shared/basePath";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 
 import { BASE_PATH } from "../../basePath";
 
@@ -146,7 +146,7 @@ export function resolvePrimaryEnvironmentHttpUrl(
   }
 
   const url = new URL(resolveHttpRequestBaseUrl(primaryTarget.target.httpBaseUrl));
-  url.pathname = joinBasePath(Effect.runSync(normalizeBasePath(url.pathname)), pathname);
+  url.pathname = `${Effect.runSync(normalizeBasePath(url.pathname))}${pathname}`;
   url.search = "";
   url.hash = "";
   if (searchParams) {

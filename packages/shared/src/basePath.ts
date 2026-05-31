@@ -36,11 +36,6 @@ export const normalizeBasePath = (
     return Effect.succeed(NormalizedBasePath(normalized));
   });
 
-export function joinBasePath(basePath: NormalizedBasePath, pathname: string): string {
-  const normalizedPathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  return `${basePath}${normalizedPathname}`;
-}
-
 export function stripBasePathFromPathname(
   basePath: NormalizedBasePath,
   pathname: string,

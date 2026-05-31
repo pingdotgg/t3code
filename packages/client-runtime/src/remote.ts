@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { identity } from "effect/Function";
-import { joinBasePath, normalizeBasePath } from "@t3tools/shared/basePath";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import {
   FetchHttpClient,
   HttpClient,
@@ -30,7 +30,7 @@ const WS_RPC_PATH = "/ws";
 
 const remoteEndpointUrl = (httpBaseUrl: string, pathname: string): string => {
   const url = new URL(httpBaseUrl);
-  url.pathname = joinBasePath(Effect.runSync(normalizeBasePath(url.pathname)), pathname);
+  url.pathname = `${Effect.runSync(normalizeBasePath(url.pathname))}${pathname}`;
   url.search = "";
   url.hash = "";
   return url.toString();
@@ -264,7 +264,7 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
 
   const url = new URL(input.wsBaseUrl);
   const basePath = yield* normalizeBasePath(new URL(input.httpBaseUrl).pathname);
-  url.pathname = joinBasePath(basePath, WS_RPC_PATH);
+  url.pathname = `${basePath}${WS_RPC_PATH}`;
   url.hash = "";
   url.searchParams.set("wsToken", issued.token);
   return url.toString();

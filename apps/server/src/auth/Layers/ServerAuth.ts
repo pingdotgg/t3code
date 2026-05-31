@@ -6,7 +6,6 @@ import {
   type AuthSessionState,
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
-import { joinBasePath } from "@t3tools/shared/basePath";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -322,7 +321,7 @@ export const makeServerAuth = Effect.gen(function* () {
     Effect.gen(function* () {
       const issued = yield* issuePairingCredential({ role: "owner" });
       const url = new URL(baseUrl);
-      url.pathname = joinBasePath(serverConfig.basePath, "/pair");
+      url.pathname = `${serverConfig.basePath}/pair`;
       url.searchParams.delete("token");
       url.hash = new URLSearchParams([["token", issued.credential]]).toString();
       return url.toString();

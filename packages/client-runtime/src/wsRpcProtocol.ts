@@ -1,5 +1,5 @@
 import { WsRpcGroup } from "@t3tools/contracts";
-import { joinBasePath, normalizeBasePath } from "@t3tools/shared/basePath";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -86,10 +86,7 @@ function resolveWsRpcSocketUrl(rawUrl: string): string {
     throw new Error(`Unsupported websocket transport URL protocol: ${resolved.protocol}`);
   }
 
-  resolved.pathname = joinBasePath(
-    Effect.runSync(normalizeBasePath(resolved.pathname)),
-    WS_RPC_PATH,
-  );
+  resolved.pathname = `${Effect.runSync(normalizeBasePath(resolved.pathname))}${WS_RPC_PATH}`;
   resolved.hash = "";
   return resolved.toString();
 }

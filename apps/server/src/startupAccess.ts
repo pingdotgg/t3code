@@ -1,7 +1,7 @@
 import { networkInterfaces } from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
-import { ROOT_BASE_PATH, joinBasePath, type NormalizedBasePath } from "@t3tools/shared/basePath";
+import { ROOT_BASE_PATH, type NormalizedBasePath } from "@t3tools/shared/basePath";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -97,7 +97,7 @@ export const buildPairingUrl = (
   basePath: NormalizedBasePath = ROOT_BASE_PATH,
 ): string => {
   const url = new URL(connectionString);
-  url.pathname = joinBasePath(basePath, "/pair");
+  url.pathname = `${basePath}/pair`;
   url.searchParams.delete("token");
   url.hash = new URLSearchParams([["token", token]]).toString();
   return url.toString();
