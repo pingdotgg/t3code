@@ -33,6 +33,8 @@ import {
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
+type GitActionToastMode = "progress-and-result" | "result-only" | "none";
+type GitActionToastDescriptor = Parameters<typeof toastManager.add>[0];
 
 export interface PendingDefaultBranchAction {
   action: DefaultBranchConfirmableAction;
@@ -41,6 +43,8 @@ export interface PendingDefaultBranchAction {
   commitMessage?: string;
   onConfirmed?: () => void;
   onSuccess?: () => void;
+  onSettled?: () => void;
+  toastMode?: GitActionToastMode;
   filePaths?: string[];
 }
 
@@ -61,6 +65,7 @@ export interface RunGitActionWithToastInput {
   commitMessage?: string;
   onConfirmed?: () => void;
   onSuccess?: () => void;
+  onSettled?: () => void;
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
@@ -72,6 +77,7 @@ export interface RunGitActionWithToastInput {
    * still reported with an error toast.
    */
   suppressProgressToast?: boolean;
+  toastMode?: GitActionToastMode;
 }
 
 function formatElapsedDescription(startedAtMs: number | null): string | undefined {
@@ -92,6 +98,68 @@ function resolveProgressDescription(progress: ActiveGitActionProgress): string |
     return progress.lastOutputLine;
   }
   return formatElapsedDescription(progress.hookStartedAtMs ?? progress.phaseStartedAtMs);
+}
+
+function buildGitSuccessToastDescriptor({
+  result,
+  scopedToastData,
+  closeResultToast,
+  runToastAction,
+}: {
+  result: GitRunStackedActionResult;
+  scopedToastData: ThreadToastData | undefined;
+  closeResultToast: () => void;
+  runToastAction: (action: GitStackedAction) => void;
+}): GitActionToastDescriptor {
+  const toastCta = result.toast.cta;
+  let toastActionProps: {
+    children: string;
+    onClick: () => void;
+  } | null = null;
+
+  if (toastCta.kind === "run_action") {
+    toastActionProps = {
+      children: toastCta.label,
+      onClick: () => {
+        closeResultToast();
+        runToastAction(toastCta.action.kind);
+      },
+    };
+  } else if (toastCta.kind === "open_pr") {
+    toastActionProps = {
+      children: toastCta.label,
+      onClick: () => {
+        const api = readLocalApi();
+        if (!api) return;
+        closeResultToast();
+        void api.shell.openExternal(toastCta.url);
+      },
+    };
+  }
+
+  const successToastData = {
+    ...scopedToastData,
+    dismissAfterVisibleMs: 10_000,
+  };
+
+  if (toastActionProps) {
+    return stackedThreadToast({
+      type: "success",
+      title: result.toast.title,
+      description: result.toast.description,
+      timeout: 0,
+      actionProps: toastActionProps,
+      data: successToastData,
+    });
+  }
+
+  return {
+    type: "success",
+    title: result.toast.title,
+    description: result.toast.description,
+    timeout: 0,
+    data: successToastData,
+  };
 }
 
 export function useGitActionRunner({
@@ -331,13 +399,18 @@ export function useGitActionRunner({
       commitMessage,
       onConfirmed,
       onSuccess,
+      onSettled,
       skipDefaultBranchPrompt = false,
       statusOverride,
       featureBranch = false,
       progressToastId,
       filePaths,
       suppressProgressToast = false,
+      toastMode,
     }: RunGitActionWithToastInput) => {
+      const resolvedToastMode: GitActionToastMode = suppressProgressToast
+        ? "none"
+        : (toastMode ?? "progress-and-result");
       const actionStatus = statusOverride ?? gitStatus;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -366,6 +439,8 @@ export function useGitActionRunner({
           ...(commitMessage ? { commitMessage } : {}),
           ...(onConfirmed ? { onConfirmed } : {}),
           ...(onSuccess ? { onSuccess } : {}),
+          ...(onSettled ? { onSettled } : {}),
+          toastMode: resolvedToastMode,
           ...(filePaths ? { filePaths } : {}),
         });
         return false;
@@ -384,17 +459,20 @@ export function useGitActionRunner({
       });
       const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
       const actionId = randomUUID();
+      const shouldUseProgressToast =
+        progressToastId !== undefined || resolvedToastMode === "progress-and-result";
+      const shouldShowResultToast = resolvedToastMode !== "none" || progressToastId !== undefined;
       const resolvedProgressToastId: GitActionToastId | null =
         progressToastId ??
-        (suppressProgressToast
-          ? null
-          : toastManager.add({
+        (shouldUseProgressToast
+          ? toastManager.add({
               type: "loading",
               title: progressStages[0] ?? "Running git action...",
               description: "Waiting for Git...",
               timeout: 0,
               data: scopedToastData,
-            }));
+            })
+          : null);
 
       activeGitActionProgressRef.current =
         resolvedProgressToastId === null
@@ -501,65 +579,29 @@ export function useGitActionRunner({
           }
         }
         onSuccess?.();
-        if (resolvedProgressToastId === null) {
-          return true;
-        }
-        const closeResultToast = () => {
-          toastManager.close(resolvedProgressToastId);
-        };
-
-        const toastCta = result.toast.cta;
-        let toastActionProps: {
-          children: string;
-          onClick: () => void;
-        } | null = null;
-        if (toastCta.kind === "run_action") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              closeResultToast();
+        if (shouldShowResultToast) {
+          let resultToastId = resolvedProgressToastId;
+          const closeResultToast = () => {
+            if (resultToastId) {
+              toastManager.close(resultToastId);
+            }
+          };
+          const successToast = buildGitSuccessToastDescriptor({
+            result,
+            scopedToastData,
+            closeResultToast,
+            runToastAction: (nextAction) => {
               void runGitActionWithToast({
-                action: toastCta.action.kind,
+                action: nextAction,
               });
             },
-          };
-        } else if (toastCta.kind === "open_pr") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              const api = readLocalApi();
-              if (!api) return;
-              closeResultToast();
-              void api.shell.openExternal(toastCta.url);
-            },
-          };
-        }
-
-        const successToastData = {
-          ...scopedToastData,
-          dismissAfterVisibleMs: 10_000,
-        };
-
-        if (toastActionProps) {
-          toastManager.update(
-            resolvedProgressToastId,
-            stackedThreadToast({
-              type: "success",
-              title: result.toast.title,
-              description: result.toast.description,
-              timeout: 0,
-              actionProps: toastActionProps,
-              data: successToastData,
-            }),
-          );
-        } else {
-          toastManager.update(resolvedProgressToastId, {
-            type: "success",
-            title: result.toast.title,
-            description: result.toast.description,
-            timeout: 0,
-            data: successToastData,
           });
+
+          if (resolvedProgressToastId === null) {
+            resultToastId = toastManager.add(successToast);
+          } else {
+            toastManager.update(resolvedProgressToastId, successToast);
+          }
         }
         return true;
       } catch (err) {
@@ -576,19 +618,24 @@ export function useGitActionRunner({
           toastManager.update(resolvedProgressToastId, errorToast);
         }
         return false;
+      } finally {
+        onSettled?.();
       }
     },
   );
 
   const continuePendingDefaultBranchAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, onSuccess, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, onSuccess, onSettled, toastMode, filePaths } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(onSuccess ? { onSuccess } : {}),
+      ...(onSettled ? { onSettled } : {}),
+      ...(toastMode ? { toastMode } : {}),
       ...(filePaths ? { filePaths } : {}),
       skipDefaultBranchPrompt: true,
     });
@@ -596,13 +643,16 @@ export function useGitActionRunner({
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, onSuccess, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, onSuccess, onSettled, toastMode, filePaths } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(onSuccess ? { onSuccess } : {}),
+      ...(onSettled ? { onSettled } : {}),
+      ...(toastMode ? { toastMode } : {}),
       ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,

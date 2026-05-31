@@ -189,6 +189,7 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
   );
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
   const [pendingStagePaths, setPendingStagePaths] = useState<ReadonlySet<string>>(() => new Set());
   const [pendingUnstagePaths, setPendingUnstagePaths] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -253,7 +254,7 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
   // Treat the post-action status refresh as "running" so action buttons stay in
   // their loading/disabled state until the fresh status lands and the primary
   // button can flip cleanly (Commit -> Push, Push -> gone) without a stale flash.
-  const isGitActionRunning = isGitActionRunningRaw || isFinalizingAction;
+  const isGitActionRunning = isGitActionRunningRaw || isFinalizingAction || isPushing;
 
   const generateCommitMessageMutation = useMutation(
     gitGenerateCommitMessageMutationOptions({ environmentId, cwd }),
@@ -453,7 +454,12 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
   }, [commitMessage, runGitActionWithToast, setCommitMessage]);
 
   const handlePush = useCallback(() => {
-    void runGitActionWithToast({ action: "push" });
+    void runGitActionWithToast({
+      action: "push",
+      toastMode: "result-only",
+      onConfirmed: () => setIsPushing(true),
+      onSettled: () => setIsPushing(false),
+    });
   }, [runGitActionWithToast]);
 
   const handlePull = useCallback(() => {
@@ -687,20 +693,26 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
                   title={pushReason ?? undefined}
                   onClick={handlePush}
                 >
-                  <CloudUploadIcon className="size-3.5" />
+                  {isPushing ? (
+                    <Spinner className="size-3.5" />
+                  ) : (
+                    <CloudUploadIcon className="size-3.5" />
+                  )}
                   Push
-                  <span className="ml-auto flex items-center gap-2 text-[11px] tabular-nums">
-                    <span className="flex items-center gap-0.5">
-                      <ArrowUpIcon className="size-3" />
-                      {aheadCount}
-                    </span>
-                    {behindCount > 0 ? (
+                  {!isPushing ? (
+                    <span className="flex items-center gap-2 text-[11px] tabular-nums">
                       <span className="flex items-center gap-0.5">
-                        <ArrowDownIcon className="size-3" />
-                        {behindCount}
+                        <ArrowUpIcon className="size-3" />
+                        {aheadCount}
                       </span>
-                    ) : null}
-                  </span>
+                      {behindCount > 0 ? (
+                        <span className="flex items-center gap-0.5">
+                          <ArrowDownIcon className="size-3" />
+                          {behindCount}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </Button>
               ) : (
                 <Button

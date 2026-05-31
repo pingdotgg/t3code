@@ -1,7 +1,7 @@
 import "../index.css";
 
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { ThreadId, type GitRunStackedActionResult, type VcsStatusResult } from "@t3tools/contracts";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -365,6 +365,27 @@ function createPanelStatus(input?: {
   };
 }
 
+function createPushedResult(
+  cta: GitRunStackedActionResult["toast"]["cta"] = { kind: "none" },
+): GitRunStackedActionResult {
+  return {
+    action: "push",
+    branch: { status: "skipped_not_requested" },
+    commit: { status: "skipped_not_requested" },
+    push: {
+      status: "pushed",
+      branch: BRANCH_NAME,
+      upstreamBranch: `origin/${BRANCH_NAME}`,
+    },
+    pr: { status: "skipped_not_requested" },
+    toast: {
+      title: `Pushed 89abcde to origin/${BRANCH_NAME}`,
+      description: "feat: update source control push flow",
+      cta,
+    },
+  };
+}
+
 async function renderPanel() {
   const host = document.createElement("div");
   host.style.height = "320px";
@@ -462,7 +483,7 @@ describe("SourceControlPanel git action runner", () => {
       findButtonByText("unstaged-only.ts")?.click();
       filePanel = __readWorkspaceFilePanelStateForTests();
       expect(filePanel.target?.relativePath).toBe("unstaged-only.ts");
-      expect(filePanel.returnTarget).toEqual({ kind: "source-control" });
+      expect(filePanel.returnTarget).toBeNull();
       expect(navigateSpy).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
@@ -653,6 +674,63 @@ describe("SourceControlPanel git action runner", () => {
     }
   });
 
+  it("shows a button spinner instead of a loading toast while pushing, then adds the success toast", async () => {
+    currentGitStatusRef.current = {
+      ...createPanelStatus(),
+      aheadCount: 2,
+      behindCount: 0,
+    };
+    const { host, screen } = await renderPanel();
+    const actionDeferred = createDeferredPromise<GitRunStackedActionResult>();
+    runStackedActionMutateAsyncSpy.mockImplementationOnce(
+      () => actionDeferred.promise as unknown as Promise<never>,
+    );
+    const refreshDeferred = createDeferredPromise<null>();
+    refreshGitStatusSpy.mockImplementationOnce(() => refreshDeferred.promise);
+
+    try {
+      const pushButton = findButtonByText("Push");
+      expect(pushButton).not.toBeNull();
+      pushButton?.click();
+
+      await vi.waitFor(() => {
+        expect(runStackedActionMutateAsyncSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ action: "push" }),
+        );
+      });
+      await vi.waitFor(() => {
+        const loadingPushButton = findButtonByText("Push");
+        expect(loadingPushButton?.querySelector('[role="status"]')).not.toBeNull();
+        expect(loadingPushButton?.disabled).toBe(true);
+        expect(loadingPushButton?.textContent).not.toContain("2");
+      });
+      expect(toastAddSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "loading" }));
+
+      actionDeferred.resolve(
+        createPushedResult({
+          kind: "run_action",
+          label: "Create PR",
+          action: { kind: "create_pr" },
+        }),
+      );
+      currentGitStatusRef.current = { ...createPanelStatus(), aheadCount: 0, behindCount: 0 };
+      refreshDeferred.resolve(null);
+
+      await vi.waitFor(() => {
+        expect(toastAddSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            actionProps: expect.objectContaining({ children: "Create PR" }),
+            title: `Pushed 89abcde to origin/${BRANCH_NAME}`,
+            type: "success",
+          }),
+        );
+      });
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps the primary button loading until the post-action status refresh resolves", async () => {
     currentGitStatusRef.current = { ...createPanelStatus(), aheadCount: 2, behindCount: 0 };
 
@@ -673,20 +751,22 @@ describe("SourceControlPanel git action runner", () => {
       expect(pushButton?.disabled).toBe(false);
       pushButton?.click();
 
-      // The action resolves; the runner now awaits the forced status refresh.
-      actionDeferred.resolve({
-        action: "push",
-        branch: { status: "skipped_not_requested" },
-        commit: { status: "skipped_not_requested" },
-        push: { status: "pushed" },
-        pr: { status: "skipped_not_requested" },
-        toast: { title: "Pushed", cta: { kind: "none" } },
+      await vi.waitFor(() => {
+        const loadingPushButton = findButtonByText("Push");
+        expect(loadingPushButton?.querySelector('[role="status"]')).not.toBeNull();
+        expect(loadingPushButton?.disabled).toBe(true);
       });
+      expect(toastAddSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "loading" }));
+
+      // The action resolves; the runner now awaits the forced status refresh.
+      actionDeferred.resolve(createPushedResult());
 
       // While the refresh is in flight the Push button stays disabled rather
       // than flashing back to an actionable state.
       await vi.waitFor(() => {
-        expect(findButtonByText("Push")?.disabled).toBe(true);
+        const loadingPushButton = findButtonByText("Push");
+        expect(loadingPushButton?.disabled).toBe(true);
+        expect(loadingPushButton?.querySelector('[role="status"]')).not.toBeNull();
       });
 
       // The push landed: the fresh status is clean/up-to-date, so once the
