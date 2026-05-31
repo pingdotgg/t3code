@@ -5,7 +5,6 @@ import type { ProjectKickoffThreadInput } from "~/t3work/t3work-kickoffTypes";
 import type { ProjectDashboardMode } from "~/t3work/t3work-projectDashboardModeState";
 import { ProjectDashboardKickoffAside } from "~/t3work/t3work-ProjectDashboardKickoffAside";
 import { T3workDashboardRecipeActionProvider } from "~/t3work/t3work-dashboardRecipeActions";
-import { T3workInlineRecipeLaunchProvider } from "~/t3work/t3work-inlineRecipeLaunch";
 import { ResizableRightSidebarLayout } from "~/t3work/t3work-ResizableRightSidebarLayout";
 import { T3workDashboardRecipeViewProvider } from "~/t3work/t3work-dashboardRecipeViewContext";
 import { getProjectDashboardRightSidebarCollapsedStorageKey } from "~/t3work/t3work-rightSidebarPersistence";
@@ -51,62 +50,60 @@ export function AppDashboardPane({
   return (
     <T3workDashboardRecipeViewProvider>
       <T3workDashboardRecipeActionProvider>
-        <T3workInlineRecipeLaunchProvider>
-          <ResizableRightSidebarLayout
-            storageKey="t3work_dashboard_right_sidebar"
-            collapsedStorageKey={getProjectDashboardRightSidebarCollapsedStorageKey({
-              projectId: project.id,
-              dashboardMode: activeDashboardMode,
-              embeddedThreadId: activeThreadId,
-            })}
-            minAsideWidth={22 * 16}
-            defaultAsideWidth={24 * 16}
-            mobileDefaultPanel={activeThread ? "aside" : "main"}
-            mobileMainLabel={activeDashboardMode === "backlog" ? "Backlog" : "My work"}
-            mobileAsideLabel={activeThread ? "Chat" : "Agent"}
-            main={
-              <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
-                {renderDashboard(project)}
-              </div>
-            }
-            aside={
-              <ProjectDashboardKickoffAside
-                project={project}
-                dashboardMode={activeDashboardMode}
-                projectThreads={projectThreads}
-                activeThread={activeThread}
-                providers={providers}
-                isConnected={isConnected}
-                onOpenThread={(threadId) => onOpenThread(project.id, threadId)}
-                onOpenFullThread={(threadId) => onOpenFullThread(project.id, threadId)}
-                onThreadKickoffConsumed={onThreadKickoffConsumed}
-                onKickoffThread={(
+        <ResizableRightSidebarLayout
+          storageKey="t3work_dashboard_right_sidebar"
+          collapsedStorageKey={getProjectDashboardRightSidebarCollapsedStorageKey({
+            projectId: project.id,
+            dashboardMode: activeDashboardMode,
+            embeddedThreadId: activeThreadId,
+          })}
+          minAsideWidth={22 * 16}
+          defaultAsideWidth={24 * 16}
+          mobileDefaultPanel={activeThread ? "aside" : "main"}
+          mobileMainLabel={activeDashboardMode === "backlog" ? "Backlog" : "My work"}
+          mobileAsideLabel={activeThread ? "Chat" : "Agent"}
+          main={
+            <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+              {renderDashboard(project)}
+            </div>
+          }
+          aside={
+            <ProjectDashboardKickoffAside
+              project={project}
+              dashboardMode={activeDashboardMode}
+              projectThreads={projectThreads}
+              activeThread={activeThread}
+              providers={providers}
+              isConnected={isConnected}
+              onOpenThread={(threadId) => onOpenThread(project.id, threadId)}
+              onOpenFullThread={(threadId) => onOpenFullThread(project.id, threadId)}
+              onThreadKickoffConsumed={onThreadKickoffConsumed}
+              onKickoffThread={(
+                kickoffMessage,
+                kickoffPending,
+                kickoffModelSelection,
+                kickoffRuntimeMode,
+                kickoffInteractionMode,
+                selectedToolIds,
+                kickoffContextAttachments,
+                kickoffWorkflow,
+              ) => {
+                onKickoffProjectThread({
+                  projectId: project.id,
+                  dashboardMode: activeDashboardMode,
                   kickoffMessage,
-                  kickoffPending,
+                  ...(kickoffPending !== undefined ? { kickoffPending } : {}),
                   kickoffModelSelection,
                   kickoffRuntimeMode,
                   kickoffInteractionMode,
                   selectedToolIds,
                   kickoffContextAttachments,
-                  kickoffWorkflow,
-                ) => {
-                  onKickoffProjectThread({
-                    projectId: project.id,
-                    dashboardMode: activeDashboardMode,
-                    kickoffMessage,
-                    ...(kickoffPending !== undefined ? { kickoffPending } : {}),
-                    kickoffModelSelection,
-                    kickoffRuntimeMode,
-                    kickoffInteractionMode,
-                    selectedToolIds,
-                    kickoffContextAttachments,
-                    ...(kickoffWorkflow ? { kickoffWorkflow } : {}),
-                  });
-                }}
-              />
-            }
-          />
-        </T3workInlineRecipeLaunchProvider>
+                  ...(kickoffWorkflow ? { kickoffWorkflow } : {}),
+                });
+              }}
+            />
+          }
+        />
       </T3workDashboardRecipeActionProvider>
     </T3workDashboardRecipeViewProvider>
   );

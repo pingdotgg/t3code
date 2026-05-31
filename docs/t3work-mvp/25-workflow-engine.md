@@ -198,8 +198,8 @@ import { models } from "@t3work/sdk/models";
 export const meta = {
   // …
   model: {
-    provider: "anthropic-primary",        // project-configured provider instance id (string)
-    model:    models.anthropic.claudeHaiku45,   // typed ModelRef — autocomplete + typo-safe
+    provider: "anthropic-primary", // project-configured provider instance id (string)
+    model: models.anthropic.claudeHaiku45, // typed ModelRef — autocomplete + typo-safe
   },
 } as const;
 ```
@@ -444,14 +444,14 @@ determinism for everything downstream of it.
 
 ### What the engine catches automatically
 
-| Detected                                              | When                      | Effect                                   |
-| ----------------------------------------------------- | ------------------------- | ---------------------------------------- |
-| Banned global usage (`Date.now`, etc.)                | Lint + workflow load time | Workflow refuses to load                 |
-| Non-type runtime imports                              | Workflow load time        | Workflow refuses to load                 |
-| Module-level mutable state                            | Lint + load time          | Workflow refuses to load                 |
-| `meta` referencing non-extractable values             | Workflow load time        | Workflow refuses to load                 |
-| Mismatched `argsHash` on replay                       | Replay execution          | `ReplayDriftError` at the diverging site |
-| Primitive call after `cancellation` aborted           | Runtime                   | `CancelledError`                         |
+| Detected                                                                                         | When                      | Effect                                       |
+| ------------------------------------------------------------------------------------------------ | ------------------------- | -------------------------------------------- |
+| Banned global usage (`Date.now`, etc.)                                                           | Lint + workflow load time | Workflow refuses to load                     |
+| Non-type runtime imports                                                                         | Workflow load time        | Workflow refuses to load                     |
+| Module-level mutable state                                                                       | Lint + load time          | Workflow refuses to load                     |
+| `meta` referencing non-extractable values                                                        | Workflow load time        | Workflow refuses to load                     |
+| Mismatched `argsHash` on replay                                                                  | Replay execution          | `ReplayDriftError` at the diverging site     |
+| Primitive call after `cancellation` aborted                                                      | Runtime                   | `CancelledError`                             |
 | Capability mismatch (call site references a tool whose `group` ref isn't in `meta.capabilities`) | Runtime, at the call site | `PermissionDeniedError` thrown and journaled |
 
 ### What the engine cannot catch

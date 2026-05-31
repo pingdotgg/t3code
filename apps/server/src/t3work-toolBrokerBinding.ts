@@ -15,10 +15,10 @@ import {
   foldResult,
   okResult,
   readBacklogAssigneeFilterMode,
-  readRenameTitle,
   resourceResult,
 } from "./t3work-toolBrokerHelpers.ts";
 import { buildBindingState, permissionMessage } from "./t3work-toolBrokerBindingPermissions.ts";
+import { callT3workRenameTool } from "./t3work-toolBrokerBindingRename.ts";
 
 type CreateBindingInput<
   TRenameError = never,
@@ -64,21 +64,13 @@ function createToolSurface<TRenameError, TStartChildError, TReadError, TBacklogA
       return Effect.succeed(errorResult(permissionMessage(tool, state.effectiveGroups)));
     }
     if (tool === "t3work.thread.rename") {
-      if (!input.renameThread) {
-        return Effect.succeed(errorResult(`Tool '${tool}' is not enabled ${input.scopeLabel}.`));
-      }
-      const title = readRenameTitle(toolArgs);
-      if (!title) {
-        return Effect.succeed(errorResult("t3work.thread.rename requires a non-empty 'title'."));
-      }
-      return foldResult(
-        input.renameThread(title),
-        () =>
-          okResult(
-            input.renameThreadResult ? input.renameThreadResult(title) : { ok: true, title },
-          ),
-        (message) => errorResult(`Failed to rename thread: ${message}`),
-      );
+      return callT3workRenameTool({
+        tool,
+        scopeLabel: input.scopeLabel,
+        toolArgs,
+        ...(input.renameThread ? { renameThread: input.renameThread } : {}),
+        ...(input.renameThreadResult ? { renameThreadResult: input.renameThreadResult } : {}),
+      });
     }
     if (tool === "t3work.thread.start_child") {
       if (!input.startChild) {

@@ -18,6 +18,12 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
+    "paths": {
+      "@t3work/sdk": ["./packages/t3work-sdk/src/t3work-sdk.index.ts"],
+      "@t3work/sdk/groups": ["./packages/t3work-sdk/src/t3work-sdk.groups.ts"],
+      "@t3work/sdk/models": ["./packages/t3work-sdk/src/t3work-sdk.models.ts"],
+      "@t3work/sdk/tools/t3work": ["./packages/t3work-sdk/src/tools/t3work-sdk.t3work.ts"]
+    },
     "plugins": [
       {
         "name": "@effect/language-service",
