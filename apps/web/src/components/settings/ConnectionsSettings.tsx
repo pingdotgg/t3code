@@ -2442,6 +2442,9 @@ export function ConnectionsSettings() {
       }, 360_000);
     });
 
+    // Whether the new backend's welcome event synced before the 45s ceiling.
+    // Stays false if the wait timed out, which softens the success copy below.
+    let welcomeSynced = false;
     const runSwap = async () => {
       const updated = await desktopBridge.setWslBackend(target);
       if (aborted) return;
@@ -2460,14 +2463,21 @@ export function ConnectionsSettings() {
       if (aborted) return;
 
       // Wait for the new backend's welcome event so the modal stays open
-      // until threads are actually ready. Bounded by 45s.
+      // until threads are actually ready. Bounded by 45s. Record which side
+      // of the race won: the backend has already restarted and reauth has
+      // succeeded by this point, so a timeout only means thread state is
+      // still catching up — the global welcome subscription refreshes it
+      // when the delayed welcome lands. We surface that as softer success
+      // copy rather than silently claiming threads are ready.
       setDesktopWslChangeStage("syncing");
-      await Promise.race([
-        newWelcomePromise,
-        new Promise<void>((resolve) => {
-          window.setTimeout(resolve, 45_000);
+      let welcomeSyncTimer: number | null = null;
+      welcomeSynced = await Promise.race([
+        newWelcomePromise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          welcomeSyncTimer = window.setTimeout(() => resolve(false), 45_000);
         }),
       ]);
+      if (welcomeSyncTimer !== null) window.clearTimeout(welcomeSyncTimer);
     };
 
     // Wrap the whole flow (incl. error recovery) in suppressReconnect so the
@@ -2479,13 +2489,16 @@ export function ConnectionsSettings() {
           await Promise.race([runSwap(), flowTimeout]);
 
           setPendingDesktopWslSelection(null);
+          const backendLocation =
+            target.mode === "wsl"
+              ? `inside ${target.distro ?? "the default WSL distro"}`
+              : "on Windows";
           toastManager.add({
             type: "success",
             title: "Backend restarted",
-            description:
-              target.mode === "wsl"
-                ? `The local backend is now running inside ${target.distro ?? "the default WSL distro"}.`
-                : "The local backend is now running on Windows.",
+            description: welcomeSynced
+              ? `The local backend is now running ${backendLocation}.`
+              : `The local backend is now running ${backendLocation}. It's taking a moment to finish syncing — your threads will refresh automatically.`,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
