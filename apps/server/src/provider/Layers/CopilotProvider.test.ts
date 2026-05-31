@@ -10,12 +10,14 @@ import { checkCopilotProviderStatus } from "./CopilotProvider.ts";
 const runtimeMock = vi.hoisted(() => {
   const state = {
     listModelsError: null as Error | null,
+    createClientError: null as Error | null,
   };
 
   return {
     state,
     reset() {
       state.listModelsError = null;
+      state.createClientError = null;
     },
   };
 });
@@ -26,27 +28,32 @@ vi.mock("../copilotRuntime.ts", async () => {
 
   return {
     ...actual,
-    createCopilotClient: vi.fn(() => ({
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      getStatus: vi.fn(async () => ({
-        version: "1.0.32",
-        protocolVersion: 3,
-      })),
-      getAuthStatus: vi.fn(async () => ({
-        isAuthenticated: true,
-        authType: "gh-cli",
-        host: "https://github.com",
-        statusMessage: "zortos293 (via gh)",
-        login: "zortos293",
-      })),
-      listModels: vi.fn(async () => {
-        if (runtimeMock.state.listModelsError) {
-          throw runtimeMock.state.listModelsError;
-        }
-        return [];
-      }),
-    })),
+    createCopilotClient: vi.fn(() => {
+      if (runtimeMock.state.createClientError) {
+        throw runtimeMock.state.createClientError;
+      }
+      return {
+        start: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        getStatus: vi.fn(async () => ({
+          version: "1.0.32",
+          protocolVersion: 3,
+        })),
+        getAuthStatus: vi.fn(async () => ({
+          isAuthenticated: true,
+          authType: "gh-cli",
+          host: "https://github.com",
+          statusMessage: "zortos293 (via gh)",
+          login: "zortos293",
+        })),
+        listModels: vi.fn(async () => {
+          if (runtimeMock.state.listModelsError) {
+            throw runtimeMock.state.listModelsError;
+          }
+          return [];
+        }),
+      };
+    }),
   };
 });
 
@@ -69,6 +76,29 @@ describe("CopilotProvider status", () => {
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, true);
       assert.equal(snapshot.message, "401 Unauthorized");
+    }),
+  );
+
+  it.effect("returns an error snapshot when the configured Copilot CLI path is invalid", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.createClientError = new Error(
+        "The configured Copilot binary could not be found: /missing/copilot.",
+      );
+
+      const snapshot = yield* checkCopilotProviderStatus({
+        settings: {
+          ...defaultCopilotSettings,
+          binaryPath: "/missing/copilot",
+        },
+        cwd: process.cwd(),
+      });
+
+      assert.equal(snapshot.status, "error");
+      assert.equal(snapshot.installed, false);
+      assert.equal(
+        snapshot.message,
+        "The configured Copilot binary could not be started: /missing/copilot.",
+      );
     }),
   );
 });
