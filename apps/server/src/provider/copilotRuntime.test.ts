@@ -30,10 +30,12 @@ describe("buildCopilotClientOptions", () => {
   });
 
   it("prefers the configured binary path over any inherited CLI path override", () => {
+    const configuredBinaryPath = process.execPath;
+
     const options = buildCopilotClientOptions({
       settings: {
         enabled: true,
-        binaryPath: "/custom/copilot",
+        binaryPath: configuredBinaryPath,
         serverUrl: "",
         customModels: [],
       },
@@ -42,7 +44,7 @@ describe("buildCopilotClientOptions", () => {
       },
     });
 
-    assert.equal(options.cliPath, "/custom/copilot");
+    assert.equal(options.cliPath, configuredBinaryPath);
     assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
   });
 });

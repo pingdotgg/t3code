@@ -177,11 +177,20 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             return existing.client;
           }
 
-          const client = createCopilotClient({
-            settings: input.settings,
-            cwd: input.cwd,
-            env: environment,
-            logLevel: "error",
+          const client = yield* Effect.try({
+            try: () =>
+              createCopilotClient({
+                settings: input.settings,
+                cwd: input.cwd,
+                env: environment,
+                logLevel: "error",
+              }),
+            catch: (cause) =>
+              copilotTextGenerationError(
+                input.operation,
+                detailFromCause(cause, "Failed to configure Copilot client."),
+                cause,
+              ),
           });
           yield* Effect.tryPromise({
             try: () => client.start(),

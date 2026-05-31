@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
 
@@ -104,6 +105,32 @@ export function createCopilotClient(input: {
   return new CopilotClient(buildCopilotClientOptions(input));
 }
 
+function validateConfiguredCopilotCliPath(input: {
+  readonly settings: CopilotSettings;
+  readonly env?: Record<string, string | undefined>;
+}): string | undefined {
+  const cliUrl = trimOrUndefined(input.settings.serverUrl);
+  if (cliUrl) {
+    return undefined;
+  }
+
+  const cliPath = trimOrUndefined(input.settings.binaryPath);
+  if (!cliPath) {
+    return undefined;
+  }
+
+  const env = {
+    ...process.env,
+    ...(input.env ?? {}),
+  };
+  const resolvedCommandPath = resolveCommandPath(cliPath, { env });
+  if (!resolvedCommandPath) {
+    throw new Error(`The configured Copilot binary could not be found: ${cliPath}.`);
+  }
+
+  return resolvedCommandPath;
+}
+
 export function buildCopilotClientOptions(input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
@@ -111,7 +138,10 @@ export function buildCopilotClientOptions(input: {
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
 }): CopilotClientOptions {
-  const cliPath = trimOrUndefined(input.settings.binaryPath);
+  const cliPath = validateConfiguredCopilotCliPath({
+    settings: input.settings,
+    ...(input.env ? { env: input.env } : {}),
+  });
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
   const env = { ...process.env };
 
@@ -256,7 +286,9 @@ export function formatCopilotProbeError(input: {
     lower.includes("enoent") ||
     lower.includes("spawn") ||
     lower.includes("not found") ||
-    lower.includes("could not find")
+    lower.includes("could not find") ||
+    lower.includes("could not be found") ||
+    lower.includes("not executable")
   ) {
     return {
       installed: false,

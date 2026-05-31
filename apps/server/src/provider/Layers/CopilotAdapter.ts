@@ -2046,11 +2046,20 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         );
       };
 
-      const client = createCopilotClient({
-        settings,
-        cwd,
-        ...(options?.environment ? { env: options.environment } : {}),
-        logLevel: "error",
+      const client = yield* Effect.try({
+        try: () =>
+          createCopilotClient({
+            settings,
+            cwd,
+            ...(options?.environment ? { env: options.environment } : {}),
+            logLevel: "error",
+          }),
+        catch: (cause) =>
+          processError(
+            input.threadId,
+            detailFromCause(cause, "Failed to configure Copilot client."),
+            cause,
+          ),
       });
 
       const baseSessionConfig = {
