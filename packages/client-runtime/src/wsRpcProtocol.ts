@@ -1,4 +1,5 @@
 import { WsRpcGroup } from "@t3tools/contracts";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,6 +12,8 @@ import {
   getReconnectDelayMs,
   type ReconnectBackoffConfig,
 } from "./reconnectBackoff.ts";
+
+const WS_RPC_PATH = "/ws";
 
 export interface WsProtocolLifecycleHandlers {
   readonly getConnectionLabel?: () => string | null;
@@ -83,7 +86,8 @@ function resolveWsRpcSocketUrl(rawUrl: string): string {
     throw new Error(`Unsupported websocket transport URL protocol: ${resolved.protocol}`);
   }
 
-  resolved.pathname = "/ws";
+  resolved.pathname = `${Effect.runSync(normalizeBasePath(resolved.pathname))}${WS_RPC_PATH}`;
+  resolved.hash = "";
   return resolved.toString();
 }
 

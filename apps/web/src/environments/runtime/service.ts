@@ -742,7 +742,7 @@ async function fetchDesktopSshSessionState(httpBaseUrl: string, bearerToken: str
   return await getDesktopSshBridge().fetchSshSessionState(httpBaseUrl, bearerToken);
 }
 
-async function resolveDesktopSshWebSocketConnectionUrl(
+async function resolveDesktopSshWebSocketBaseUrl(
   wsBaseUrl: string,
   httpBaseUrl: string,
   bearerToken: string,
@@ -1159,7 +1159,7 @@ function createSavedEnvironmentClient(
           throw new Error(`Saved environment ${environmentId} not found.`);
         }
         return record.desktopSsh
-          ? await resolveDesktopSshWebSocketConnectionUrl(
+          ? await resolveDesktopSshWebSocketBaseUrl(
               record.wsBaseUrl,
               record.httpBaseUrl,
               bearerToken,

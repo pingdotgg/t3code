@@ -11,6 +11,10 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
+    "./basePath": {
+      "types": "./src/basePath.ts",
+      "import": "./src/basePath.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

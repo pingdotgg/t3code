@@ -23,6 +23,7 @@ import {
   ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -1624,6 +1625,7 @@ async function mountChatView(options: {
     createMemoryHistory({
       initialEntries: [options.initialPath ?? `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`],
     }),
+    ROOT_BASE_PATH,
   );
 
   const screen = await render(

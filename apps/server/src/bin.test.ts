@@ -7,6 +7,7 @@ import { join } from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
+      basePath: ROOT_BASE_PATH,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
     } satisfies ServerConfigShape;

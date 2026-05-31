@@ -28,6 +28,7 @@ import {
   SessionCredentialService,
 } from "../Services/SessionCredentialService.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
+import { ServerConfig } from "../../config.ts";
 
 type BootstrapExchangeResult = {
   readonly response: AuthBootstrapResult;
@@ -67,6 +68,7 @@ export const makeServerAuth = Effect.gen(function* () {
   const bootstrapCredentials = yield* BootstrapCredentialService;
   const authControlPlane = yield* AuthControlPlane;
   const sessions = yield* SessionCredentialService;
+  const serverConfig = yield* ServerConfig;
   const descriptor = yield* policy.getDescriptor();
 
   const authenticateToken = (token: string): Effect.Effect<AuthenticatedSession, AuthError> =>
@@ -316,15 +318,14 @@ export const makeServerAuth = Effect.gen(function* () {
     );
 
   const issueStartupPairingUrl: ServerAuthShape["issueStartupPairingUrl"] = (baseUrl) =>
-    issuePairingCredential({ role: "owner" }).pipe(
-      Effect.map((issued) => {
-        const url = new URL(baseUrl);
-        url.pathname = "/pair";
-        url.searchParams.delete("token");
-        url.hash = new URLSearchParams([["token", issued.credential]]).toString();
-        return url.toString();
-      }),
-    );
+    Effect.gen(function* () {
+      const issued = yield* issuePairingCredential({ role: "owner" });
+      const url = new URL(baseUrl);
+      url.pathname = `${serverConfig.basePath}/pair`;
+      url.searchParams.delete("token");
+      url.hash = new URLSearchParams([["token", issued.credential]]).toString();
+      return url.toString();
+    });
 
   const issueWebSocketToken: ServerAuthShape["issueWebSocketToken"] = (session) =>
     sessions.issueWebSocketToken(session.sessionId).pipe(

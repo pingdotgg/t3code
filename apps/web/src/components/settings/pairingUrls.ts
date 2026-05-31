@@ -1,9 +1,12 @@
+import { normalizeBasePath } from "@t3tools/shared/basePath";
+import * as Effect from "effect/Effect";
+
 import { buildHostedPairingUrl } from "../../hostedPairing";
 import { setPairingTokenOnUrl } from "../../pairingUrl";
 
 export function resolveDesktopPairingUrl(endpointUrl: string, credential: string): string {
   const url = new URL(endpointUrl);
-  url.pathname = "/pair";
+  url.pathname = `${Effect.runSync(normalizeBasePath(url.pathname))}/pair`;
   return setPairingTokenOnUrl(url, credential).toString();
 }
 

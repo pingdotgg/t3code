@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { ServerEnvironment } from "../Services/ServerEnvironment.ts";
 import { ServerEnvironmentLive } from "./ServerEnvironment.ts";
@@ -35,6 +36,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     mode: "web",
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
+    basePath: ROOT_BASE_PATH,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
     port: 0,

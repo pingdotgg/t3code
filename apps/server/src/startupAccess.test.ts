@@ -1,5 +1,6 @@
 import { assert, expect, it } from "@effect/vitest";
 
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import {
   buildPairingUrl,
   formatHeadlessServeOutput,
@@ -20,7 +21,7 @@ it("keeps explicit bind hosts in the connection string", () => {
 });
 
 it("resolves wildcard hosts to a concrete external interface when one is available", () => {
-  const connectionString = resolveHeadlessConnectionString("0.0.0.0", 3773, {
+  const connectionString = resolveHeadlessConnectionString("0.0.0.0", 3773, ROOT_BASE_PATH, {
     en0: [
       {
         address: "192.168.1.42",

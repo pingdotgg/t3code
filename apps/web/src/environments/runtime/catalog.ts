@@ -1,4 +1,6 @@
 import { getKnownEnvironmentHttpBaseUrl } from "@t3tools/client-runtime";
+import * as Effect from "effect/Effect";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import type {
   AuthSessionRole,
   EnvironmentId,
@@ -220,7 +222,9 @@ export function resolveEnvironmentHttpUrl(input: {
   }
 
   const url = new URL(httpBaseUrl);
-  url.pathname = input.pathname;
+  url.pathname = `${Effect.runSync(normalizeBasePath(url.pathname))}${input.pathname}`;
+  url.search = "";
+  url.hash = "";
   if (input.searchParams) {
     url.search = new URLSearchParams(input.searchParams).toString();
   }

@@ -1,6 +1,7 @@
 import { networkInterfaces } from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
+import { ROOT_BASE_PATH, type NormalizedBasePath } from "@t3tools/shared/basePath";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -71,10 +72,11 @@ export const resolveHeadlessConnectionHost = (
 export const resolveHeadlessConnectionString = (
   host: string | undefined,
   port: number,
+  basePath: NormalizedBasePath = ROOT_BASE_PATH,
   interfaces: NetworkInterfacesMap = networkInterfaces(),
 ): string => {
   const connectionHost = resolveHeadlessConnectionHost(host, interfaces);
-  return `http://${formatHostForUrl(connectionHost)}:${port}`;
+  return `http://${formatHostForUrl(connectionHost)}:${port}${basePath}`;
 };
 
 export const resolveListeningPort = (address: unknown, fallbackPort: number): number => {
@@ -89,9 +91,13 @@ export const resolveListeningPort = (address: unknown, fallbackPort: number): nu
   return fallbackPort;
 };
 
-export const buildPairingUrl = (connectionString: string, token: string): string => {
+export const buildPairingUrl = (
+  connectionString: string,
+  token: string,
+  basePath: NormalizedBasePath = ROOT_BASE_PATH,
+): string => {
   const url = new URL(connectionString);
-  url.pathname = "/pair";
+  url.pathname = `${basePath}/pair`;
   url.searchParams.delete("token");
   url.hash = new URLSearchParams([["token", token]]).toString();
   return url.toString();
@@ -137,12 +143,13 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
+    serverConfig.basePath,
   );
   const issued = yield* serverAuth.issuePairingCredential({ role: "owner" });
 
   return {
     connectionString,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
+    pairingUrl: buildPairingUrl(connectionString, issued.credential, serverConfig.basePath),
   } satisfies HeadlessServeAccessInfo;
 });

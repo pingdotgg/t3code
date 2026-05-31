@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { NormalizedBasePath } from "@t3tools/shared/basePath";
 import {
   classifyHostedHttpsCompatibility,
   createAdvertisedEndpoint,
@@ -20,6 +21,17 @@ describe("advertised endpoint helpers", () => {
     expect(normalizeHttpBaseUrl("wss://example.com/socket")).toBe("https://example.com/");
     expect(deriveWsBaseUrl("https://example.com/api")).toBe("wss://example.com/");
     expect(deriveWsBaseUrl("http://127.0.0.1:3773")).toBe("ws://127.0.0.1:3773/");
+  });
+
+  it("uses explicit base path when provided", () => {
+    const basePath = NormalizedBasePath("/custom");
+
+    expect(normalizeHttpBaseUrl("https://example.com/path?x=1#hash", { basePath })).toBe(
+      "https://example.com/custom/",
+    );
+    expect(deriveWsBaseUrl("https://example.com/api", { basePath })).toBe(
+      "wss://example.com/custom/",
+    );
   });
 
   it("marks HTTP endpoints as blocked from hosted HTTPS apps", () => {

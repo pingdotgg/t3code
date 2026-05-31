@@ -25,6 +25,7 @@ import {
   WsRpcGroup,
   EditorId,
 } from "@t3tools/contracts";
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -374,6 +375,7 @@ const buildAppUnderTest = (options?: {
       desktopBootstrapToken: defaultDesktopBootstrapToken,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
+      basePath: ROOT_BASE_PATH,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
       ...options?.config,

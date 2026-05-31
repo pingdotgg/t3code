@@ -15,6 +15,7 @@ import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
+import { ServerConfig } from "../config.ts";
 
 export const respondToAuthError = (error: AuthError) =>
   Effect.gen(function* () {
@@ -70,6 +71,7 @@ export const authBootstrapRouteLayer = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* ServerAuth;
     const sessions = yield* SessionCredentialService;
+    const config = yield* ServerConfig;
     const payload = yield* HttpServerRequest.schemaBodyJson(AuthBootstrapInput).pipe(
       Effect.mapError(
         (cause) =>
@@ -92,7 +94,7 @@ export const authBootstrapRouteLayer = HttpRouter.add(
       HttpServerResponse.setCookie(sessions.cookieName, result.sessionToken, {
         expires: DateTime.toDate(result.response.expiresAt),
         httpOnly: true,
-        path: "/",
+        path: `${config.basePath}/`,
         sameSite: "lax",
       }),
     );

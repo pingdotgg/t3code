@@ -408,9 +408,19 @@ export const makeServerLayer = Layer.unwrap(
       : Layer.empty;
 
     const serverApplicationLayer = Layer.mergeAll(
-      HttpRouter.serve(makeRoutesLayer, {
-        disableLogger: !config.logWebSocketEvents,
-      }),
+      HttpRouter.serve(
+        Layer.unwrap(
+          Effect.gen(function* () {
+            const router = yield* HttpRouter.HttpRouter;
+            return makeRoutesLayer.pipe(
+              Layer.provide(Layer.succeed(HttpRouter.HttpRouter)(router.prefixed(config.basePath))),
+            );
+          }),
+        ),
+        {
+          disableLogger: !config.logWebSocketEvents,
+        },
+      ),
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,

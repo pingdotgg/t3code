@@ -1,6 +1,7 @@
 import { SymbolView } from "expo-symbols";
 import { useState } from "react";
 import { Image, View } from "react-native";
+import { resolveRemoteHttpUrl } from "../lib/remoteUrl";
 import { useThemeColor } from "../lib/useThemeColor";
 
 /* ─── Favicon cache (matches web pattern) ────────────────────────────── */
@@ -19,7 +20,11 @@ export function ProjectFavicon(props: {
 
   const faviconUrl =
     props.httpBaseUrl && props.workspaceRoot
-      ? `${props.httpBaseUrl}/api/project-favicon?cwd=${encodeURIComponent(props.workspaceRoot)}`
+      ? resolveRemoteHttpUrl({
+          httpBaseUrl: props.httpBaseUrl,
+          pathname: "/api/project-favicon",
+          searchParams: { cwd: props.workspaceRoot },
+        })
       : null;
 
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>

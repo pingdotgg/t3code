@@ -16,6 +16,7 @@ import {
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { ROOT_BASE_PATH } from "@t3tools/shared/basePath";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
@@ -460,6 +461,7 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
 
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}`] }),
+    ROOT_BASE_PATH,
   );
 
   const screen = await render(

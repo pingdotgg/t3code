@@ -13,6 +13,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import {
   DEFAULT_PORT,
@@ -40,6 +41,10 @@ export const hostFlag = Flag.string("host").pipe(
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription("Base directory path (equivalent to T3CODE_HOME)."),
+  Flag.optional,
+);
+export const basePathFlag = Flag.string("base-path").pipe(
+  Flag.withDescription("Path prefix to mount the web app and backend under."),
   Flag.optional,
 );
 export const devUrlFlag = Flag.string("dev-url").pipe(
@@ -110,6 +115,10 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  basePath: Config.string("T3CODE_BASE_PATH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
@@ -142,6 +151,7 @@ export interface CliServerFlags {
   readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
+  readonly basePath: Option.Option<string>;
   readonly baseDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
@@ -171,6 +181,7 @@ export const sharedServerCommandFlags = {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
+  basePath: basePathFlag,
   baseDir: baseDirFlag,
   cwd: Argument.string("cwd").pipe(
     Argument.withDescription(
@@ -221,6 +232,7 @@ export const resolveServerConfig = (
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
       host: flags.host ?? Option.none(),
+      basePath: flags.basePath ?? Option.none(),
       baseDir: flags.baseDir ?? Option.none(),
       cwd: flags.cwd ?? Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
@@ -339,6 +351,11 @@ export const resolveServerConfig = (
       ),
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
+    const basePath = yield* normalizeBasePath(
+      Option.getOrUndefined(
+        resolveOptionPrecedence(normalizedFlags.basePath, Option.fromUndefinedOr(env.basePath)),
+      ),
+    );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
     const config: ServerConfigShape = {
@@ -361,6 +378,7 @@ export const resolveServerConfig = (
       mode,
       port,
       cwd,
+      basePath,
       baseDir,
       ...derivedPaths,
       serverTracePath,
@@ -388,6 +406,7 @@ export const resolveCliAuthConfig = (
       mode: Option.none(),
       port: Option.none(),
       host: Option.none(),
+      basePath: Option.none(),
       baseDir: flags.baseDir,
       cwd: Option.none(),
       devUrl: flags.devUrl ?? Option.none(),

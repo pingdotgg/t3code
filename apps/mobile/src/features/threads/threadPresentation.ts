@@ -1,5 +1,6 @@
 import type { StatusTone } from "../../components/StatusPill";
 import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import { resolveRemoteHttpUrl } from "../../lib/remoteUrl";
 
 export function threadSortValue(thread: EnvironmentScopedThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
@@ -48,6 +49,8 @@ export function messageImageUrl(httpBaseUrl: string | null, attachmentId: string
     return null;
   }
 
-  const url = new URL(`/attachments/${encodeURIComponent(attachmentId)}`, httpBaseUrl);
-  return url.toString();
+  return resolveRemoteHttpUrl({
+    httpBaseUrl,
+    pathname: `/attachments/${encodeURIComponent(attachmentId)}`,
+  });
 }

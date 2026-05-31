@@ -290,6 +290,7 @@
       "name": "@t3tools/tailscale",
       "dependencies": {
         "@effect/platform-node": "catalog:",
+        "@t3tools/shared": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {

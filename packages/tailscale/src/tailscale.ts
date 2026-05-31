@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ROOT_BASE_PATH, type NormalizedBasePath } from "@t3tools/shared/basePath";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 export const TAILSCALE_STATUS_TIMEOUT_MS = 1_500;
@@ -192,13 +193,14 @@ export const readTailscaleStatus: Effect.Effect<
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;
   readonly servePort?: number;
+  readonly basePath?: NormalizedBasePath;
 }): string {
   const url = new URL(`https://${input.magicDnsName}`);
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   if (servePort !== DEFAULT_TAILSCALE_SERVE_PORT) {
     url.port = String(servePort);
   }
-  url.pathname = "/";
+  url.pathname = `${input.basePath ?? ROOT_BASE_PATH}/`;
   return url.toString();
 }
 
@@ -290,12 +292,16 @@ export const disableTailscaleServe = (
 
 export const probeTailscaleHttpsEndpoint = (input: {
   readonly baseUrl: string;
+  readonly basePath?: NormalizedBasePath;
   readonly timeoutMs?: number;
 }): Effect.Effect<boolean, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* Effect.gen(function* () {
-      const url = new URL("/.well-known/t3/environment", input.baseUrl);
+      const url = new URL(input.baseUrl);
+      url.pathname = `${input.basePath ?? ROOT_BASE_PATH}/.well-known/t3/environment`;
+      url.search = "";
+      url.hash = "";
       const request = HttpClientRequest.get(url.toString());
       return yield* client.execute(request);
     }).pipe(Effect.timeoutOption(input.timeoutMs ?? TAILSCALE_PROBE_TIMEOUT_MS));
@@ -309,6 +315,7 @@ export const probeTailscaleHttpsEndpoint = (input: {
 export const resolveTailscaleHttpsBaseUrl = (
   input: {
     readonly servePort?: number;
+    readonly basePath?: NormalizedBasePath;
   } = {},
 ): Effect.Effect<
   string | null,
@@ -321,6 +328,7 @@ export const resolveTailscaleHttpsBaseUrl = (
         ? buildTailscaleHttpsBaseUrl({
             magicDnsName: status.magicDnsName,
             ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
+            ...(input.basePath === undefined ? {} : { basePath: input.basePath }),
           })
         : null,
     ),

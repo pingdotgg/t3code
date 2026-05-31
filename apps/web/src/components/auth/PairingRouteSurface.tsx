@@ -9,6 +9,7 @@ import {
   submitServerAuthCredential,
 } from "../../environments/primary";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { BASE_PATH } from "../../basePath";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -272,7 +273,11 @@ export function HostedPairingRouteSurface() {
             </Button>
           ) : null}
           {status === "paired" ? (
-            <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => (window.location.href = `${BASE_PATH}/`)}
+            >
               Open app
             </Button>
           ) : null}

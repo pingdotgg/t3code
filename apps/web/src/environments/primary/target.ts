@@ -1,5 +1,9 @@
 import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
+import * as Effect from "effect/Effect";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
+
+import { BASE_PATH } from "../../basePath";
 
 export interface PrimaryEnvironmentTarget {
   readonly source: KnownEnvironment["source"];
@@ -91,7 +95,7 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
 }
 
 function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
-  const httpBaseUrl = normalizeBaseUrl(window.location.origin);
+  const httpBaseUrl = `${window.location.origin}${BASE_PATH}/`;
   const url = new URL(httpBaseUrl);
   if (url.protocol === "http:") {
     url.protocol = "ws:";
@@ -142,7 +146,9 @@ export function resolvePrimaryEnvironmentHttpUrl(
   }
 
   const url = new URL(resolveHttpRequestBaseUrl(primaryTarget.target.httpBaseUrl));
-  url.pathname = pathname;
+  url.pathname = `${Effect.runSync(normalizeBasePath(url.pathname))}${pathname}`;
+  url.search = "";
+  url.hash = "";
   if (searchParams) {
     url.search = new URLSearchParams(searchParams).toString();
   }

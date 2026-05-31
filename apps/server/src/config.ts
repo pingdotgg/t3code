@@ -14,6 +14,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 
+import { ROOT_BASE_PATH, type NormalizedBasePath } from "@t3tools/shared/basePath";
+
 export const DEFAULT_PORT = 3773;
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
@@ -62,6 +64,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
+  readonly basePath: NormalizedBasePath;
   readonly cwd: string;
   readonly baseDir: string;
   readonly staticDir: string | undefined;
@@ -170,6 +173,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           tailscaleServePort: 443,
           port: 0,
           host: undefined,
+          basePath: ROOT_BASE_PATH,
           desktopBootstrapToken: undefined,
           staticDir: undefined,
           devUrl,

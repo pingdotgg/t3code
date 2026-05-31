@@ -15,7 +15,7 @@ import {
   formatPairingCredentialList,
   formatSessionList,
 } from "../cliAuthFormat.ts";
-import { ServerConfig } from "../config.ts";
+import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import {
   authLocationFlags,
   type CliAuthLocationFlags,
@@ -25,7 +25,7 @@ import {
 
 const runWithAuthControlPlane = <A, E>(
   flags: CliAuthLocationFlags,
-  run: (authControlPlane: AuthControlPlaneShape) => Effect.Effect<A, E>,
+  run: (authControlPlane: AuthControlPlaneShape, config: ServerConfigShape) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -36,7 +36,7 @@ const runWithAuthControlPlane = <A, E>(
     const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
     return yield* Effect.gen(function* () {
       const authControlPlane = yield* AuthControlPlane;
-      return yield* run(authControlPlane);
+      return yield* run(authControlPlane, config);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(AuthControlPlaneRuntimeLive).pipe(
@@ -94,7 +94,7 @@ const pairingCreateCommand = Command.make("create", {
   Command.withHandler((flags) =>
     runWithAuthControlPlane(
       flags,
-      (authControlPlane) =>
+      (authControlPlane, config) =>
         Effect.gen(function* () {
           const issued = yield* authControlPlane.createPairingLink({
             role: "client",
@@ -105,6 +105,7 @@ const pairingCreateCommand = Command.make("create", {
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
             ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+            basePath: config.basePath,
           });
           yield* Console.log(output);
         }),

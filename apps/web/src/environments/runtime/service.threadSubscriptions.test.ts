@@ -21,7 +21,7 @@ const mockReadSavedEnvironmentBearerToken = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockGetPrimaryKnownEnvironment = vi.hoisted(() => vi.fn());
 const mockFetchRemoteSessionState = vi.fn();
-const mockResolveRemoteWebSocketConnectionUrl = vi.fn(async () => "ws://remote.example.test/ws");
+const mockResolveRemoteWebSocketConnectionUrl = vi.fn(async () => "ws://remote.example.test/");
 const mockRemoteHttpRunPromise = vi.fn((effect: Promise<unknown>) => effect);
 const mockConnectionReconnects: Array<ReturnType<typeof vi.fn>> = [];
 let savedEnvironmentRegistryListener: (() => void) | null = null;

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
 
 import { NoActiveThreadState } from "../components/NoActiveThreadState";
@@ -52,7 +52,7 @@ function HostedStaticOnboardingState() {
                 manually. Your saved environments stay in this browser.
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
-                <Button render={<a href="/settings/connections" />} size="sm">
+                <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />
                   Add environment
                 </Button>

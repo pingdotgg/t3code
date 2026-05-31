@@ -1,3 +1,7 @@
+import * as Effect from "effect/Effect";
+
+import { normalizeBasePath } from "./basePath.ts";
+
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
@@ -16,7 +20,6 @@ const normalizeRemoteBaseUrl = (rawValue: string): URL => {
       ? trimmed
       : `https://${trimmed}`;
   const url = new URL(normalizedInput);
-  url.pathname = "/";
   url.search = "";
   url.hash = "";
   return url;
@@ -29,24 +32,19 @@ const toHttpBaseUrl = (url: URL): string => {
   } else if (next.protocol === "wss:") {
     next.protocol = "https:";
   }
-  next.pathname = "/";
+  next.pathname = `${Effect.runSync(normalizeBasePath(next.pathname))}/`;
   next.search = "";
   next.hash = "";
   return next.toString();
 };
 
 const toWsBaseUrl = (url: URL): string => {
-  const next = new URL(url.toString());
-  if (next.protocol === "http:") {
-    next.protocol = "ws:";
-  } else if (next.protocol === "https:") {
-    next.protocol = "wss:";
-  }
-  next.pathname = "/";
-  next.search = "";
-  next.hash = "";
+  const next = new URL(toHttpBaseUrl(url));
+  next.protocol = next.protocol === "https:" ? "wss:" : "ws:";
   return next.toString();
 };
+
+const toHttpBaseUrlFromPairingUrl = (url: URL): string => toHttpBaseUrl(new URL(".", url));
 
 export interface ResolvedRemotePairingTarget {
   readonly credential: string;
@@ -126,10 +124,11 @@ export const resolveRemotePairingTarget = (input: {
     if (!credential) {
       throw new Error("Pairing URL is missing its token.");
     }
+    const httpBaseUrl = toHttpBaseUrlFromPairingUrl(url);
     return {
       credential,
-      httpBaseUrl: toHttpBaseUrl(url),
-      wsBaseUrl: toWsBaseUrl(url),
+      httpBaseUrl,
+      wsBaseUrl: toWsBaseUrl(new URL(httpBaseUrl)),
     };
   }
 
