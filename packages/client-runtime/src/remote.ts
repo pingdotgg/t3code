@@ -247,8 +247,8 @@ export const issueRemoteWebSocketToken = Effect.fn(
   });
 });
 
-export const resolveRemoteWebSocketBaseUrl = Effect.fn(
-  "clientRuntime.remote.resolveRemoteWebSocketBaseUrl",
+export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
+  "clientRuntime.remote.resolveRemoteWebSocketConnectionUrl",
 )(function* (input: {
   readonly wsBaseUrl: string;
   readonly httpBaseUrl: string;
@@ -263,7 +263,6 @@ export const resolveRemoteWebSocketBaseUrl = Effect.fn(
 
   const url = new URL(input.wsBaseUrl);
   const basePath = yield* normalizeBasePath(new URL(input.httpBaseUrl).pathname);
-  // WsRpcProtocol owns the RPC endpoint path; this helper only returns the authenticated base URL.
   url.pathname = `${basePath}/`;
   url.hash = "";
   url.searchParams.set("wsToken", issued.token);

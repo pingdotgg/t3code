@@ -8,7 +8,7 @@ const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
 const mockIsRemoteEnvironmentAuthHttpError = vi.fn((_: unknown) => false);
-const mockResolveRemoteWebSocketBaseUrl = vi.fn();
+const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
 const mockRemoteHttpRunPromise = vi.fn((effect: Promise<unknown>) => effect);
 const mockBootstrapSshBearerSession = vi.fn();
 const mockFetchSshSessionState = vi.fn();
@@ -129,7 +129,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
     fetchRemoteSessionState: mockFetchRemoteSessionState,
     isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
-    resolveRemoteWebSocketBaseUrl: mockResolveRemoteWebSocketBaseUrl,
+    resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
   };
 });
 
@@ -184,7 +184,7 @@ describe("addSavedEnvironment", () => {
       role: "owner",
     });
     mockIsRemoteEnvironmentAuthHttpError.mockReturnValue(false);
-    mockResolveRemoteWebSocketBaseUrl.mockResolvedValue(
+    mockResolveRemoteWebSocketConnectionUrl.mockResolvedValue(
       "wss://remote.example.com/?wsToken=remote-token",
     );
     mockFetchSshEnvironmentDescriptor.mockResolvedValue({

@@ -86,7 +86,6 @@ function resolveWsRpcSocketUrl(rawUrl: string): string {
     throw new Error(`Unsupported websocket transport URL protocol: ${resolved.protocol}`);
   }
 
-  // WsRpcProtocol is the single owner of the concrete RPC route.
   resolved.pathname = `${Effect.runSync(normalizeBasePath(resolved.pathname))}${WS_RPC_PATH}`;
   resolved.hash = "";
   return resolved.toString();

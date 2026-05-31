@@ -21,7 +21,7 @@ const mockReadSavedEnvironmentBearerToken = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockGetPrimaryKnownEnvironment = vi.hoisted(() => vi.fn());
 const mockFetchRemoteSessionState = vi.fn();
-const mockResolveRemoteWebSocketBaseUrl = vi.fn(async () => "ws://remote.example.test/");
+const mockResolveRemoteWebSocketConnectionUrl = vi.fn(async () => "ws://remote.example.test/");
 const mockRemoteHttpRunPromise = vi.fn((effect: Promise<unknown>) => effect);
 const mockConnectionReconnects: Array<ReturnType<typeof vi.fn>> = [];
 let savedEnvironmentRegistryListener: (() => void) | null = null;
@@ -154,7 +154,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     createWsRpcClient: vi.fn(() => stubWsClient),
     fetchRemoteSessionState: mockFetchRemoteSessionState,
     isRemoteEnvironmentAuthHttpError: vi.fn(() => false),
-    resolveRemoteWebSocketBaseUrl: mockResolveRemoteWebSocketBaseUrl,
+    resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
   };
 });
 

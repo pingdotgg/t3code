@@ -2,7 +2,6 @@ import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
-import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +13,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
-import { ROOT_BASE_PATH, normalizeBasePath } from "@t3tools/shared/basePath";
+import { normalizeBasePath } from "@t3tools/shared/basePath";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import {
   DEFAULT_PORT,
@@ -162,14 +161,6 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
-}
-
-export class DevBasePathUnsupportedError extends Data.TaggedError("DevBasePathUnsupportedError")<{
-  readonly basePath: string;
-}> {
-  override get message(): string {
-    return `Custom base paths are not supported with dev URL mode. Received ${this.basePath}.`;
-  }
 }
 
 export interface CliAuthLocationFlags {
@@ -365,9 +356,6 @@ export const resolveServerConfig = (
         resolveOptionPrecedence(normalizedFlags.basePath, Option.fromUndefinedOr(env.basePath)),
       ),
     );
-    if (devUrl !== undefined && basePath !== ROOT_BASE_PATH) {
-      return yield* new DevBasePathUnsupportedError({ basePath });
-    }
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
     const config: ServerConfigShape = {

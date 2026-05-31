@@ -12,7 +12,7 @@ import {
   issueRemoteWebSocketToken,
   remoteHttpClientLayer,
   RemoteEnvironmentAuthTimeoutError,
-  resolveRemoteWebSocketBaseUrl,
+  resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 
 type FetchCall = readonly [input: RequestInfo | URL, init: RequestInit];
@@ -239,7 +239,7 @@ describe("remote", () => {
         ),
       );
 
-      const url = yield* resolveRemoteWebSocketBaseUrl({
+      const url = yield* resolveRemoteWebSocketConnectionUrl({
         wsBaseUrl: "wss://remote.example.com/",
         httpBaseUrl: "https://remote.example.com/",
         bearerToken: "bearer-token",

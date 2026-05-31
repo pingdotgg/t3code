@@ -7,10 +7,6 @@ import {
 } from "@t3tools/shared/basePath";
 
 function resolveRuntimeBasePath(): NormalizedBasePath {
-  if (import.meta.env.DEV) {
-    return ROOT_BASE_PATH;
-  }
-
   const moduleUrl = new URL(import.meta.url);
   if (moduleUrl.protocol !== "http:" && moduleUrl.protocol !== "https:") {
     return ROOT_BASE_PATH;

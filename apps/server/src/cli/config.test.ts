@@ -141,7 +141,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.some(true),
           logWebSocketEvents: Option.some(true),
-          basePath: Option.none(),
+          basePath: Option.some("/custom/"),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
         },
@@ -185,7 +185,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
-        basePath: ROOT_BASE_PATH,
+        basePath: "/custom",
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });

@@ -10,7 +10,7 @@ import {
   createWsRpcClient,
   EnvironmentConnectionState,
   WsTransport,
-  resolveRemoteWebSocketBaseUrl,
+  resolveRemoteWebSocketConnectionUrl,
 } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -237,7 +237,7 @@ export async function connectSavedEnvironment(
   const transport = new WsTransport(
     () =>
       mobileRemoteHttpRuntime.runPromise(
-        resolveRemoteWebSocketBaseUrl({
+        resolveRemoteWebSocketConnectionUrl({
           wsBaseUrl: connection.wsBaseUrl,
           httpBaseUrl: connection.httpBaseUrl,
           bearerToken: connection.bearerToken,

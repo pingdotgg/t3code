@@ -16,7 +16,7 @@ import {
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
   isRemoteEnvironmentAuthHttpError,
-  resolveRemoteWebSocketBaseUrl,
+  resolveRemoteWebSocketConnectionUrl,
 } from "@t3tools/client-runtime";
 
 import { type QueryClient } from "@tanstack/react-query";
@@ -1165,7 +1165,7 @@ function createSavedEnvironmentClient(
               bearerToken,
             )
           : await remoteHttpRuntime.runPromise(
-              resolveRemoteWebSocketBaseUrl({
+              resolveRemoteWebSocketConnectionUrl({
                 wsBaseUrl: record.wsBaseUrl,
                 httpBaseUrl: record.httpBaseUrl,
                 bearerToken,
