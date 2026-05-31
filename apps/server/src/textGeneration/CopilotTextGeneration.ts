@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   TextGenerationError,
 } from "@t3tools/contracts";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -22,7 +23,6 @@ import {
 } from "./TextGenerationPrompts.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
 import {
-  extractJsonObject,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
