@@ -91,6 +91,40 @@ describe("CopilotAcpRuntimeModel", () => {
     expect(task.kind).toBe("subagent");
   });
 
+  it("classifies Copilot ACP task calls with agent metadata as subagents", () => {
+    const normalized = normalizeCopilotToolCallState({
+      toolCallId: "call-subagent-1",
+      kind: "other",
+      title: "acp-alpha",
+      status: "completed",
+      data: {
+        rawInput: {
+          name: "acp-alpha",
+          description: "Alpha read-only result",
+          agent_type: "explore",
+          prompt: "Inspect the API surface and report back.",
+        },
+        rawOutput: {
+          content: "Alpha result",
+        },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      itemType: "collab_agent_tool_call",
+      kind: "subagent",
+      title: "acp-alpha",
+      data: {
+        itemType: "collab_agent_tool_call",
+        kind: "subagent",
+        rawInput: {
+          agent_type: "explore",
+          prompt: "Inspect the API surface and report back.",
+        },
+      },
+    });
+  });
+
   it("parses TodoWrite-like payloads into plan updates", () => {
     const toolCall: AcpToolCallState = {
       toolCallId: "todo-1",

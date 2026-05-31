@@ -7,6 +7,7 @@ import {
   ClientSettingsSchema,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
+  DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SERVER_SETTINGS,
   ServerSettings,
   ServerSettingsPatch,
@@ -31,6 +32,21 @@ describe("ClientSettings.codeFont", () => {
 
   it("rejects unknown code font options in patches", () => {
     expect(() => decodeClientSettingsPatch({ codeFont: "not-a-font" })).toThrow();
+  });
+});
+
+describe("ClientSettings.sidebarFontSize", () => {
+  it("defaults to the sidebar title font size", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.sidebarFontSize).toBe(DEFAULT_SIDEBAR_FONT_SIZE);
+    expect(decodeClientSettings({}).sidebarFontSize).toBe(DEFAULT_SIDEBAR_FONT_SIZE);
+  });
+
+  it("accepts valid sidebar font size patches", () => {
+    expect(decodeClientSettingsPatch({ sidebarFontSize: 13 }).sidebarFontSize).toBe(13);
+  });
+
+  it("rejects invalid sidebar font size patches", () => {
+    expect(() => decodeClientSettingsPatch({ sidebarFontSize: 25 })).toThrow();
   });
 });
 

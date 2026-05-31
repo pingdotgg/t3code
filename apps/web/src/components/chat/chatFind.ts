@@ -32,6 +32,7 @@ function collectMessageSearchText(message: ChatMessage): string {
 }
 
 function collectWorkEntrySearchText(entry: WorkLogEntry): string {
+  const subagent = entry.subagent;
   const parts = [
     entry.label,
     entry.detail ?? "",
@@ -39,6 +40,11 @@ function collectWorkEntrySearchText(entry: WorkLogEntry): string {
     entry.rawCommand ?? "",
     entry.toolTitle ?? "",
     ...(entry.changedFiles ?? []),
+    subagent?.name ?? "",
+    subagent?.description ?? "",
+    subagent?.agentType ?? "",
+    subagent?.prompt ?? "",
+    subagent?.result ?? "",
   ];
 
   return normalizeSearchText(parts.join("\n"));

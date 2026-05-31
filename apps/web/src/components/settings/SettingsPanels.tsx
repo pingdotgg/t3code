@@ -14,6 +14,7 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
@@ -519,6 +520,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
         ? ["Chat font size"]
         : []),
+      ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
+        ? ["Sidebar font size"]
+        : []),
       ...(settings.toolFontSize !== DEFAULT_UNIFIED_SETTINGS.toolFontSize
         ? ["Tool font size"]
         : []),
@@ -559,6 +563,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.sidebarFontSize,
       settings.timestampFormat,
       settings.toolFontSize,
       settings.uiDensity,
@@ -1202,6 +1207,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.chatFontSize)
                     ?.label ?? `${DEFAULT_CHAT_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar font size"
+          description="Font size for project and chat titles in the sidebar."
+          resetAction={
+            settings.sidebarFontSize !== DEFAULT_SIDEBAR_FONT_SIZE ? (
+              <SettingResetButton
+                label="sidebar font size"
+                onClick={() =>
+                  updateSettings({
+                    sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ sidebarFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
+                    ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

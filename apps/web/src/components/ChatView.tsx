@@ -36,16 +36,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import {
-  memo,
-  type ReactNode,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
@@ -121,7 +112,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -200,115 +191,15 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
-import { Input } from "./ui/input";
-import { Button } from "./ui/button";
 import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
-import {
-  buildChatFindRows,
-  findChatFindMatches,
-  type ChatFindMatch,
-  type ChatFindRow,
-} from "./chat/chatFind";
-import { useChatFindHighlight } from "./chat/useChatFindHighlight";
+import { FindInChatBar } from "./chat/FindInChatBar";
+import { useChatFind } from "./chat/useChatFind";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const EMPTY_CHAT_FIND_ROWS: ChatFindRow[] = [];
-const EMPTY_CHAT_FIND_MATCHES: ChatFindMatch[] = [];
-const TIMELINE_ROW_ESTIMATED_SIZE_PX = 90;
-
-function escapeAttributeSelectorValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-}
-
-function FindInChatBar(props: {
-  inputId: string;
-  query: string;
-  onQueryChange: (nextValue: string) => void;
-  matchCount: number;
-  activeMatchIndex: number;
-  shortcutLabel: string | null;
-  onPrevious: () => void;
-  onNext: () => void;
-  onClose: () => void;
-}) {
-  const {
-    inputId,
-    query,
-    onQueryChange,
-    matchCount,
-    activeMatchIndex,
-    shortcutLabel,
-    onPrevious,
-    onNext,
-    onClose,
-  } = props;
-  const matchLabel =
-    query.trim().length === 0
-      ? "Type to search"
-      : matchCount === 0
-        ? "No matches"
-        : `${activeMatchIndex + 1} of ${matchCount}`;
-
-  return (
-    <div className="border-b border-border px-3 py-2 sm:px-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[16rem] flex-1">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
-          <Input
-            id={inputId}
-            nativeInput
-            type="search"
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder={shortcutLabel ? `Find in chat (${shortcutLabel})` : "Find in chat"}
-            className="pl-8"
-            aria-label="Find in chat"
-            spellCheck={false}
-          />
-        </div>
-        <p className="min-w-20 text-right text-xs text-muted-foreground/70">{matchLabel}</p>
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            onClick={onPrevious}
-            disabled={matchCount === 0}
-            aria-label="Previous match"
-          >
-            <ChevronUpIcon className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            onClick={onNext}
-            disabled={matchCount === 0}
-            aria-label="Next match"
-          >
-            <ChevronDownIcon className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            onClick={onClose}
-            aria-label="Close find in chat"
-          >
-            <XIcon className="size-3.5" />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function getCopilotResumeCommand(
   thread: Pick<Thread, "modelSelection" | "session"> | null,
@@ -773,14 +664,6 @@ function ChatViewBody(
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
-  const [chatFindOpen, setChatFindOpen] = useState(false);
-  const [chatFindQuery, setChatFindQuery] = useState("");
-  const [activeChatFindMatchId, setActiveChatFindMatchId] = useState<string | null>(null);
-  const deferredChatFindQuery = useDeferredValue(chatFindQuery);
-  const chatFindInputId = useMemo(
-    () => `chat-find-${routeThreadKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
-    [routeThreadKey],
-  );
   const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
     Record<string, Record<string, PendingUserInputDraftAnswer>>
   >({});
@@ -1583,31 +1466,24 @@ function ChatViewBody(
       turnDiffSummaryByAssistantMessageId,
     ],
   );
-  const chatFindRows = useMemo(
-    () => (chatFindOpen ? buildChatFindRows(timelineRows) : EMPTY_CHAT_FIND_ROWS),
-    [chatFindOpen, timelineRows],
-  );
-  const chatFindMatches = useMemo(
-    () =>
-      deferredChatFindQuery.length > 0
-        ? findChatFindMatches(chatFindRows, deferredChatFindQuery)
-        : EMPTY_CHAT_FIND_MATCHES,
-    [chatFindRows, deferredChatFindQuery],
-  );
-  const activeChatFindMatchIndex = useMemo(
-    () => chatFindMatches.findIndex((match) => match.id === activeChatFindMatchId),
-    [activeChatFindMatchId, chatFindMatches],
-  );
-  const activeChatFindMatch =
-    activeChatFindMatchIndex >= 0 ? (chatFindMatches[activeChatFindMatchIndex] ?? null) : null;
-
-  // DOM-based highlighting via CSS Custom Highlight API
-  useChatFindHighlight(
+  const {
+    open: chatFindOpen,
+    inputId: chatFindInputId,
+    query: chatFindQuery,
+    setQuery: setChatFindQuery,
+    matches: chatFindMatches,
+    activeMatchIndex: activeChatFindMatchIndex,
+    activeMatch: activeChatFindMatch,
+    openFind: openChatFind,
+    closeFind: closeChatFind,
+    cycleMatch: cycleChatFindMatch,
+  } = useChatFind({
+    timelineRows,
     messagesViewportRef,
-    chatFindOpen ? deferredChatFindQuery : "",
-    activeChatFindMatch?.rowId ?? null,
-    activeChatFindMatch?.matchIndexInRow ?? 0,
-  );
+    legendListRef,
+    routeThreadKey,
+    activeThreadId,
+  });
 
   const copilotResumeCommand = getCopilotResumeCommand(activeThread ?? null);
   const gitCwd = activeProject
@@ -1687,39 +1563,6 @@ function ChatViewBody(
   const chatFindShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "chat.find", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
-  );
-  const focusChatFindInput = useCallback(() => {
-    const input = document.getElementById(chatFindInputId) as HTMLInputElement | null;
-    if (!input) {
-      return;
-    }
-    input.focus();
-    input.select();
-  }, [chatFindInputId]);
-  const openChatFind = useCallback(() => {
-    setChatFindOpen(true);
-    focusChatFindInput();
-  }, [focusChatFindInput]);
-  const closeChatFind = useCallback(() => {
-    setChatFindOpen(false);
-  }, []);
-  const selectChatFindMatch = useCallback((match: ChatFindMatch | null) => {
-    setActiveChatFindMatchId(match?.id ?? null);
-  }, []);
-  const cycleChatFindMatch = useCallback(
-    (direction: -1 | 1) => {
-      if (chatFindMatches.length === 0) {
-        return;
-      }
-      const nextIndex =
-        activeChatFindMatchIndex >= 0
-          ? (activeChatFindMatchIndex + direction + chatFindMatches.length) % chatFindMatches.length
-          : direction > 0
-            ? 0
-            : chatFindMatches.length - 1;
-      selectChatFindMatch(chatFindMatches[nextIndex] ?? null);
-    },
-    [activeChatFindMatchIndex, chatFindMatches, selectChatFindMatch],
   );
   const updateDiffSearch = useCallback(
     (nextDiffSearch: DiffRouteSearch) => {
@@ -2345,86 +2188,11 @@ function ChatViewBody(
     };
   }, [onIsAtEndChange, routeThreadKey]);
 
-  const scrollChatFindMatchIntoView = useCallback((match: ChatFindMatch | null) => {
-    if (!match) {
-      return;
-    }
-
-    const rowSelector = `[data-timeline-row-id="${escapeAttributeSelectorValue(match.rowId)}"]`;
-    const tryScroll = (attempt: number, offsetScrolled: boolean) => {
-      const rowElement = document.querySelector<HTMLElement>(rowSelector);
-      if (rowElement) {
-        rowElement.scrollIntoView({ block: "nearest" });
-        return;
-      }
-
-      if (!offsetScrolled) {
-        legendListRef.current?.scrollToOffset?.({
-          offset: match.rowIndex * TIMELINE_ROW_ESTIMATED_SIZE_PX,
-          animated: false,
-        });
-      }
-
-      if (attempt <= 0) {
-        return;
-      }
-      window.requestAnimationFrame(() => tryScroll(attempt - 1, true));
-    };
-
-    window.requestAnimationFrame(() => tryScroll(3, false));
-  }, []);
-
-  useEffect(() => {
-    if (!chatFindOpen) {
-      return;
-    }
-    const input = document.getElementById(chatFindInputId) as HTMLInputElement | null;
-    if (!input) {
-      return;
-    }
-    const frameId = window.requestAnimationFrame(() => {
-      input.focus();
-      input.select();
-    });
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [chatFindInputId, chatFindOpen]);
-
-  useEffect(() => {
-    if (!chatFindOpen) {
-      return;
-    }
-    if (chatFindMatches.length === 0) {
-      if (activeChatFindMatchId !== null) {
-        setActiveChatFindMatchId(null);
-      }
-      return;
-    }
-    if (
-      activeChatFindMatchId &&
-      chatFindMatches.some((match) => match.id === activeChatFindMatchId)
-    ) {
-      return;
-    }
-    setActiveChatFindMatchId(chatFindMatches[0]?.id ?? null);
-  }, [activeChatFindMatchId, chatFindMatches, chatFindOpen]);
-
-  useEffect(() => {
-    if (!chatFindOpen) {
-      return;
-    }
-    scrollChatFindMatchIntoView(activeChatFindMatch);
-  }, [activeChatFindMatch, chatFindOpen, scrollChatFindMatchIntoView]);
-
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
-    setChatFindOpen(false);
-    setChatFindQuery("");
-    setActiveChatFindMatchId(null);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       setPlanSidebarOpen(true);

@@ -93,6 +93,7 @@
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   --app-code-font-size: 12px;
   --app-chat-font-size: 14px;
+  --app-sidebar-font-size: 12px;
   --app-tool-font-size: 12px;
 
   /* Density tokens (default, mobile-first) */

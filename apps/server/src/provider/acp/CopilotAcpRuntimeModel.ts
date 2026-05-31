@@ -56,6 +56,13 @@ function normalizeSearchText(...values: ReadonlyArray<unknown>): string {
     .trim();
 }
 
+function hasSubagentMetadata(rawInput: Record<string, unknown> | undefined): boolean {
+  if (!rawInput) {
+    return false;
+  }
+  return asString(rawInput.agent_type) !== undefined;
+}
+
 function normalizeCommandValue(value: unknown): string | undefined {
   const direct = asString(value);
   if (direct) {
@@ -113,6 +120,7 @@ function classifyCopilotTool(input: {
     input.toolCall.toolCallId,
     input.toolCall.title,
     input.toolCall.kind,
+    rawInput?.agent_type,
     rawInput?.command,
     rawInput?.query,
     rawInput?.path,
@@ -136,7 +144,7 @@ function classifyCopilotTool(input: {
     return { itemType: "web_search", kind: text.includes("fetch") ? "fetch" : "search" };
   }
 
-  if (/\b(?:task|subagent|sub_agent|agent)\b/u.test(text)) {
+  if (hasSubagentMetadata(rawInput) || /\b(?:task|subagent|sub_agent|agent)\b/u.test(text)) {
     return { itemType: "collab_agent_tool_call", kind: "subagent" };
   }
 

@@ -78,6 +78,7 @@ const EXPECTED_COPILOT_BUILT_IN_MODEL_SLUGS = [
   "gpt-5-mini",
   "gpt-4.1",
   "gpt-4o",
+  "claude-opus-4.8",
   "claude-opus-4.7",
   "claude-opus-4.6",
   "claude-opus-4.5",
@@ -138,6 +139,15 @@ describe("CopilotProvider", () => {
         name: "GPT-5.5",
         isCustom: false,
         capabilities: reasoningCapabilities(true),
+      },
+    );
+    assert.deepStrictEqual(
+      models.find((model) => model.slug === "claude-opus-4.8"),
+      {
+        slug: "claude-opus-4.8",
+        name: "Claude Opus 4.8",
+        isCustom: false,
+        capabilities: reasoningCapabilities(false),
       },
     );
     assert.deepStrictEqual(

@@ -3,6 +3,7 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
@@ -68,6 +69,7 @@ export function applyCodeFont(font: CodeFont): void {
 export function applyFontSizes(
   codeFontSize: FontSize,
   chatFontSize: FontSize,
+  sidebarFontSize: FontSize,
   toolFontSize: FontSize,
 ): void {
   if (typeof document === "undefined") {
@@ -77,6 +79,7 @@ export function applyFontSizes(
   const style = document.documentElement.style;
   style.setProperty("--app-code-font-size", `${codeFontSize}px`);
   style.setProperty("--app-chat-font-size", `${chatFontSize}px`);
+  style.setProperty("--app-sidebar-font-size", `${sidebarFontSize}px`);
   style.setProperty("--app-tool-font-size", `${toolFontSize}px`);
 }
 
@@ -102,6 +105,7 @@ if (typeof document !== "undefined") {
   applyFontSizes(
     normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
     normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    normalizeFontSize(storedSettings?.sidebarFontSize, DEFAULT_SIDEBAR_FONT_SIZE),
     normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
   );
 }
@@ -111,6 +115,7 @@ export function useAppFont() {
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
+  const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const uiDensity = useSettings((settings) => settings.uiDensity);
 
@@ -123,12 +128,12 @@ export function useAppFont() {
   }, [codeFont]);
 
   useEffect(() => {
-    applyFontSizes(codeFontSize, chatFontSize, toolFontSize);
-  }, [codeFontSize, chatFontSize, toolFontSize]);
+    applyFontSizes(codeFontSize, chatFontSize, sidebarFontSize, toolFontSize);
+  }, [chatFontSize, codeFontSize, sidebarFontSize, toolFontSize]);
 
   useEffect(() => {
     applyUiDensity(uiDensity);
   }, [uiDensity]);
 
-  return { uiFont, codeFont, codeFontSize, chatFontSize, toolFontSize, uiDensity };
+  return { uiFont, codeFont, codeFontSize, chatFontSize, sidebarFontSize, toolFontSize, uiDensity };
 }

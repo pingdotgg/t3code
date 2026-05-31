@@ -192,6 +192,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [COPILOT_DRIVER_KIND]: {
+    opus: "claude-opus-4.8",
+    "opus-4.8": "claude-opus-4.8",
+    "claude-opus-4.8": "claude-opus-4.8",
     "5.5": "gpt-5.5",
     "gpt-5.5": "gpt-5.5",
     "5.4": "gpt-5.4",
