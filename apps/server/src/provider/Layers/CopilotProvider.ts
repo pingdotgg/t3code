@@ -92,14 +92,16 @@ export function checkCopilotProviderStatus(input: {
   };
 
   return Effect.acquireUseRelease(
-    Effect.sync(() =>
-      createCopilotClient({
-        settings: input.settings,
-        cwd: input.cwd,
-        ...(input.environment ? { env: input.environment } : {}),
-        logLevel: "error",
-      }),
-    ),
+    Effect.try({
+      try: () =>
+        createCopilotClient({
+          settings: input.settings,
+          cwd: input.cwd,
+          ...(input.environment ? { env: input.environment } : {}),
+          logLevel: "error",
+        }),
+      catch: toCopilotProbeError,
+    }),
     (client) =>
       Effect.tryPromise({
         try: async () => {
@@ -143,5 +145,5 @@ export function checkCopilotProviderStatus(input: {
         catch: toCopilotProbeError,
       }).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
     (client) => Effect.promise(() => client.stop()).pipe(Effect.ignore({ log: true })),
-  );
+  ).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause))));
 }
