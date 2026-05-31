@@ -17,12 +17,12 @@ different angles.
 Everything in this epic is expressed in terms of four primitives. They are defined once,
 in code, and reused everywhere. Avoid inventing recipe-specific parallels to any of them.
 
-| Primitive    | What it is                                                                                                                                                                                                                                       | Owns                       |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
-| **Context**  | A read-only snapshot of the world the agent and workflows read. Two depths: a light _render context_ used before launch, and a rich _full context_ available after launch.                                                                       | `packages/project-context` |
-| **Tools**    | The single capability surface — the verbs that read or mutate `t3work` and external state. The _same_ surface is consumed by agent turns, workflow steps, and views, scoped by `allowedToolGroups`. See [Epic 21](./21-context-tool-catalog.md). | `T3workToolBroker`         |
-| **Workflow** | The core engine. Target: a TS-native, replay-based durable-execution engine (Epic 25) where workflows are plain async TypeScript functions and primitive calls are journaled. Legacy: a serializable, persisted, forward-only sequence of typed steps the host interprets. Both run side by side during the migration.                                                                                                                                                       | `packages/project-recipes` |
-| **View**     | A code-based, interactive UI unit that mounts on any surface — the action list, a conversation message, a dashboard slot, a side panel. Action launchers and conversation cards are both Views. See [Epic 19](./19-workspace-miniapps.md).       | `@t3work/miniapp-sdk`      |
+| Primitive    | What it is                                                                                                                                                                                                                                                                                                             | Owns                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **Context**  | A read-only snapshot of the world the agent and workflows read. Two depths: a light _render context_ used before launch, and a rich _full context_ available after launch.                                                                                                                                             | `packages/project-context` |
+| **Tools**    | The single capability surface — the verbs that read or mutate `t3work` and external state. The _same_ surface is consumed by agent turns, workflow steps, and views, scoped by `allowedToolGroups`. See [Epic 21](./21-context-tool-catalog.md).                                                                       | `T3workToolBroker`         |
+| **Workflow** | The core engine. Target: a TS-native, replay-based durable-execution engine (Epic 25) where workflows are plain async TypeScript functions and primitive calls are journaled. Legacy: a serializable, persisted, forward-only sequence of typed steps the host interprets. Both run side by side during the migration. | `packages/project-recipes` |
+| **View**     | A code-based, interactive UI unit that mounts on any surface — the action list, a conversation message, a dashboard slot, a side panel. Action launchers and conversation cards are both Views. See [Epic 19](./19-workspace-miniapps.md).                                                                             | `@t3work/miniapp-sdk`      |
 
 How they interact, in one line:
 
@@ -863,8 +863,8 @@ body:
 ```ts
 const summary = await agent.task({
   prompt: `Summarize this diff:\n\n${pr.diff}`,
-  schema: SummarySchema,                                       // Effect Schema; typed return
-  model: { provider: "anthropic-primary", model: "claude-haiku-4-5" },
+  schema: SummarySchema, // Effect Schema; typed return
+  model: { provider: "anthropic-primary", model: models.anthropic.claudeHaiku45 },
 });
 // summary is Schema.Schema.Type<typeof SummarySchema>
 ```
@@ -940,8 +940,10 @@ agent-scoped tools (`T3workToolBroker` binds a per-thread set of `callTool`/`rea
 capabilities for an agent turn). The same surface is consumed by:
 
 - agent turns (today),
-- workflow bodies — `script` / `tool` steps in the legacy runtime; `script()` and
-  `tool()` primitive calls in the Epic 25 engine,
+- workflow bodies — `script` / `tool` steps in the legacy runtime; in the Epic 25 engine,
+  via the typed `tools.<group>.<name>(args)` ambient tree (see
+  [Epic 25 §Tools](./25-workflow-engine.md#tools) for `defineTool` / `defineToolGroup`
+  and how the typed-ref tree is constructed),
 - Views (via the miniapp tool bridge).
 
 A script receives the broker binding as `api.tools`; it does not get a second, parallel
@@ -1383,37 +1385,37 @@ project is created. Project-local recipes are the editable source of truth for t
 
 ## Implementation Status Summary
 
-| Area                                                                                                                             | Status                                                                                          |
-| -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Project-local discovery + bundled matching                                                                                       | Built                                                                                           |
-| Visibility (predicate + script, timeout, isolation)                                                                              | Built (via `recipe.json` + expression engine)                                                   |
-| TS-module authoring (`recipe.ts`), retire expression engine                                                                      | Planned (Phase 1 target; current engine still active)                                           |
-| Unified workflow step union; kickoff absorbed                                                                                    | Built (legacy runtime; retired in phase 25.7)                                                   |
-| Workflow runtime: bootstrap agent, card, await-card-action, script                                                               | Built (legacy runtime; superseded by Epic 25 primitives)                                        |
-| Workflow runtime: mid-flow agent, tool, present-message, collect-input                                                           | Built (legacy runtime; superseded by Epic 25 primitives in phase 25.4)                          |
-| Three-author conversation model + `t3workExt` seam (system messages, view-in-message)                                            | Built                                                                                           |
-| Shared tool surface for scripts/steps via broker; enforce `allowedToolGroups`                                                    | Built                                                                                           |
-| Deterministic workflows (no-agent workflows skip thread/launch-card) + `action.inline` placement                                 | Built (tool-step no-chat path; backlog inline chip wired)                                       |
+| Area                                                                                                                             | Status                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Project-local discovery + bundled matching                                                                                       | Built                                                                                                                       |
+| Visibility (predicate + script, timeout, isolation)                                                                              | Built (via `recipe.json` + expression engine)                                                                               |
+| TS-module authoring (`recipe.ts`), retire expression engine                                                                      | Planned (Phase 1 target; current engine still active)                                                                       |
+| Unified workflow step union; kickoff absorbed                                                                                    | Built (legacy runtime; retired in phase 25.7)                                                                               |
+| Workflow runtime: bootstrap agent, card, await-card-action, script                                                               | Built (legacy runtime; superseded by Epic 25 primitives)                                                                    |
+| Workflow runtime: mid-flow agent, tool, present-message, collect-input                                                           | Built (legacy runtime; superseded by Epic 25 primitives in phase 25.4)                                                      |
+| Three-author conversation model + `t3workExt` seam (system messages, view-in-message)                                            | Built                                                                                                                       |
+| Shared tool surface for scripts/steps via broker; enforce `allowedToolGroups`                                                    | Built                                                                                                                       |
+| Deterministic workflows (no-agent workflows skip thread/launch-card) + `action.inline` placement                                 | Built (tool-step no-chat path; backlog inline chip wired)                                                                   |
 | `agent.task` step (background non-interactive LLM call) + step-result binding model                                              | Subsumed by Epic 25 `agent.task` global; step-result binding obsoleted by replay-based engine (results are scope variables) |
-| Sidecar sections + `defineSidecarSection` SDK + composition model + remove hardcoded kickoff aside                               | Built (sections + composition + shell menus + declared deterministic actions)                   |
-| Composer slash-command launchers for recipes (`slashAlias` + `recipe-slash-command` item kind)                                   | Planned (precondition: extract shared composer-menu hook so kickoff wires `/`, `@`, `$` at all) |
-| `define*` SDK surface (per-placement helpers, no generic primitive, multi-placement via exports)                                 | Planned (Phase 5 — ships alongside the placements it covers)                                    |
-| Run-directory materialization, `context.json`/schema/map                                                                         | Built                                                                                           |
-| Setup script (formerly `init.ts`)                                                                                                | Deferred until stage-2 sandbox                                                                  |
-| Views unified on miniapp model; typed-event action path                                                                          | Planned (Phase 5)                                                                               |
-| `Queryable<T>` contract (Array-backed at MVP)                                                                                    | Planned (Phase 2 — needed by unified steps)                                                     |
-| `Queryable<T>` runtime: SQL-backed + signals (Signia / equivalent); projection-driven invalidation                               | Planned (Phase 6 — scale tier)                                                                  |
-| Agent-discovery types pipeline: generated `.d.ts` + `context.schema.json` + `context-map.md`                                     | Built                                                                                           |
-| `create-recipe` recipe (canonical end-to-end workflow proof)                                                                     | Built                                                                                           |
-| `edit-plugin-module` recipe (single canonical AI-edit entry point; backs "Edit this…" now and remains the base for "Customize…") | Implemented for "Edit this…" (Phase 5c); structured customize flows remain deferred             |
-| Stage-2 sandboxing                                                                                                               | Planned, parallel track                                                                         |
-| **Epic 25 — `.workflow.ts` loader + `meta` static extractor + `defineWorkflow` SDK + ambient types**                             | Planned (25.1)                                                                                  |
-| **Epic 25 — Durable-execution engine: journal, replay, argsHash, `ReplayDriftError`**                                            | Planned (25.2 — foundational rewrite)                                                           |
-| **Epic 25 — Inherited primitives: `agent`, `agent.task`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`**  | Planned (25.3)                                                                                  |
-| **Epic 25 — Handle primitives: `ui.show`, `child.spawn`, `thread.send`, `user.ask`, `user.notify`, `wait`**                      | Planned (25.4 — depends on cross-thread messaging broker work)                                  |
-| **Epic 25 — Determinism enforcement: lint rules, banned-global throws, capability gating at load time**                          | Planned (25.5)                                                                                  |
-| **Epic 25 — Migration tooling: legacy `recipe.json` + step-union → `.workflow.ts` conversion**                                   | Planned (25.6)                                                                                  |
-| **Epic 25 — Retire legacy step-union runtime (`recipeWorkflowRuntime*`)**                                                        | Planned (25.7 — after all recipes migrated)                                                     |
+| Sidecar sections + `defineSidecarSection` SDK + composition model + remove hardcoded kickoff aside                               | Built (sections + composition + shell menus + declared deterministic actions)                                               |
+| Composer slash-command launchers for recipes (`slashAlias` + `recipe-slash-command` item kind)                                   | Planned (precondition: extract shared composer-menu hook so kickoff wires `/`, `@`, `$` at all)                             |
+| `define*` SDK surface (per-placement helpers, no generic primitive, multi-placement via exports)                                 | Planned (Phase 5 — ships alongside the placements it covers)                                                                |
+| Run-directory materialization, `context.json`/schema/map                                                                         | Built                                                                                                                       |
+| Setup script (formerly `init.ts`)                                                                                                | Deferred until stage-2 sandbox                                                                                              |
+| Views unified on miniapp model; typed-event action path                                                                          | Planned (Phase 5)                                                                                                           |
+| `Queryable<T>` contract (Array-backed at MVP)                                                                                    | Planned (Phase 2 — needed by unified steps)                                                                                 |
+| `Queryable<T>` runtime: SQL-backed + signals (Signia / equivalent); projection-driven invalidation                               | Planned (Phase 6 — scale tier)                                                                                              |
+| Agent-discovery types pipeline: generated `.d.ts` + `context.schema.json` + `context-map.md`                                     | Built                                                                                                                       |
+| `create-recipe` recipe (canonical end-to-end workflow proof)                                                                     | Built                                                                                                                       |
+| `edit-plugin-module` recipe (single canonical AI-edit entry point; backs "Edit this…" now and remains the base for "Customize…") | Implemented for "Edit this…" (Phase 5c); structured customize flows remain deferred                                         |
+| Stage-2 sandboxing                                                                                                               | Planned, parallel track                                                                                                     |
+| **Epic 25 — `.workflow.ts` loader + `meta` static extractor + `defineWorkflow` / `defineTool` / `defineToolGroup` / `defineScript` SDK + ambient `tools.*` / `scripts.*` trees** | Planned (25.1)                                                                              |
+| **Epic 25 — Durable-execution engine: journal, replay, argsHash, `ReplayDriftError`**                                            | Planned (25.2 — foundational rewrite)                                                                                       |
+| **Epic 25 — Inherited and ambient primitives: `agent`, `agent.task`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`, `random`, `now`, `uuid`, `wait`, `scripts.*`, `tools.*`** | Planned (25.3)                                                                  |
+| **Epic 25 — Handle primitives: `ui.show`, `child.spawn`, `thread.send`, `user.ask`, `user.notify`**                              | Planned (25.4 — depends on cross-thread messaging broker work)                                                              |
+| **Epic 25 — Determinism enforcement: lint rules, banned-global throws, capability gating at load time**                          | Planned (25.5)                                                                                                              |
+| **Epic 25 — Migration tooling: legacy `recipe.json` + step-union → `.workflow.ts` conversion**                                   | Planned (25.6)                                                                                                              |
+| **Epic 25 — Retire legacy step-union runtime (`recipeWorkflowRuntime*`)**                                                        | Planned (25.7 — after all recipes migrated)                                                                                 |
 
 ## Implementation Notes
 
