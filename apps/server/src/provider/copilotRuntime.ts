@@ -79,7 +79,7 @@ function describeCopilotProbeCause(cause: unknown): string {
 function authTypeLabel(authType: GetAuthStatusResponse["authType"]): string | undefined {
   switch (authType) {
     case "user":
-      return "Signed-in user";
+      return undefined;
     case "env":
       return "Environment token";
     case "gh-cli":
