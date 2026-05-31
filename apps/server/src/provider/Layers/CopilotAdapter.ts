@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   CopilotClient,
   CopilotSession,
@@ -25,7 +27,7 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Deferred, Effect, Layer, Path, Predicate, PubSub, Random, Stream } from "effect";
+import { DateTime, Deferred, Effect, Layer, Path, Predicate, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -159,7 +161,7 @@ const EMPTY_USER_INPUT_RESPONSE = {
 } satisfies CopilotUserInputResponse;
 
 function nowIso(): string {
-  return new Date().toISOString();
+  return DateTime.formatIso(DateTime.nowUnsafe());
 }
 
 function parseCopilotResumeCursor(raw: unknown): { sessionId: string } | undefined {
@@ -192,7 +194,7 @@ function createBaseEvent(input: {
   readonly raw?: SessionEvent | undefined;
 }) {
   return {
-    eventId: EventId.make(Effect.runSync(Random.nextUUIDv4)),
+    eventId: EventId.make(randomUUID()),
     provider: PROVIDER,
     threadId: input.threadId,
     createdAt: input.createdAt ?? nowIso(),
@@ -643,7 +645,7 @@ function resolveTurnIdForSdkTurn(context: CopilotSessionContext, sdkTurnId: stri
     context.queuedTurnIds.shift() ??
     context.activeTurnId ??
     latestTurnId(context) ??
-    TurnId.make(`copilot-turn-${Effect.runSync(Random.nextUUIDv4)}`);
+    TurnId.make(`copilot-turn-${randomUUID()}`);
   context.sdkTurnIdsToTurnIds.set(sdkTurnId, nextTurnId);
   ensureTurnSnapshot(context, nextTurnId);
   context.activeSdkTurnId = sdkTurnId;
@@ -2202,7 +2204,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       );
     }
 
-    const turnId = TurnId.make(`copilot-turn-${yield* Random.nextUUIDv4}`);
+    const turnId = TurnId.make(`copilot-turn-${randomUUID()}`);
     const modelSelection =
       input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
     const reasoningEffort = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") as
@@ -2291,7 +2293,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     return {
       threadId: input.threadId,
       turnId,
-      resumeCursor: context.session.resumeCursor,
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
     };
   });
 
