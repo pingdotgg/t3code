@@ -16,6 +16,11 @@ import {
   PUBLISH_ICON_OVERRIDES,
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
+import {
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME,
+  BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR,
+  BROWSER_AGENT_EXTENSION_REPO_PACKAGE_RELATIVE_PATHS,
+} from "@t3tools/shared/browserAgent";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
@@ -138,6 +143,32 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
 
+const copyBrowserAgentExtensionPackage = Effect.fn("copyBrowserAgentExtensionPackage")(function* (
+  repoRoot: string,
+  clientTarget: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const downloadsDir = path.join(clientTarget, BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR);
+
+  for (const relativePath of BROWSER_AGENT_EXTENSION_REPO_PACKAGE_RELATIVE_PATHS) {
+    const sourcePath = path.join(repoRoot, relativePath);
+    if (!(yield* fs.exists(sourcePath))) {
+      continue;
+    }
+
+    yield* fs.makeDirectory(downloadsDir, { recursive: true });
+    yield* fs.copyFile(
+      sourcePath,
+      path.join(downloadsDir, BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME),
+    );
+    yield* Effect.log("[cli] Bundled browser agent extension package into dist/client/downloads");
+    return;
+  }
+
+  yield* Effect.logWarning("[cli] Browser agent extension package not found — skipping download.");
+});
+
 // ---------------------------------------------------------------------------
 // build subcommand
 // ---------------------------------------------------------------------------
@@ -171,6 +202,7 @@ const buildCmd = Command.make(
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
+        yield* copyBrowserAgentExtensionPackage(repoRoot, clientTarget);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");

@@ -1,8 +1,15 @@
 import type { BrowserAgentListResult } from "@t3tools/contracts";
+import {
+  BROWSER_AGENT_AUTO_PAIR_PATH,
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH,
+} from "@t3tools/shared/browserAgent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BrowserAgentExtensionUnavailableError,
   buildBrowserAgentAutoPairUrl,
+  buildBrowserAgentExtensionDownloadUrl,
+  isBrowserAgentExtensionUnavailableError,
   isNoBrowserAgentConnectedError,
   resolveBrowserAgentBackendBaseUrl,
   waitForBrowserAgentConnection,
@@ -45,12 +52,23 @@ describe("browser agent pairing", () => {
     );
 
     expect(url.origin).toBe("http://100.105.249.96:3773");
-    expect(url.pathname).toBe("/browser-agent/auto-pair");
+    expect(url.pathname).toBe(BROWSER_AGENT_AUTO_PAIR_PATH);
     expect(url.searchParams.get("t3BrowserAgentPair")).toBe("1");
     expect(url.searchParams.get("t3BrowserAgentBaseUrl")).toBe("http://100.105.249.96:3773/");
     expect(new URLSearchParams(url.hash.slice(1)).get("t3BrowserAgentSessionToken")).toBe(
       "session-token",
     );
+  });
+
+  it("builds an extension download URL on the backend origin", () => {
+    const url = new URL(
+      buildBrowserAgentExtensionDownloadUrl({
+        baseUrl: "http://100.105.249.96:3773/some/path",
+      }),
+    );
+
+    expect(url.origin).toBe("http://100.105.249.96:3773");
+    expect(url.pathname).toBe(BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH);
   });
 
   it("uses the configured backend target instead of the current dev proxy origin", async () => {
@@ -126,6 +144,15 @@ describe("browser agent pairing", () => {
       isNoBrowserAgentConnectedError(new Error("No paired browser extension is connected.")),
     ).toBe(true);
     expect(isNoBrowserAgentConnectedError(new Error("Different failure"))).toBe(false);
+  });
+
+  it("detects the extension unavailable pairing failure", () => {
+    const error = new BrowserAgentExtensionUnavailableError({
+      downloadUrl: "http://localhost:3773/downloads/t3-code-browser-agent.crx",
+    });
+
+    expect(isBrowserAgentExtensionUnavailableError(error)).toBe(true);
+    expect(isBrowserAgentExtensionUnavailableError(new Error("Different failure"))).toBe(false);
   });
 
   it("waits until a browser agent connects", async () => {

@@ -6,6 +6,7 @@ import { ServerConfig } from "./config.ts";
 import {
   attachmentsRouteLayer,
   browserAgentAutoPairRouteLayer,
+  browserAgentExtensionDownloadRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
@@ -324,6 +325,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
   browserAgentAutoPairRouteLayer,
+  browserAgentExtensionDownloadRouteLayer,
   staticAndDevRouteLayer,
   browserAgentRouteLayer,
   websocketRpcRouteLayer,

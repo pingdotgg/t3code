@@ -1,6 +1,11 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME,
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH,
+  BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR,
+} from "@t3tools/shared/browserAgent";
 
 import {
   CommandId,
@@ -970,6 +975,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 302);
       assert.equal(response.headers.location, "http://127.0.0.1:5173/foo/bar?token=test-token");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves browser agent extension downloads before the dev URL redirect", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-router-extension-download-",
+      });
+      const downloadsDir = path.join(staticDir, BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR);
+      yield* fileSystem.makeDirectory(downloadsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(downloadsDir, BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME),
+        "extension-package-ok",
+      );
+
+      yield* buildAppUnderTest({
+        config: {
+          staticDir,
+          devUrl: new URL("http://127.0.0.1:5173"),
+        },
+      });
+
+      const response = yield* HttpClient.get(BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH).pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-type"], "application/x-chrome-extension");
+      assert.equal(
+        response.headers["content-disposition"],
+        `inline; filename="${BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME}"`,
+      );
+      assert.equal(yield* response.text, "extension-package-ok");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

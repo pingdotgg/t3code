@@ -11,6 +11,10 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
+    "./browserAgent": {
+      "types": "./src/browserAgent.ts",
+      "import": "./src/browserAgent.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

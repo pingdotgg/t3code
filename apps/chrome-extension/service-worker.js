@@ -554,17 +554,6 @@ async function resolveNativeSidePanelTab(tab) {
   return activeTab ?? null;
 }
 
-async function setDefaultNativeSidePanelDisabled() {
-  if (!chrome.sidePanel?.setOptions) {
-    return;
-  }
-  try {
-    await chrome.sidePanel.setOptions({ enabled: false });
-  } catch (error) {
-    console.warn("[T3 Code] failed to disable the default side panel", error);
-  }
-}
-
 async function closeGlobalNativeSidePanels() {
   if (!chrome.sidePanel?.close) {
     return;
@@ -584,59 +573,49 @@ async function closeGlobalNativeSidePanels() {
   }
 }
 
-async function enableNativeSidePanelForTab(tab) {
+async function setNativeSidePanelForTab(tab, enabled) {
+  if (!chrome.sidePanel?.setOptions) {
+    return false;
+  }
   const tabId = numericTabId(tab);
   if (tabId === null) {
-    throw new Error("No active Chrome tab.");
+    return false;
   }
-  if (!chrome.sidePanel?.setOptions) {
-    throw new Error("Chrome Side Panel tab options are unavailable.");
-  }
-  await chrome.sidePanel.setOptions({
-    tabId,
-    path: SIDE_PANEL_PATH,
-    enabled: true,
-  });
+  await chrome.sidePanel.setOptions(
+    enabled ? { tabId, path: SIDE_PANEL_PATH, enabled: true } : { tabId, enabled: false },
+  );
+  return true;
 }
 
-async function disableNativeSidePanelForTab(tab) {
-  const tabId = numericTabId(tab);
-  if (tabId === null || !chrome.sidePanel?.setOptions) {
-    return;
-  }
-  await chrome.sidePanel.setOptions({ tabId, enabled: false });
-}
-
-function selectTabScopedWorkspaceLinkForTab(links, tab) {
-  return newestLink(
-    links.filter(
-      (entry) =>
-        linkMatchesTabIdentity(entry, tab) && tabMatchesDevServer(tab.url, entry.devServerUrl),
-    ),
+function tabHasNativeSidePanelLink(links, tab) {
+  return links.some(
+    (entry) =>
+      linkMatchesTabIdentity(entry, tab) && tabMatchesDevServer(tab.url, entry.devServerUrl),
   );
 }
 
-async function syncNativeSidePanelOptionsForTab(tab) {
-  if (!chrome.sidePanel?.setOptions || numericTabId(tab) === null) {
+async function syncNativeSidePanelOptionsForTabs(tabs) {
+  if (!chrome.sidePanel?.setOptions || tabs.length === 0) {
     return;
   }
   try {
     const links = await readLinks();
-    const link = selectTabScopedWorkspaceLinkForTab(links, tab);
-    if (link) {
-      await enableNativeSidePanelForTab(tab);
-    } else {
-      await disableNativeSidePanelForTab(tab);
-    }
+    await Promise.all(
+      tabs.map((tab) => setNativeSidePanelForTab(tab, tabHasNativeSidePanelLink(links, tab))),
+    );
   } catch (error) {
     console.warn("[T3 Code] failed to sync side panel tab options", error);
   }
 }
 
+async function syncNativeSidePanelOptionsForTab(tab) {
+  await syncNativeSidePanelOptionsForTabs([tab]);
+}
+
 async function syncNativeSidePanelOptionsForTabId(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
-    await syncNativeSidePanelOptionsForTab(tab);
+    await syncNativeSidePanelOptionsForTabs([tab]);
   } catch {
     // The tab may have closed before Chrome delivered the event.
   }
@@ -647,8 +626,7 @@ async function syncNativeSidePanelOptionsForAllTabs() {
     return;
   }
   try {
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(tabs.map((tab) => syncNativeSidePanelOptionsForTab(tab)));
+    await syncNativeSidePanelOptionsForTabs(await chrome.tabs.query({}));
   } catch (error) {
     console.warn("[T3 Code] failed to sync side panel options for open tabs", error);
   }
@@ -660,7 +638,7 @@ async function disableNativeSidePanelForAllTabs() {
   }
   try {
     const tabs = await chrome.tabs.query({});
-    await Promise.all(tabs.map((tab) => disableNativeSidePanelForTab(tab)));
+    await Promise.all(tabs.map((tab) => setNativeSidePanelForTab(tab, false)));
   } catch (error) {
     console.warn("[T3 Code] failed to disable side panel options for open tabs", error);
   }
@@ -670,7 +648,7 @@ async function syncNativeSidePanelOptionsForFocusedWindow() {
   try {
     const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (activeTab) {
-      await syncNativeSidePanelOptionsForTab(activeTab);
+      await syncNativeSidePanelOptionsForTabs([activeTab]);
     }
   } catch {
     // There may be no focused browser window.
@@ -681,7 +659,11 @@ async function configureSidePanelBehavior() {
   if (!chrome.sidePanel) {
     return;
   }
-  await setDefaultNativeSidePanelDisabled();
+  if (chrome.sidePanel.setOptions) {
+    await chrome.sidePanel.setOptions({ enabled: false }).catch((error) => {
+      console.warn("[T3 Code] failed to disable the default side panel", error);
+    });
+  }
   await closeGlobalNativeSidePanels();
   await syncNativeSidePanelOptionsForAllTabs();
   if (!chrome.sidePanel.setPanelBehavior) {
@@ -704,7 +686,10 @@ async function openNativeSidePanel(tab) {
     if (tabId === null) {
       return { opened: false, reason: "No active Chrome tab." };
     }
-    await enableNativeSidePanelForTab(targetTab);
+    const enabled = await setNativeSidePanelForTab(targetTab, true);
+    if (!enabled) {
+      return { opened: false, reason: "Chrome Side Panel tab options are unavailable." };
+    }
     await chrome.sidePanel.open({ tabId });
     return { opened: true };
   } catch (error) {
@@ -760,7 +745,7 @@ async function setActiveNativeSidePanelLink(tab, link, options = {}) {
   await upsertLink(linkForStorage(link));
   await writeActiveWorkspaceLink(link);
   if (options.open !== true) {
-    await enableNativeSidePanelForTab(tab).catch((error) => {
+    await setNativeSidePanelForTab(tab, true).catch((error) => {
       console.warn("[T3 Code] failed to enable side panel for linked tab", error);
     });
   }

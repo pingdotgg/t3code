@@ -1,4 +1,8 @@
 import type { BrowserAgentListResult } from "@t3tools/contracts";
+import {
+  BROWSER_AGENT_AUTO_PAIR_PATH,
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH,
+} from "@t3tools/shared/browserAgent";
 
 import { selectPairingEndpoint } from "./advertisedEndpointSelection";
 import { createServerSessionBearerToken } from "./environments/primary";
@@ -6,7 +10,7 @@ import { readPrimaryEnvironmentTarget } from "./environments/primary/target";
 import { ensureLocalApi } from "./localApi";
 import { useUiStateStore } from "./uiStateStore";
 
-export const BROWSER_AGENT_AUTO_PAIR_PATH = "/browser-agent/auto-pair";
+export { BROWSER_AGENT_AUTO_PAIR_PATH, BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH };
 const AUTO_PAIR_REQUEST_TYPE = "t3code.browserAgent.autoPair";
 const AUTO_PAIR_RESULT_TYPE = "t3code.browserAgent.autoPair.result";
 const AUTO_PAIR_CONNECT_TIMEOUT_MS = 12_000;
@@ -27,6 +31,21 @@ interface WaitForBrowserAgentConnectionOptions {
 interface AutoPairContentScriptResult {
   readonly ok: boolean;
   readonly error?: string;
+}
+
+export class BrowserAgentExtensionUnavailableError extends Error {
+  readonly downloadUrl: string;
+
+  constructor(input: { readonly downloadUrl: string; readonly cause?: unknown }) {
+    super(
+      "The T3 Code Browser Agent Chrome extension is not installed or is not running in this browser.",
+    );
+    this.name = "BrowserAgentExtensionUnavailableError";
+    this.downloadUrl = input.downloadUrl;
+    if (input.cause !== undefined) {
+      this.cause = input.cause;
+    }
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -88,6 +107,18 @@ export function buildBrowserAgentAutoPairUrl(input: {
   url.searchParams.set("t3BrowserAgentClose", "1");
   url.hash = new URLSearchParams([["t3BrowserAgentSessionToken", input.sessionToken]]).toString();
   return url.toString();
+}
+
+export function buildBrowserAgentExtensionDownloadUrl(input: { readonly baseUrl: string }): string {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  const url = new URL(BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH, baseUrl);
+  return url.toString();
+}
+
+export function isBrowserAgentExtensionUnavailableError(
+  error: unknown,
+): error is BrowserAgentExtensionUnavailableError {
+  return error instanceof BrowserAgentExtensionUnavailableError;
 }
 
 export function isNoBrowserAgentConnectedError(error: unknown): boolean {
@@ -205,6 +236,7 @@ export async function waitForBrowserAgentConnection(
 
 export async function autoPairBrowserAgent(client: BrowserAgentListClient): Promise<void> {
   const baseUrl = await resolveBrowserAgentBackendBaseUrl();
+  const downloadUrl = buildBrowserAgentExtensionDownloadUrl({ baseUrl });
   const session = await createServerSessionBearerToken();
   const pairedInCurrentPage = await requestContentScriptPair({
     baseUrl,
@@ -212,6 +244,10 @@ export async function autoPairBrowserAgent(client: BrowserAgentListClient): Prom
   });
 
   if (!pairedInCurrentPage) {
+    if (!window.desktopBridge && sameOriginAsCurrentPage(baseUrl)) {
+      throw new BrowserAgentExtensionUnavailableError({ downloadUrl });
+    }
+
     await ensureLocalApi().shell.openExternal(
       buildBrowserAgentAutoPairUrl({
         baseUrl,
@@ -220,5 +256,12 @@ export async function autoPairBrowserAgent(client: BrowserAgentListClient): Prom
     );
   }
 
-  await waitForBrowserAgentConnection(client);
+  try {
+    await waitForBrowserAgentConnection(client);
+  } catch (error) {
+    if (!window.desktopBridge && !pairedInCurrentPage) {
+      throw new BrowserAgentExtensionUnavailableError({ downloadUrl, cause: error });
+    }
+    throw error;
+  }
 }

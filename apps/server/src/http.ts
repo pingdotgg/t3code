@@ -1,4 +1,11 @@
 import Mime from "@effect/platform-node/Mime";
+import {
+  BROWSER_AGENT_AUTO_PAIR_PATH,
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME,
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH,
+  BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR,
+  BROWSER_AGENT_EXTENSION_PACKAGE_FILENAMES,
+} from "@t3tools/shared/browserAgent";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -108,13 +115,68 @@ export const browserApiCorsLayer = HttpRouter.cors({
 
 export const browserAgentAutoPairRouteLayer = HttpRouter.add(
   "GET",
-  "/browser-agent/auto-pair",
+  BROWSER_AGENT_AUTO_PAIR_PATH,
   Effect.succeed(
     HttpServerResponse.text(BROWSER_AGENT_AUTO_PAIR_HTML, {
       status: 200,
       contentType: "text/html; charset=utf-8",
     }),
   ),
+);
+
+const resolveBrowserAgentExtensionPackagePath = Effect.fn(function* () {
+  const config = yield* ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const appsDir = path.resolve(import.meta.dirname, "../..");
+  const staticDownloadsDir = config.staticDir
+    ? path.join(config.staticDir, BROWSER_AGENT_EXTENSION_DOWNLOADS_DIR)
+    : undefined;
+  const candidatePaths = [
+    ...(staticDownloadsDir
+      ? BROWSER_AGENT_EXTENSION_PACKAGE_FILENAMES.map((fileName) =>
+          path.join(staticDownloadsDir, fileName),
+        )
+      : []),
+    ...BROWSER_AGENT_EXTENSION_PACKAGE_FILENAMES.map((fileName) => path.join(appsDir, fileName)),
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    const fileInfo = yield* fileSystem
+      .stat(candidatePath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (fileInfo?.type === "File") {
+      return candidatePath;
+    }
+  }
+
+  return null;
+});
+
+export const browserAgentExtensionDownloadRouteLayer = HttpRouter.add(
+  "GET",
+  BROWSER_AGENT_EXTENSION_DOWNLOAD_PATH,
+  Effect.gen(function* () {
+    const packagePath = yield* resolveBrowserAgentExtensionPackagePath();
+    if (!packagePath) {
+      return HttpServerResponse.text("T3 Code Browser Agent extension package not found.", {
+        status: 404,
+      });
+    }
+
+    return yield* HttpServerResponse.file(packagePath, {
+      status: 200,
+      contentType: "application/x-chrome-extension",
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Disposition": `inline; filename="${BROWSER_AGENT_EXTENSION_DOWNLOAD_FILENAME}"`,
+      },
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+      ),
+    );
+  }),
 );
 
 export function isLoopbackHostname(hostname: string): boolean {
