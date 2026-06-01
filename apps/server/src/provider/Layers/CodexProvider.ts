@@ -248,10 +248,8 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-export const codexAppServerArgs = (launchArgs: string | undefined): ReadonlyArray<string> => [
-  "app-server",
-  ...(launchArgs ?? "").trim().split(/\s+/).filter(Boolean),
-];
+export const codexAppServerArgs = (launchArgs?: string) =>
+  launchArgs?.trim() ? ["app-server", ...launchArgs.trim().split(/\s+/)] : ["app-server"];
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;

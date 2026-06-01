@@ -196,10 +196,6 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Launch arguments",
         description: "Additional CLI arguments passed to codex app-server on session start.",
-        providerSettingsForm: {
-          placeholder: "e.g. --strict-config",
-          clearWhenEmpty: "omit",
-        },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(
