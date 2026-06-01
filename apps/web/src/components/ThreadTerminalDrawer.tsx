@@ -1,5 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import { EyeOff, Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -786,8 +786,10 @@ interface ThreadTerminalDrawerProps {
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
   focusRequestId: number;
+  onCollapseTerminal: () => void;
   onSplitTerminal: () => void;
   onNewTerminal: () => void;
+  toggleShortcutLabel?: string | undefined;
   splitShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
@@ -844,8 +846,10 @@ export default function ThreadTerminalDrawer({
   terminalGroups,
   activeTerminalGroupId,
   focusRequestId,
+  onCollapseTerminal,
   onSplitTerminal,
   onNewTerminal,
+  toggleShortcutLabel,
   splitShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
@@ -1003,6 +1007,9 @@ export default function ThreadTerminalDrawer({
     : splitShortcutLabel
       ? `Split Terminal (${splitShortcutLabel})`
       : "Split Terminal";
+  const collapseTerminalActionLabel = toggleShortcutLabel
+    ? `Hide Terminal (${toggleShortcutLabel})`
+    : "Hide Terminal";
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
@@ -1125,6 +1132,17 @@ export default function ThreadTerminalDrawer({
         className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
         style={{ height: `${drawerHeight}px` }}
       >
+        <div className="pointer-events-none absolute right-2 top-2 z-20">
+          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+            <TerminalActionButton
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onCollapseTerminal}
+              label={collapseTerminalActionLabel}
+            >
+              <EyeOff className="size-3.25" />
+            </TerminalActionButton>
+          </div>
+        </div>
         <div
           className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
           onPointerDown={handleResizePointerDown}
@@ -1164,6 +1182,14 @@ export default function ThreadTerminalDrawer({
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+            <TerminalActionButton
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onCollapseTerminal}
+              label={collapseTerminalActionLabel}
+            >
+              <EyeOff className="size-3.25" />
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
@@ -1279,7 +1305,14 @@ export default function ThreadTerminalDrawer({
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
                 <div className="inline-flex h-full items-stretch">
                   <TerminalActionButton
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
+                    className="inline-flex h-full items-center px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onClick={onCollapseTerminal}
+                    label={collapseTerminalActionLabel}
+                  >
+                    <EyeOff className="size-3.25" />
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
                         ? "cursor-not-allowed opacity-45 hover:bg-transparent"
                         : "hover:bg-accent/70"

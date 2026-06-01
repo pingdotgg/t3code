@@ -129,7 +129,7 @@ vi.mock("~/localApi", () => ({
   readLocalApi: readLocalApiMock,
 }));
 
-import { TerminalViewport } from "./ThreadTerminalDrawer";
+import ThreadTerminalDrawer, { TerminalViewport } from "./ThreadTerminalDrawer";
 
 const THREAD_ID = ThreadId.make("thread-terminal-browser");
 
@@ -413,6 +413,61 @@ describe("TerminalViewport", () => {
       );
     } finally {
       await mounted.cleanup();
+    }
+  });
+});
+
+describe("ThreadTerminalDrawer", () => {
+  afterEach(() => {
+    environmentApiById.clear();
+    readEnvironmentApiMock.mockClear();
+    readLocalApiMock.mockClear();
+    terminalConstructorSpy.mockClear();
+    terminalDisposeSpy.mockClear();
+    fitAddonFitSpy.mockClear();
+    fitAddonLoadSpy.mockClear();
+  });
+
+  it("collapses the drawer from the hide terminal toolbar button", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    const onCollapseTerminal = vi.fn();
+
+    const screen = await render(
+      <ThreadTerminalDrawer
+        threadRef={scopeThreadRef("environment-a" as never, THREAD_ID)}
+        threadId={THREAD_ID}
+        cwd="/repo/project"
+        visible
+        height={320}
+        terminalIds={["term-1"]}
+        activeTerminalId="term-1"
+        terminalGroups={[{ id: "group-term-1", terminalIds: ["term-1"] }]}
+        activeTerminalGroupId="group-term-1"
+        focusRequestId={0}
+        onCollapseTerminal={onCollapseTerminal}
+        onSplitTerminal={() => undefined}
+        onNewTerminal={() => undefined}
+        toggleShortcutLabel="Mod+J"
+        onActiveTerminalChange={() => undefined}
+        onCloseTerminal={() => undefined}
+        onHeightChange={() => undefined}
+        onAddTerminalContext={() => undefined}
+        keybindings={[]}
+      />,
+    );
+
+    try {
+      const hideButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Hide Terminal (Mod+J)"]',
+      );
+      expect(hideButton).not.toBeNull();
+
+      hideButton?.click();
+
+      expect(onCollapseTerminal).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
     }
   });
 });
