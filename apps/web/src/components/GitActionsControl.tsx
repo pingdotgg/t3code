@@ -34,8 +34,10 @@ import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import {
+  buildGitAgentPrompt,
   buildGitActionProgressStages,
   buildMenuItems,
+  type GitAgentPromptIntent,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -149,6 +151,7 @@ const RUNNING_SOURCE_CONTROL_ACTIONS = [
   "syncBase",
   "publishRepository",
 ] as const;
+const USE_AGENT_PROMPTS_FOR_GIT_ACTIONS = true;
 const PULL_QUICK_ACTION_CLASS_NAME =
   "border-cyan-500/50 bg-cyan-500/12 text-cyan-700 shadow-cyan-500/20 shadow-sm [:hover,[data-pressed]]:bg-cyan-500/18 dark:border-cyan-300/45 dark:bg-cyan-300/12 dark:text-cyan-100 dark:shadow-cyan-300/20 dark:[:hover,[data-pressed]]:bg-cyan-300/18";
 
@@ -372,6 +375,54 @@ function GitQuickActionIcon({
   }
   if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
   return <InfoIcon className={iconClassName} />;
+}
+
+function gitStackedActionToPromptIntent(action: GitStackedAction): GitAgentPromptIntent {
+  switch (action) {
+    case "commit":
+      return "commit";
+    case "push":
+      return "push";
+    case "create_pr":
+      return "create_pr";
+    case "commit_push":
+      return "commit_push";
+    case "commit_push_pr":
+      return "commit_push_pr";
+  }
+}
+
+function quickActionPromptIntent(quickAction: GitQuickAction): GitAgentPromptIntent | null {
+  if (quickAction.label === "Archive") return "archive_merged_thread";
+  if (quickAction.kind === "prompt_ai") {
+    if (quickAction.label === "Resolve conflicts") return "resolve_conflicts";
+    return "sync_base";
+  }
+  if (quickAction.kind === "open_pr") {
+    if (quickAction.label === "Merge") return "merge_pr";
+    if (quickAction.label === "Merged") return "archive_merged_thread";
+    return "inspect_pr";
+  }
+  if (quickAction.kind === "open_publish") return "publish_repository";
+  if (quickAction.kind === "run_pull") return "pull";
+  if (quickAction.kind === "run_sync_base") return "sync_base";
+  if (quickAction.kind === "run_action" && quickAction.action) {
+    return gitStackedActionToPromptIntent(quickAction.action);
+  }
+  return null;
+}
+
+function menuItemPromptIntent(item: GitActionMenuItem): GitAgentPromptIntent | null {
+  if (item.id === "commit") return "commit";
+  if (item.id === "push") return "push";
+  if (item.id === "pr") {
+    if (item.kind === "open_pr") {
+      if (item.label === "Merged") return "archive_merged_thread";
+      return "inspect_pr";
+    }
+    return "create_pr";
+  }
+  return null;
 }
 
 function gitQuickActionToneClassName(tone: GitQuickAction["tone"]): string | undefined {
@@ -1374,6 +1425,31 @@ export default function GitActionsControl({
     ],
   );
 
+  const buildAgentPrompt = useCallback(
+    (
+      intent: GitAgentPromptIntent,
+      options?: {
+        readonly commitMessage?: string;
+        readonly filePaths?: readonly string[];
+        readonly promptHint?: string;
+        readonly unreadCommentCount?: number;
+      },
+    ) =>
+      buildGitAgentPrompt({
+        intent,
+        cwd: gitCwd,
+        gitStatus: gitStatusForActions,
+        threadRef: activeThreadRef,
+        ...(options?.commitMessage ? { commitMessage: options.commitMessage } : {}),
+        ...(options?.filePaths ? { filePaths: options.filePaths } : {}),
+        ...(options?.promptHint ? { promptHint: options.promptHint } : {}),
+        ...(options?.unreadCommentCount !== undefined
+          ? { unreadCommentCount: options.unreadCommentCount }
+          : {}),
+      }),
+    [activeThreadRef, gitCwd, gitStatusForActions],
+  );
+
   runGitActionWithToast = useEffectEvent(
     async ({
       action,
@@ -1633,22 +1709,48 @@ export default function GitActionsControl({
   const runDialogActionOnNewBranch = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const filePaths = !allSelected ? selectedFiles.map((f) => f.path) : undefined;
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
 
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      promptAi(
+        buildAgentPrompt("commit", {
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
+          promptHint:
+            "Create a new feature ref before committing. Pick a descriptive branch name from the actual change.",
+        }),
+      );
+      return;
+    }
+
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
   };
 
   const runQuickAction = () => {
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      const promptIntent = quickActionPromptIntent(renderedQuickAction);
+      if (promptIntent) {
+        promptAi(
+          buildAgentPrompt(
+            promptIntent,
+            renderedQuickAction.prompt ? { promptHint: renderedQuickAction.prompt } : undefined,
+          ),
+        );
+        return;
+      }
+    }
+
     if (isMergedQuickAction) {
       if (!activeThreadRef || !activeThreadKey) {
         toastManager.add({
@@ -1758,6 +1860,15 @@ export default function GitActionsControl({
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      const promptIntent = menuItemPromptIntent(item);
+      if (promptIntent) {
+        promptAi(
+          buildAgentPrompt(promptIntent, item.prompt ? { promptHint: item.prompt } : undefined),
+        );
+        return;
+      }
+    }
     if (item.kind === "open_pr") {
       void openExistingPr();
       return;
@@ -1782,14 +1893,26 @@ export default function GitActionsControl({
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const filePaths = !allSelected ? selectedFiles.map((f) => f.path) : undefined;
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
+
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      promptAi(
+        buildAgentPrompt("commit", {
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
+        }),
+      );
+      return;
+    }
+
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
     });
   };
 
@@ -1831,6 +1954,10 @@ export default function GitActionsControl({
           size="xs"
           disabled={initAction.isPending}
           onClick={() => {
+            if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+              promptAi(buildAgentPrompt("initialize"));
+              return;
+            }
             void initAction.run();
           }}
         >
@@ -1957,7 +2084,17 @@ export default function GitActionsControl({
                         ? `PR comments, ${pullRequestCommentsAction.unreadCount} unread`
                         : "PR comments"
                     }
-                    onClick={pullRequestCommentsAction.onOpen}
+                    onClick={() => {
+                      if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+                        promptAi(
+                          buildAgentPrompt("review_pr_comments", {
+                            unreadCommentCount: pullRequestCommentsAction.unreadCount,
+                          }),
+                        );
+                        return;
+                      }
+                      pullRequestCommentsAction.onOpen();
+                    }}
                   >
                     {pullRequestCommentsAction.isFetching ? (
                       <Spinner className="size-4" />
@@ -1981,6 +2118,10 @@ export default function GitActionsControl({
                 <MenuItem
                   disabled={isGitActionRunning}
                   onClick={() => {
+                    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+                      promptAi(buildAgentPrompt("publish_repository"));
+                      return;
+                    }
                     setIsPublishDialogOpen(true);
                   }}
                 >

@@ -1,6 +1,7 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vitest";
 import {
+  buildGitAgentPrompt,
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
@@ -30,6 +31,73 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("buildGitAgentPrompt", () => {
+  it("includes workspace, repo, branch, PR, and selected file context", () => {
+    const prompt = buildGitAgentPrompt({
+      intent: "commit_push_pr",
+      cwd: "/repo/t3code",
+      threadRef: {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      commitMessage: "feat: route github actions through prompts",
+      filePaths: ["apps/web/src/components/GitActionsControl.tsx"],
+      gitStatus: status({
+        refName: "feature/prompt-github-actions",
+        hasWorkingTreeChanges: true,
+        aheadCount: 2,
+        behindCount: 0,
+        aheadOfDefaultCount: 3,
+        behindOfDefaultCount: 1,
+        sourceControlProvider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        workingTree: {
+          files: [
+            {
+              path: "apps/web/src/components/GitActionsControl.tsx",
+              insertions: 120,
+              deletions: 20,
+            },
+          ],
+          insertions: 120,
+          deletions: 20,
+        },
+        pr: {
+          number: 42,
+          title: "Prompt GitHub actions",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          baseRef: "main",
+          headRef: "feature/prompt-github-actions",
+          state: "open",
+          mergeStatus: "behind",
+          checks: {
+            total: 3,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 1,
+          },
+        },
+      }),
+    });
+
+    assert.include(prompt, "Workspace path: /repo/t3code");
+    assert.include(prompt, "Repository: pingdotgg/t3code");
+    assert.include(prompt, "Source control provider: GitHub (github, https://github.com)");
+    assert.include(prompt, "Current ref: feature/prompt-github-actions");
+    assert.include(prompt, "Ahead/behind base: 3 ahead / 1 behind");
+    assert.include(prompt, "apps/web/src/components/GitActionsControl.tsx (+120 / -20)");
+    assert.include(prompt, "User-selected file scope");
+    assert.include(prompt, "Pull request: #42 Prompt GitHub actions");
+    assert.include(prompt, "Checks: 2/3 complete, 2 successful, 0 failed, 1 pending");
+    assert.include(prompt, "git status --short --branch");
+    assert.include(prompt, "git remote -v");
+  });
+});
 
 describe("when: ref is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {
