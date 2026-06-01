@@ -19,6 +19,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import { normalizeBrowserAgentPreviewUrl } from "../../browserAgents";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -407,6 +408,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.browserAgentPreviewUrl !== DEFAULT_UNIFIED_SETTINGS.browserAgentPreviewUrl
+        ? ["Preview URL"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -438,6 +442,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.diffWordWrap,
       settings.automaticGitFetchInterval,
+      settings.browserAgentPreviewUrl,
       settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -466,6 +471,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      browserAgentPreviewUrl: DEFAULT_UNIFIED_SETTINGS.browserAgentPreviewUrl,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
@@ -889,6 +895,39 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Preview">
+        <SettingsRow
+          title="Preview URL"
+          description="Leave empty to use the detected or inferred project dev-server URL."
+          resetAction={
+            settings.browserAgentPreviewUrl !== DEFAULT_UNIFIED_SETTINGS.browserAgentPreviewUrl ? (
+              <SettingResetButton
+                label="preview URL"
+                onClick={() =>
+                  updateSettings({
+                    browserAgentPreviewUrl: DEFAULT_UNIFIED_SETTINGS.browserAgentPreviewUrl,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-72"
+              value={settings.browserAgentPreviewUrl}
+              onCommit={(next) =>
+                updateSettings({ browserAgentPreviewUrl: normalizeBrowserAgentPreviewUrl(next) })
+              }
+              placeholder="http://localhost:3000/"
+              spellCheck={false}
+              inputMode="url"
+              type="url"
+              aria-label="Preview URL"
+            />
           }
         />
       </SettingsSection>

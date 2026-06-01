@@ -631,6 +631,7 @@ describe("wsApi", () => {
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      browserAgentPreviewUrl: "http://localhost:5173/",
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       dismissedProviderUpdateNotificationKeys: [],
@@ -694,6 +695,7 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      browserAgentPreviewUrl: "http://localhost:5173/",
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       dismissedProviderUpdateNotificationKeys: [],

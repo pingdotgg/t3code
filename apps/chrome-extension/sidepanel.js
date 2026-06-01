@@ -81,7 +81,7 @@ async function refreshState() {
     currentWorkspaceLink = null;
     currentFrameOrigin = null;
     frameEl.removeAttribute("src");
-    setupCopyEl.textContent = "Pair this browser with T3 Code, then use Transfer to Browser.";
+    setupCopyEl.textContent = "Pair this browser with T3 Code, then use Preview.";
     setStatus("Not paired.");
     setMode("setup");
     return;
@@ -89,7 +89,7 @@ async function refreshState() {
 
   if (!currentWorkspaceLink?.t3Url) {
     frameEl.removeAttribute("src");
-    setupCopyEl.textContent = "This browser is paired. Use Transfer to Browser in T3 Code.";
+    setupCopyEl.textContent = "This browser is paired. Use Preview in T3 Code.";
     setStatus(`${state.connected ? "Connected" : "Paired"}: ${state.baseUrl}`);
     setMode("setup");
     return;

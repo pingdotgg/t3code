@@ -52,7 +52,7 @@ function connectAgent(
 }
 
 describe("BrowserAgentRegistry", () => {
-  it("sends transfer commands to the browser agent for the requesting session", async () => {
+  it("sends preview commands to the browser agent for the requesting session", async () => {
     const registry = new BrowserAgentRegistry();
     const hostSessionId = AuthSessionId.make("session-host");
     const remoteSessionId = AuthSessionId.make("session-remote");

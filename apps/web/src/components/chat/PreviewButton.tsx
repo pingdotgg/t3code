@@ -3,8 +3,8 @@ import { MonitorUpIcon, PuzzleIcon } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 
 import {
-  inferBrowserAgentDevServerUrl,
-  resolveBrowserAgentTransferDevServerUrl,
+  resolveBrowserAgentPreviewUrl,
+  resolveBrowserAgentReachablePreviewUrl,
 } from "../../browserAgents";
 import {
   autoPairBrowserAgent,
@@ -12,6 +12,7 @@ import {
   isNoBrowserAgentConnectedError,
 } from "../../browserAgentPairing";
 import { getPrimaryEnvironmentConnection } from "../../environments/runtime";
+import { useSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -25,7 +26,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-export const TransferToBrowserButton = memo(function TransferToBrowserButton({
+export const PreviewButton = memo(function PreviewButton({
   activeProjectName,
   activeProjectScripts,
   activeThreadEnvironmentId,
@@ -38,29 +39,34 @@ export const TransferToBrowserButton = memo(function TransferToBrowserButton({
   readonly activeThreadId: ThreadId;
   readonly detectedDevServerUrl: string | null;
 }) {
-  const [isTransferring, setIsTransferring] = useState(false);
+  const [isOpeningPreview, setIsOpeningPreview] = useState(false);
   const [extensionDownloadUrl, setExtensionDownloadUrl] = useState<string | null>(null);
-  const inferredDevServerUrl = useMemo(
-    () => inferBrowserAgentDevServerUrl(activeProjectScripts),
-    [activeProjectScripts],
+  const customPreviewUrl = useSettings((settings) => settings.browserAgentPreviewUrl);
+  const devServerUrl = useMemo(
+    () =>
+      resolveBrowserAgentPreviewUrl({
+        customPreviewUrl,
+        detectedDevServerUrl,
+        scripts: activeProjectScripts,
+      }),
+    [activeProjectScripts, customPreviewUrl, detectedDevServerUrl],
   );
-  const devServerUrl = detectedDevServerUrl ?? inferredDevServerUrl;
 
-  const transferToBrowser = () => {
-    if (isTransferring) return;
+  const openPreviewInBrowser = () => {
+    if (isOpeningPreview) return;
     if (!activeProjectName) {
       return;
     }
 
-    setIsTransferring(true);
+    setIsOpeningPreview(true);
     void (async () => {
       const connection = getPrimaryEnvironmentConnection();
       const openPreview = async () => {
-        const transferDevServerUrl = await resolveBrowserAgentTransferDevServerUrl(devServerUrl);
+        const reachablePreviewUrl = await resolveBrowserAgentReachablePreviewUrl(devServerUrl);
         return await connection.client.browserAgents.openOrFocusPreview({
           environmentId: activeThreadEnvironmentId,
           threadId: activeThreadId,
-          devServerUrl: transferDevServerUrl,
+          devServerUrl: reachablePreviewUrl,
           repoName: activeProjectName,
         });
       };
@@ -103,13 +109,13 @@ export const TransferToBrowserButton = memo(function TransferToBrowserButton({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Transfer to browser failed",
+            title: "Preview failed",
             description,
           }),
         );
       })
       .finally(() => {
-        setIsTransferring(false);
+        setIsOpeningPreview(false);
       });
   };
 
@@ -122,15 +128,15 @@ export const TransferToBrowserButton = memo(function TransferToBrowserButton({
               className="shrink-0"
               size="xs"
               variant="outline"
-              aria-label="Transfer to Browser"
-              disabled={isTransferring || !activeProjectName}
-              onClick={transferToBrowser}
+              aria-label="Preview"
+              disabled={isOpeningPreview || !activeProjectName}
+              onClick={openPreviewInBrowser}
             />
           }
         >
           <MonitorUpIcon className="size-3" />
           <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-            Transfer to Browser
+            Preview
           </span>
         </TooltipTrigger>
         <TooltipPopup side="bottom">
@@ -150,13 +156,12 @@ export const TransferToBrowserButton = memo(function TransferToBrowserButton({
           <DialogHeader>
             <DialogTitle>Chrome extension not installed</DialogTitle>
             <DialogDescription>
-              Transfer to Browser needs the T3 Code Browser Agent extension installed in this
-              browser.
+              Preview needs the T3 Code Browser Agent extension installed in this browser.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
             <p className="text-muted-foreground text-sm leading-6">
-              Install the extension, keep it enabled, then retry Transfer to Browser.
+              Install the extension, keep it enabled, then retry Preview.
             </p>
           </DialogPanel>
           <DialogFooter>

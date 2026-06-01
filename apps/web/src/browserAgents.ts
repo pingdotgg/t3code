@@ -6,6 +6,8 @@ import { useUiStateStore } from "./uiStateStore";
 
 export const DEFAULT_BROWSER_AGENT_DEV_SERVER_URL = "http://localhost:3000/";
 const WILDCARD_DEV_SERVER_HOSTNAMES = new Set(["0.0.0.0", "::"]);
+const ABSOLUTE_URL_PATTERN = /^[a-z][a-z\d+\-.]*:\/\//iu;
+const LOCAL_PORT_URL_PATTERN = /^:\d{1,5}(?:[/?#]|$)/u;
 
 const PORT_PATTERNS = [
   /(?:^|\s)(?:--port|-p)\s+(\d{2,5})\b/,
@@ -49,6 +51,41 @@ function parseUrl(rawUrl: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function looksLikeBareHttpUrl(rawUrl: string): boolean {
+  const authority = rawUrl.match(/^[^/?#]+/u)?.[0] ?? "";
+  if (!authority || authority.includes("@")) {
+    return false;
+  }
+  if (/^\[[^\]]+\](?::\d{1,5})?$/u.test(authority)) {
+    return true;
+  }
+
+  return (
+    /^[a-z\d.-]+(?::\d{1,5})?$/iu.test(authority) &&
+    (/[.:]/u.test(authority) || authority.toLowerCase() === "localhost")
+  );
+}
+
+export function normalizeBrowserAgentPreviewUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (LOCAL_PORT_URL_PATTERN.test(trimmed)) {
+    return `http://localhost${trimmed}`;
+  }
+  if (trimmed.startsWith("//")) {
+    return `http:${trimmed}`;
+  }
+  if (ABSOLUTE_URL_PATTERN.test(trimmed) || trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  if (looksLikeBareHttpUrl(trimmed)) {
+    return `http://${trimmed}`;
+  }
+  return trimmed;
 }
 
 function remoteHttpHost(rawUrl: string | null | undefined): string | null {
@@ -166,7 +203,18 @@ export function inferBrowserAgentDevServerUrl(
   return DEFAULT_BROWSER_AGENT_DEV_SERVER_URL;
 }
 
-export async function resolveBrowserAgentTransferDevServerUrl(
+export function resolveBrowserAgentPreviewUrl(input: {
+  readonly customPreviewUrl: string;
+  readonly detectedDevServerUrl: string | null;
+  readonly scripts: readonly ProjectScript[] | undefined;
+}): string {
+  const customPreviewUrl = normalizeBrowserAgentPreviewUrl(input.customPreviewUrl);
+  return (
+    customPreviewUrl || input.detectedDevServerUrl || inferBrowserAgentDevServerUrl(input.scripts)
+  );
+}
+
+export async function resolveBrowserAgentReachablePreviewUrl(
   devServerUrl: string,
 ): Promise<string> {
   const url = parseUrl(devServerUrl);

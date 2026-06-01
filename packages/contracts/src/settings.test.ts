@@ -2,11 +2,35 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ClientSettings browser preview", () => {
+  it("defaults to automatic preview URL detection", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.browserAgentPreviewUrl).toBe("");
+    expect(decodeClientSettings({}).browserAgentPreviewUrl).toBe("");
+  });
+
+  it("trims custom preview URLs while decoding patches", () => {
+    const patch = decodeClientSettingsPatch({
+      browserAgentPreviewUrl: "  http://localhost:5173/app  ",
+    });
+
+    expect(patch.browserAgentPreviewUrl).toBe("http://localhost:5173/app");
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

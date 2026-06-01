@@ -5,7 +5,7 @@ import {
   shouldShowBrowserAnnotationButton,
   shouldShowOpenInPicker,
   shouldShowProjectScriptsControl,
-  shouldShowTransferToBrowserButton,
+  shouldShowPreviewButton,
 } from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
@@ -110,65 +110,83 @@ describe("shouldShowProjectScriptsControl", () => {
   });
 });
 
-describe("shouldShowTransferToBrowserButton", () => {
+describe("shouldShowPreviewButton", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
 
   it("shows in primary-project app chats", () => {
     expect(
-      shouldShowTransferToBrowserButton({
+      shouldShowPreviewButton({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
+        customPreviewUrl: "",
+      }),
+    ).toBe(true);
+  });
+
+  it("shows when a custom preview URL is configured", () => {
+    expect(
+      shouldShowPreviewButton({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        browserAgentSidebarMode: false,
+        mainActionRunning: false,
+        customPreviewUrl: "http://localhost:4000/",
       }),
     ).toBe(true);
   });
 
   it("hides until the main action is running", () => {
     expect(
-      shouldShowTransferToBrowserButton({
+      shouldShowPreviewButton({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: false,
+        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
 
   it("hides in browser-agent sidebars", () => {
     expect(
-      shouldShowTransferToBrowserButton({
+      shouldShowPreviewButton({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: true,
         mainActionRunning: true,
+        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
 
   it("hides without an active project", () => {
     expect(
-      shouldShowTransferToBrowserButton({
+      shouldShowPreviewButton({
         activeProjectName: undefined,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
+        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
 
   it("hides for remote environments", () => {
     expect(
-      shouldShowTransferToBrowserButton({
+      shouldShowPreviewButton({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
+        customPreviewUrl: "",
       }),
     ).toBe(false);
   });

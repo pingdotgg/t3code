@@ -19,10 +19,11 @@ import ProjectScriptsControl, {
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
-import { TransferToBrowserButton } from "./TransferToBrowserButton";
+import { PreviewButton } from "./PreviewButton";
 import { BrowserAnnotationButton } from "./BrowserAnnotationButton";
 import { isBrowserAgentSidebarMode, usePrimaryEnvironmentId } from "../../environments/primary";
 import { shouldShowBrowserAgentControls } from "../../browserAgents";
+import { useSettings } from "../../hooks/useSettings";
 import { topBarMainProjectScript } from "../../projectScripts";
 
 interface ChatHeaderProps {
@@ -74,15 +75,16 @@ export function shouldShowBrowserAnnotationButton(input: {
   return input.browserAgentSidebarMode && shouldShowBrowserAgentControls(input);
 }
 
-export function shouldShowTransferToBrowserButton(input: {
+export function shouldShowPreviewButton(input: {
   readonly activeProjectName: string | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly browserAgentSidebarMode: boolean;
   readonly mainActionRunning: boolean;
+  readonly customPreviewUrl: string;
 }): boolean {
   return (
-    input.mainActionRunning &&
+    (input.mainActionRunning || input.customPreviewUrl.trim().length > 0) &&
     !input.browserAgentSidebarMode &&
     shouldShowBrowserAgentControls(input)
   );
@@ -122,6 +124,7 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const customPreviewUrl = useSettings((settings) => settings.browserAgentPreviewUrl);
   const browserAgentSidebarMode = typeof window !== "undefined" && isBrowserAgentSidebarMode();
   const showProjectScriptsControl = shouldShowProjectScriptsControl({ activeProjectScripts });
   const mainProjectScript = activeProjectScripts
@@ -137,12 +140,13 @@ export const ChatHeader = memo(function ChatHeader({
       activeThreadEnvironmentId,
       primaryEnvironmentId,
     });
-  const showTransferToBrowser = shouldShowTransferToBrowserButton({
+  const showPreviewButton = shouldShowPreviewButton({
     activeProjectName,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
     browserAgentSidebarMode,
     mainActionRunning: mainProjectScriptRunning,
+    customPreviewUrl,
   });
   const showBrowserAnnotationButton = shouldShowBrowserAnnotationButton({
     activeProjectName,
@@ -156,7 +160,7 @@ export const ChatHeader = memo(function ChatHeader({
   const showHeaderActions =
     showProjectScriptsControl ||
     showOpenInPicker ||
-    showTransferToBrowser ||
+    showPreviewButton ||
     showBrowserAnnotationButton ||
     showGitActionsControl ||
     showTerminalToggle ||
@@ -207,8 +211,8 @@ export const ChatHeader = memo(function ChatHeader({
               openInCwd={openInCwd}
             />
           )}
-          {showTransferToBrowser && (
-            <TransferToBrowserButton
+          {showPreviewButton && (
+            <PreviewButton
               activeProjectName={activeProjectName}
               activeProjectScripts={activeProjectScripts}
               activeThreadEnvironmentId={activeThreadEnvironmentId}

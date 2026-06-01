@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   inferBrowserAgentDevServerUrl,
-  resolveBrowserAgentTransferDevServerUrl,
+  normalizeBrowserAgentPreviewUrl,
+  resolveBrowserAgentPreviewUrl,
+  resolveBrowserAgentReachablePreviewUrl,
   shouldShowBrowserAgentControls,
 } from "./browserAgents";
 import { useUiStateStore } from "./uiStateStore";
@@ -74,11 +76,58 @@ describe("inferBrowserAgentDevServerUrl", () => {
   });
 });
 
-describe("resolveBrowserAgentTransferDevServerUrl", () => {
+describe("normalizeBrowserAgentPreviewUrl", () => {
+  it("normalizes common localhost shorthand", () => {
+    expect(normalizeBrowserAgentPreviewUrl(" localhost:4173/app ")).toBe(
+      "http://localhost:4173/app",
+    );
+    expect(normalizeBrowserAgentPreviewUrl("localhost")).toBe("http://localhost");
+    expect(normalizeBrowserAgentPreviewUrl(":5173")).toBe("http://localhost:5173");
+  });
+
+  it("preserves absolute and root-relative URLs", () => {
+    expect(normalizeBrowserAgentPreviewUrl("https://preview.example.test/app")).toBe(
+      "https://preview.example.test/app",
+    );
+    expect(normalizeBrowserAgentPreviewUrl("/preview")).toBe("/preview");
+  });
+});
+
+describe("resolveBrowserAgentPreviewUrl", () => {
+  it("uses the custom preview URL before detected or inferred URLs", () => {
+    expect(
+      resolveBrowserAgentPreviewUrl({
+        customPreviewUrl: "localhost:4000",
+        detectedDevServerUrl: "http://localhost:5173/",
+        scripts: [script("pnpm next dev")],
+      }),
+    ).toBe("http://localhost:4000");
+  });
+
+  it("falls back to detected then inferred project dev-server URLs", () => {
+    expect(
+      resolveBrowserAgentPreviewUrl({
+        customPreviewUrl: "",
+        detectedDevServerUrl: "http://localhost:5173/",
+        scripts: [script("pnpm next dev")],
+      }),
+    ).toBe("http://localhost:5173/");
+
+    expect(
+      resolveBrowserAgentPreviewUrl({
+        customPreviewUrl: "   ",
+        detectedDevServerUrl: null,
+        scripts: [script("pnpm next dev")],
+      }),
+    ).toBe("http://localhost:3000/");
+  });
+});
+
+describe("resolveBrowserAgentReachablePreviewUrl", () => {
   it("rewrites loopback dev-server URLs through the remote browser origin", async () => {
     installWindow("http://100.105.249.96:3773/t3code/thread");
 
-    await expect(resolveBrowserAgentTransferDevServerUrl("http://localhost:3000/")).resolves.toBe(
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:3000/")).resolves.toBe(
       "http://100.105.249.96:3000/",
     );
   });
@@ -92,7 +141,7 @@ describe("resolveBrowserAgentTransferDevServerUrl", () => {
       }),
     });
 
-    await expect(resolveBrowserAgentTransferDevServerUrl("http://localhost:3000/")).resolves.toBe(
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:3000/")).resolves.toBe(
       "http://100.105.249.96:3000/",
     );
   });
@@ -115,7 +164,7 @@ describe("resolveBrowserAgentTransferDevServerUrl", () => {
         ]),
     });
 
-    await expect(resolveBrowserAgentTransferDevServerUrl("http://localhost:5173/")).resolves.toBe(
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:5173/")).resolves.toBe(
       "http://100.105.249.96:5173/",
     );
   });
@@ -137,7 +186,7 @@ describe("resolveBrowserAgentTransferDevServerUrl", () => {
         ]),
     });
 
-    await expect(resolveBrowserAgentTransferDevServerUrl("http://localhost:5173/")).resolves.toBe(
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:5173/")).resolves.toBe(
       "http://100.105.249.97:5173/",
     );
   });
@@ -160,7 +209,7 @@ describe("resolveBrowserAgentTransferDevServerUrl", () => {
       }),
     });
 
-    await expect(resolveBrowserAgentTransferDevServerUrl("http://localhost:5173/")).resolves.toBe(
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:5173/")).resolves.toBe(
       "http://localhost:5173/",
     );
   });
@@ -169,7 +218,7 @@ describe("resolveBrowserAgentTransferDevServerUrl", () => {
     installWindow("http://100.105.249.96:3773/t3code/thread");
 
     await expect(
-      resolveBrowserAgentTransferDevServerUrl("http://preview.example.test:3000/"),
+      resolveBrowserAgentReachablePreviewUrl("http://preview.example.test:3000/"),
     ).resolves.toBe("http://preview.example.test:3000/");
   });
 });

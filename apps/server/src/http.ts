@@ -103,7 +103,7 @@ const BROWSER_AGENT_AUTO_PAIR_HTML = `<!doctype html>
   <body>
     <main>
       <h1>Pairing T3 Code Browser Agent</h1>
-      <p>If this stays open, reload or install the T3 Code Browser Agent extension, then retry Transfer to Browser.</p>
+      <p>If this stays open, reload or install the T3 Code Browser Agent extension, then retry Preview.</p>
     </main>
   </body>
 </html>`;
