@@ -17,7 +17,7 @@ import {
   type HttpClientError,
 } from "effect/unstable/http";
 import type { ApnsCredentials } from "../Config.ts";
-import type { ApnsNotificationPayload } from "./ApnsDeliveryJobs.ts";
+import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
 const STALE_AFTER_SECONDS = 2 * 60;

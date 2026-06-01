@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
-} from "./AgentActivityPayloads.ts";
+} from "./agentActivityPayloads.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobInvalid,
@@ -27,7 +27,7 @@ import {
   SignedApnsDeliveryJob,
   verifySignedApnsDeliveryJob,
   type ApnsDeliveryJobVerificationError,
-} from "./ApnsDeliveryJobs.ts";
+} from "./apnsDeliveryJobs.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";

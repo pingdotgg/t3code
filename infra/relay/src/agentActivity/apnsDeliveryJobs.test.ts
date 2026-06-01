@@ -7,7 +7,7 @@ import {
   makeApnsDeliveryJobPayload,
   signApnsDeliveryJob,
   verifySignedApnsDeliveryJob,
-} from "./ApnsDeliveryJobs.ts";
+} from "./apnsDeliveryJobs.ts";
 
 const secret = Redacted.make("queue-signing-secret");
 const aggregate: RelayAgentActivityAggregateState = {

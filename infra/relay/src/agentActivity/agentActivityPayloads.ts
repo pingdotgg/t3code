@@ -2,7 +2,7 @@ import type {
   RelayAgentActivityAggregateRow,
   RelayAgentActivityAggregateState,
 } from "@t3tools/contracts/relay";
-import type { ApnsNotificationPayload } from "./ApnsDeliveryJobs.ts";
+import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 const MAX_SUMMARY_TEXT_LENGTH = 120;
 const MAX_STATUS_TEXT_LENGTH = 40;

@@ -19,7 +19,7 @@ import {
   makeApnsDeliveryJobPayload,
   signApnsDeliveryJob,
   type SignedApnsDeliveryJob,
-} from "./ApnsDeliveryJobs.ts";
+} from "./apnsDeliveryJobs.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";

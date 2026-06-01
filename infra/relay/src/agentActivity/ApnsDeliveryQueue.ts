@@ -12,14 +12,14 @@ import type { RelayDeliveryResult } from "@t3tools/contracts/relay";
 import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
-} from "./AgentActivityPayloads.ts";
+} from "./agentActivityPayloads.ts";
 import {
   expiresAtForJob,
   makeApnsDeliveryJobPayload,
   signApnsDeliveryJob,
   type ApnsDeliveryJobPayload,
   type SignedApnsDeliveryJob,
-} from "./ApnsDeliveryJobs.ts";
+} from "./apnsDeliveryJobs.ts";
 import * as RelayConfiguration from "../Config.ts";
 
 export class ApnsDeliveryQueueSendError extends Data.TaggedError("ApnsDeliveryQueueSendError")<{
