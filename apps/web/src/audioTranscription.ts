@@ -21,14 +21,6 @@ export function getPreferredAudioRecordingOptions(): MediaRecorderOptions | unde
   return mimeType ? { mimeType } : undefined;
 }
 
-export function isAudioRecordingSupported(): boolean {
-  return (
-    typeof navigator !== "undefined" &&
-    typeof navigator.mediaDevices?.getUserMedia === "function" &&
-    typeof MediaRecorder !== "undefined"
-  );
-}
-
 export function audioMimeTypeToTranscriptionFormat(mimeType: string): AudioTranscriptionFormat {
   const normalized = mimeType.toLowerCase();
   if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3";

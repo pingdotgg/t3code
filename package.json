@@ -51,6 +51,7 @@
     "fmt:check": "oxfmt --check",
     "build:contracts": "turbo run build --filter=@t3tools/contracts",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
+    "dist:desktop:applications:restart": "node scripts/build-desktop-artifact.ts --platform mac --target dir --arch arm64 --output-dir /Applications && rm -f /Applications/builder-debug.yml && (ps -axo pid=,args= | grep -E '/Applications/[T]3 Code [(]Alpha[)].app/' | awk '{print $1}' | while read -r pid; do kill -TERM \"$pid\" || true; done; sleep 1; ps -axo pid=,args= | grep -E '/Applications/[T]3 Code [(]Alpha[)].app/' | awk '{print $1}' | while read -r pid; do kill -KILL \"$pid\" 2>/dev/null || true; done) && open -n '/Applications/T3 Code (Alpha).app'",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
     "dist:desktop:dmg:x64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch x64",

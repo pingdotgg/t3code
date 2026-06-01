@@ -116,11 +116,15 @@ import {
   appendTranscriptionToPrompt,
   audioMimeTypeToTranscriptionFormat,
   blobToBase64,
-  getPreferredAudioRecordingOptions,
-  isAudioRecordingSupported,
   MAX_AUDIO_TRANSCRIPTION_BYTES,
   MAX_AUDIO_TRANSCRIPTION_SIZE_LABEL,
 } from "../../audioTranscription";
+import {
+  type BrowserAudioRecorder,
+  createAudioRecorder,
+  getAudioRecordingUnavailableReason,
+  isAudioRecordingSupported,
+} from "../../audioRecording";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -831,10 +835,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
-  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceRecorderRef = useRef<BrowserAudioRecorder | null>(null);
   const voiceRecorderStreamRef = useRef<MediaStream | null>(null);
-  const voiceRecorderChunksRef = useRef<Blob[]>([]);
-  const voiceRecorderListenerCleanupRef = useRef<(() => void) | null>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1059,15 +1061,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
   const openRouterAudioTranscriptionSettings = settings.openRouter.audioTranscription;
   const hasOpenRouterAudioTranscriptionApiKey =
     openRouterAudioTranscriptionSettings.apiKey.trim().length > 0 ||
     openRouterAudioTranscriptionSettings.apiKeyRedacted;
+  const audioRecordingUnavailableReason = getAudioRecordingUnavailableReason();
   const voiceTranscriptionDisabledReason = !hasOpenRouterAudioTranscriptionApiKey
     ? "Set an OpenRouter API key in Settings > Connections"
     : isComposerApprovalState
@@ -1076,7 +1076,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? "Wait for the backend connection"
         : environmentUnavailable !== null && activePendingProgress === null
           ? `${environmentUnavailable.label} is disconnected`
-          : null;
+          : audioRecordingUnavailableReason;
   const isVoiceTranscriptionButtonDisabled =
     voiceTranscriptionState === "recording"
       ? false
@@ -1087,6 +1087,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : voiceTranscriptionState === "transcribing"
         ? "Transcribing voice"
         : "Record voice";
+  const collapsedComposerPrimaryActionIsVoice =
+    showCollapsedMobilePromptRow && phase !== "running" && !composerSendState.hasSendableContent;
+  const collapsedComposerPrimaryActionDisabled = collapsedComposerPrimaryActionIsVoice
+    ? isVoiceTranscriptionButtonDisabled
+    : phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+  const collapsedComposerPrimaryActionLabel = collapsedComposerPrimaryActionIsVoice
+    ? voiceTranscriptionButtonLabel
+    : "Send message";
 
   // ------------------------------------------------------------------
   // Prompt helpers
@@ -1700,10 +1708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const finishVoiceRecording = useCallback(
     async (blob: Blob) => {
       stopVoiceRecorderTracks();
-      voiceRecorderListenerCleanupRef.current?.();
-      voiceRecorderListenerCleanupRef.current = null;
       voiceRecorderRef.current = null;
-      voiceRecorderChunksRef.current = [];
 
       if (blob.size === 0) {
         setVoiceTranscriptionState("idle");
@@ -1751,19 +1756,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const stopVoiceRecording = useCallback(() => {
     const recorder = voiceRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder) {
       return;
     }
     setVoiceTranscriptionState("transcribing");
-    recorder.stop();
-  }, []);
+    void recorder.stop().then(finishVoiceRecording, (error: unknown) => {
+      stopVoiceRecorderTracks();
+      voiceRecorderRef.current = null;
+      setVoiceTranscriptionState("idle");
+      toastManager.add({
+        type: "error",
+        title: "Voice recording stopped",
+        description:
+          error instanceof Error
+            ? error.message
+            : "The browser could not continue recording from the microphone.",
+      });
+    });
+  }, [finishVoiceRecording, stopVoiceRecorderTracks]);
 
   const startVoiceRecording = useCallback(async () => {
     if (!isAudioRecordingSupported()) {
       toastManager.add({
         type: "error",
         title: "Voice recording is unavailable",
-        description: "Your browser does not expose a compatible microphone recorder.",
+        description:
+          getAudioRecordingUnavailableReason() ??
+          "Your browser does not expose a compatible microphone recorder.",
       });
       return;
     }
@@ -1776,41 +1795,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       });
       voiceRecorderStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream, getPreferredAudioRecordingOptions());
-      voiceRecorderChunksRef.current = [];
+      const recorder = await createAudioRecorder(stream);
       voiceRecorderRef.current = recorder;
-
-      const handleDataAvailable = (event: BlobEvent) => {
-        if (event.data.size > 0) {
-          voiceRecorderChunksRef.current.push(event.data);
-        }
-      };
-      const handleStop = () => {
-        const mimeType = recorder.mimeType || getPreferredAudioRecordingOptions()?.mimeType || "";
-        const blob = new Blob(voiceRecorderChunksRef.current, { type: mimeType });
-        void finishVoiceRecording(blob);
-      };
-      const handleError = () => {
-        voiceRecorderListenerCleanupRef.current?.();
-        voiceRecorderListenerCleanupRef.current = null;
-        stopVoiceRecorderTracks();
-        voiceRecorderRef.current = null;
-        voiceRecorderChunksRef.current = [];
-        setVoiceTranscriptionState("idle");
-        toastManager.add({
-          type: "error",
-          title: "Voice recording stopped",
-          description: "The browser could not continue recording from the microphone.",
-        });
-      };
-      recorder.addEventListener("dataavailable", handleDataAvailable);
-      recorder.addEventListener("stop", handleStop);
-      recorder.addEventListener("error", handleError);
-      voiceRecorderListenerCleanupRef.current = () => {
-        recorder.removeEventListener("dataavailable", handleDataAvailable);
-        recorder.removeEventListener("stop", handleStop);
-        recorder.removeEventListener("error", handleError);
-      };
 
       recorder.start();
       setVoiceTranscriptionState("recording");
@@ -1824,7 +1810,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       setVoiceTranscriptionState("idle");
     }
-  }, [finishVoiceRecording, stopVoiceRecorderTracks]);
+  }, [stopVoiceRecorderTracks]);
 
   const handleVoiceTranscriptionClick = useCallback(() => {
     if (voiceTranscriptionState === "recording") {
@@ -2034,13 +2020,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     return () => {
       const recorder = voiceRecorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        voiceRecorderListenerCleanupRef.current?.();
-        voiceRecorderListenerCleanupRef.current = null;
-        recorder.stop();
-      } else {
-        voiceRecorderListenerCleanupRef.current?.();
-        voiceRecorderListenerCleanupRef.current = null;
+      if (recorder) {
+        recorder.cancel();
       }
       stopVoiceRecorderTracks();
       if (composerBlurFrameRef.current !== null) {
@@ -2334,24 +2315,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </button>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-full text-primary-foreground disabled:opacity-30",
+                  collapsedComposerPrimaryActionIsVoice && voiceTranscriptionState === "recording"
+                    ? "bg-rose-500/90"
+                    : "bg-primary/90",
+                )}
                 disabled={collapsedComposerPrimaryActionDisabled}
                 aria-label={collapsedComposerPrimaryActionLabel}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (collapsedComposerPrimaryActionIsVoice) {
+                    handleVoiceTranscriptionClick();
+                    return;
+                  }
                   submitComposer();
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path
-                    d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                {collapsedComposerPrimaryActionIsVoice ? (
+                  voiceTranscriptionState === "transcribing" ? (
+                    <LoaderCircleIcon className="size-4 animate-spin" />
+                  ) : voiceTranscriptionState === "recording" ? (
+                    <SquareIcon className="size-3.5 fill-current" />
+                  ) : (
+                    <MicIcon className="size-4" />
+                  )
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
               </button>
             </div>
           ) : null}
