@@ -19,6 +19,9 @@ the matching dev-server tab, groups it by repo name, records that tab as the act
 workspace, and serves the T3 Code chat from Chrome's native side panel. If Chrome does not open the
 side panel automatically, click the extension icon in the preview window.
 
+When the browser is paired and the active tab is not a linked preview tab, clicking the extension
+icon opens the paired T3 Code backend URL instead.
+
 The cursor button in T3 Code sends an annotation command through the backend. The extension focuses
 the linked preview tab, lets you click an element, captures a cropped screenshot around the
 highlighted element, and sends the annotation back to the backend. The backend appends the

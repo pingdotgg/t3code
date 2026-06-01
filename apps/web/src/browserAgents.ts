@@ -1,6 +1,6 @@
 import type { AdvertisedEndpoint, EnvironmentId, ProjectScript } from "@t3tools/contracts";
 
-import { endpointDefaultPreferenceKey } from "./advertisedEndpointSelection";
+import { selectDefaultAdvertisedEndpoint } from "./advertisedEndpointSelection";
 import { isLoopbackHostname, readPrimaryEnvironmentTarget } from "./environments/primary/target";
 import { useUiStateStore } from "./uiStateStore";
 
@@ -120,17 +120,7 @@ function preferredAdvertisedEndpoint(
   endpoints: ReadonlyArray<AdvertisedEndpoint>,
   defaultEndpointKey: string | null | undefined,
 ): AdvertisedEndpoint | null {
-  const availableEndpoints = endpoints.filter((endpoint) => endpoint.status !== "unavailable");
-  if (defaultEndpointKey) {
-    const selectedEndpoint = availableEndpoints.find(
-      (endpoint) => endpointDefaultPreferenceKey(endpoint) === defaultEndpointKey,
-    );
-    if (selectedEndpoint) {
-      return selectedEndpoint;
-    }
-  }
-
-  return availableEndpoints.find((endpoint) => endpoint.isDefault) ?? null;
+  return selectDefaultAdvertisedEndpoint(endpoints, defaultEndpointKey);
 }
 
 async function resolveReachablePreviewHost(): Promise<string | null> {

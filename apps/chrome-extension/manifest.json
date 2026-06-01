@@ -3,6 +3,12 @@
   "name": "T3 Code Browser Agent",
   "description": "Pairs Chrome with T3 Code so dev-server tabs can be focused and annotated.",
   "version": "0.0.1",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": ["storage", "tabs", "tabGroups", "windows", "scripting", "sidePanel"],
   "host_permissions": [
     "<all_urls>",
@@ -32,6 +38,12 @@
     "extension_pages": "script-src 'self'; object-src 'self'; frame-src http: https:;"
   },
   "action": {
-    "default_title": "T3 Code Browser Agent"
+    "default_title": "T3 Code Browser Agent",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }

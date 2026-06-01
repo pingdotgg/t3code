@@ -138,6 +138,60 @@ describe("browser agent pairing", () => {
     await expect(resolveBrowserAgentBackendBaseUrl()).resolves.toBe("http://100.105.249.96:3773/");
   });
 
+  it("prefers Tailscale HTTPS for browser agent pairing when the saved default is Tailscale IP", async () => {
+    useUiStateStore.setState({ defaultAdvertisedEndpointKey: "tailscale:ip:http" });
+    installWindow("http://127.0.0.1:5733/", {
+      getAdvertisedEndpoints: () =>
+        Promise.resolve([
+          {
+            id: "tailscale-ip:100.105.249.96",
+            label: "Tailscale IP",
+            provider: {
+              id: "tailscale",
+              label: "Tailscale",
+              kind: "private-network",
+              isAddon: true,
+            },
+            httpBaseUrl: "http://100.105.249.96:3773/",
+            wsBaseUrl: "ws://100.105.249.96:3773/",
+            reachability: "private-network",
+            compatibility: {
+              hostedHttpsApp: "mixed-content-blocked",
+              desktopApp: "compatible",
+            },
+            source: "desktop-addon",
+            status: "available",
+          },
+          {
+            id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+            label: "Tailscale HTTPS",
+            provider: {
+              id: "tailscale",
+              label: "Tailscale",
+              kind: "private-network",
+              isAddon: true,
+            },
+            httpBaseUrl: "https://desktop.tail.ts.net/",
+            wsBaseUrl: "wss://desktop.tail.ts.net/",
+            reachability: "private-network",
+            compatibility: {
+              hostedHttpsApp: "compatible",
+              desktopApp: "compatible",
+            },
+            source: "desktop-addon",
+            status: "available",
+          },
+        ]),
+      getLocalEnvironmentBootstrap: () => ({
+        environmentId: "environment-local",
+        httpBaseUrl: "http://127.0.0.1:3773/",
+        wsBaseUrl: "ws://127.0.0.1:3773/",
+      }),
+    });
+
+    await expect(resolveBrowserAgentBackendBaseUrl()).resolves.toBe("https://desktop.tail.ts.net/");
+  });
+
   it("detects the no-agent RPC failure", () => {
     expect(isNoBrowserAgentConnectedError({ code: "no-agent-connected" })).toBe(true);
     expect(

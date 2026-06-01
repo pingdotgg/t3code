@@ -46,7 +46,9 @@ function endpoint(input: {
     wsBaseUrl: input.httpBaseUrl.replace(/^http/u, "ws"),
     reachability: input.reachability,
     compatibility: {
-      hostedHttpsApp: "mixed-content-blocked",
+      hostedHttpsApp: input.httpBaseUrl.startsWith("https:")
+        ? "compatible"
+        : "mixed-content-blocked",
       desktopApp: "compatible",
     },
     source: "desktop-core",
@@ -177,6 +179,34 @@ describe("resolveBrowserAgentReachablePreviewUrl", () => {
 
     await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:5173/")).resolves.toBe(
       "http://100.105.249.96:5173/",
+    );
+  });
+
+  it("uses the Tailscale HTTPS hostname when Tailscale IP is the saved default and HTTPS is enabled", async () => {
+    useUiStateStore.setState({ defaultAdvertisedEndpointKey: "tailscale:ip:http" });
+    installWindow("http://127.0.0.1:3773/", {
+      getAdvertisedEndpoints: () =>
+        Promise.resolve([
+          endpoint({
+            id: "desktop-loopback:3773",
+            httpBaseUrl: "http://127.0.0.1:3773/",
+            reachability: "loopback",
+          }),
+          endpoint({
+            id: "tailscale-ip:100.105.249.96",
+            httpBaseUrl: "http://100.105.249.96:3773/",
+            reachability: "private-network",
+          }),
+          endpoint({
+            id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+            httpBaseUrl: "https://desktop.tail.ts.net/",
+            reachability: "private-network",
+          }),
+        ]),
+    });
+
+    await expect(resolveBrowserAgentReachablePreviewUrl("http://localhost:5173/")).resolves.toBe(
+      "http://desktop.tail.ts.net:5173/",
     );
   });
 

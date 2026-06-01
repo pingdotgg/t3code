@@ -73,6 +73,43 @@ describe("selectPairingEndpoint", () => {
     expect(selectPairingEndpoint([loopback, tailscale], "tailscale:ip:http")).toBe(tailscale);
   });
 
+  it("prefers enabled Tailscale HTTPS when the saved default is Tailscale IP", () => {
+    const tailscale = endpoint({
+      id: "tailscale-ip:100.105.249.96",
+      label: "Tailscale IP",
+      httpBaseUrl: "http://100.105.249.96:3773/",
+      reachability: "private-network",
+    });
+    const tailscaleHttps = endpoint({
+      id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+      label: "Tailscale HTTPS",
+      httpBaseUrl: "https://desktop.tail.ts.net/",
+      reachability: "private-network",
+    });
+
+    expect(selectPairingEndpoint([tailscale, tailscaleHttps], "tailscale:ip:http")).toBe(
+      tailscaleHttps,
+    );
+  });
+
+  it("keeps Tailscale IP when Tailscale HTTPS is not enabled", () => {
+    const tailscale = endpoint({
+      id: "tailscale-ip:100.105.249.96",
+      label: "Tailscale IP",
+      httpBaseUrl: "http://100.105.249.96:3773/",
+      reachability: "private-network",
+    });
+    const tailscaleHttps = endpoint({
+      id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+      label: "Tailscale HTTPS",
+      httpBaseUrl: "https://desktop.tail.ts.net/",
+      reachability: "private-network",
+      status: "unavailable",
+    });
+
+    expect(selectPairingEndpoint([tailscale, tailscaleHttps], "tailscale:ip:http")).toBe(tailscale);
+  });
+
   it("ignores unavailable saved endpoints", () => {
     const unavailableTailscale = endpoint({
       id: "tailscale-ip:100.105.249.96",

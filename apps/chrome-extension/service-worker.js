@@ -12,6 +12,7 @@ let reconnectTimer = null;
 let reconnectDelayMs = RECONNECT_MIN_MS;
 let currentBackend = null;
 let connecting = null;
+let workspaceLinksCache = [];
 
 function normalizeBaseUrl(value) {
   try {
@@ -84,6 +85,7 @@ async function writeBackend(backend) {
 
 async function clearBackend() {
   currentBackend = null;
+  workspaceLinksCache = [];
   closeSocket();
   await chrome.storage.local.remove([BACKEND_KEY, LINKS_KEY, ACTIVE_LINK_KEY]);
   await disableNativeSidePanelForAllTabs();
@@ -92,7 +94,8 @@ async function clearBackend() {
 async function readLinks() {
   const stored = await chrome.storage.local.get(LINKS_KEY);
   const links = stored[LINKS_KEY];
-  return Array.isArray(links) ? links : [];
+  workspaceLinksCache = Array.isArray(links) ? links : [];
+  return workspaceLinksCache;
 }
 
 async function upsertLink(link) {
@@ -109,6 +112,7 @@ async function upsertLink(link) {
     );
   });
   next.push(link);
+  workspaceLinksCache = next;
   await chrome.storage.local.set({ [LINKS_KEY]: next });
 }
 
@@ -949,6 +953,60 @@ async function activateForCurrentTab(tab) {
   return { ok: true };
 }
 
+function cachedWorkspaceLinkForTab(tab) {
+  if (!tab?.id || !tab.url) {
+    return null;
+  }
+  return selectWorkspaceLinkForTab(workspaceLinksCache, tab);
+}
+
+async function completeSidePanelActionClick(tab, openPromise) {
+  const result = await openPromise;
+  if (result.opened) {
+    await clearSidePanelOpenPrompt(tab);
+  } else {
+    await showSidePanelOpenPrompt(tab, result.reason);
+  }
+  const backend = currentBackend ?? (await readBackend());
+  if (backend) {
+    currentBackend = backend;
+    await connectBackend();
+    await activateForCurrentTab(tab).catch(() => undefined);
+  }
+}
+
+async function openBackendFromActionClick(tab, backend) {
+  currentBackend = backend;
+  void connectBackend().catch((error) => {
+    console.warn("[T3 Code] failed to connect after toolbar backend open", error);
+  });
+
+  const createProperties = {
+    url: backend.baseUrl,
+    active: true,
+  };
+  if (tab?.windowId !== undefined) {
+    createProperties.windowId = tab.windowId;
+  }
+  await chrome.tabs.create(createProperties);
+}
+
+async function handleNonPreviewActionClick(tab) {
+  const links = await readLinks().catch(() => workspaceLinksCache);
+  if (tab?.id && tab.url && selectWorkspaceLinkForTab(links, tab)) {
+    await completeSidePanelActionClick(tab, openNativeSidePanel(tab));
+    return;
+  }
+
+  const backend = currentBackend ?? (await readBackend());
+  if (backend?.baseUrl) {
+    await openBackendFromActionClick(tab, backend);
+    return;
+  }
+
+  await completeSidePanelActionClick(tab, openNativeSidePanel(tab));
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const respond = (promise) => {
     promise
@@ -1060,20 +1118,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.action.onClicked.addListener((tab) => {
-  const openPromise = openNativeSidePanel(tab);
-  void (async () => {
-    const result = await openPromise;
-    if (result.opened) {
-      await clearSidePanelOpenPrompt(tab);
-    } else {
-      await showSidePanelOpenPrompt(tab, result.reason);
-    }
-    const backend = currentBackend ?? (await readBackend());
-    if (backend) {
-      await connectBackend();
-      await activateForCurrentTab(tab).catch(() => undefined);
-    }
-  })();
+  if (cachedWorkspaceLinkForTab(tab)) {
+    const openPromise = openNativeSidePanel(tab);
+    void completeSidePanelActionClick(tab, openPromise).catch((error) => {
+      console.warn("[T3 Code] failed to handle preview toolbar click", error);
+    });
+    return;
+  }
+
+  void handleNonPreviewActionClick(tab).catch((error) => {
+    console.warn("[T3 Code] failed to handle toolbar click", error);
+  });
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes[LINKS_KEY]) {
+    return;
+  }
+  const links = changes[LINKS_KEY].newValue;
+  workspaceLinksCache = Array.isArray(links) ? links : [];
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -1105,5 +1168,6 @@ chrome.runtime.onInstalled.addListener(() => {
   void connectBackend();
 });
 
+void readLinks().catch(() => undefined);
 void configureSidePanelBehavior();
 void connectBackend();
