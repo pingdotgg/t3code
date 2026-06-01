@@ -67,6 +67,8 @@ const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "debug", label: "Debug" },
 ];
 const EMPTY_RUNNING_SCRIPT_IDS = new Set<string>() as ReadonlySet<string>;
+const RUNNING_SCRIPT_BUTTON_CLASS_NAME =
+  "border-emerald-500/45 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300";
 
 function ScriptIcon({
   icon,
@@ -138,6 +140,8 @@ export default function ProjectScriptsControl({
     [primaryScript?.id, scripts],
   );
   const primaryScriptRunning = primaryScript ? runningScriptIds.has(primaryScript.id) : false;
+  const hasTopBarRunningScript =
+    primaryScriptRunning || pinnedScripts.some((script) => runningScriptIds.has(script.id));
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
@@ -241,8 +245,7 @@ export default function ProjectScriptsControl({
             variant="outline"
             className={cn(
               "min-w-0 max-w-44",
-              primaryScriptRunning &&
-                "border-emerald-500/45 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300",
+              primaryScriptRunning && RUNNING_SCRIPT_BUTTON_CLASS_NAME,
             )}
             onClick={() => onRunScript(primaryScript)}
             aria-label={
@@ -272,10 +275,7 @@ export default function ProjectScriptsControl({
                         <Button
                           size="icon-xs"
                           variant="outline"
-                          className={cn(
-                            scriptRunning &&
-                              "border-emerald-500/45 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300",
-                          )}
+                          className={cn(scriptRunning && RUNNING_SCRIPT_BUTTON_CLASS_NAME)}
                           onClick={() => onRunScript(script, { rememberAsLastInvoked: false })}
                           aria-label={label}
                           title={label}
@@ -297,7 +297,14 @@ export default function ProjectScriptsControl({
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="outline"
+                  className={cn(hasTopBarRunningScript && RUNNING_SCRIPT_BUTTON_CLASS_NAME)}
+                  aria-label="Script actions"
+                />
+              }
             >
               <ChevronDownIcon className="size-4" />
             </MenuTrigger>
