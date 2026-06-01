@@ -72,6 +72,9 @@ export interface ServerAuthShape {
   readonly authenticateHttpRequest: (
     request: HttpServerRequest.HttpServerRequest,
   ) => Effect.Effect<AuthenticatedSession, AuthError>;
+  readonly authenticateBearerHttpRequest: (
+    request: HttpServerRequest.HttpServerRequest,
+  ) => Effect.Effect<AuthenticatedSession, AuthError>;
   readonly authenticateWebSocketUpgrade: (
     request: HttpServerRequest.HttpServerRequest,
   ) => Effect.Effect<AuthenticatedSession, AuthError>;

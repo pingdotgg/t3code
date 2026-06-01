@@ -1195,8 +1195,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(sessionBody.authenticated, true);
         assert.equal(sessionBody.sessionMethod, "bearer-session-token");
 
+        const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: {
+            authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+          },
+        });
+        const pairingBody = (yield* pairingResponse.json) as {
+          readonly credential: string;
+        };
+        const { cookie: setCookie } = yield* bootstrapBrowserSession(pairingBody.credential);
+
         const revokeResponse = yield* HttpClient.post("/api/auth/session/revoke", {
           headers: {
+            cookie: setCookie?.split(";")[0] ?? "",
             authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
           },
         });

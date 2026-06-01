@@ -110,6 +110,33 @@ export const makeServerAuth = Effect.gen(function* () {
     return authenticateToken(credential);
   };
 
+  const authenticateBearerRequest: ServerAuthShape["authenticateBearerHttpRequest"] = (request) => {
+    const bearerToken = parseBearerToken(request);
+    if (!bearerToken) {
+      return Effect.fail(
+        new AuthError({
+          message: request.cookies[sessions.cookieName]
+            ? "Bearer session authentication required."
+            : "Authentication required.",
+          status: request.cookies[sessions.cookieName] ? 403 : 401,
+        }),
+      );
+    }
+
+    return authenticateToken(bearerToken).pipe(
+      Effect.flatMap((session) =>
+        session.method === "bearer-session-token"
+          ? Effect.succeed(session)
+          : Effect.fail(
+              new AuthError({
+                message: "Bearer session authentication required.",
+                status: 403,
+              }),
+            ),
+      ),
+    );
+  };
+
   const getSessionState: ServerAuthShape["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
       Effect.map(
@@ -385,6 +412,7 @@ export const makeServerAuth = Effect.gen(function* () {
     revokeClientSession,
     revokeOtherClientSessions,
     authenticateHttpRequest: authenticateRequest,
+    authenticateBearerHttpRequest: authenticateBearerRequest,
     authenticateWebSocketUpgrade,
     issueWebSocketToken,
     issueStartupPairingUrl,
