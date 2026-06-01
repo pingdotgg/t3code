@@ -33,7 +33,12 @@ import {
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import {
+  PROJECT_SCRIPT_ID_ENV,
+  PROJECT_SCRIPT_PROJECT_ID_ENV,
+  projectScriptCwd,
+  projectScriptRuntimeEnv,
+} from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -173,6 +178,8 @@ import {
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
+  PROJECT_SCRIPT_TERMINAL_IDS_BY_RUN_KEY,
+  ProjectScriptTerminalIdsByRunKeySchema,
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
@@ -459,8 +466,30 @@ function terminalIdListsEqual(left: readonly string[], right: readonly string[])
   return true;
 }
 
-function projectScriptRunKey(projectId: ProjectId, scriptId: string): string {
-  return `${projectId}:${scriptId}`;
+function projectScriptRunKey(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly projectId: ProjectId;
+  readonly scriptId: string;
+}): string {
+  return `${scopedThreadKey(input.threadRef)}:${input.projectId}:${input.scriptId}`;
+}
+
+function mergeProjectScriptTerminalIds(
+  stored: Readonly<Record<string, ReadonlyArray<string>>>,
+  server: Readonly<Record<string, ReadonlyArray<string>>>,
+): Record<string, string[]> {
+  const next: Record<string, string[]> = Object.fromEntries(
+    Object.entries(stored).map(([key, terminalIds]) => [key, Array.from(terminalIds)]),
+  );
+  const serverEntries = Object.entries(server);
+  for (const [key, terminalIds] of serverEntries) {
+    const existing = new Set(next[key] ?? []);
+    for (const terminalId of terminalIds) {
+      existing.add(terminalId);
+    }
+    next[key] = Array.from(existing);
+  }
+  return next;
 }
 
 const PROJECT_SCRIPT_WEB_SERVER_DETECTION_ATTEMPTS = 40;
@@ -915,9 +944,12 @@ export default function ChatView(props: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
-  const [projectScriptTerminalIdsByRunKey, setProjectScriptTerminalIdsByRunKey] = useState<
-    Record<string, string[]>
-  >({});
+  const [storedProjectScriptTerminalIdsByRunKey, setProjectScriptTerminalIdsByRunKey] =
+    useLocalStorage(
+      PROJECT_SCRIPT_TERMINAL_IDS_BY_RUN_KEY,
+      {},
+      ProjectScriptTerminalIdsByRunKeySchema,
+    );
   const [projectScriptDetectedWebServerByRunKey, setProjectScriptDetectedWebServerByRunKey] =
     useState<Record<string, ProjectScriptDetectedWebServerState>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
@@ -1048,6 +1080,34 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread, activeThreadRef, sidebarThreadSummaries],
   );
   const [creatingChatTab, setCreatingChatTab] = useState(false);
+  const serverProjectScriptTerminalIdsByRunKey = useMemo(() => {
+    const next: Record<string, string[]> = {};
+    if (!activeThreadRef) {
+      return next;
+    }
+
+    for (const session of activeThreadKnownSessions) {
+      const projectScript = session.state.summary?.projectScript;
+      if (!projectScript || !session.state.hasRunningSubprocess) {
+        continue;
+      }
+      const runKey = projectScriptRunKey({
+        threadRef: activeThreadRef,
+        projectId: projectScript.projectId,
+        scriptId: projectScript.scriptId,
+      });
+      next[runKey] = [...(next[runKey] ?? []), session.target.terminalId];
+    }
+    return next;
+  }, [activeThreadKnownSessions, activeThreadRef]);
+  const projectScriptTerminalIdsByRunKey = useMemo(
+    () =>
+      mergeProjectScriptTerminalIds(
+        storedProjectScriptTerminalIdsByRunKey,
+        serverProjectScriptTerminalIdsByRunKey,
+      ),
+    [serverProjectScriptTerminalIdsByRunKey, storedProjectScriptTerminalIdsByRunKey],
+  );
 
   useEffect(() => {
     if (!activeThreadRef) {
@@ -1114,22 +1174,28 @@ export default function ChatView(props: ChatViewProps) {
   );
   const runningProjectScriptIds = useMemo(() => {
     const runningScriptIds = new Set<string>();
-    if (!activeProject) {
+    if (!activeProject || !activeThreadRef) {
       return runningScriptIds;
     }
 
     const runningTerminalIdSet = new Set(runningTerminalIds);
     for (const script of activeProject.scripts) {
       const terminalIds =
-        projectScriptTerminalIdsByRunKey[projectScriptRunKey(activeProject.id, script.id)] ?? [];
+        projectScriptTerminalIdsByRunKey[
+          projectScriptRunKey({
+            threadRef: activeThreadRef,
+            projectId: activeProject.id,
+            scriptId: script.id,
+          })
+        ] ?? [];
       if (terminalIds.some((terminalId) => runningTerminalIdSet.has(terminalId))) {
         runningScriptIds.add(script.id);
       }
     }
     return runningScriptIds;
-  }, [activeProject, projectScriptTerminalIdsByRunKey, runningTerminalIds]);
+  }, [activeProject, activeThreadRef, projectScriptTerminalIdsByRunKey, runningTerminalIds]);
   const detectedProjectScriptDevServerUrl = useMemo(() => {
-    if (!activeProject) {
+    if (!activeProject || !activeThreadRef) {
       return null;
     }
 
@@ -1143,7 +1209,13 @@ export default function ChatView(props: ChatViewProps) {
 
     for (const script of orderedScripts) {
       const detected =
-        projectScriptDetectedWebServerByRunKey[projectScriptRunKey(activeProject.id, script.id)];
+        projectScriptDetectedWebServerByRunKey[
+          projectScriptRunKey({
+            threadRef: activeThreadRef,
+            projectId: activeProject.id,
+            scriptId: script.id,
+          })
+        ];
       if (!detected || !detected.server.verified) {
         continue;
       }
@@ -1156,6 +1228,7 @@ export default function ChatView(props: ChatViewProps) {
     return null;
   }, [
     activeProject,
+    activeThreadRef,
     lastInvokedScriptByProjectId,
     projectScriptDetectedWebServerByRunKey,
     runningTerminalIds,
@@ -2282,8 +2355,12 @@ export default function ChatView(props: ChatViewProps) {
       },
     ) => {
       const api = readEnvironmentApi(environmentId);
-      if (!api || !activeThreadId || !activeProject || !activeThread) return;
-      const runKey = projectScriptRunKey(activeProject.id, script.id);
+      if (!api || !activeThreadId || !activeProject || !activeThread || !activeThreadRef) return;
+      const runKey = projectScriptRunKey({
+        threadRef: activeThreadRef,
+        projectId: activeProject.id,
+        scriptId: script.id,
+      });
       const runningScriptTerminalIds = runningProjectScriptTerminalIds({
         scriptTerminalIds: projectScriptTerminalIdsByRunKey[runKey],
         runningTerminalIds,
@@ -2341,9 +2418,6 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
       });
       setTerminalOpen(true);
-      if (!activeThreadRef) {
-        return;
-      }
       setTerminalFocusRequestId((value) => value + 1);
 
       const runtimeEnv = projectScriptRuntimeEnv({
@@ -2351,7 +2425,11 @@ export default function ChatView(props: ChatViewProps) {
           cwd: activeProject.cwd,
         },
         worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        extraEnv: {
+          ...options?.env,
+          [PROJECT_SCRIPT_PROJECT_ID_ENV]: activeProject.id,
+          [PROJECT_SCRIPT_ID_ENV]: script.id,
+        },
       });
       const targetTerminalId = shouldCreateNewTerminal
         ? nextTerminalId(activeKnownTerminalIds)
@@ -2420,6 +2498,7 @@ export default function ChatView(props: ChatViewProps) {
       storeNewTerminal,
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
+      setProjectScriptTerminalIdsByRunKey,
       environmentId,
       activeKnownTerminalIds,
       projectScriptTerminalIdsByRunKey,
@@ -2476,6 +2555,7 @@ export default function ChatView(props: ChatViewProps) {
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        pinnedToTopBar: input.pinnedToTopBar,
       };
       const nextScripts = input.runOnWorktreeCreate
         ? [
@@ -2511,6 +2591,7 @@ export default function ChatView(props: ChatViewProps) {
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        pinnedToTopBar: input.pinnedToTopBar,
       };
       const nextScripts = activeProject.scripts.map((script) =>
         script.id === scriptId

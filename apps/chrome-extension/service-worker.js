@@ -541,19 +541,6 @@ function numericTabId(tab) {
   return Number.isInteger(tabId) && tabId >= 0 ? tabId : null;
 }
 
-async function resolveNativeSidePanelTab(tab) {
-  const tabId = numericTabId(tab);
-  if (tabId !== null) {
-    try {
-      return await chrome.tabs.get(tabId);
-    } catch {
-      return tab;
-    }
-  }
-  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  return activeTab ?? null;
-}
-
 async function closeGlobalNativeSidePanels() {
   if (!chrome.sidePanel?.close) {
     return;
@@ -676,27 +663,50 @@ async function configureSidePanelBehavior() {
   }
 }
 
-async function openNativeSidePanel(tab) {
+function sidePanelOpenFailure(error) {
+  return {
+    opened: false,
+    reason: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function openNativeSidePanel(tab) {
   if (!chrome.sidePanel?.open) {
-    return { opened: false, reason: "Chrome Side Panel API is unavailable." };
+    return Promise.resolve({ opened: false, reason: "Chrome Side Panel API is unavailable." });
   }
-  try {
-    const targetTab = await resolveNativeSidePanelTab(tab);
-    const tabId = numericTabId(targetTab);
-    if (tabId === null) {
-      return { opened: false, reason: "No active Chrome tab." };
-    }
-    const enabled = await setNativeSidePanelForTab(targetTab, true);
-    if (!enabled) {
-      return { opened: false, reason: "Chrome Side Panel tab options are unavailable." };
-    }
-    await chrome.sidePanel.open({ tabId });
-    return { opened: true };
-  } catch (error) {
-    return {
+  if (!chrome.sidePanel.setOptions) {
+    return Promise.resolve({
       opened: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+      reason: "Chrome Side Panel tab options are unavailable.",
+    });
+  }
+
+  const tabId = numericTabId(tab);
+  if (tabId === null) {
+    return Promise.resolve({ opened: false, reason: "No active Chrome tab." });
+  }
+
+  try {
+    const optionsPromise = chrome.sidePanel.setOptions({
+      tabId,
+      path: SIDE_PANEL_PATH,
+      enabled: true,
+    });
+    if (optionsPromise?.catch) {
+      void optionsPromise.catch((error) => {
+        console.warn("[T3 Code] failed to enable side panel before opening", error);
+      });
+    }
+  } catch (error) {
+    return Promise.resolve(sidePanelOpenFailure(error));
+  }
+
+  try {
+    return Promise.resolve(chrome.sidePanel.open({ tabId }))
+      .then(() => ({ opened: true }))
+      .catch(sidePanelOpenFailure);
+  } catch (error) {
+    return Promise.resolve(sidePanelOpenFailure(error));
   }
 }
 

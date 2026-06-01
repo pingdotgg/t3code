@@ -84,17 +84,35 @@ function showOpenSidePanelPrompt(reason) {
   dismissButton.style.width = "32px";
   dismissButton.style.height = "32px";
 
-  openButton.addEventListener("click", () => {
+  let openRequested = false;
+  const requestOpenSidePanel = () => {
+    if (openRequested) {
+      return;
+    }
+    openRequested = true;
     openButton.disabled = true;
     openButton.textContent = "Opening";
     text.textContent = "Opening T3 Code side panel...";
     void sendRuntimeMessage({ type: "t3code.browserAgent.openSidePanelFromPage" })
       .then(removeOpenSidePanelPrompt)
       .catch((error) => {
+        openRequested = false;
         openButton.disabled = false;
         openButton.textContent = "Open";
         text.textContent = error instanceof Error ? error.message : "Could not open side panel.";
       });
+  };
+
+  openButton.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    requestOpenSidePanel();
+  });
+  openButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    requestOpenSidePanel();
   });
   dismissButton.addEventListener("click", removeOpenSidePanelPrompt);
 

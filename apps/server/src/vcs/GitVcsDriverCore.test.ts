@@ -310,6 +310,36 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect(
+      "uses the local branch as the worktree start point when a tag has the same name",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["tag", initialBranch]);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "ambiguous-main",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const created = yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/ambiguous-main",
+          });
+
+          assert.equal(created.worktree.path, worktreePath);
+          assert.equal(created.worktree.refName, "feature/ambiguous-main");
+          assert.equal(
+            yield* git(worktreePath, ["branch", "--show-current"]),
+            "feature/ambiguous-main",
+          );
+        }),
+    );
   });
 
   describe("commit context", () => {

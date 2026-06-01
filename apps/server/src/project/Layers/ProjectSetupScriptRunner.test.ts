@@ -154,7 +154,9 @@ describe("ProjectSetupScriptRunner", () => {
       cwd: "/repo/worktrees/a",
       worktreePath: "/repo/worktrees/a",
       env: {
+        T3CODE_PROJECT_ID: "project-1",
         T3CODE_PROJECT_ROOT: "/repo/project",
+        T3CODE_PROJECT_SCRIPT_ID: "setup",
         T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
       },
     });

@@ -1,5 +1,6 @@
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalDetectedWebServer,
@@ -11,6 +12,10 @@ import {
   type TerminalSummary,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
+import {
+  PROJECT_SCRIPT_ID_ENV,
+  PROJECT_SCRIPT_PROJECT_ID_ENV,
+} from "@t3tools/shared/projectScripts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -209,6 +214,20 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
+function projectScriptContextFromRuntimeEnv(
+  runtimeEnv: Record<string, string> | null,
+): TerminalSummary["projectScript"] | undefined {
+  const projectId = runtimeEnv?.[PROJECT_SCRIPT_PROJECT_ID_ENV]?.trim();
+  const scriptId = runtimeEnv?.[PROJECT_SCRIPT_ID_ENV]?.trim();
+  if (!projectId || !scriptId) {
+    return undefined;
+  }
+  return {
+    projectId: ProjectId.make(projectId),
+    scriptId,
+  };
+}
+
 function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
@@ -227,6 +246,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
 }
 
 function summary(session: TerminalSessionState): TerminalSummary {
+  const projectScript = projectScriptContextFromRuntimeEnv(session.runtimeEnv);
   return {
     threadId: session.threadId,
     terminalId: session.terminalId,
@@ -237,6 +257,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
+    ...(projectScript ? { projectScript } : {}),
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
   };

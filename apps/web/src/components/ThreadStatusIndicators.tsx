@@ -96,9 +96,11 @@ export function terminalStatusFromRunningIds(
 export function ThreadStatusLabel({
   status,
   compact = false,
+  variant = "label",
 }: {
   status: ThreadStatusPill;
   compact?: boolean;
+  variant?: "label" | "bar";
 }) {
   if (compact) {
     return (
@@ -108,6 +110,22 @@ export function ThreadStatusLabel({
       >
         <span
           className={`size-[9px] rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-pulse" : ""
+          }`}
+        />
+        <span className="sr-only">{status.label}</span>
+      </span>
+    );
+  }
+
+  if (variant === "bar") {
+    return (
+      <span
+        title={status.label}
+        className="inline-flex h-4 w-1 shrink-0 items-center justify-center"
+      >
+        <span
+          className={`h-3.5 w-0.5 rounded-full ${status.dotClass} ${
             status.pulse ? "animate-pulse" : ""
           }`}
         />

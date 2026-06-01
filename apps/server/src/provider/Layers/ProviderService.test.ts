@@ -958,6 +958,30 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("treats stopSession without a persisted binding as a no-op", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-stop-without-binding");
+
+      routing.codex.stopSession.mockClear();
+      routing.claude.stopSession.mockClear();
+
+      yield* provider.stopSession({ threadId });
+
+      assert.equal(routing.codex.stopSession.mock.calls.length, 0);
+      assert.equal(routing.claude.stopSession.mock.calls.length, 0);
+      assert.equal(
+        Option.isNone(
+          yield* runtimeRepository.getByThreadId({
+            threadId,
+          }),
+        ),
+        true,
+      );
+    }),
+  );
+
   it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;

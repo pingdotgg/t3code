@@ -813,6 +813,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        const bindingOption = yield* directory.getBinding(input.threadId);
+        if (Option.isNone(bindingOption)) {
+          yield* Effect.logDebug("provider.session.stop-skipped-missing-binding", {
+            threadId: input.threadId,
+          });
+          return;
+        }
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.stopSession",

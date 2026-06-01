@@ -1,5 +1,10 @@
 import { ProjectId } from "@t3tools/contracts";
-import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/projectScripts";
+import {
+  PROJECT_SCRIPT_ID_ENV,
+  PROJECT_SCRIPT_PROJECT_ID_ENV,
+  projectScriptRuntimeEnv,
+  setupProjectScript,
+} from "@t3tools/shared/projectScripts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -49,6 +54,10 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
       const env = projectScriptRuntimeEnv({
         project: { cwd: project.workspaceRoot },
         worktreePath: input.worktreePath,
+        extraEnv: {
+          [PROJECT_SCRIPT_PROJECT_ID_ENV]: project.id,
+          [PROJECT_SCRIPT_ID_ENV]: script.id,
+        },
       });
 
       yield* terminalManager.open({

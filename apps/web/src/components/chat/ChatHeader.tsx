@@ -12,7 +12,10 @@ import { type DraftId } from "~/composerDraftStore";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import ProjectScriptsControl, {
+  type NewProjectScriptInput,
+  type RunProjectScriptOptions,
+} from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
@@ -20,6 +23,7 @@ import { TransferToBrowserButton } from "./TransferToBrowserButton";
 import { BrowserAnnotationButton } from "./BrowserAnnotationButton";
 import { isBrowserAgentSidebarMode, usePrimaryEnvironmentId } from "../../environments/primary";
 import { shouldShowBrowserAgentControls } from "../../browserAgents";
+import { topBarMainProjectScript } from "../../projectScripts";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -41,7 +45,7 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
-  onRunProjectScript: (script: ProjectScript) => void;
+  onRunProjectScript: (script: ProjectScript, options?: RunProjectScriptOptions) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
@@ -75,8 +79,19 @@ export function shouldShowTransferToBrowserButton(input: {
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly browserAgentSidebarMode: boolean;
+  readonly mainActionRunning: boolean;
 }): boolean {
-  return !input.browserAgentSidebarMode && shouldShowBrowserAgentControls(input);
+  return (
+    input.mainActionRunning &&
+    !input.browserAgentSidebarMode &&
+    shouldShowBrowserAgentControls(input)
+  );
+}
+
+export function shouldShowProjectScriptsControl(input: {
+  readonly activeProjectScripts: ProjectScript[] | undefined;
+}): boolean {
+  return input.activeProjectScripts !== undefined;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -108,7 +123,13 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const browserAgentSidebarMode = typeof window !== "undefined" && isBrowserAgentSidebarMode();
-  const showProjectScriptsControl = !browserAgentSidebarMode && activeProjectScripts !== undefined;
+  const showProjectScriptsControl = shouldShowProjectScriptsControl({ activeProjectScripts });
+  const mainProjectScript = activeProjectScripts
+    ? topBarMainProjectScript(activeProjectScripts, preferredScriptId)
+    : null;
+  const mainProjectScriptRunning = mainProjectScript
+    ? runningProjectScriptIds.has(mainProjectScript.id)
+    : false;
   const showOpenInPicker =
     !browserAgentSidebarMode &&
     shouldShowOpenInPicker({
@@ -121,6 +142,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
     browserAgentSidebarMode,
+    mainActionRunning: mainProjectScriptRunning,
   });
   const showBrowserAnnotationButton = shouldShowBrowserAnnotationButton({
     activeProjectName,
@@ -173,7 +195,7 @@ export const ChatHeader = memo(function ChatHeader({
       </div>
       {showHeaderActions && (
         <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 sm:shrink-0 sm:justify-end @3xl/header-actions:gap-3">
-          {showProjectScriptsControl && (
+          {showProjectScriptsControl && activeProjectScripts !== undefined && (
             <ProjectScriptsControl
               scripts={activeProjectScripts}
               keybindings={keybindings}

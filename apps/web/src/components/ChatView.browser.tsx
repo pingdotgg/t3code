@@ -62,7 +62,10 @@ import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
-import { TERMINAL_INTERRUPT_SEQUENCE } from "./ChatView.logic";
+import {
+  PROJECT_SCRIPT_TERMINAL_IDS_BY_RUN_KEY,
+  TERMINAL_INTERRUPT_SEQUENCE,
+} from "./ChatView.logic";
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -2349,7 +2352,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/project",
             env: {
+              T3CODE_PROJECT_ID: PROJECT_ID,
               T3CODE_PROJECT_ROOT: "/repo/project",
+              T3CODE_PROJECT_SCRIPT_ID: "lint",
             },
           });
         },
@@ -2479,6 +2484,202 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       expect(wsRequests.filter((request) => request._tag === WS_METHODS.terminalOpen)).toHaveLength(
         1,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores running project script state from persisted terminal mapping", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [THREAD_KEY]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: THREAD_KEY,
+      },
+    });
+    const terminalId = DEFAULT_TERMINAL_ID;
+    localStorage.setItem(
+      PROJECT_SCRIPT_TERMINAL_IDS_BY_RUN_KEY,
+      JSON.stringify({
+        [`${THREAD_KEY}:${PROJECT_ID}:lint`]: [terminalId],
+      }),
+    );
+    const scripts = [
+      {
+        id: "lint",
+        name: "Lint",
+        command: "bun run lint",
+        icon: "lint",
+        runOnWorktreeCreate: false,
+      },
+    ] satisfies OrchestrationReadModel["projects"][number]["scripts"];
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), scripts),
+      configureFixture: (nextFixture) => {
+        nextFixture.terminalMetadataEvents = [
+          {
+            type: "snapshot",
+            terminals: [
+              {
+                threadId: THREAD_ID,
+                terminalId,
+                cwd: "/repo/project",
+                worktreePath: null,
+                status: "running",
+                pid: 123,
+                exitCode: null,
+                exitSignal: null,
+                hasRunningSubprocess: true,
+                label: "bun",
+                updatedAt: isoAt(1_200),
+              },
+            ],
+          },
+        ];
+      },
+    });
+
+    try {
+      const stopButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.title === "Stop Lint",
+          ) as HTMLButtonElement | null,
+        "Unable to find Stop Lint button after remount.",
+      );
+      stopButton.click();
+
+      await vi.waitFor(
+        () => {
+          const interruptRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalWrite &&
+              request.terminalId === terminalId &&
+              request.data === TERMINAL_INTERRUPT_SEQUENCE,
+          );
+          expect(interruptRequest).toMatchObject({
+            _tag: WS_METHODS.terminalWrite,
+            threadId: THREAD_ID,
+            terminalId,
+            data: TERMINAL_INTERRUPT_SEQUENCE,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(wsRequests.filter((request) => request._tag === WS_METHODS.terminalOpen)).toHaveLength(
+        0,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores running project script state from shared terminal metadata", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [THREAD_KEY]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: THREAD_KEY,
+      },
+    });
+    const terminalId = DEFAULT_TERMINAL_ID;
+    const scripts = [
+      {
+        id: "lint",
+        name: "Lint",
+        command: "bun run lint",
+        icon: "lint",
+        runOnWorktreeCreate: false,
+      },
+    ] satisfies OrchestrationReadModel["projects"][number]["scripts"];
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), scripts),
+      configureFixture: (nextFixture) => {
+        nextFixture.terminalMetadataEvents = [
+          {
+            type: "snapshot",
+            terminals: [
+              {
+                threadId: THREAD_ID,
+                terminalId,
+                cwd: "/repo/project",
+                worktreePath: null,
+                status: "running",
+                pid: 123,
+                exitCode: null,
+                exitSignal: null,
+                hasRunningSubprocess: true,
+                projectScript: {
+                  projectId: PROJECT_ID,
+                  scriptId: "lint",
+                },
+                label: "bun",
+                updatedAt: isoAt(1_200),
+              },
+            ],
+          },
+        ];
+      },
+    });
+
+    try {
+      const stopButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.title === "Stop Lint",
+          ) as HTMLButtonElement | null,
+        "Unable to find Stop Lint button from terminal metadata.",
+      );
+      stopButton.click();
+
+      await vi.waitFor(
+        () => {
+          const interruptRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalWrite &&
+              request.terminalId === terminalId &&
+              request.data === TERMINAL_INTERRUPT_SEQUENCE,
+          );
+          expect(interruptRequest).toMatchObject({
+            _tag: WS_METHODS.terminalWrite,
+            threadId: THREAD_ID,
+            terminalId,
+            data: TERMINAL_INTERRUPT_SEQUENCE,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(wsRequests.filter((request) => request._tag === WS_METHODS.terminalOpen)).toHaveLength(
+        0,
       );
     } finally {
       await mounted.cleanup();

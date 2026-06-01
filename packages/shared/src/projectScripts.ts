@@ -1,5 +1,8 @@
 import type { ProjectScript } from "@t3tools/contracts";
 
+export const PROJECT_SCRIPT_PROJECT_ID_ENV = "T3CODE_PROJECT_ID";
+export const PROJECT_SCRIPT_ID_ENV = "T3CODE_PROJECT_SCRIPT_ID";
+
 interface ProjectScriptRuntimeEnvInput {
   project: {
     cwd: string;

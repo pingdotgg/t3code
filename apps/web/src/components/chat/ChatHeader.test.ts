@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldShowBrowserAnnotationButton,
   shouldShowOpenInPicker,
+  shouldShowProjectScriptsControl,
   shouldShowTransferToBrowserButton,
 } from "./ChatHeader";
 
@@ -99,6 +100,16 @@ describe("shouldShowBrowserAnnotationButton", () => {
   });
 });
 
+describe("shouldShowProjectScriptsControl", () => {
+  it("shows project actions when project scripts are loaded", () => {
+    expect(shouldShowProjectScriptsControl({ activeProjectScripts: [] })).toBe(true);
+  });
+
+  it("hides project actions when there is no active project", () => {
+    expect(shouldShowProjectScriptsControl({ activeProjectScripts: undefined })).toBe(false);
+  });
+});
+
 describe("shouldShowTransferToBrowserButton", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
 
@@ -109,8 +120,21 @@ describe("shouldShowTransferToBrowserButton", () => {
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
+        mainActionRunning: true,
       }),
     ).toBe(true);
+  });
+
+  it("hides until the main action is running", () => {
+    expect(
+      shouldShowTransferToBrowserButton({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        browserAgentSidebarMode: false,
+        mainActionRunning: false,
+      }),
+    ).toBe(false);
   });
 
   it("hides in browser-agent sidebars", () => {
@@ -120,6 +144,7 @@ describe("shouldShowTransferToBrowserButton", () => {
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: true,
+        mainActionRunning: true,
       }),
     ).toBe(false);
   });
@@ -131,6 +156,7 @@ describe("shouldShowTransferToBrowserButton", () => {
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
+        mainActionRunning: true,
       }),
     ).toBe(false);
   });
@@ -142,6 +168,7 @@ describe("shouldShowTransferToBrowserButton", () => {
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
+        mainActionRunning: true,
       }),
     ).toBe(false);
   });

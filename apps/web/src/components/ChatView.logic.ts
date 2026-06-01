@@ -20,10 +20,16 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const PROJECT_SCRIPT_TERMINAL_IDS_BY_RUN_KEY =
+  "t3code:project-script-terminal-ids-by-run-key";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const TERMINAL_INTERRUPT_SEQUENCE = "\x03";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+export const ProjectScriptTerminalIdsByRunKeySchema = Schema.Record(
+  Schema.String,
+  Schema.Array(Schema.String),
+);
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
