@@ -15,6 +15,8 @@ const forgetButton = document.getElementById("forget");
 
 let currentWorkspaceLink = null;
 let currentFrameOrigin = null;
+let loadedWorkspaceLink = null;
+let loadedFrameUrl = null;
 let refreshTimer = null;
 
 function send(message) {
@@ -61,6 +63,20 @@ function frameOriginFor(rawUrl) {
   }
 }
 
+function clearFrame() {
+  frameEl.removeAttribute("src");
+  loadedWorkspaceLink = null;
+  loadedFrameUrl = null;
+}
+
+function setFrameWorkspaceLink(workspaceLink) {
+  loadedWorkspaceLink = workspaceLink;
+  if (loadedFrameUrl !== workspaceLink.t3Url) {
+    frameEl.src = workspaceLink.t3Url;
+    loadedFrameUrl = workspaceLink.t3Url;
+  }
+}
+
 async function refreshState() {
   const activeTab = await readActiveTab();
   const state = await send({
@@ -73,14 +89,13 @@ async function refreshState() {
   }
 
   currentWorkspaceLink = state.workspaceLink ?? null;
-  currentFrameOrigin = currentWorkspaceLink?.t3Url
-    ? frameOriginFor(currentWorkspaceLink.t3Url)
-    : null;
+  const frameUrl = currentWorkspaceLink?.t3Url ?? loadedFrameUrl;
+  currentFrameOrigin = frameUrl ? frameOriginFor(frameUrl) : null;
 
   if (!state.paired) {
     currentWorkspaceLink = null;
     currentFrameOrigin = null;
-    frameEl.removeAttribute("src");
+    clearFrame();
     setupCopyEl.textContent = "Pair this browser with T3 Code, then use Preview.";
     setStatus("Not paired.");
     setMode("setup");
@@ -88,16 +103,13 @@ async function refreshState() {
   }
 
   if (!currentWorkspaceLink?.t3Url) {
-    frameEl.removeAttribute("src");
     setupCopyEl.textContent = "This browser is paired. Use Preview in T3 Code.";
     setStatus(`${state.connected ? "Connected" : "Paired"}: ${state.baseUrl}`);
     setMode("setup");
     return;
   }
 
-  if (frameEl.src !== currentWorkspaceLink.t3Url) {
-    frameEl.src = currentWorkspaceLink.t3Url;
-  }
+  setFrameWorkspaceLink(currentWorkspaceLink);
   setMode("chat");
 }
 
@@ -145,9 +157,10 @@ window.addEventListener("message", (event) => {
   if (currentFrameOrigin && event.origin !== currentFrameOrigin) {
     return;
   }
+  const workspaceLink = currentWorkspaceLink ?? loadedWorkspaceLink;
   void send({
     type: CANCEL_ANNOTATION_MESSAGE_TYPE,
-    workspaceLinkId: currentWorkspaceLink?.id,
+    workspaceLinkId: workspaceLink?.id,
   }).catch(() => undefined);
 });
 
