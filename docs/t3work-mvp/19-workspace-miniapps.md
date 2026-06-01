@@ -190,8 +190,8 @@ is a shell-registered React component key. Function-typed titles and compiled `v
 module paths are deferred to the miniapp runtime phase.
 
 ```ts
-// @t3work/plugin-sdk
-import { defineSidecarSection } from "@t3work/plugin-sdk";
+// @t3work/sdk
+import { defineSidecarSection } from "@t3work/sdk";
 
 export default defineSidecarSection({
   id: "quick-starts",
@@ -426,7 +426,7 @@ for when concrete cross-section actions emerge.
 
 ## Plugin SDK Surface
 
-The `@t3work/plugin-sdk` exposes a small set of **`define*` helpers**, one per
+The `@t3work/sdk` exposes a small set of **`define*` helpers**, one per
 contribution kind. Each helper carries its own typed shape — no generic miniapp
 primitive, no string-keyed placement options bag. Authors pick the helper whose name
 matches the surface and role they're targeting; the type system enforces correctness
@@ -504,11 +504,12 @@ enumerate its placements — each placed contribution is its own atomic registra
 
 ### Where helpers live in code
 
-`@t3work/plugin-sdk` is the planned package for these helpers. `defineRecipe` and
-`defineWorkflow` are owned by `packages/project-recipes` (workflow-side concerns);
-the placement helpers (`defineSidecarSection`, `defineDashboardWidget`, etc.) are
-owned by `@t3work/miniapp-sdk` (View-side concerns). Both SDK packages re-export
-through `@t3work/plugin-sdk` so authors have one import path.
+`@t3work/sdk` is the single SDK package and public import path for these helpers. The
+workflow/tool primitives (`defineWorkflow`, `defineTool`, `defineToolGroup`, `defineModel`,
+`defineScript`) ship there today (Epic 25). The recipe and placement helpers (`defineRecipe`,
+`defineSidecarSection`, `defineDashboardWidget`, etc.) currently live in
+`packages/project-recipes` and are surfaced through `@t3work/sdk` so authors have one
+import path.
 
 ## Custom Views
 
@@ -568,7 +569,7 @@ export default function App({ host }: { host: MiniappHostContext }) {
 Miniapps are full React code, but they should import through a narrow SDK.
 
 ```tsx
-import { Badge, Button, Chart, Table, useMiniappTools } from "@t3work/miniapp-sdk";
+import { Badge, Button, Chart, Table, useMiniappTools } from "@t3work/sdk";
 
 export default function App() {
   const tools = useMiniappTools();
@@ -647,7 +648,7 @@ The stage-2 constraints (build toward these now so the transition is "remove the
 hatches," not a rewrite):
 
 - run miniapps in an isolated runtime, likely a sandboxed iframe or equivalent boundary
-- load imports only from `@t3work/miniapp-sdk` and approved runtime shims
+- load imports only from `@t3work/sdk` and approved runtime shims
 - deny arbitrary package installs for the MVP
 - deny direct access to browser storage outside the miniapp namespace
 - pass data through structured host props and tool results
@@ -668,7 +669,7 @@ Example flow:
 1. User asks for a project health miniapp.
 2. Agent interviews for placement, data sources, and allowed actions.
 3. Agent writes `.t3work/miniapps/project-health/miniapp.json`.
-4. Agent writes `App.tsx` using `@t3work/miniapp-sdk`.
+4. Agent writes `App.tsx` using `@t3work/sdk`.
 5. Agent adds README and example fixtures where useful.
 6. Shell validates manifest, imports, and tool declarations.
 7. User enables the miniapp for selected placements.

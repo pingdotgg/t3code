@@ -22,7 +22,7 @@ in code, and reused everywhere. Avoid inventing recipe-specific parallels to any
 | **Context**  | A read-only snapshot of the world the agent and workflows read. Two depths: a light _render context_ used before launch, and a rich _full context_ available after launch.                                                                                                                                             | `packages/project-context` |
 | **Tools**    | The single capability surface — the verbs that read or mutate `t3work` and external state. The _same_ surface is consumed by agent turns, workflow steps, and views, scoped by `allowedToolGroups`. See [Epic 21](./21-context-tool-catalog.md).                                                                       | `T3workToolBroker`         |
 | **Workflow** | The core engine. Target: a TS-native, replay-based durable-execution engine (Epic 25) where workflows are plain async TypeScript functions and primitive calls are journaled. Legacy: a serializable, persisted, forward-only sequence of typed steps the host interprets. Both run side by side during the migration. | `packages/project-recipes` |
-| **View**     | A code-based, interactive UI unit that mounts on any surface — the action list, a conversation message, a dashboard slot, a side panel. Action launchers and conversation cards are both Views. See [Epic 19](./19-workspace-miniapps.md).                                                                             | `@t3work/miniapp-sdk`      |
+| **View**     | A code-based, interactive UI unit that mounts on any surface — the action list, a conversation message, a dashboard slot, a side panel. Action launchers and conversation cards are both Views. See [Epic 19](./19-workspace-miniapps.md).                                                                             | `@t3work/sdk`      |
 
 How they interact, in one line:
 
@@ -70,7 +70,7 @@ now a plain function of context — fully type-checked, no custom expression lan
 `new Function` evaluator.
 
 ```ts
-import { defineRecipe, defineWorkflow } from "@t3work/plugin-sdk";
+import { defineRecipe, defineWorkflow } from "@t3work/sdk";
 
 export default defineRecipe({
   id: "qa-test-plan",
@@ -1229,7 +1229,7 @@ each surface's context, which queries are available, which tools the recipe may 
 which Views can be referenced. The contract is the **TypeScript types**, exposed three
 ways for whichever consumer prefers which form:
 
-- **Generated `.d.ts` per surface** — the source of truth. `@t3work/plugin-sdk` exports
+- **Generated `.d.ts` per surface** — the source of truth. `@t3work/sdk` exports
   `DashboardBacklogContext`, `WorkItemDetailContext`, etc. When the agent writes a
   `recipe.ts`, TypeScript checks every field access against the real context type. A wrong
   field is a compile error before runtime.
@@ -1240,7 +1240,7 @@ ways for whichever consumer prefers which form:
   surface, which are eager vs. lazy, which expose query methods, with one-line
   descriptions and an example call.
 
-The same generated pipeline covers **Tools** (`@t3work/plugin-sdk` exports a typed
+The same generated pipeline covers **Tools** (`@t3work/sdk` exports a typed
 registry, autocomplete shows what's available) and **Views** (typed miniapp registry — a
 recipe's `view:` reference is type-checked against the surface's context).
 
@@ -1425,8 +1425,10 @@ project is created. Project-local recipes are the editable source of truth for t
   generated agent-discovery artifacts (`.d.ts` per surface, `context.schema.json`,
   `context-map.md`). All three are generated from the canonical TS types — never
   hand-maintained.
-- `@t3work/plugin-sdk` (to be introduced) owns `defineRecipe`/`defineWorkflow` and the
-  plugin-module contract; `@t3work/miniapp-sdk` owns Views.
+- `@t3work/sdk` is the workflow/tool authoring SDK (Epic 25: `defineWorkflow`, `defineTool`,
+  `defineToolGroup`, `defineModel`, `defineScript`) and the public import path for the
+  recipe/plugin-module and View `define*` helpers. Some helpers (e.g. `defineSidecarSection`)
+  currently live in `packages/project-recipes` and are surfaced through `@t3work/sdk`.
 - `T3workToolBroker` (`apps/server`) is the single tool surface for agents, scripts, and
   Views. Mutations through it emit events on the existing orchestration bus.
 - **The Queryable runtime is backed by the existing local SQLite persistence layer**

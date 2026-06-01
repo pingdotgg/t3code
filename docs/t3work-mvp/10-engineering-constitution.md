@@ -60,8 +60,9 @@ Current `t3work` additive packages on disk:
 - `packages/integrations-core` (formerly proposed as `t3work-integrations-core`)
 - `packages/integrations-atlassian` (formerly proposed as `t3work-integrations-atlassian`)
 - `packages/t3work-skill-packs`
-- planned new additive packages: `@t3work/plugin-sdk` (recipe/workflow SDK) and
-  `@t3work/miniapp-sdk` (the View primitive)
+- `@t3work/sdk` — the additive workflow/tool authoring SDK (Epic 25: `defineWorkflow`,
+  `defineTool`, `defineToolGroup`, `defineModel`, `defineScript`); also the public import
+  path for the recipe and View/placement `define*` helpers
 
 The unprefixed names (`project-*`, `integrations-*`) are explicitly whitelisted in the
 additive guard because they predate the prefix policy. Anything new should prefer the
