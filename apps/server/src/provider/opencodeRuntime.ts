@@ -95,9 +95,16 @@ export interface OpenCodeCommandResult {
   readonly code: number;
 }
 
+export interface OpenCodeSkill {
+  readonly name: string;
+  readonly description: string;
+  readonly location: string;
+}
+
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  readonly skills: ReadonlyArray<OpenCodeSkill>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -139,11 +146,12 @@ export interface OpenCodeRuntimeShape {
   }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
   readonly createOpenCodeSdkClient: (input: {
     readonly baseUrl: string;
-    readonly directory: string;
+    readonly directory?: string;
     readonly serverPassword?: string;
   }) => OpencodeClient;
   readonly loadOpenCodeInventory: (
     client: OpencodeClient,
+    cwds: ReadonlyArray<string>,
   ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
 }
 
@@ -497,7 +505,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const createOpenCodeSdkClient: OpenCodeRuntimeShape["createOpenCodeSdkClient"] = (input) =>
     createOpencodeClient({
       baseUrl: input.baseUrl,
-      directory: input.directory,
+      ...(input.directory !== undefined ? { directory: input.directory } : {}),
       ...(input.serverPassword
         ? {
             headers: {
@@ -529,9 +537,42 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
+  const loadSkills = (client: OpencodeClient, directory: string) =>
+    runOpenCodeSdk("app.skills", () => client.app.skills({ directory })).pipe(
+      Effect.map((result) =>
+        (result.data ?? []).map(({ name, description, location }) => ({
+          name,
+          description,
+          location,
+        })),
+      ),
+    );
+
+  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client, cwds) =>
     Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+      Effect.flatMap(([providerList, agents]) =>
+        Effect.all(
+          cwds.map((cwd) =>
+            loadSkills(client, cwd).pipe(Effect.orElseSucceed(() => [] as OpenCodeSkill[])),
+          ),
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map((skillArrays) => {
+            // Deduplication is first-occurrence wins. `cwds` is ordered with
+            // `serverConfig.cwd` first, followed by project workspace roots in
+            // DB insertion order (createdAt ASC). A skill defined in the
+            // server's startup directory therefore takes precedence over a
+            // same-named skill in any open project.
+            const seen = new Set<string>();
+            const skills = skillArrays.flat().filter((s) => {
+              if (seen.has(s.name)) return false;
+              seen.add(s.name);
+              return true;
+            });
+            return { providerList, agents, skills };
+          }),
+        ),
+      ),
     );
 
   return {

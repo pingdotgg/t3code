@@ -10,7 +10,7 @@ import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@t3tools/
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
@@ -79,3 +79,13 @@ export class ProjectionProjectRepository extends Context.Service<
   ProjectionProjectRepository,
   ProjectionProjectRepositoryShape
 >()("t3/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}
+
+/**
+ * No-op implementation for use in tests that don't exercise project persistence.
+ */
+export const NoOpProjectionProjectRepository: ProjectionProjectRepositoryShape = {
+  upsert: () => Effect.void,
+  getById: () => Effect.succeed(Option.none()),
+  listAll: () => Effect.succeed([]),
+  deleteById: () => Effect.void,
+};

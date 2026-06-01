@@ -120,7 +120,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [process.cwd()]);
 
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, false);
@@ -131,7 +131,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("hides generic Effect.tryPromise text for local CLI probe failures", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("An error occurred in Effect.tryPromise");
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [process.cwd()]);
 
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, true);
@@ -171,7 +171,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ],
       };
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [process.cwd()]);
       const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
 
       assert.ok(model);
@@ -196,7 +196,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
   it.effect("closes the local OpenCode server scope after provider refresh", () =>
     Effect.gen(function* () {
-      yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [process.cwd()]);
 
       assert.equal(runtimeMock.state.closeCalls, 1);
     }),
@@ -212,7 +212,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
           serverUrl: "http://127.0.0.1:9999",
           serverPassword: "secret-password",
         }),
-        process.cwd(),
+        [process.cwd()],
       );
 
       assert.equal(snapshot.status, "error");
@@ -234,9 +234,8 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
           serverUrl: "http://127.0.0.1:9999",
           serverPassword: "secret-password",
         }),
-        process.cwd(),
+        [process.cwd()],
       );
-
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.installed, true);
       assert.equal(

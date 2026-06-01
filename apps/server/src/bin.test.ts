@@ -33,8 +33,16 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import {
+  ProjectionProjectRepository,
+  NoOpProjectionProjectRepository,
+} from "./persistence/Services/ProjectionProjects.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  Layer.succeed(ProjectionProjectRepository, NoOpProjectionProjectRepository),
+);
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>

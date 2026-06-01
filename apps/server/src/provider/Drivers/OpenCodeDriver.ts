@@ -25,6 +25,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
+import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
@@ -79,6 +80,7 @@ export type OpenCodeDriverEnv =
   | HttpClient.HttpClient
   | OpenCodeRuntime
   | Path.Path
+  | ProjectionProjectRepository
   | ProviderEventLoggers
   | ServerConfig;
 
@@ -110,6 +112,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
     Effect.gen(function* () {
       const openCodeRuntime = yield* OpenCodeRuntime;
       const serverConfig = yield* ServerConfig;
+      const projectRepository = yield* ProjectionProjectRepository;
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -136,11 +139,29 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       });
       const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
-        serverConfig.cwd,
-        processEnv,
-      ).pipe(Effect.map(stampIdentity), Effect.provideService(OpenCodeRuntime, openCodeRuntime));
+      const buildProjectCwds = projectRepository.listAll().pipe(
+        Effect.map((projects) => {
+          const cwds = new Set([
+            serverConfig.cwd,
+            ...projects.filter((p) => p.deletedAt === null).map((p) => p.workspaceRoot),
+          ]);
+          return Array.from(cwds);
+        }),
+        Effect.tapError((e) =>
+          Effect.logWarning(
+            "Failed to list projects for OpenCode skills discovery; falling back to server cwd only",
+            e,
+          ),
+        ),
+        Effect.orElseSucceed(() => [serverConfig.cwd]),
+      );
+
+      const checkProvider = Effect.flatMap(buildProjectCwds, (cwds) =>
+        checkOpenCodeProviderStatus(effectiveConfig, cwds, processEnv).pipe(
+          Effect.map(stampIdentity),
+          Effect.provideService(OpenCodeRuntime, openCodeRuntime),
+        ),
+      );
 
       const snapshot = yield* makeManagedServerProvider<OpenCodeSettings>({
         maintenanceCapabilities,

@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -22,6 +23,7 @@ import {
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
+  type OpenCodeSkill,
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
@@ -298,9 +300,20 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
+function mapOpenCodeSkills(
+  skills: ReadonlyArray<OpenCodeSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  return skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description || undefined,
+    path: skill.location,
+    enabled: true,
+  }));
+}
+
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
-  cwd: string,
+  cwds: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
@@ -418,11 +431,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         return yield* openCodeRuntime.loadOpenCodeInventory(
           openCodeRuntime.createOpenCodeSdkClient({
             baseUrl: server.url,
-            directory: cwd,
             ...(isExternalServer && openCodeSettings.serverPassword
               ? { serverPassword: openCodeSettings.serverPassword }
               : {}),
           }),
+          cwds,
         );
       }).pipe(
         Effect.mapError(
@@ -441,12 +454,14 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
+  const skills = mapOpenCodeSkills(inventoryExit.value.skills);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
+    skills,
     probe: {
       installed: true,
       version,
