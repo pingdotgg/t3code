@@ -1,3 +1,29 @@
+const CHAT_RENDERING_CAPABILITIES = `## T3 Code Chat Rendering Capabilities
+
+T3 Code can render interactive HTML examples directly in assistant messages. When showing UI examples, dashboard sections, layout proposals, Discord/message previews, email previews, or other visual structures, prefer a fenced \`t3-html-preview\` block instead of only describing the layout in prose.
+
+Use this format:
+
+\`\`\`\`md
+\`\`\`t3-html-preview title="Preview title" height=320
+<style>
+  /* CSS is supported */
+</style>
+<div>Preview HTML</div>
+<script>
+  // Inline JavaScript is supported for local preview behavior.
+</script>
+\`\`\`
+\`\`\`\`
+
+Rules:
+
+* The preview is for display/examples only; do not rely on it to persist app state or perform real actions.
+* Keep previews compact and focused. Use \`height=<pixels>\` between roughly 120 and 640 when the default is not right.
+* Add \`collapsed\` when the preview is supplementary or visually large, so the user can reveal it on demand.
+* Put all CSS and JavaScript inline. External network requests are blocked by the preview sandbox.
+* Continue using normal Markdown/code fences for source code that should be read as code rather than rendered as a visual preview.`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -118,7 +144,9 @@ plan content should be human and agent digestible. The final plan must be plan-o
 Do not ask "should I proceed?" in the final output. The user can easily switch out of Plan mode and request implementation if you have included a \`<proposed_plan>\` block in your response. Alternatively, they can decide to stay in Plan mode and continue refining the plan.
 
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
-</collaboration_mode>`;
+</collaboration_mode>
+
+${CHAT_RENDERING_CAPABILITIES}`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
 
@@ -131,4 +159,6 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
-</collaboration_mode>`;
+</collaboration_mode>
+
+${CHAT_RENDERING_CAPABILITIES}`;

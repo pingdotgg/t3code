@@ -138,4 +138,83 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("renders html preview fences as script-enabled sandboxed iframes", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={[
+          '```t3-html-preview title="Counter preview" height=180',
+          '<div id="counter">0</div>',
+          "<script>document.getElementById('counter').textContent = '1';</script>",
+          "```",
+        ].join("\n")}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Hide preview" })).toBeInTheDocument();
+      const frame = document.querySelector<HTMLIFrameElement>(
+        'iframe[title="Counter preview preview"]',
+      );
+      expect(frame).not.toBeNull();
+      expect(frame?.getAttribute("sandbox")).toBe("allow-scripts");
+      expect(frame?.getAttribute("referrerpolicy")).toBe("no-referrer");
+      expect(frame?.getAttribute("srcdoc")).toContain("script-src 'unsafe-inline'");
+      expect(frame?.getAttribute("srcdoc")).toContain("connect-src 'none'");
+      expect(frame?.getAttribute("srcdoc")).toContain("<script>");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("supports collapsed html previews that can be shown later", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={[
+          '```html-preview title="Hidden preview" collapsed',
+          "<main>Hidden until opened</main>",
+          "```",
+        ].join("\n")}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Preview hidden")).toBeInTheDocument();
+      expect(document.querySelector("iframe")).toBeNull();
+
+      await page.getByRole("button", { name: "Show preview" }).click();
+
+      await expect.element(page.getByRole("button", { name: "Hide preview" })).toBeInTheDocument();
+      expect(document.querySelector('iframe[title="Hidden preview preview"]')).not.toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("can maximize html previews into a dialog", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={['```preview-html title="Dialog preview"', "<section>Expanded</section>", "```"].join(
+          "\n",
+        )}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Maximize preview" }).click();
+
+      await expect.element(page.getByRole("dialog")).toBeInTheDocument();
+      await expect
+        .element(page.getByRole("heading", { name: "Dialog preview" }))
+        .toBeInTheDocument();
+      expect(
+        document.querySelector('iframe[title="Dialog preview maximized preview"]'),
+      ).not.toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

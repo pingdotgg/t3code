@@ -19,6 +19,7 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { HtmlPreviewBlock, isHtmlPreviewLanguage } from "./chat/HtmlPreviewBlock";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -75,9 +76,13 @@ const highlightedCodeCache = new LRUCache<string>(
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
-function extractFenceLanguage(className: string | undefined): string {
+function extractRawFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  const raw = match?.[1] ?? "text";
+  return match?.[1] ?? "text";
+}
+
+function extractFenceLanguage(className: string | undefined): string {
+  const raw = extractRawFenceLanguage(className);
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
 }
@@ -97,7 +102,8 @@ function nodeToPlainText(node: ReactNode): string {
 
 function extractCodeBlock(
   children: ReactNode,
-): { className: string | undefined; code: string } | null {
+  containerNode: unknown,
+): { className: string | undefined; code: string; meta: string | undefined } | null {
   const childNodes = Children.toArray(children);
   if (childNodes.length !== 1) {
     return null;
@@ -105,7 +111,7 @@ function extractCodeBlock(
 
   const onlyChild = childNodes[0];
   if (
-    !isValidElement<{ className?: string; children?: ReactNode }>(onlyChild) ||
+    !isValidElement<{ className?: string; children?: ReactNode; node?: unknown }>(onlyChild) ||
     onlyChild.type !== "code"
   ) {
     return null;
@@ -114,7 +120,43 @@ function extractCodeBlock(
   return {
     className: onlyChild.props.className,
     code: nodeToPlainText(onlyChild.props.children),
+    meta: readCodeFenceMeta(onlyChild.props.node) ?? readCodeFenceMeta(containerNode),
   };
+}
+
+function readCodeFenceMeta(node: unknown): string | undefined {
+  if (node == null || typeof node !== "object") {
+    return undefined;
+  }
+
+  const data = "data" in node ? (node as { data?: unknown }).data : undefined;
+  if (data != null && typeof data === "object") {
+    const meta = "meta" in data ? (data as { meta?: unknown }).meta : undefined;
+    if (typeof meta === "string") {
+      return meta;
+    }
+  }
+
+  const properties =
+    "properties" in node ? (node as { properties?: unknown }).properties : undefined;
+  if (properties != null && typeof properties === "object") {
+    const meta = "meta" in properties ? (properties as { meta?: unknown }).meta : undefined;
+    if (typeof meta === "string") {
+      return meta;
+    }
+  }
+
+  const children = "children" in node ? (node as { children?: unknown }).children : undefined;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const meta = readCodeFenceMeta(child);
+      if (meta) {
+        return meta;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
@@ -581,9 +623,19 @@ function ChatMarkdown({
         );
       },
       pre({ node: _node, children, ...props }) {
-        const codeBlock = extractCodeBlock(children);
+        const codeBlock = extractCodeBlock(children, _node);
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
+        }
+        const rawLanguage = extractRawFenceLanguage(codeBlock.className);
+        if (isHtmlPreviewLanguage(rawLanguage)) {
+          return (
+            <HtmlPreviewBlock
+              code={codeBlock.code}
+              meta={codeBlock.meta}
+              isStreaming={isStreaming}
+            />
+          );
         }
 
         return (

@@ -42,6 +42,17 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it("documents T3 Code HTML preview rendering in Codex modes", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      assert.match(instructions, /t3-html-preview/);
+      assert.match(instructions, /Inline JavaScript is supported/);
+      assert.match(instructions, /collapsed/);
+    }
+  });
+
   it("includes plan collaboration mode when requested", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
