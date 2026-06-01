@@ -8,8 +8,10 @@ import {
 import {
   commandForProjectScript,
   nextProjectScriptId,
+  pinnedTopBarProjectScripts,
   primaryProjectScript,
   projectScriptIdFromCommand,
+  topBarMainProjectScript,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
@@ -46,6 +48,42 @@ describe("projectScripts helpers", () => {
 
     expect(primaryProjectScript(scripts)?.id).toBe("test");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
+  });
+
+  it("resolves the top bar main script separately from pinned scripts", () => {
+    const scripts = [
+      {
+        id: "lint",
+        name: "Lint",
+        command: "bun lint",
+        icon: "lint" as const,
+        runOnWorktreeCreate: false,
+        pinnedToTopBar: true,
+      },
+      {
+        id: "dev",
+        name: "Dev",
+        command: "bun dev",
+        icon: "play" as const,
+        runOnWorktreeCreate: false,
+        pinnedToTopBar: false,
+      },
+      {
+        id: "test",
+        name: "Test",
+        command: "bun run test",
+        icon: "test" as const,
+        runOnWorktreeCreate: false,
+        pinnedToTopBar: true,
+      },
+    ];
+
+    expect(topBarMainProjectScript(scripts, null)?.id).toBe("dev");
+    expect(topBarMainProjectScript(scripts, "test")?.id).toBe("dev");
+    expect(pinnedTopBarProjectScripts(scripts, "dev").map((script) => script.id)).toEqual([
+      "lint",
+      "test",
+    ]);
   });
 
   it("builds default runtime env for scripts", () => {

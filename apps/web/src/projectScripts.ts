@@ -56,7 +56,26 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
   return `${baseId}-${Date.now()}`.slice(0, MAX_SCRIPT_ID_LENGTH);
 }
 
-export function primaryProjectScript(scripts: ProjectScript[]): ProjectScript | null {
+export function primaryProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   const regular = scripts.find((script) => !script.runOnWorktreeCreate);
   return regular ?? scripts[0] ?? null;
+}
+
+export function topBarMainProjectScript(
+  scripts: readonly ProjectScript[],
+  preferredScriptId: string | null | undefined,
+): ProjectScript | null {
+  const mainCandidates = scripts.filter((script) => script.pinnedToTopBar !== true);
+  if (preferredScriptId) {
+    const preferred = mainCandidates.find((script) => script.id === preferredScriptId);
+    if (preferred) return preferred;
+  }
+  return primaryProjectScript(mainCandidates.length > 0 ? mainCandidates : scripts);
+}
+
+export function pinnedTopBarProjectScripts(
+  scripts: readonly ProjectScript[],
+  mainScriptId: string | null | undefined,
+): ProjectScript[] {
+  return scripts.filter((script) => script.pinnedToTopBar === true && script.id !== mainScriptId);
 }
