@@ -17,6 +17,7 @@ import {
   ProjectId,
   ProviderItemId,
   ThreadId,
+  TrimmedString,
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
@@ -205,6 +206,7 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -387,6 +389,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -477,6 +480,8 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  scripts: Schema.optional(Schema.Array(ProjectScript)),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
   createdAt: IsoDateTime,
 });
 
@@ -488,6 +493,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -827,6 +833,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -838,6 +845,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  browserPreviewUrl: Schema.optional(Schema.NullOr(TrimmedString)),
   updatedAt: IsoDateTime,
 });
 

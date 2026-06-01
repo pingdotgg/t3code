@@ -33,6 +33,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
+import { makeProjectConfigResolverFunction } from "../project/Layers/ProjectConfigResolver.ts";
 import { RepositoryIdentityResolverLive } from "../project/Layers/RepositoryIdentityResolver.ts";
 import { getAutoBootstrapDefaultModelSelection } from "../serverRuntimeStartup.ts";
 import {
@@ -354,6 +355,8 @@ const projectAddCommand = Command.make("add", {
         }
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
+        const resolveProjectConfig = yield* makeProjectConfigResolverFunction;
+        const projectConfig = yield* resolveProjectConfig({ cwd: workspaceRoot });
         const projectId = ProjectId.make(yield* projectCommandUuid);
         yield* dispatch({
           type: "project.create",
@@ -362,6 +365,10 @@ const projectAddCommand = Command.make("add", {
           title,
           workspaceRoot,
           defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
+          ...(projectConfig.scripts !== undefined ? { scripts: projectConfig.scripts } : {}),
+          ...(projectConfig.browserPreviewUrl !== undefined
+            ? { browserPreviewUrl: projectConfig.browserPreviewUrl }
+            : {}),
           createdAt: DateTime.formatIso(yield* DateTime.now),
         });
         return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;

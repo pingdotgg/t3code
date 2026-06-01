@@ -154,6 +154,20 @@ describe("shouldShowPreviewButton", () => {
     ).toBe(true);
   });
 
+  it("shows when a project preview URL is configured", () => {
+    expect(
+      shouldShowPreviewButton({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        browserAgentSidebarMode: false,
+        mainActionRunning: false,
+        projectPreviewUrl: "http://localhost:5173/",
+        customPreviewUrl: "",
+      }),
+    ).toBe(true);
+  });
+
   it("hides until the main action is running", () => {
     expect(
       shouldShowPreviewButton({

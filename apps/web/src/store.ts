@@ -230,6 +230,7 @@ function mapProject(
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
       : null,
+    browserPreviewUrl: project.browserPreviewUrl ?? null,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
@@ -1247,6 +1248,9 @@ function applyEnvironmentOrchestrationEvent(
           : {}),
         ...(event.payload.scripts !== undefined
           ? { scripts: mapProjectScripts(event.payload.scripts) }
+          : {}),
+        ...(event.payload.browserPreviewUrl !== undefined
+          ? { browserPreviewUrl: event.payload.browserPreviewUrl }
           : {}),
         updatedAt: event.payload.updatedAt,
       };

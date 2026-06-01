@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   OrchestrationCommand,
   ProjectId,
+  ProjectScript,
   SourceControlDiscoveryResult,
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
@@ -206,6 +207,8 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly scripts?: readonly ProjectScript[] | undefined;
+  readonly browserPreviewUrl?: string | null | undefined;
   readonly createdAt: string;
 }): Extract<OrchestrationCommand, { type: "project.create" }> {
   return {
@@ -219,6 +222,10 @@ export function buildProjectCreateCommand(input: {
       instanceId: ProviderInstanceId.make("codex"),
       model: DEFAULT_MODEL,
     },
+    ...(input.scripts !== undefined ? { scripts: [...input.scripts] } : {}),
+    ...(input.browserPreviewUrl !== undefined
+      ? { browserPreviewUrl: input.browserPreviewUrl }
+      : {}),
     createdAt: input.createdAt,
   };
 }

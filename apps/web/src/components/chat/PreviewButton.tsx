@@ -29,12 +29,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export const PreviewButton = memo(function PreviewButton({
   activeProjectName,
   activeProjectScripts,
+  projectPreviewUrl,
   activeThreadEnvironmentId,
   activeThreadId,
   detectedDevServerUrl,
 }: {
   readonly activeProjectName: string | undefined;
   readonly activeProjectScripts: readonly ProjectScript[] | undefined;
+  readonly projectPreviewUrl: string | null | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly activeThreadId: ThreadId;
   readonly detectedDevServerUrl: string | null;
@@ -45,11 +47,12 @@ export const PreviewButton = memo(function PreviewButton({
   const devServerUrl = useMemo(
     () =>
       resolveBrowserAgentPreviewUrl({
+        projectPreviewUrl,
         customPreviewUrl,
         detectedDevServerUrl,
         scripts: activeProjectScripts,
       }),
-    [activeProjectScripts, customPreviewUrl, detectedDevServerUrl],
+    [activeProjectScripts, customPreviewUrl, detectedDevServerUrl, projectPreviewUrl],
   );
 
   const openPreviewInBrowser = () => {

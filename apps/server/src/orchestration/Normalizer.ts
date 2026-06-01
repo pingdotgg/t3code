@@ -11,6 +11,7 @@ import {
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { makeProjectConfigResolverFunction } from "../project/Layers/ProjectConfigResolver.ts";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
 
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
@@ -19,6 +20,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
     const workspacePaths = yield* WorkspacePaths;
+    const resolveProjectConfig = yield* makeProjectConfigResolverFunction;
 
     const normalizeProjectWorkspaceRoot = (workspaceRoot: string) =>
       workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(
@@ -48,13 +50,17 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (command.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        command.workspaceRoot,
+        command.createWorkspaceRootIfMissing,
+      );
+      const projectConfig = yield* resolveProjectConfig({ cwd: workspaceRoot });
       return {
         ...command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          command.workspaceRoot,
-          command.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
         createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
+        scripts: command.scripts ?? projectConfig.scripts,
+        browserPreviewUrl: command.browserPreviewUrl ?? projectConfig.browserPreviewUrl,
       } satisfies OrchestrationCommand;
     }
 

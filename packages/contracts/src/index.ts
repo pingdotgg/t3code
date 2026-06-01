@@ -18,6 +18,7 @@ export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
+export * from "./projectConfig.ts";
 export * from "./filesystem.ts";
 export * from "./review.ts";
 export * from "./browserAgent.ts";

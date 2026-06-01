@@ -4,6 +4,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
   ProjectId,
+  type ProjectScript,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -31,6 +32,7 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { makeProjectConfigResolverFunction } from "./project/Layers/ProjectConfigResolver.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
@@ -159,6 +161,27 @@ export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
   model: DEFAULT_MODEL,
 });
 
+function projectScriptsEqual(
+  left: readonly ProjectScript[],
+  right: readonly ProjectScript[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((script, index) => {
+      const other = right[index];
+      return (
+        other !== undefined &&
+        script.id === other.id &&
+        script.name === other.name &&
+        script.command === other.command &&
+        script.icon === other.icon &&
+        script.runOnWorktreeCreate === other.runOnWorktreeCreate &&
+        script.pinnedToTopBar === other.pinnedToTopBar
+      );
+    })
+  );
+}
+
 export const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
@@ -176,10 +199,39 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const resolveProjectConfig = yield* makeProjectConfigResolverFunction;
   const path = yield* Path.Path;
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
+
+  const commandReadModel = yield* projectionReadModelQuery.getCommandReadModel();
+  yield* Effect.forEach(
+    commandReadModel.projects.filter((project) => project.deletedAt === null),
+    (project) =>
+      Effect.gen(function* () {
+        const projectConfig = yield* resolveProjectConfig({ cwd: project.workspaceRoot });
+        const scriptsChanged =
+          projectConfig.scripts !== undefined &&
+          !projectScriptsEqual(projectConfig.scripts, project.scripts);
+        const browserPreviewUrlChanged =
+          projectConfig.browserPreviewUrl !== undefined &&
+          projectConfig.browserPreviewUrl !== (project.browserPreviewUrl ?? null);
+        if (!scriptsChanged && !browserPreviewUrlChanged) {
+          return;
+        }
+        yield* orchestrationEngine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make(yield* randomUUID),
+          projectId: project.id,
+          ...(projectConfig.scripts !== undefined ? { scripts: projectConfig.scripts } : {}),
+          ...(projectConfig.browserPreviewUrl !== undefined
+            ? { browserPreviewUrl: projectConfig.browserPreviewUrl }
+            : {}),
+        });
+      }),
+    { concurrency: 1 },
+  );
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
@@ -194,6 +246,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         nextProjectId = ProjectId.make(yield* randomUUID);
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
+        const projectConfig = yield* resolveProjectConfig({ cwd: serverConfig.cwd });
         yield* orchestrationEngine.dispatch({
           type: "project.create",
           commandId: CommandId.make(yield* randomUUID),
@@ -201,12 +254,34 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
           defaultModelSelection: nextProjectDefaultModelSelection,
+          ...(projectConfig.scripts !== undefined ? { scripts: projectConfig.scripts } : {}),
+          ...(projectConfig.browserPreviewUrl !== undefined
+            ? { browserPreviewUrl: projectConfig.browserPreviewUrl }
+            : {}),
           createdAt,
         });
       } else {
         nextProjectId = existingProject.value.id;
         nextProjectDefaultModelSelection =
           existingProject.value.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
+        const projectConfig = yield* resolveProjectConfig({ cwd: serverConfig.cwd });
+        const scriptsChanged =
+          projectConfig.scripts !== undefined &&
+          !projectScriptsEqual(projectConfig.scripts, existingProject.value.scripts);
+        const browserPreviewUrlChanged =
+          projectConfig.browserPreviewUrl !== undefined &&
+          projectConfig.browserPreviewUrl !== existingProject.value.browserPreviewUrl;
+        if (scriptsChanged || browserPreviewUrlChanged) {
+          yield* orchestrationEngine.dispatch({
+            type: "project.meta.update",
+            commandId: CommandId.make(yield* randomUUID),
+            projectId: nextProjectId,
+            ...(projectConfig.scripts !== undefined ? { scripts: projectConfig.scripts } : {}),
+            ...(projectConfig.browserPreviewUrl !== undefined
+              ? { browserPreviewUrl: projectConfig.browserPreviewUrl }
+              : {}),
+          });
+        }
       }
 
       const existingThreadId =
