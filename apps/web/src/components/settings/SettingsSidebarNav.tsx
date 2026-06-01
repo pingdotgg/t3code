@@ -20,6 +20,7 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "../ui/sidebar";
+import { SidebarPwaUpdateButton } from "../sidebar/SidebarPwaUpdateButton";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -99,6 +100,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
+        <SidebarPwaUpdateButton />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

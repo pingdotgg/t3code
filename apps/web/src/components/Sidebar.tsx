@@ -177,6 +177,7 @@ import {
   ThreadStatusPill,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
+import { SidebarPwaUpdateButton } from "./sidebar/SidebarPwaUpdateButton";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { SidebarUsageIndicator } from "./sidebar/SidebarUsageIndicator";
 import { SidebarConnectionStatus } from "./ConnectionStatusIndicator";
@@ -2569,6 +2570,7 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
 
   return (
     <SidebarFooter className="p-2">
+      <SidebarPwaUpdateButton />
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarUsageIndicator />

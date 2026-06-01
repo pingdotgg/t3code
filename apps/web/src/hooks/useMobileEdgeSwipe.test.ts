@@ -76,8 +76,58 @@ describe("resolveMobileEdgeSwipeDecision", () => {
     ).toBe("close");
   });
 
-  it("cancels vertical scrolling gestures", () => {
-    expect(resolveMobileEdgeSwipeDecision({ deltaX: 18, deltaY: 40, side: "left" })).toBe("cancel");
+  it("stays pending during vertical scrolling so it does not fight the swipe", () => {
+    expect(resolveMobileEdgeSwipeDecision({ deltaX: 18, deltaY: 40, side: "left" })).toBe(
+      "pending",
+    );
+  });
+
+  it("closes a panel on a quick horizontal flick before the sustained distance", () => {
+    expect(
+      resolveMobileEdgeSwipeDecision({
+        action: "close",
+        deltaX: 28,
+        deltaY: 6,
+        side: "right",
+        velocityX: 0.9,
+      }),
+    ).toBe("close");
+  });
+
+  it("keeps a slow horizontal drag pending so scrollable bodies can still scroll", () => {
+    expect(
+      resolveMobileEdgeSwipeDecision({
+        action: "close",
+        deltaX: 28,
+        deltaY: 6,
+        side: "right",
+        velocityX: 0.1,
+      }),
+    ).toBe("pending");
+  });
+
+  it("ignores a fast flick in the wrong direction", () => {
+    expect(
+      resolveMobileEdgeSwipeDecision({
+        action: "close",
+        deltaX: -28,
+        deltaY: 6,
+        side: "right",
+        velocityX: -0.9,
+      }),
+    ).toBe("cancel");
+  });
+
+  it("still flick-closes when a quick horizontal flick also drifts vertically", () => {
+    expect(
+      resolveMobileEdgeSwipeDecision({
+        action: "close",
+        deltaX: 28,
+        deltaY: 30,
+        side: "right",
+        velocityX: 0.9,
+      }),
+    ).toBe("close");
   });
 
   it("accepts starts within the configured left edge band", () => {

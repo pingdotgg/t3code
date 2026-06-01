@@ -12,6 +12,15 @@ export const MOBILE_EDGE_SWIPE_HORIZONTAL_DOMINANCE_RATIO = 1.25;
 export const MOBILE_EDGE_SWIPE_OPEN_INTENT_TIMEOUT_MS = 350;
 export const MOBILE_EDGE_SWIPE_PANEL_ATTRIBUTE = "data-mobile-edge-swipe-panel";
 
+// A quick horizontal flick can trigger the action well before the sustained
+// drag distance is reached. This lets the gesture win over a scrollable body,
+// which otherwise cancels the swipe (via native scroll + touchcancel) before
+// the slower distance threshold is met. A flick still has to clear a small
+// distance and stay horizontally dominant so it does not fire on taps or
+// vertical scrolls.
+export const MOBILE_EDGE_SWIPE_FLICK_DISTANCE_PX = 24;
+export const MOBILE_EDGE_SWIPE_FLICK_VELOCITY_PX_PER_MS = 0.5;
+
 export type MobileEdgeSwipeDecision = "cancel" | MobileEdgeSwipeAction | "pending";
 
 export interface MobileEdgeSwipeDelta {
@@ -20,6 +29,11 @@ export interface MobileEdgeSwipeDelta {
   readonly deltaY: number;
   readonly elapsedMs?: number;
   readonly side: MobileEdgeSwipeSide;
+  /**
+   * Instantaneous horizontal velocity (px/ms, signed like `deltaX`) sampled
+   * from the most recent move. Used to recognize quick flicks.
+   */
+  readonly velocityX?: number;
 }
 
 export function isMobileEdgeSwipeStart({
@@ -48,23 +62,30 @@ export function resolveMobileEdgeSwipeDecision({
   deltaY,
   elapsedMs,
   side,
+  velocityX = 0,
 }: MobileEdgeSwipeDelta): MobileEdgeSwipeDecision {
   const horizontalDistance = Math.abs(deltaX);
   const verticalDistance = Math.abs(deltaY);
   const openingDistance = side === "left" ? deltaX : -deltaX;
   const actionDistance = action === "open" ? openingDistance : -openingDistance;
+  const openingVelocity = side === "left" ? velocityX : -velocityX;
+  const actionVelocity = action === "open" ? openingVelocity : -openingVelocity;
+  const isHorizontallyDominant =
+    horizontalDistance >= verticalDistance * MOBILE_EDGE_SWIPE_HORIZONTAL_DOMINANCE_RATIO;
 
+  // Quick flick in the action direction: trigger before the sustained drag
+  // distance, so the gesture beats a scrollable body that would otherwise
+  // cancel the swipe. Vertical motion is intentionally ignored here — only
+  // horizontal intent matters, so flicking while the body scrolls up/down still
+  // works. A slow horizontal scroll never reaches the velocity threshold.
   if (
-    verticalDistance >= MOBILE_EDGE_SWIPE_VERTICAL_CANCEL_DISTANCE_PX &&
-    verticalDistance > horizontalDistance
+    actionDistance >= MOBILE_EDGE_SWIPE_FLICK_DISTANCE_PX &&
+    actionVelocity >= MOBILE_EDGE_SWIPE_FLICK_VELOCITY_PX_PER_MS
   ) {
-    return "cancel";
+    return action;
   }
 
-  if (
-    actionDistance >= MOBILE_EDGE_SWIPE_TRIGGER_DISTANCE_PX &&
-    horizontalDistance >= verticalDistance * MOBILE_EDGE_SWIPE_HORIZONTAL_DOMINANCE_RATIO
-  ) {
+  if (actionDistance >= MOBILE_EDGE_SWIPE_TRIGGER_DISTANCE_PX && isHorizontallyDominant) {
     if (
       action === "open" &&
       elapsedMs != null &&
@@ -166,22 +187,15 @@ export function useMobileEdgeSwipe({
       return;
     }
 
-    let activeSwipe:
-      | {
-          pointerId: number;
-          source: "pointer";
-          startTime: number;
-          startX: number;
-          startY: number;
-        }
-      | {
-          source: "touch";
-          startTime: number;
-          startX: number;
-          startY: number;
-          touchId: number;
-        }
-      | null = null;
+    let activeSwipe: {
+      id: number;
+      source: "pointer" | "touch";
+      startTime: number;
+      startX: number;
+      startY: number;
+      lastTime: number;
+      lastX: number;
+    } | null = null;
     let ignorePointerUntil = 0;
 
     const startSwipe = ({
@@ -212,10 +226,8 @@ export function useMobileEdgeSwipe({
         return;
       }
 
-      activeSwipe =
-        source === "pointer"
-          ? { pointerId: id, source, startTime: performance.now(), startX, startY }
-          : { source, startTime: performance.now(), startX, startY, touchId: id };
+      const now = performance.now();
+      activeSwipe = { id, source, startTime: now, startX, startY, lastTime: now, lastX: startX };
     };
 
     const updateSwipe = ({
@@ -236,12 +248,19 @@ export function useMobileEdgeSwipe({
         return;
       }
 
+      const now = performance.now();
+      const sampleMs = now - activeSwipe.lastTime;
+      const velocityX = sampleMs > 0 ? (clientX - activeSwipe.lastX) / sampleMs : 0;
+      activeSwipe.lastTime = now;
+      activeSwipe.lastX = clientX;
+
       const decision = resolveMobileEdgeSwipeDecision({
         deltaX: clientX - activeSwipe.startX,
         deltaY: clientY - activeSwipe.startY,
-        elapsedMs: performance.now() - activeSwipe.startTime,
+        elapsedMs: now - activeSwipe.startTime,
         action,
         side,
+        velocityX,
       });
 
       if (decision === "pending") {
@@ -284,7 +303,7 @@ export function useMobileEdgeSwipe({
         return;
       }
 
-      const touchId = activeSwipe.touchId;
+      const touchId = activeSwipe.id;
       const touch = Array.from(event.changedTouches).find(
         (changedTouch) => changedTouch.identifier === touchId,
       );
@@ -319,11 +338,7 @@ export function useMobileEdgeSwipe({
     };
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (
-        !activeSwipe ||
-        activeSwipe.source !== "pointer" ||
-        activeSwipe.pointerId !== event.pointerId
-      ) {
+      if (!activeSwipe || activeSwipe.source !== "pointer" || activeSwipe.id !== event.pointerId) {
         return;
       }
 
