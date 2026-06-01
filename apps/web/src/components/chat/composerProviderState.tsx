@@ -15,7 +15,17 @@ import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  type DescriptorFilter,
+  isReasoningDescriptor,
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+} from "./TraitsPicker";
+
+/** The reasoning-effort control is promoted to its own picker in the compact composer. */
+const reasoningOnlyFilter: DescriptorFilter = (descriptor) => isReasoningDescriptor(descriptor);
+const withoutReasoningFilter: DescriptorFilter = (descriptor) => !isReasoningDescriptor(descriptor);
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -77,6 +87,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  descriptorFilter?: DescriptorFilter,
 ): ReactNode {
   const {
     provider,
@@ -92,7 +103,14 @@ function renderTraitsControl(
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
     !hasTarget ||
-    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt })
+    !shouldRenderTraitsControls({
+      provider,
+      models,
+      model,
+      modelOptions,
+      prompt,
+      ...(descriptorFilter ? { descriptorFilter } : {}),
+    })
   ) {
     return null;
   }
@@ -107,6 +125,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...(descriptorFilter ? { descriptorFilter } : {})}
     />
   );
 }
@@ -117,4 +136,20 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
   return renderTraitsControl(TraitsPicker, input);
+}
+
+/**
+ * Compact-composer variant of {@link renderProviderTraitsMenuContent} that
+ * excludes the reasoning-effort control, which is surfaced separately via
+ * {@link renderProviderReasoningPicker}.
+ */
+export function renderProviderTraitsMenuContentWithoutReasoning(
+  input: TraitsRenderInput,
+): ReactNode {
+  return renderTraitsControl(TraitsMenuContent, input, withoutReasoningFilter);
+}
+
+/** Standalone reasoning-effort picker used in the compact composer footer. */
+export function renderProviderReasoningPicker(input: TraitsRenderInput): ReactNode {
+  return renderTraitsControl(TraitsPicker, input, reasoningOnlyFilter);
 }

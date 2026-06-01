@@ -17,6 +17,7 @@ import {
   ModelEsque,
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
+  stripCompanyPrefix,
 } from "./providerIconUtils";
 import { setModelPickerOpen } from "../../modelPickerOpenState";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -89,10 +90,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
+  const triggerTitle = selectedModel
+    ? stripCompanyPrefix(getTriggerDisplayModelName(selectedModel))
+    : props.model;
   const triggerSubtitle = selectedModel?.subProvider;
-  const triggerReasoningLevel = getReasoningLevelValue(props.modelOptionSelections);
-  const triggerBaseLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  // The compact composer surfaces reasoning effort in its own dedicated picker,
+  // so it is omitted from the model trigger text there to avoid duplication.
+  const triggerReasoningLevel = props.compact
+    ? null
+    : getReasoningLevelValue(props.modelOptionSelections);
+  const triggerBaseLabel = selectedModel
+    ? stripCompanyPrefix(getTriggerDisplayModelLabel(selectedModel))
+    : props.model;
   const triggerLabel = triggerReasoningLevel
     ? `${triggerBaseLabel} ${triggerReasoningLevel}`
     : triggerBaseLabel;

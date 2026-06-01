@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
   ModelSelection,
+  type ProviderOptionDescriptor,
   ProviderInstanceId,
   ProviderDriverKind,
   ThreadId,
@@ -16,8 +17,13 @@ import { render } from "vitest-browser-react";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { TraitsMenuContent } from "./TraitsPicker";
+import { isReasoningDescriptor, TraitsMenuContent } from "./TraitsPicker";
 import { useComposerDraftStore } from "../../composerDraftStore";
+
+// The compact "more controls" menu mirrors the app: the reasoning-effort
+// control is promoted to its own picker, so it is filtered out here.
+const withoutReasoning = (descriptor: ProviderOptionDescriptor) =>
+  !isReasoningDescriptor(descriptor);
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
@@ -150,6 +156,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
           prompt={props?.prompt ?? ""}
           modelOptions={providerOptions}
           onPromptChange={onPromptChange}
+          descriptorFilter={withoutReasoning}
         />
       }
       onToggleInteractionMode={vi.fn()}
@@ -214,11 +221,11 @@ describe("CompactComposerControlsMenu", () => {
     });
   });
 
-  it("shows only the provided effort options", async () => {
+  it("omits the reasoning-effort control (it lives in its own picker)", async () => {
     await using _ = await mountMenu({
       modelSelection: createModelSelection(
         ProviderInstanceId.make("claudeAgent"),
-        "claude-sonnet-4-6",
+        "claude-opus-4-6",
       ),
     });
 
@@ -226,11 +233,10 @@ describe("CompactComposerControlsMenu", () => {
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("Low");
-      expect(text).toContain("Medium");
-      expect(text).toContain("High");
-      expect(text).not.toContain("Max");
-      expect(text).toContain("Ultrathink");
+      // Reasoning section header and its options are absent; Fast Mode remains.
+      expect(text).not.toContain("Reasoning");
+      expect(text).not.toContain("Ultrathink");
+      expect(text).toContain("Fast Mode");
     });
   });
 
@@ -250,45 +256,6 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).toContain("Thinking");
       expect(text).toContain("On");
       expect(text).toContain("Off");
-    });
-  });
-
-  it("shows prompt-controlled Ultrathink state with selectable effort controls", async () => {
-    await using _ = await mountMenu({
-      modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudeAgent"),
-        "claude-opus-4-6",
-        [{ id: "effort", value: "high" }],
-      ),
-      prompt: "Ultrathink:\nInvestigate this",
-    });
-
-    await page.getByLabelText("More composer controls").click();
-
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Reasoning");
-      expect(text).not.toContain("ultrathink");
-    });
-  });
-
-  it("warns when ultrathink appears in prompt body text", async () => {
-    await using _ = await mountMenu({
-      modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudeAgent"),
-        "claude-opus-4-6",
-        [{ id: "effort", value: "high" }],
-      ),
-      prompt: "Ultrathink:\nplease ultrathink about this problem",
-    });
-
-    await page.getByLabelText("More composer controls").click();
-
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain(
-        'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
-      );
     });
   });
 

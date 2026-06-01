@@ -41,6 +41,19 @@ export function getTriggerDisplayModelName(model: ModelEsque): string {
   return getDisplayModelName(model, { preferShortName: true });
 }
 
+/**
+ * Leading company/brand tokens we drop from the *selected* model label so the
+ * picker trigger reads "Opus 4.8" / "5.4 Codex" rather than "Claude Opus 4.8" /
+ * "GPT-5.4 Codex". Only the trigger applies this; the picker list keeps the
+ * full, disambiguated names.
+ */
+const COMPANY_PREFIX_PATTERN = /^(?:claude|gpt|openai|anthropic)[\s-]+/i;
+
+export function stripCompanyPrefix(name: string): string {
+  const stripped = name.replace(COMPANY_PREFIX_PATTERN, "").trimStart();
+  return stripped.length > 0 ? stripped : name;
+}
+
 export function getTriggerDisplayModelLabel(model: ModelEsque): string {
   const title = getTriggerDisplayModelName(model);
   return model.subProvider ? `${model.subProvider} · ${title}` : title;

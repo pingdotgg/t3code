@@ -91,7 +91,8 @@ import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
   getComposerProviderState,
-  renderProviderTraitsMenuContent,
+  renderProviderReasoningPicker,
+  renderProviderTraitsMenuContentWithoutReasoning,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
@@ -1107,7 +1108,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
-  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+  const traitsRenderInput = {
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
@@ -1117,18 +1118,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: selectedInstanceModelOptions,
     prompt,
     onPromptChange: setPromptFromTraits,
-  });
-  const providerTraitsPicker = renderProviderTraitsPicker({
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    modelOptions: selectedInstanceModelOptions,
-    prompt,
-    onPromptChange: setPromptFromTraits,
-  });
+  };
+  // Compact footer (mobile/narrow): reasoning effort gets its own picker, so it
+  // is excluded from the "more controls" menu. The full traits picker (with
+  // reasoning) is still used on the roomier non-compact footer.
+  const providerTraitsMenuContent = renderProviderTraitsMenuContentWithoutReasoning(
+    traitsRenderInput,
+  );
+  const providerReasoningPicker = renderProviderReasoningPicker(traitsRenderInput);
+  const providerTraitsPicker = renderProviderTraitsPicker(traitsRenderInput);
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -2545,21 +2543,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
 
                 {isComposerFooterCompact ? (
-                  <CompactComposerControlsMenu
-                    activePlan={showPlanSidebarToggle}
-                    interactionMode={interactionMode}
-                    planSidebarLabel={planSidebarLabel}
-                    planSidebarOpen={planSidebarOpen}
-                    runtimeMode={runtimeMode}
-                    showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                    traitsMenuContent={providerTraitsMenuContent}
-                    autoReviewAvailable={autoReviewAvailable}
-                    autoReviewEnabled={autoReviewEnabled}
-                    onToggleInteractionMode={toggleInteractionMode}
-                    onTogglePlanSidebar={togglePlanSidebar}
-                    onRuntimeModeChange={handleRuntimeModeChange}
-                    onAutoReviewChange={handleAutoReviewChange}
-                  />
+                  <>
+                    {providerReasoningPicker}
+                    <CompactComposerControlsMenu
+                      activePlan={showPlanSidebarToggle}
+                      interactionMode={interactionMode}
+                      planSidebarLabel={planSidebarLabel}
+                      planSidebarOpen={planSidebarOpen}
+                      runtimeMode={runtimeMode}
+                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      traitsMenuContent={providerTraitsMenuContent}
+                      autoReviewAvailable={autoReviewAvailable}
+                      autoReviewEnabled={autoReviewEnabled}
+                      onToggleInteractionMode={toggleInteractionMode}
+                      onTogglePlanSidebar={togglePlanSidebar}
+                      onRuntimeModeChange={handleRuntimeModeChange}
+                      onAutoReviewChange={handleAutoReviewChange}
+                    />
+                  </>
                 ) : (
                   <>
                     {providerTraitsPicker ? (

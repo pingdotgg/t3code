@@ -7,10 +7,13 @@ import {
 } from "@t3tools/contracts";
 import {
   getComposerProviderState,
+  renderProviderReasoningPicker,
   renderProviderTraitsMenuContent,
+  renderProviderTraitsMenuContentWithoutReasoning,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { shouldRenderTraitsControls } from "./TraitsPicker";
+import { DraftId } from "../../composerDraftStore";
 
 // Everything in composerProviderState is now data-driven by the model's
 // optionDescriptors, so these tests use a single synthetic provider/model and
@@ -263,5 +266,47 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+});
+
+describe("compact reasoning split", () => {
+  const DRAFT_ID = DraftId.make("draft-reasoning-split");
+
+  function argsFor(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
+    return {
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith(descriptors),
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+      draftId: DRAFT_ID,
+    };
+  }
+
+  it("renders a reasoning picker only when the model exposes a reasoning control", () => {
+    const reasoning = selectDescriptor("reasoningEffort", [
+      { id: "low", label: "Low" },
+      { id: "high", label: "High", isDefault: true },
+    ]);
+
+    expect(renderProviderReasoningPicker(argsFor([reasoning]))).not.toBeNull();
+    expect(renderProviderReasoningPicker(argsFor([booleanDescriptor("fastMode")]))).toBeNull();
+  });
+
+  it("excludes reasoning from the compact more-controls menu", () => {
+    const reasoning = selectDescriptor("reasoningEffort", [
+      { id: "low", label: "Low" },
+      { id: "high", label: "High", isDefault: true },
+    ]);
+
+    // Reasoning-only model: the more-controls traits section collapses to null.
+    expect(renderProviderTraitsMenuContentWithoutReasoning(argsFor([reasoning]))).toBeNull();
+    // With another trait present, the menu renders (and that trait is reasoning's sibling).
+    expect(
+      renderProviderTraitsMenuContentWithoutReasoning(
+        argsFor([reasoning, booleanDescriptor("fastMode")]),
+      ),
+    ).not.toBeNull();
   });
 });
