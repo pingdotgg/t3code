@@ -14,6 +14,8 @@ export interface EnvironmentOption {
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
+export const WorktreeMode = Schema.Literals(["newBranch", "existingBranch"]);
+export type WorktreeMode = typeof WorktreeMode.Type;
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
@@ -44,6 +46,10 @@ export function resolveEnvironmentOptionLabel(input: {
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
+}
+
+export function resolveWorktreeModeLabel(mode: WorktreeMode): string {
+  return mode === "existingBranch" ? "Existing branch worktree" : "New worktree";
 }
 
 export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {

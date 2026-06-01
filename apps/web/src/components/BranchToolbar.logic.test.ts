@@ -11,6 +11,7 @@ import {
   resolveEnvModeLabel,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeModeLabel,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 
@@ -145,6 +146,13 @@ describe("resolveEnvModeLabel", () => {
   it("uses explicit workspace labels", () => {
     expect(resolveEnvModeLabel("local")).toBe("Current checkout");
     expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
+  });
+});
+
+describe("resolveWorktreeModeLabel", () => {
+  it("distinguishes new worktrees from direct existing-branch worktrees", () => {
+    expect(resolveWorktreeModeLabel("newBranch")).toBe("New worktree");
+    expect(resolveWorktreeModeLabel("existingBranch")).toBe("Existing branch worktree");
   });
 });
 

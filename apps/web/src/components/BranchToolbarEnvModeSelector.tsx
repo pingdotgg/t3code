@@ -3,9 +3,10 @@ import { memo, useMemo } from "react";
 
 import {
   resolveCurrentWorkspaceLabel,
-  resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeModeLabel,
   type EnvMode,
+  type WorktreeMode,
 } from "./BranchToolbar.logic";
 import {
   Select,
@@ -20,20 +21,29 @@ import {
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
+  worktreeMode: WorktreeMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  onWorktreeModeChange: (mode: WorktreeMode) => void;
 }
+
+type WorkspaceSelectValue = "local" | "worktree:newBranch" | "worktree:existingBranch";
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   envLocked,
   effectiveEnvMode,
+  worktreeMode,
   activeWorktreePath,
   onEnvModeChange,
+  onWorktreeModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
+  const workspaceValue: WorkspaceSelectValue =
+    effectiveEnvMode === "worktree" ? `worktree:${worktreeMode}` : "local";
   const envModeItems = useMemo(
     () => [
       { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
+      { value: "worktree:newBranch", label: resolveWorktreeModeLabel("newBranch") },
+      { value: "worktree:existingBranch", label: resolveWorktreeModeLabel("existingBranch") },
     ],
     [activeWorktreePath],
   );
@@ -59,8 +69,22 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   return (
     <Select
       modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+      value={workspaceValue}
+      onValueChange={(value) => {
+        if (value === "local") {
+          onEnvModeChange("local");
+          return;
+        }
+        if (value === "worktree:newBranch") {
+          onWorktreeModeChange("newBranch");
+          onEnvModeChange("worktree");
+          return;
+        }
+        if (value === "worktree:existingBranch") {
+          onWorktreeModeChange("existingBranch");
+          onEnvModeChange("worktree");
+        }
+      }}
       items={envModeItems}
     >
       <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
@@ -86,10 +110,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>
           </SelectItem>
-          <SelectItem value="worktree">
+          <SelectItem value="worktree:newBranch">
             <span className="inline-flex items-center gap-1.5">
               <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
+              {resolveWorktreeModeLabel("newBranch")}
+            </span>
+          </SelectItem>
+          <SelectItem value="worktree:existingBranch">
+            <span className="inline-flex items-center gap-1.5">
+              <FolderGit2Icon className="size-3" />
+              {resolveWorktreeModeLabel("existingBranch")}
             </span>
           </SelectItem>
         </SelectGroup>

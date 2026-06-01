@@ -145,6 +145,7 @@ import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRo
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type DraftThreadWorktreeMode,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -938,6 +939,8 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
+  const [pendingServerThreadWorktreeMode, setPendingServerThreadWorktreeMode] =
+    useState<DraftThreadWorktreeMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -2931,6 +2934,9 @@ export default function ChatView(props: ChatViewProps) {
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
+  const worktreeMode: DraftThreadWorktreeMode = canOverrideServerThreadEnvMode
+    ? (pendingServerThreadWorktreeMode ?? draftThread?.worktreeMode ?? "newBranch")
+    : (draftThread?.worktreeMode ?? "newBranch");
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
@@ -3013,6 +3019,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
+    setPendingServerThreadWorktreeMode(null);
     setPendingServerThreadBranch(undefined);
   }, [activeThread?.id]);
 
@@ -3021,6 +3028,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     setPendingServerThreadEnvMode(null);
+    setPendingServerThreadWorktreeMode(null);
     setPendingServerThreadBranch(undefined);
   }, [canOverrideServerThreadEnvMode]);
 
@@ -3330,6 +3338,8 @@ export default function ChatView(props: ChatViewProps) {
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
         : null;
+    const shouldCreateNewWorktreeBranch =
+      Boolean(baseBranchForWorktree) && worktreeMode === "newBranch";
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -3482,7 +3492,9 @@ export default function ChatView(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      ...(shouldCreateNewWorktreeBranch
+                        ? { branch: buildTemporaryWorktreeBranchName(randomHex) }
+                        : {}),
                     },
                     runSetupScript: true,
                   }
@@ -4088,6 +4100,28 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const onWorktreeModeChange = useCallback(
+    (mode: DraftThreadWorktreeMode) => {
+      if (canOverrideServerThreadEnvMode) {
+        setPendingServerThreadWorktreeMode(mode);
+        scheduleComposerFocus();
+        return;
+      }
+      if (isLocalDraftThread) {
+        setDraftThreadContext(composerDraftTarget, {
+          worktreeMode: mode,
+        });
+      }
+      scheduleComposerFocus();
+    },
+    [
+      canOverrideServerThreadEnvMode,
+      composerDraftTarget,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
+  );
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
@@ -4335,7 +4369,9 @@ export default function ChatView(props: ChatViewProps) {
                 threadId={activeThread.id}
                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                 onEnvModeChange={onEnvModeChange}
+                onWorktreeModeChange={onWorktreeModeChange}
                 {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                {...(canOverrideServerThreadEnvMode ? { worktreeModeOverride: worktreeMode } : {})}
                 {...(canOverrideServerThreadEnvMode
                   ? {
                       activeThreadBranchOverride: activeThreadBranch,

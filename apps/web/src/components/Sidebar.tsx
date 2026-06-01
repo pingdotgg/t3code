@@ -1686,6 +1686,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 branch: currentActiveDraftThread.branch,
                 worktreePath: currentActiveDraftThread.worktreePath,
                 envMode: currentActiveDraftThread.envMode,
+                ...(currentActiveDraftThread.worktreeMode
+                  ? { worktreeMode: currentActiveDraftThread.worktreeMode }
+                  : {}),
               }
             : null,
       });
@@ -1698,6 +1701,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ? { worktreePath: seedContext.worktreePath }
           : {}),
         envMode: seedContext.envMode,
+        ...(seedContext.worktreeMode ? { worktreeMode: seedContext.worktreeMode } : {}),
       });
     },
     [defaultThreadEnvMode, handleNewThread, isMobile, router, setOpenMobile],

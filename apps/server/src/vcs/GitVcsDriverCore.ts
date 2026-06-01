@@ -2064,19 +2064,88 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const findWorktreePathForBranch = Effect.fn("findWorktreePathForBranch")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const worktreeList = yield* executeGit(
+      "GitVcsDriver.findWorktreePathForBranch.worktreeList",
+      cwd,
+      ["worktree", "list", "--porcelain"],
+      {
+        timeoutMs: 5_000,
+        allowNonZeroExit: true,
+      },
+    );
+    if (worktreeList.exitCode !== 0) {
+      return null;
+    }
+
+    let currentPath: string | null = null;
+    for (const line of worktreeList.stdout.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        const candidatePath = line.slice("worktree ".length);
+        const exists = yield* fileSystem.stat(candidatePath).pipe(
+          Effect.map(() => true),
+          Effect.catch(() => Effect.succeed(false)),
+        );
+        currentPath = exists ? candidatePath : null;
+        continue;
+      }
+      if (line.startsWith("branch refs/heads/") && currentPath) {
+        if (line.slice("branch refs/heads/".length) === branch) {
+          return currentPath;
+        }
+        continue;
+      }
+      if (line === "") {
+        currentPath = null;
+      }
+    }
+
+    return null;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriverShape["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
-    const targetBranch = input.newRefName ?? input.refName;
+    const remoteNames = input.newRefName
+      ? []
+      : yield* listRemoteNames(input.cwd).pipe(Effect.catch(() => Effect.succeed([])));
+    const parsedRemoteRef = input.newRefName
+      ? null
+      : parseRemoteRefWithRemoteNames(input.refName, remoteNames);
+    const localBranch = parsedRemoteRef?.branchName ?? input.refName;
+    const targetBranch = input.newRefName ?? localBranch;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
-    const worktreeStartPoint = yield* branchExists(input.cwd, input.refName).pipe(
-      Effect.map((exists) => (exists ? `refs/heads/${input.refName}` : input.refName)),
-    );
+
+    if (!input.newRefName) {
+      const existingWorktree = yield* findWorktreePathForBranch(input.cwd, targetBranch);
+      if (existingWorktree) {
+        return {
+          worktree: {
+            path: existingWorktree,
+            refName: targetBranch,
+          },
+        };
+      }
+    }
+
+    const localBranchExists = yield* branchExists(input.cwd, localBranch);
+    const worktreeStartPoint = input.newRefName
+      ? yield* branchExists(input.cwd, input.refName).pipe(
+          Effect.map((exists) => (exists ? `refs/heads/${input.refName}` : input.refName)),
+        )
+      : localBranchExists
+        ? localBranch
+        : input.refName;
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, worktreeStartPoint]
-      : ["worktree", "add", worktreePath, worktreeStartPoint];
+      : parsedRemoteRef && !localBranchExists
+        ? ["worktree", "add", "--track", "-b", localBranch, worktreePath, input.refName]
+        : ["worktree", "add", worktreePath, worktreeStartPoint];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorMessage: "git worktree add failed",

@@ -17,10 +17,11 @@ import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeS
 import {
   type EnvMode,
   type EnvironmentOption,
+  type WorktreeMode,
   resolveCurrentWorkspaceLabel,
-  resolveEnvModeLabel,
   resolveEffectiveEnvMode,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeModeLabel,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
@@ -43,7 +44,9 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
+  onWorktreeModeChange: (mode: WorktreeMode) => void;
   effectiveEnvModeOverride?: EnvMode;
+  worktreeModeOverride?: WorktreeMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   envLocked: boolean;
@@ -61,8 +64,10 @@ interface MobileRunContextSelectorProps {
   showEnvironmentPicker: boolean;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
   effectiveEnvMode: EnvMode;
+  worktreeMode: WorktreeMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  onWorktreeModeChange: (mode: WorktreeMode) => void;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -73,8 +78,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   showEnvironmentPicker,
   onEnvironmentChange,
   effectiveEnvMode,
+  worktreeMode,
   activeWorktreePath,
   onEnvModeChange,
+  onWorktreeModeChange,
 }: MobileRunContextSelectorProps) {
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
@@ -89,8 +96,9 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   const workspaceLabel = envModeLocked
     ? resolveLockedWorkspaceLabel(activeWorktreePath)
     : effectiveEnvMode === "worktree"
-      ? resolveEnvModeLabel("worktree")
+      ? resolveWorktreeModeLabel(worktreeMode)
       : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const workspaceValue = effectiveEnvMode === "worktree" ? `worktree:${worktreeMode}` : "local";
   const isLocked = envLocked || envModeLocked;
   const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
   const icon = showEnvironmentPicker ? (
@@ -161,8 +169,22 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         <MenuGroup>
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
-            value={effectiveEnvMode}
-            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+            value={workspaceValue}
+            onValueChange={(value) => {
+              if (value === "local") {
+                onEnvModeChange("local");
+                return;
+              }
+              if (value === "worktree:newBranch") {
+                onWorktreeModeChange("newBranch");
+                onEnvModeChange("worktree");
+                return;
+              }
+              if (value === "worktree:existingBranch") {
+                onWorktreeModeChange("existingBranch");
+                onEnvModeChange("worktree");
+              }
+            }}
           >
             <MenuRadioItem disabled={envModeLocked} value="local">
               <span className="flex min-w-0 items-center gap-1.5">
@@ -176,10 +198,18 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 </span>
               </span>
             </MenuRadioItem>
-            <MenuRadioItem disabled={envModeLocked} value="worktree">
+            <MenuRadioItem disabled={envModeLocked} value="worktree:newBranch">
               <span className="flex min-w-0 items-center gap-1.5">
                 <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                <span className="min-w-0 truncate">{resolveWorktreeModeLabel("newBranch")}</span>
+              </span>
+            </MenuRadioItem>
+            <MenuRadioItem disabled={envModeLocked} value="worktree:existingBranch">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                <span className="min-w-0 truncate">
+                  {resolveWorktreeModeLabel("existingBranch")}
+                </span>
               </span>
             </MenuRadioItem>
           </MenuRadioGroup>
@@ -194,7 +224,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   threadId,
   draftId,
   onEnvModeChange,
+  onWorktreeModeChange,
   effectiveEnvModeOverride,
+  worktreeModeOverride,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   envLocked,
@@ -231,6 +263,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       hasServerThread: serverThread !== undefined,
       draftThreadEnvMode: draftThread?.envMode,
     });
+  const worktreeMode = worktreeModeOverride ?? draftThread?.worktreeMode ?? "newBranch";
   const envModeLocked = envLocked || (serverThread !== undefined && activeWorktreePath !== null);
 
   const showEnvironmentPicker = Boolean(
@@ -251,8 +284,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           showEnvironmentPicker={showEnvironmentPicker}
           onEnvironmentChange={onEnvironmentChange}
           effectiveEnvMode={effectiveEnvMode}
+          worktreeMode={worktreeMode}
           activeWorktreePath={activeWorktreePath}
           onEnvModeChange={onEnvModeChange}
+          onWorktreeModeChange={onWorktreeModeChange}
         />
       ) : (
         <div className="flex min-w-0 shrink-0 items-center gap-1">
@@ -270,8 +305,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           <BranchToolbarEnvModeSelector
             envLocked={envModeLocked}
             effectiveEnvMode={effectiveEnvMode}
+            worktreeMode={worktreeMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
+            onWorktreeModeChange={onWorktreeModeChange}
           />
         </div>
       )}
@@ -283,6 +320,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(draftId ? { draftId } : {})}
         envLocked={envLocked}
         {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+        worktreeMode={worktreeMode}
         {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}

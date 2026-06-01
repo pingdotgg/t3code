@@ -49,6 +49,8 @@ export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 6;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
+const DraftThreadWorktreeModeSchema = Schema.Literals(["newBranch", "existingBranch"]);
+export type DraftThreadWorktreeMode = typeof DraftThreadWorktreeModeSchema.Type;
 
 export const DraftId = Schema.String.pipe(Schema.brand("DraftId"));
 export type DraftId = typeof DraftId.Type;
@@ -179,6 +181,7 @@ const PersistedDraftThreadState = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
+  worktreeMode: Schema.optionalKey(DraftThreadWorktreeModeSchema),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -248,6 +251,7 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  worktreeMode?: DraftThreadWorktreeMode;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -309,6 +313,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      worktreeMode?: DraftThreadWorktreeMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -323,6 +328,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      worktreeMode?: DraftThreadWorktreeMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -336,6 +342,7 @@ interface ComposerDraftStoreState {
       projectRef?: ScopedProjectRef;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      worktreeMode?: DraftThreadWorktreeMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -1019,6 +1026,10 @@ function normalizeDraftThreadEnvMode(
   return fallbackWorktreePath ? "worktree" : "local";
 }
 
+function normalizeDraftThreadWorktreeMode(value: unknown): DraftThreadWorktreeMode {
+  return value === "existingBranch" ? "existingBranch" : "newBranch";
+}
+
 function projectDraftKey(projectRef: ScopedProjectRef): string {
   return scopedProjectKey(projectRef);
 }
@@ -1158,6 +1169,7 @@ function createDraftThreadState(
     worktreePath?: string | null;
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
+    worktreeMode?: DraftThreadWorktreeMode;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
   },
@@ -1196,6 +1208,9 @@ function createDraftThreadState(
         : projectChanged
           ? "local"
           : (existingThread?.envMode ?? "local")),
+    worktreeMode:
+      options?.worktreeMode ??
+      (projectChanged ? "newBranch" : (existingThread?.worktreeMode ?? "newBranch")),
     promotedTo: null,
   };
 }
@@ -1227,6 +1242,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    left.worktreeMode === right.worktreeMode &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1368,6 +1384,7 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        worktreeMode: normalizeDraftThreadWorktreeMode(candidateDraftThread.worktreeMode),
         promotedTo,
       };
     }
@@ -1413,6 +1430,7 @@ function normalizePersistedDraftThreads(
           branch: null,
           worktreePath: null,
           envMode: "local",
+          worktreeMode: "newBranch",
           promotedTo: null,
         };
       } else if (
@@ -1931,6 +1949,7 @@ function toHydratedDraftThreadState(
     branch: persistedDraftThread.branch,
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
+    worktreeMode: persistedDraftThread.worktreeMode ?? "newBranch",
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2136,6 +2155,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : projectChanged
                     ? "local"
                     : (existing.envMode ?? "local")),
+              worktreeMode:
+                options.worktreeMode ??
+                (projectChanged ? "newBranch" : (existing.worktreeMode ?? "newBranch")),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2148,6 +2170,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.branch === existing.branch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
+              nextDraftThread.worktreeMode === existing.worktreeMode &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

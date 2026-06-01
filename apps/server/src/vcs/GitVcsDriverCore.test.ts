@@ -340,6 +340,53 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           );
         }),
     );
+
+    it.effect("checks out an existing branch directly when newRefName is omitted", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "feature/direct"]);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "direct");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: "feature/direct",
+        });
+
+        assert.equal(created.worktree.path, worktreePath);
+        assert.equal(created.worktree.refName, "feature/direct");
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/direct");
+      }),
+    );
+
+    it.effect("reuses the existing checkout when a direct branch is already checked out", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const requestedWorktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "already-checked-out",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: requestedWorktreePath,
+          refName: initialBranch,
+        });
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(
+          yield* fileSystem.realPath(created.worktree.path),
+          yield* fileSystem.realPath(cwd),
+        );
+        assert.equal(created.worktree.refName, initialBranch);
+      }),
+    );
   });
 
   describe("commit context", () => {

@@ -16,6 +16,7 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarNewThreadWorktreeMode = "newBranch" | "existingBranch";
 type SidebarProject = {
   id: string;
   name: string;
@@ -180,11 +181,13 @@ export function resolveSidebarNewThreadSeedContext(input: {
     branch: string | null;
     worktreePath: string | null;
     envMode: SidebarNewThreadEnvMode;
+    worktreeMode?: SidebarNewThreadWorktreeMode;
   } | null;
 }): {
   branch?: string | null;
   worktreePath?: string | null;
   envMode: SidebarNewThreadEnvMode;
+  worktreeMode?: SidebarNewThreadWorktreeMode;
 } {
   if (input.defaultEnvMode === "worktree") {
     return {
@@ -197,6 +200,9 @@ export function resolveSidebarNewThreadSeedContext(input: {
       branch: input.activeDraftThread.branch,
       worktreePath: input.activeDraftThread.worktreePath,
       envMode: input.activeDraftThread.envMode,
+      ...(input.activeDraftThread.worktreeMode
+        ? { worktreeMode: input.activeDraftThread.worktreeMode }
+        : {}),
     };
   }
 

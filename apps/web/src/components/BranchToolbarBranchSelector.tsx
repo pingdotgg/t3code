@@ -30,6 +30,8 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
+  type EnvMode,
+  type WorktreeMode,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -51,7 +53,8 @@ interface BranchToolbarBranchSelectorProps {
   threadId: ThreadId;
   draftId?: DraftId;
   envLocked: boolean;
-  effectiveEnvModeOverride?: "local" | "worktree";
+  effectiveEnvModeOverride?: EnvMode;
+  worktreeMode: WorktreeMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -66,15 +69,18 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 function getBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
-  effectiveEnvMode: "local" | "worktree";
+  effectiveEnvMode: EnvMode;
+  worktreeMode: WorktreeMode;
   resolvedActiveBranch: string | null;
 }): string {
-  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
+  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch, worktreeMode } = input;
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    return `From ${resolvedActiveBranch}`;
+    return worktreeMode === "existingBranch"
+      ? `Use ${resolvedActiveBranch}`
+      : `From ${resolvedActiveBranch}`;
   }
   return resolvedActiveBranch;
 }
@@ -86,6 +92,7 @@ export function BranchToolbarBranchSelector({
   draftId,
   envLocked,
   effectiveEnvModeOverride,
+  worktreeMode,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
@@ -139,7 +146,7 @@ export function BranchToolbarBranchSelector({
   // Thread branch mutation (colocated — only this component calls it)
   // ---------------------------------------------------------------------------
   const setThreadBranch = useCallback(
-    (branch: string | null, worktreePath: string | null) => {
+    (branch: string | null, worktreePath: string | null, envModeOverride?: EnvMode) => {
       if (!activeThreadId || !activeProject) return;
       const api = readEnvironmentApi(environmentId);
       if (serverSession && worktreePath !== activeWorktreePath && api) {
@@ -174,7 +181,8 @@ export function BranchToolbarBranchSelector({
       setDraftThreadContext(draftId ?? threadRef, {
         branch,
         worktreePath,
-        envMode: nextDraftEnvMode,
+        envMode: envModeOverride ?? nextDraftEnvMode,
+        worktreeMode,
         projectRef: scopeProjectRef(environmentId, activeProject.id),
       });
     },
@@ -191,6 +199,7 @@ export function BranchToolbarBranchSelector({
       threadRef,
       environmentId,
       effectiveEnvMode,
+      worktreeMode,
     ],
   );
 
@@ -238,11 +247,11 @@ export function BranchToolbarBranchSelector({
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
-  const isSelectingWorktreeBase =
+  const isSelectingPendingWorktreeRef =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
-  const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
+  const canCreateBranch = !isSelectingPendingWorktreeRef && trimmedBranchQuery.length > 0;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
@@ -307,7 +316,15 @@ export function BranchToolbarBranchSelector({
     const api = readEnvironmentApi(environmentId);
     if (!api || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
-    if (isSelectingWorktreeBase) {
+    if (isSelectingPendingWorktreeRef) {
+      if (worktreeMode === "existingBranch" && refName.worktreePath) {
+        const nextWorktreePath =
+          refName.worktreePath === activeProjectCwd ? null : refName.worktreePath;
+        setThreadBranch(refName.name, nextWorktreePath, nextWorktreePath ? "worktree" : "local");
+        setIsBranchMenuOpen(false);
+        onComposerFocusRequest?.();
+        return;
+      }
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
@@ -493,6 +510,7 @@ export function BranchToolbarBranchSelector({
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
+    worktreeMode,
     resolvedActiveBranch,
   });
 
