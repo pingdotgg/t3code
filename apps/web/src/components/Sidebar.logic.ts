@@ -23,6 +23,7 @@ type SidebarProject = {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
+type SidebarThreadIdentity = Pick<SidebarThreadSummary, "id" | "tabGroupId">;
 
 export type ThreadTraversalDirection = "previous" | "next";
 
@@ -217,6 +218,16 @@ export function resolveSidebarNewThreadSeedContext(input: {
   return {
     envMode: input.defaultEnvMode,
   };
+}
+
+export function getSidebarTopLevelThreadId(
+  thread: SidebarThreadIdentity,
+): SidebarThreadSummary["id"] {
+  return thread.tabGroupId ?? thread.id;
+}
+
+export function isSidebarTopLevelThread(thread: SidebarThreadIdentity): boolean {
+  return getSidebarTopLevelThreadId(thread) === thread.id;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

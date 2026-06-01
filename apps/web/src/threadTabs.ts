@@ -30,7 +30,7 @@ export function buildThreadContentTabs(input: {
 }): ThreadContentTab[] {
   const activeThread = input.activeThread;
   const activeThreadRef = input.activeThreadRef;
-  if (!activeThread || !activeThreadRef) {
+  if (!activeThread || !activeThreadRef || activeThread.archivedAt !== null) {
     return [];
   }
 
@@ -39,6 +39,7 @@ export function buildThreadContentTabs(input: {
   const tabs = input.sidebarThreads
     .filter(
       (thread) =>
+        thread.archivedAt === null &&
         thread.environmentId === activeThread.environmentId &&
         sidebarThreadTabGroupId(thread) === activeGroupId &&
         (thread.tabType ?? "chat") === "chat",
@@ -72,4 +73,17 @@ export function buildThreadContentTabs(input: {
     (left, right) =>
       left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
   );
+}
+
+export function resolveFallbackThreadTabAfterClose(
+  tabs: ReadonlyArray<ThreadContentTab>,
+  closedTab: ThreadContentTab,
+): ThreadContentTab | null {
+  const closedTabKey = scopedThreadKey(closedTab.threadRef);
+  const closedIndex = tabs.findIndex((tab) => scopedThreadKey(tab.threadRef) === closedTabKey);
+  if (closedIndex === -1) {
+    return null;
+  }
+
+  return tabs[closedIndex + 1] ?? tabs[closedIndex - 1] ?? null;
 }

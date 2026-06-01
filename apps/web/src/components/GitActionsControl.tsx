@@ -1682,7 +1682,7 @@ export default function GitActionsControl({
                   <Button
                     aria-disabled="true"
                     className={cn(
-                      "cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none",
+                      "min-w-0 max-w-56 cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none",
                       quickActionClassName,
                     )}
                     size="xs"
@@ -1694,9 +1694,7 @@ export default function GitActionsControl({
                   quickAction={quickAction}
                   SourceControlIcon={SourceControlIcon}
                 />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                  {quickAction.label}
-                </span>
+                <span className="ml-0.5 min-w-0 truncate">{quickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -1706,14 +1704,12 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
-              className={quickActionClassName}
+              className={cn("min-w-0 max-w-56", quickActionClassName)}
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                {quickAction.label}
-              </span>
+              <span className="ml-0.5 min-w-0 truncate">{quickAction.label}</span>
             </Button>
           )}
           <GroupSeparator className="hidden @3xl/header-actions:block" />

@@ -160,8 +160,10 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  getSidebarTopLevelThreadId,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isSidebarTopLevelThread,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -1043,7 +1045,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   // thread-list change).
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
-  const projectThreads = sidebarThreads;
+  const projectThreads = useMemo(
+    () => sidebarThreads.filter(isSidebarTopLevelThread),
+    [sidebarThreads],
+  );
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -1086,7 +1091,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     const counts = new Map<string, number>(
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
-    for (const thread of projectThreads) {
+    for (const thread of sidebarThreads) {
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -1096,7 +1101,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       counts.set(member.physicalProjectKey, (counts.get(member.physicalProjectKey) ?? 0) + 1);
     }
     return counts;
-  }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  }, [memberProjectByScopedKey, project.memberProjects, sidebarThreads]);
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -2893,6 +2898,22 @@ export default function Sidebar() {
       ),
     [sidebarThreads],
   );
+  const topLevelSidebarThreads = useMemo(
+    () => sidebarThreads.filter(isSidebarTopLevelThread),
+    [sidebarThreads],
+  );
+  const activeSidebarThreadKey = useMemo(() => {
+    if (!routeThreadKey) {
+      return null;
+    }
+    const activeThread = sidebarThreadByKey.get(routeThreadKey);
+    if (!activeThread) {
+      return routeThreadKey;
+    }
+    return scopedThreadKey(
+      scopeThreadRef(activeThread.environmentId, getSidebarTopLevelThreadId(activeThread)),
+    );
+  }, [routeThreadKey, sidebarThreadByKey]);
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
   const activeRouteProjectKey = useMemo(() => {
@@ -2912,7 +2933,7 @@ export default function Sidebar() {
   // are displayed together.
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
-    for (const thread of sidebarThreads) {
+    for (const thread of topLevelSidebarThreads) {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -2926,7 +2947,7 @@ export default function Sidebar() {
       }
     }
     return next;
-  }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [topLevelSidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3040,8 +3061,8 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
-    [sidebarThreads],
+    () => topLevelSidebarThreads.filter((thread) => thread.archivedAt === null),
+    [topLevelSidebarThreads],
   );
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
@@ -3085,7 +3106,7 @@ export default function Sidebar() {
           sidebarThreadSortOrder,
         );
         const projectExpanded = projectExpandedById[project.projectKey] ?? true;
-        const activeThreadKey = routeThreadKey ?? undefined;
+        const activeThreadKey = activeSidebarThreadKey ?? undefined;
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
             ? (projectThreads.find(
@@ -3113,8 +3134,8 @@ export default function Sidebar() {
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,
+      activeSidebarThreadKey,
       projectExpandedById,
-      routeThreadKey,
       sortedProjects,
       threadsByProjectKey,
     ],
@@ -3215,7 +3236,7 @@ export default function Sidebar() {
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
           threadIds: orderedSidebarThreadKeys,
-          currentThreadId: routeThreadKey,
+          currentThreadId: activeSidebarThreadKey,
           direction: traversalDirection,
         });
         if (!targetThreadKey) {
@@ -3262,7 +3283,7 @@ export default function Sidebar() {
     navigateToThread,
     orderedSidebarThreadKeys,
     platform,
-    routeThreadKey,
+    activeSidebarThreadKey,
     sidebarThreadByKey,
     threadJumpThreadKeys,
   ]);
@@ -3449,7 +3470,7 @@ export default function Sidebar() {
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
-            routeThreadKey={routeThreadKey}
+            routeThreadKey={activeSidebarThreadKey}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
