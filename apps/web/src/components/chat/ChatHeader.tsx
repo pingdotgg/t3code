@@ -59,6 +59,7 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  onSubmitGitPrompt: (prompt: string) => boolean | Promise<boolean>;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -136,6 +137,7 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
+  onSubmitGitPrompt,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const customPreviewUrl = useSettings((settings) => settings.browserAgentPreviewUrl);
@@ -265,6 +267,7 @@ export const ChatHeader = memo(function ChatHeader({
             <GitActionsControl
               gitCwd={gitCwd}
               activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              onSubmitPrompt={onSubmitGitPrompt}
               {...(draftId ? { draftId } : {})}
               {...(pullRequestCommentsAction ? { pullRequestCommentsAction } : {})}
             />
