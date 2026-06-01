@@ -29,4 +29,4 @@ export interface RelayConfigurationShape {
 export class RelayConfiguration extends Context.Service<
   RelayConfiguration,
   RelayConfigurationShape
->()("RelayConfiguration") {}
+>()("t3code-relay/Config/RelayConfiguration") {}

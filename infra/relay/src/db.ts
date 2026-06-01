@@ -10,20 +10,17 @@ export interface RelayDatabase extends EffectPgDatabase {
   readonly $client: PgClient;
 }
 
-export class RelayDb extends Context.Service<RelayDb, RelayDatabase>()("RelayDb") {}
-
-export const relayPostgresDatabaseRegion = { slug: "us-west" } as const;
-
-export const RelaySchema = Drizzle.Schema("RelaySchema", {
-  schema: "./src/schema.ts",
-  out: "./migrations/postgres",
-  dialect: "postgres",
-});
+export class RelayDb extends Context.Service<RelayDb, RelayDatabase>()("t3code-relay/db/RelayDb") {}
 
 export const PlanetscaleDatabase = Effect.gen(function* () {
-  const schema = yield* RelaySchema;
+  const schema = yield* Drizzle.Schema("RelaySchema", {
+    schema: "./src/persistence/schema.ts",
+    out: "./migrations/postgres",
+    dialect: "postgres",
+  });
+
   const database = yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
-    region: relayPostgresDatabaseRegion,
+    region: { slug: "us-west" },
     clusterSize: "PS_5",
     migrationsDir: schema.out,
     migrationsTable: "relay_migrations",

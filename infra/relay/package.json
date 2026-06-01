@@ -6,27 +6,24 @@
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "^3.4.14",
-    "@distilled.cloud/cloudflare": "^0.21.5",
+    "@clerk/backend": "3.4.14",
     "@effect/sql-pg": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "alchemy": "2.0.0-beta.45",
-    "drizzle-orm": "^1.0.0-rc.1",
+    "alchemy": "2.0.0-beta.47",
+    "drizzle-orm": "1.0.0-rc.3",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260520.0",
+    "@cloudflare/workers-types": "^4.20260601.1",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "^8.15.6",
-    "drizzle-kit": "^1.0.0-rc.1",
-    "typescript": "catalog:",
+    "drizzle-kit": "1.0.0-rc.3",
     "vitest": "catalog:"
   }
 }

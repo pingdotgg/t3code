@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off layerMergeAllWithDependencies:off - Alchemy provider helpers expose framework-owned any requirements.
 import * as Alchemy from "alchemy";
 import * as Axiom from "alchemy/Axiom";
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -13,7 +14,6 @@ import Api from "./src/worker.ts";
 export default Alchemy.Stack(
   "T3CodeRelay",
   {
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off layerMergeAllWithDependencies:off - Alchemy provider helpers expose framework-owned any requirements.
     providers: Layer.mergeAll(
       Axiom.providers(),
       Cloudflare.providers(),
