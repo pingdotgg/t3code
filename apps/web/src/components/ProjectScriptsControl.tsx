@@ -26,7 +26,8 @@ import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSe
 import {
   commandForProjectScript,
   nextProjectScriptId,
-  primaryProjectScript,
+  pinnedTopBarProjectScripts,
+  topBarMainProjectScript,
 } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
 import {
@@ -55,6 +56,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "play", label: "Play" },
@@ -86,7 +88,12 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
+  pinnedToTopBar: boolean;
   keybinding: string | null;
+}
+
+export interface RunProjectScriptOptions {
+  rememberAsLastInvoked?: boolean;
 }
 
 interface ProjectScriptsControlProps {
@@ -94,7 +101,7 @@ interface ProjectScriptsControlProps {
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   runningScriptIds?: ReadonlySet<string>;
-  onRunScript: (script: ProjectScript) => void;
+  onRunScript: (script: ProjectScript, options?: RunProjectScriptOptions) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
   onDeleteScript: (scriptId: string) => Promise<void> | void;
@@ -118,17 +125,18 @@ export default function ProjectScriptsControl({
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
+  const [pinnedToTopBar, setPinnedToTopBar] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const primaryScript = useMemo(() => {
-    if (preferredScriptId) {
-      const preferred = scripts.find((script) => script.id === preferredScriptId);
-      if (preferred) return preferred;
-    }
-    return primaryProjectScript(scripts);
+    return topBarMainProjectScript(scripts, preferredScriptId);
   }, [preferredScriptId, scripts]);
+  const pinnedScripts = useMemo(
+    () => pinnedTopBarProjectScripts(scripts, primaryScript?.id ?? null),
+    [primaryScript?.id, scripts],
+  );
   const primaryScriptRunning = primaryScript ? runningScriptIds.has(primaryScript.id) : false;
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
@@ -176,6 +184,7 @@ export default function ProjectScriptsControl({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
+        pinnedToTopBar,
         keybinding: keybindingRule?.key ?? null,
       } satisfies NewProjectScriptInput;
       if (editingScriptId) {
@@ -197,6 +206,7 @@ export default function ProjectScriptsControl({
     setIcon("play");
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(false);
+    setPinnedToTopBar(false);
     setKeybinding("");
     setValidationError(null);
     setDialogOpen(true);
@@ -209,6 +219,7 @@ export default function ProjectScriptsControl({
     setIcon(script.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
+    setPinnedToTopBar(script.pinnedToTopBar === true);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
     setValidationError(null);
     setDialogOpen(true);
@@ -249,6 +260,41 @@ export default function ProjectScriptsControl({
               {primaryScript.name}
             </span>
           </Button>
+          {pinnedScripts.length > 0 && (
+            <>
+              <GroupSeparator className="hidden @3xl/header-actions:block" />
+              {pinnedScripts.map((script) => {
+                const scriptRunning = runningScriptIds.has(script.id);
+                const label = scriptRunning ? `Stop ${script.name}` : `Run ${script.name}`;
+                return (
+                  <Tooltip key={script.id}>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-xs"
+                          variant="outline"
+                          className={cn(
+                            scriptRunning &&
+                              "border-emerald-500/45 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300",
+                          )}
+                          onClick={() => onRunScript(script, { rememberAsLastInvoked: false })}
+                          aria-label={label}
+                          title={label}
+                        />
+                      }
+                    >
+                      {scriptRunning ? (
+                        <SquareIcon className="size-3.5 fill-current" />
+                      ) : (
+                        <ScriptIcon icon={script.icon} />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipPopup side="bottom">{label}</TooltipPopup>
+                  </Tooltip>
+                );
+              })}
+            </>
+          )}
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
@@ -339,6 +385,7 @@ export default function ProjectScriptsControl({
           setCommand("");
           setIcon("play");
           setRunOnWorktreeCreate(false);
+          setPinnedToTopBar(false);
           setKeybinding("");
           setValidationError(null);
         }}
@@ -431,6 +478,13 @@ export default function ProjectScriptsControl({
                 <Switch
                   checked={runOnWorktreeCreate}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+                <span>Pin to top bar</span>
+                <Switch
+                  checked={pinnedToTopBar}
+                  onCheckedChange={(checked) => setPinnedToTopBar(Boolean(checked))}
                 />
               </label>
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
