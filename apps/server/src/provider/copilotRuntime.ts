@@ -95,6 +95,11 @@ function authTypeLabel(authType: GetAuthStatusResponse["authType"]): string | un
   }
 }
 
+function normalizeAuthLabelPart(value: string | null | undefined): string | undefined {
+  const trimmed = trimOrUndefined(value);
+  return trimmed ? trimmed.replace(/^@/, "").toLowerCase() : undefined;
+}
+
 export function createCopilotClient(input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
@@ -217,13 +222,25 @@ export function authSnapshotFromCopilotSdk(authStatus: GetAuthStatusResponse): {
   readonly message?: string;
 } {
   const authType = trimOrUndefined(authStatus.authType);
-  const label = [
-    authTypeLabel(authStatus.authType),
+  const authTypeDisplay = authTypeLabel(authStatus.authType);
+  const fallbackLabel = [
+    authTypeDisplay,
     authStatus.login ? `@${authStatus.login}` : undefined,
     trimOrUndefined(authStatus.host)?.replace(/^https?:\/\//, ""),
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join(" - ");
+  const statusMessageLabel = trimOrUndefined(authStatus.statusMessage);
+  const normalizedStatusMessage = normalizeAuthLabelPart(statusMessageLabel);
+  const normalizedLogin = normalizeAuthLabelPart(authStatus.login);
+  const normalizedAuthTypeDisplay = normalizeAuthLabelPart(authTypeDisplay);
+  const label =
+    authStatus.isAuthenticated &&
+    normalizedStatusMessage !== undefined &&
+    normalizedStatusMessage !== normalizedLogin &&
+    normalizedStatusMessage !== normalizedAuthTypeDisplay
+      ? statusMessageLabel
+      : fallbackLabel;
 
   if (!authStatus.isAuthenticated) {
     return {
