@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildThreadContentTabs,
   resolveFallbackThreadTabAfterClose,
+  resolveThreadTabGroupRehomeUpdatesAfterClose,
   type ThreadContentTab,
 } from "./threadTabs";
 import type { SidebarThreadSummary, Thread } from "./types";
@@ -16,10 +17,11 @@ const modelSelection = {
   model: "gpt-5.4",
 };
 
-function makeTab(id: string): ThreadContentTab {
+function makeTab(id: string, tabGroupId = ThreadId.make(id)): ThreadContentTab {
   const threadId = ThreadId.make(id);
   return {
     id: threadId,
+    tabGroupId,
     type: "chat",
     title: id,
     threadRef: scopeThreadRef(environmentId, threadId),
@@ -150,5 +152,34 @@ describe("resolveFallbackThreadTabAfterClose", () => {
     const only = makeTab("thread-only");
 
     expect(resolveFallbackThreadTabAfterClose([only], only)).toBeNull();
+  });
+});
+
+describe("resolveThreadTabGroupRehomeUpdatesAfterClose", () => {
+  it("promotes the next tab as group anchor when closing the first root tab", () => {
+    const rootId = ThreadId.make("thread-root");
+    const root = makeTab("thread-root", rootId);
+    const second = makeTab("thread-second", rootId);
+    const third = makeTab("thread-third", rootId);
+
+    expect(resolveThreadTabGroupRehomeUpdatesAfterClose([root, second, third], root)).toEqual([
+      { threadRef: second.threadRef, tabGroupId: second.id },
+      { threadRef: third.threadRef, tabGroupId: second.id },
+    ]);
+  });
+
+  it("returns no updates when closing a non-root child tab", () => {
+    const rootId = ThreadId.make("thread-root");
+    const root = makeTab("thread-root", rootId);
+    const second = makeTab("thread-second", rootId);
+    const third = makeTab("thread-third", rootId);
+
+    expect(resolveThreadTabGroupRehomeUpdatesAfterClose([root, second, third], second)).toEqual([]);
+  });
+
+  it("returns no updates when closing the only root tab", () => {
+    const root = makeTab("thread-root");
+
+    expect(resolveThreadTabGroupRehomeUpdatesAfterClose([root], root)).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import type { SidebarThreadSummary, Thread } from "./types";
 
 export interface ThreadContentTab {
   readonly id: ThreadId;
+  readonly tabGroupId: ThreadId;
   readonly type: ThreadTabType;
   readonly title: string;
   readonly threadRef: ScopedThreadRef;
@@ -47,6 +48,7 @@ export function buildThreadContentTabs(input: {
     .map(
       (thread): ThreadContentTab => ({
         id: thread.id,
+        tabGroupId: sidebarThreadTabGroupId(thread),
         type: thread.tabType ?? "chat",
         title: thread.title,
         threadRef: scopeThreadRef(thread.environmentId, thread.id),
@@ -60,6 +62,7 @@ export function buildThreadContentTabs(input: {
   if (!tabs.some((tab) => tab.id === activeThread.id)) {
     tabs.push({
       id: activeThread.id,
+      tabGroupId: threadTabGroupId(activeThread),
       type: activeThread.tabType ?? "chat",
       title: activeThread.title,
       threadRef: activeThreadRef,
@@ -86,4 +89,27 @@ export function resolveFallbackThreadTabAfterClose(
   }
 
   return tabs[closedIndex + 1] ?? tabs[closedIndex - 1] ?? null;
+}
+
+export interface ThreadTabGroupRehomeUpdate {
+  readonly threadRef: ScopedThreadRef;
+  readonly tabGroupId: ThreadId;
+}
+
+export function resolveThreadTabGroupRehomeUpdatesAfterClose(
+  tabs: ReadonlyArray<ThreadContentTab>,
+  closedTab: ThreadContentTab,
+): ThreadTabGroupRehomeUpdate[] {
+  const fallbackTab = resolveFallbackThreadTabAfterClose(tabs, closedTab);
+  if (!fallbackTab || closedTab.tabGroupId !== closedTab.id) {
+    return [];
+  }
+
+  const closedTabKey = scopedThreadKey(closedTab.threadRef);
+  return tabs.flatMap((tab) => {
+    if (scopedThreadKey(tab.threadRef) === closedTabKey || tab.tabGroupId !== closedTab.id) {
+      return [];
+    }
+    return [{ threadRef: tab.threadRef, tabGroupId: fallbackTab.id }];
+  });
 }

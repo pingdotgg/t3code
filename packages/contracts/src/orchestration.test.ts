@@ -324,6 +324,28 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   }),
 );
 
+it.effect("decodes thread metadata tab group updates", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-thread-meta-tab-group",
+      threadId: "thread-child",
+      tabGroupId: "thread-anchor",
+    });
+    const payload = yield* decodeThreadMetaUpdatedPayload({
+      threadId: "thread-child",
+      tabGroupId: "thread-anchor",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    if (command.type !== "thread.meta.update") {
+      assert.fail(`Expected thread.meta.update command, received ${command.type}.`);
+    }
+    assert.strictEqual(command.tabGroupId, "thread-anchor");
+    assert.strictEqual(payload.tabGroupId, "thread-anchor");
+  }),
+);
+
 it.effect("decodes thread archive and unarchive commands", () =>
   Effect.gen(function* () {
     const archive = yield* decodeOrchestrationCommand({

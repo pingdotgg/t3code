@@ -292,6 +292,82 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("persists thread tab group metadata updates", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-tabs");
+    const rootThreadId = ThreadId.make("thread-tabs-root");
+    const childThreadId = ThreadId.make("thread-tabs-child");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-tabs-create"),
+        projectId,
+        title: "Project Tabs",
+        workspaceRoot: "/tmp/project-tabs",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-tabs-root-create"),
+        threadId: rootThreadId,
+        projectId,
+        title: "Root",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-tabs-child-create"),
+        threadId: childThreadId,
+        projectId,
+        tabGroupId: rootThreadId,
+        title: "Child",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-tabs-child-promote"),
+        threadId: childThreadId,
+        tabGroupId: childThreadId,
+      }),
+    );
+
+    const readModel = await system.readModel();
+    expect(readModel.threads.find((thread) => thread.id === childThreadId)?.tabGroupId).toBe(
+      childThreadId,
+    );
+    await system.dispose();
+  });
+
   it("archives and unarchives threads through orchestration commands", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

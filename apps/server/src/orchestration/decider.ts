@@ -333,11 +333,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.tabGroupId !== undefined && command.tabGroupId !== command.threadId) {
+        const tabGroupThread = yield* requireThread({
+          readModel,
+          command,
+          threadId: command.tabGroupId,
+        });
+        if (tabGroupThread.projectId !== thread.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Tab group thread '${command.tabGroupId}' belongs to a different project.`,
+          });
+        }
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -349,6 +362,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.tabGroupId !== undefined ? { tabGroupId: command.tabGroupId } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }

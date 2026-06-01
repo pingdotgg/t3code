@@ -223,6 +223,7 @@ import { ThreadTabStrip } from "./thread-tabs/ThreadTabStrip";
 import {
   buildThreadContentTabs,
   resolveFallbackThreadTabAfterClose,
+  resolveThreadTabGroupRehomeUpdatesAfterClose,
   threadTabGroupId,
   type ThreadContentTab,
 } from "../threadTabs";
@@ -3193,37 +3194,47 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
-      const fallbackTab = tab.active ? resolveFallbackThreadTabAfterClose(threadTabs, tab) : null;
-      void api.orchestration
-        .dispatchCommand({
+      const fallbackTab = resolveFallbackThreadTabAfterClose(threadTabs, tab);
+      const rehomeUpdates = resolveThreadTabGroupRehomeUpdatesAfterClose(threadTabs, tab);
+      void (async () => {
+        for (const update of rehomeUpdates) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: update.threadRef.threadId,
+            tabGroupId: update.tabGroupId,
+          });
+        }
+
+        await api.orchestration.dispatchCommand({
           type: "thread.archive",
           commandId: newCommandId(),
           threadId: tab.threadRef.threadId,
-        })
-        .then(() => {
-          refreshArchivedThreadsForEnvironment(tab.threadRef.environmentId);
-          if (!tab.active) {
-            return;
-          }
-          if (fallbackTab) {
-            return navigate({
-              to: "/$environmentId/$threadId",
-              params: buildThreadRouteParams(fallbackTab.threadRef),
-              search: (previous) => previous,
-              replace: true,
-            });
-          }
-          return navigate({ to: "/", replace: true });
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not close tab",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
         });
+
+        refreshArchivedThreadsForEnvironment(tab.threadRef.environmentId);
+        if (!tab.active) {
+          return;
+        }
+        if (fallbackTab) {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(fallbackTab.threadRef),
+            search: (previous) => previous,
+            replace: true,
+          });
+          return;
+        }
+        await navigate({ to: "/", replace: true });
+      })().catch((error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not close tab",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
     },
     [isServerThread, navigate, threadTabs],
   );
