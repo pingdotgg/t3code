@@ -3398,7 +3398,10 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    options?: { promptOverride?: string },
+  ): Promise<boolean> => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (
@@ -3409,23 +3412,29 @@ export default function ChatView(props: ChatViewProps) {
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     )
-      return;
+      return false;
+    const isGeneratedPromptSend = options?.promptOverride !== undefined;
     if (activePendingProgress) {
+      if (isGeneratedPromptSend) {
+        return false;
+      }
       onAdvanceActivePendingUserInput();
-      return;
+      return true;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx) return;
+    if (!sendCtx) return false;
     const {
-      images: composerImages,
-      terminalContexts: composerTerminalContexts,
+      images: currentComposerImages,
+      terminalContexts: currentComposerTerminalContexts,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const promptForSend = promptRef.current;
+    const composerImages = isGeneratedPromptSend ? [] : currentComposerImages;
+    const composerTerminalContexts = isGeneratedPromptSend ? [] : currentComposerTerminalContexts;
+    const promptForSend = options?.promptOverride ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -3436,7 +3445,7 @@ export default function ChatView(props: ChatViewProps) {
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
+    if (!isGeneratedPromptSend && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -3448,10 +3457,12 @@ export default function ChatView(props: ChatViewProps) {
         text: followUp.text,
         interactionMode: followUp.interactionMode,
       });
-      return;
+      return true;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+      !isGeneratedPromptSend &&
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -3459,7 +3470,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
-      return;
+      return true;
     }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
@@ -3475,7 +3486,7 @@ export default function ChatView(props: ChatViewProps) {
           }),
         );
       }
-      return;
+      return false;
     }
     const threadIdForSend = activeThread.id;
     if (!activeProject) {
@@ -3483,7 +3494,7 @@ export default function ChatView(props: ChatViewProps) {
         threadIdForSend,
         "Workspace is still loading. Wait for the workspace to finish adding, then try again.",
       );
-      return;
+      return false;
     }
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -3499,7 +3510,7 @@ export default function ChatView(props: ChatViewProps) {
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
-      return;
+      return false;
     }
 
     sendInFlightRef.current = true;
@@ -3571,9 +3582,11 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (!isGeneratedPromptSend) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
 
     let turnStartSucceeded = false;
     await (async () => {
@@ -3675,6 +3688,7 @@ export default function ChatView(props: ChatViewProps) {
       markPendingPullRequestCommentsSeen();
     })().catch(async (err: unknown) => {
       if (
+        !isGeneratedPromptSend &&
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -3710,7 +3724,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
+    return turnStartSucceeded;
   };
+
+  const onSubmitGitPrompt = (prompt: string) => onSend(undefined, { promptOverride: prompt });
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
@@ -4365,6 +4382,7 @@ export default function ChatView(props: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          onSubmitGitPrompt={onSubmitGitPrompt}
         />
       </header>
       {(threadTabs.length > 1 || isServerThread) && (

@@ -89,6 +89,7 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  onSubmitPrompt?: (prompt: string) => boolean | Promise<boolean>;
 }
 
 interface PendingDefaultBranchAction {
@@ -976,6 +977,7 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
+  onSubmitPrompt,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
@@ -994,6 +996,7 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const composerRef = useComposerHandleContext();
@@ -1292,11 +1295,57 @@ export default function GitActionsControl({
         });
         return;
       }
+      if (onSubmitPrompt) {
+        void Promise.resolve(onSubmitPrompt(nextPrompt))
+          .then((submitted) => {
+            if (submitted) {
+              return;
+            }
+            toastManager.add({
+              type: "error",
+              title: "Unable to send prompt.",
+              description: "The thread is busy or unavailable.",
+              data: threadToastData,
+            });
+          })
+          .catch((err: unknown) => {
+            toastManager.add({
+              type: "error",
+              title: "Unable to send prompt.",
+              description: err instanceof Error ? err.message : "An error occurred.",
+              data: threadToastData,
+            });
+          });
+        return;
+      }
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      const stagedDraft = getComposerDraft(composerDraftTarget);
+      if (stagedDraft?.prompt !== nextPrompt) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add prompt to composer.",
+          data: threadToastData,
+        });
+        return;
+      }
       composerRef?.current?.resetCursorState({ cursor: nextPrompt.length, prompt: nextPrompt });
       composerRef?.current?.focusAtEnd();
+      toastManager.add({
+        type: "success",
+        title: "Prompt added to composer.",
+        description: "Review and send it to start the AI action.",
+        data: threadToastData,
+      });
     },
-    [activeThreadRef, composerRef, draftId, setComposerDraftPrompt, threadToastData],
+    [
+      activeThreadRef,
+      composerRef,
+      draftId,
+      getComposerDraft,
+      onSubmitPrompt,
+      setComposerDraftPrompt,
+      threadToastData,
+    ],
   );
 
   runGitActionWithToast = useEffectEvent(
