@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
+  type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -20,6 +21,12 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import {
+  applyTerminalCtrlModifier,
+  TERMINAL_ACCESSORY_KEYS,
+  type TerminalAccessoryKey,
+  type TerminalModifier,
+} from "~/lib/terminalAccessoryKeys";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
@@ -359,6 +366,8 @@ interface TerminalViewportProps {
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
+  pendingModifierRef?: MutableRefObject<TerminalModifier | null>;
+  onModifierConsumed?: () => void;
 }
 
 export function TerminalViewport({
@@ -376,6 +385,8 @@ export function TerminalViewport({
   resizeEpoch,
   drawerHeight,
   keybindings,
+  pendingModifierRef,
+  onModifierConsumed,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -388,6 +399,7 @@ export function TerminalViewport({
   const selectionActionOpenRef = useRef(false);
   const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
+  const onModifierConsumedRef = useRef(onModifierConsumed);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
   const touchScrollStateRef = useRef<{
@@ -409,6 +421,10 @@ export function TerminalViewport({
   useEffect(() => {
     keybindingsRef.current = keybindings;
   }, [keybindings]);
+
+  useEffect(() => {
+    onModifierConsumedRef.current = onModifierConsumed;
+  }, [onModifierConsumed]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -624,8 +640,14 @@ export function TerminalViewport({
     });
 
     const inputDisposable = terminal.onData((data) => {
+      let payload = data;
+      if (pendingModifierRef?.current === "ctrl") {
+        pendingModifierRef.current = null;
+        onModifierConsumedRef.current?.();
+        payload = applyTerminalCtrlModifier(data) ?? data;
+      }
       void api.terminal
-        .write({ threadId, terminalId, data })
+        .write({ threadId, terminalId, data: payload })
         .catch((err) =>
           writeSystemMessage(
             terminal,
@@ -1044,6 +1066,49 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+interface TerminalAccessoryKeyBarProps {
+  armedModifier: TerminalModifier | null;
+  onKeyDown: (key: TerminalAccessoryKey) => void;
+}
+
+function TerminalAccessoryKeyBar({ armedModifier, onKeyDown }: TerminalAccessoryKeyBarProps) {
+  return (
+    <div
+      // The bar spans the screen's right edge, so its horizontal scroll would
+      // otherwise be read as a right edge-swipe and open the sidebar.
+      data-mobile-edge-swipe-block="true"
+      className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border/60 bg-background px-2 py-1.5 [scrollbar-width:none]"
+    >
+      {TERMINAL_ACCESSORY_KEYS.map((key) => {
+        const isArmed = key.kind === "modifier" && armedModifier === key.modifier;
+        return (
+          <button
+            key={key.id}
+            type="button"
+            tabIndex={-1}
+            aria-label={key.ariaLabel}
+            aria-pressed={key.kind === "modifier" ? isArmed : undefined}
+            className={`inline-flex h-8 min-w-9 shrink-0 items-center justify-center rounded-md border px-2 font-mono text-sm leading-none transition-colors ${
+              isArmed
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border/70 bg-muted/30 text-foreground/90 active:bg-accent"
+            }`}
+            // Prevent the default mousedown so tapping a key never blurs the
+            // terminal's hidden textarea (which would dismiss the soft keyboard).
+            // The key is sent on click instead — the browser suppresses click
+            // when a touch becomes a scroll, so dragging the bar scrolls rather
+            // than firing buttons.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onKeyDown(key)}
+          >
+            {key.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ThreadTerminalDrawer({
   threadRef,
   threadId,
@@ -1085,6 +1150,8 @@ export default function ThreadTerminalDrawer({
     startHeight: number;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
+  const pendingTerminalModifierRef = useRef<TerminalModifier | null>(null);
+  const [armedModifier, setArmedModifier] = useState<TerminalModifier | null>(null);
 
   const normalizedTerminalIds = useMemo(() => {
     const cleaned = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -1205,6 +1272,42 @@ export default function ThreadTerminalDrawer({
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
+
+  const sendActiveTerminalInput = useCallback(
+    (data: string) => {
+      const api = readEnvironmentApi(threadRef.environmentId);
+      if (!api) return;
+      void api.terminal
+        .write({ threadId, terminalId: resolvedActiveTerminalId, data })
+        .catch(() => undefined);
+    },
+    [resolvedActiveTerminalId, threadId, threadRef.environmentId],
+  );
+
+  const handleModifierConsumed = useCallback(() => {
+    setArmedModifier(null);
+  }, []);
+
+  const handleAccessoryKey = useCallback(
+    (key: TerminalAccessoryKey) => {
+      if (key.kind === "modifier") {
+        setArmedModifier((current) => {
+          const next = current === key.modifier ? null : key.modifier;
+          pendingTerminalModifierRef.current = next;
+          return next;
+        });
+        return;
+      }
+      // A pending Ctrl latch only applies to the next character typed on the
+      // soft keyboard, not to another accessory key — clear it and send the key.
+      if (pendingTerminalModifierRef.current !== null) {
+        pendingTerminalModifierRef.current = null;
+        setArmedModifier(null);
+      }
+      sendActiveTerminalInput(key.data);
+    },
+    [sendActiveTerminalInput],
+  );
 
   useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
@@ -1496,6 +1599,8 @@ export default function ThreadTerminalDrawer({
                         resizeEpoch={resizeEpoch}
                         drawerHeight={renderedDrawerHeight}
                         keybindings={keybindings}
+                        pendingModifierRef={pendingTerminalModifierRef}
+                        onModifierConsumed={handleModifierConsumed}
                       />
                     </div>
                   </div>
@@ -1519,6 +1624,8 @@ export default function ThreadTerminalDrawer({
                   resizeEpoch={resizeEpoch}
                   drawerHeight={renderedDrawerHeight}
                   keybindings={keybindings}
+                  pendingModifierRef={pendingTerminalModifierRef}
+                  onModifierConsumed={handleModifierConsumed}
                 />
               </div>
             )}
@@ -1664,6 +1771,10 @@ export default function ThreadTerminalDrawer({
           )}
         </div>
       </div>
+
+      {isMobile && keyboardViewport.bottomInset > 0 && (
+        <TerminalAccessoryKeyBar armedModifier={armedModifier} onKeyDown={handleAccessoryKey} />
+      )}
     </aside>
   );
 }

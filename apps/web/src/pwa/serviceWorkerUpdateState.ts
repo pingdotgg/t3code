@@ -7,9 +7,16 @@ export type PwaServiceWorkerUpdateStatus = "idle" | "ready" | "updating";
 interface PwaServiceWorkerUpdateState {
   errorMessage: string | null;
   status: PwaServiceWorkerUpdateStatus;
+  /**
+   * True while a background check for a newer service worker is in flight.
+   * Tracked separately from `status` because a check can run while the app is
+   * idle or while an update is already pending.
+   */
+  isCheckingForUpdate: boolean;
   updateServiceWorker: ServiceWorkerUpdater | null;
   reloadForUpdate: () => void;
   showUpdateAvailable: (updateServiceWorker: ServiceWorkerUpdater) => void;
+  setCheckingForUpdate: (checking: boolean) => void;
 }
 
 function describeUpdateError(error: unknown): string {
@@ -19,7 +26,14 @@ function describeUpdateError(error: unknown): string {
 export const usePwaServiceWorkerUpdateStore = create<PwaServiceWorkerUpdateState>((set, get) => ({
   errorMessage: null,
   status: "idle",
+  isCheckingForUpdate: false,
   updateServiceWorker: null,
+
+  setCheckingForUpdate: (checking) => {
+    set((state) =>
+      state.isCheckingForUpdate === checking ? state : { isCheckingForUpdate: checking },
+    );
+  },
 
   reloadForUpdate: () => {
     const { status, updateServiceWorker } = get();
@@ -72,4 +86,8 @@ export function showPwaServiceWorkerUpdateAvailable(
   updateServiceWorker: ServiceWorkerUpdater,
 ): void {
   usePwaServiceWorkerUpdateStore.getState().showUpdateAvailable(updateServiceWorker);
+}
+
+export function setPwaServiceWorkerCheckingForUpdate(checking: boolean): void {
+  usePwaServiceWorkerUpdateStore.getState().setCheckingForUpdate(checking);
 }

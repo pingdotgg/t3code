@@ -1,4 +1,4 @@
-import { RefreshCwIcon } from "lucide-react";
+import { Loader2Icon, RefreshCwIcon } from "lucide-react";
 
 import { isElectron } from "../../env";
 import { usePwaServiceWorkerUpdateStore } from "../../pwa/serviceWorkerUpdateState";
@@ -7,10 +7,27 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function SidebarPwaUpdateButton() {
   const status = usePwaServiceWorkerUpdateStore((state) => state.status);
   const errorMessage = usePwaServiceWorkerUpdateStore((state) => state.errorMessage);
+  const isCheckingForUpdate = usePwaServiceWorkerUpdateStore((state) => state.isCheckingForUpdate);
   const reloadForUpdate = usePwaServiceWorkerUpdateStore((state) => state.reloadForUpdate);
 
-  if (isElectron || status === "idle") {
+  if (isElectron) {
     return null;
+  }
+
+  if (status === "idle") {
+    if (!isCheckingForUpdate) {
+      return null;
+    }
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-7 w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-2 text-[13px] font-medium text-muted-foreground shadow-xs md:text-xs"
+      >
+        <Loader2Icon className="size-3.5 animate-spin" />
+        <span className="truncate">Checking for updates…</span>
+      </div>
+    );
   }
 
   const updating = status === "updating";

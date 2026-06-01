@@ -88,6 +88,7 @@ function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
   descriptorFilter?: DescriptorFilter,
+  triggerClassName?: string,
 ): ReactNode {
   const {
     provider,
@@ -126,6 +127,7 @@ function renderTraitsControl(
       prompt={prompt}
       onPromptChange={onPromptChange}
       {...(descriptorFilter ? { descriptorFilter } : {})}
+      {...(triggerClassName ? { triggerClassName } : {})}
     />
   );
 }
@@ -151,5 +153,7 @@ export function renderProviderTraitsMenuContentWithoutReasoning(
 
 /** Standalone reasoning-effort picker used in the compact composer footer. */
 export function renderProviderReasoningPicker(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsPicker, input, reasoningOnlyFilter);
+  // Pull the reasoning picker toward the model picker so the model and its
+  // reasoning-effort control read as one tight pair in the compact footer.
+  return renderTraitsControl(TraitsPicker, input, reasoningOnlyFilter, "-ml-1");
 }

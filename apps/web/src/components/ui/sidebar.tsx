@@ -1,9 +1,10 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
+import { Loader2Icon, PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
+import { usePwaServiceWorkerUpdateStore } from "~/pwa/serviceWorkerUpdateState";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -332,10 +333,14 @@ function Sidebar({
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar, openMobile } = useSidebar();
+  const updateStatus = usePwaServiceWorkerUpdateStore((state) => state.status);
+  const isCheckingForUpdate = usePwaServiceWorkerUpdateStore((state) => state.isCheckingForUpdate);
+  const updateAvailable = updateStatus === "ready";
+  const showCheckingIndicator = isCheckingForUpdate && !updateAvailable;
 
   return (
     <Button
-      className={cn("size-7", className)}
+      className={cn("relative size-7", className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       onClick={(event) => {
@@ -347,7 +352,19 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
+      {updateAvailable && (
+        <span
+          aria-hidden
+          className="absolute right-0.5 top-0.5 size-2 rounded-full bg-blue-500 ring-2 ring-background dark:bg-blue-400"
+        />
+      )}
+      {showCheckingIndicator && (
+        <Loader2Icon
+          aria-hidden
+          className="absolute right-0 top-0 size-2.5 animate-spin text-muted-foreground"
+        />
+      )}
+      <span className="sr-only">Toggle Sidebar{updateAvailable ? " (update available)" : ""}</span>
     </Button>
   );
 }
