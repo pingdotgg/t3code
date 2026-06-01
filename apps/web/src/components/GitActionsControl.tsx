@@ -128,6 +128,8 @@ interface RunGitActionWithToastInput {
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const PULL_QUICK_ACTION_CLASS_NAME =
+  "border-cyan-500/50 bg-cyan-500/12 text-cyan-700 shadow-cyan-500/20 shadow-sm [:hover,[data-pressed]]:bg-cyan-500/18 dark:border-cyan-300/45 dark:bg-cyan-300/12 dark:text-cyan-100 dark:shadow-cyan-300/20 dark:[:hover,[data-pressed]]:bg-cyan-300/18";
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
@@ -1125,6 +1127,8 @@ export default function GitActionsControl({
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
   );
+  const quickActionClassName =
+    quickAction.kind === "run_pull" ? PULL_QUICK_ACTION_CLASS_NAME : undefined;
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
@@ -1644,6 +1648,7 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
+              className={quickActionClassName}
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
