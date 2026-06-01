@@ -56,6 +56,7 @@ export const BrowserAnnotationButton = memo(function BrowserAnnotationButton({
             onClick={onClick}
           >
             <MousePointer2Icon className="size-3" />
+            <span className="ml-0.5">Annotate</span>
           </Button>
         }
       />

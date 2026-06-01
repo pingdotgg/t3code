@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  getSidebarTopLevelThreadId,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -11,6 +12,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarTopLevelThread,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
@@ -271,6 +273,26 @@ describe("resolveSidebarNewThreadSeedContext", () => {
     ).toEqual({
       envMode: "worktree",
     });
+  });
+});
+
+describe("isSidebarTopLevelThread", () => {
+  it("treats threads without a separate tab group as sidebar-visible top-level threads", () => {
+    const threadId = ThreadId.make("thread-root");
+
+    expect(isSidebarTopLevelThread({ id: threadId })).toBe(true);
+    expect(isSidebarTopLevelThread({ id: threadId, tabGroupId: threadId })).toBe(true);
+    expect(getSidebarTopLevelThreadId({ id: threadId, tabGroupId: threadId })).toBe(threadId);
+  });
+
+  it("treats grouped child chat tabs as non-top-level sidebar rows", () => {
+    const rootThreadId = ThreadId.make("thread-root");
+    const childThreadId = ThreadId.make("thread-child");
+
+    expect(isSidebarTopLevelThread({ id: childThreadId, tabGroupId: rootThreadId })).toBe(false);
+    expect(getSidebarTopLevelThreadId({ id: childThreadId, tabGroupId: rootThreadId })).toBe(
+      rootThreadId,
+    );
   });
 });
 

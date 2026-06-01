@@ -240,6 +240,7 @@ export default function ProjectScriptsControl({
             size="xs"
             variant="outline"
             className={cn(
+              "min-w-0 max-w-44",
               primaryScriptRunning &&
                 "border-emerald-500/45 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18 dark:text-emerald-300",
             )}
@@ -256,9 +257,7 @@ export default function ProjectScriptsControl({
             ) : (
               <ScriptIcon icon={primaryScript.icon} />
             )}
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              {primaryScript.name}
-            </span>
+            <span className="ml-0.5 min-w-0 truncate">{primaryScript.name}</span>
           </Button>
           {pinnedScripts.length > 0 && (
             <>
@@ -365,9 +364,7 @@ export default function ProjectScriptsControl({
       ) : (
         <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
           <PlusIcon className="size-3.5" />
-          <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-            Add action
-          </span>
+          <span className="ml-0.5">Add action</span>
         </Button>
       )}
 

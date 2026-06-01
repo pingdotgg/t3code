@@ -87,11 +87,13 @@ import {
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
+  selectThreadByRef,
   selectThreadsAcrossEnvironments,
   useStore,
 } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
+import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -206,7 +208,11 @@ import { retainThreadDetailSubscription } from "../environments/runtime/service"
 import { RightPanelSheet } from "./RightPanelSheet";
 import { Button } from "./ui/button";
 import { ThreadTabStrip } from "./thread-tabs/ThreadTabStrip";
-import { buildThreadContentTabs, type ThreadContentTab } from "../threadTabs";
+import {
+  buildThreadContentTabs,
+  resolveFallbackThreadTabAfterClose,
+  type ThreadContentTab,
+} from "../threadTabs";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
@@ -2954,6 +2960,64 @@ export default function ChatView(props: ChatViewProps) {
     },
     [navigate],
   );
+  const closeThreadTab = useCallback(
+    (tab: ThreadContentTab) => {
+      if (!isServerThread) {
+        return;
+      }
+      const api = readEnvironmentApi(tab.threadRef.environmentId);
+      if (!api) {
+        return;
+      }
+      const targetThread = selectThreadByRef(useStore.getState(), tab.threadRef);
+      if (
+        targetThread?.session?.status === "running" &&
+        targetThread.session.activeTurnId != null
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not close tab",
+            description: "Stop the running thread before closing it.",
+          }),
+        );
+        return;
+      }
+
+      const fallbackTab = tab.active ? resolveFallbackThreadTabAfterClose(threadTabs, tab) : null;
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.archive",
+          commandId: newCommandId(),
+          threadId: tab.threadRef.threadId,
+        })
+        .then(() => {
+          refreshArchivedThreadsForEnvironment(tab.threadRef.environmentId);
+          if (!tab.active) {
+            return;
+          }
+          if (fallbackTab) {
+            return navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(fallbackTab.threadRef),
+              search: (previous) => previous,
+              replace: true,
+            });
+          }
+          return navigate({ to: "/", replace: true });
+        })
+        .catch((error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not close tab",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+    },
+    [isServerThread, navigate, threadTabs],
+  );
   const createChatTab = useCallback(() => {
     if (!isServerThread || !activeThread || !activeProject || creatingChatTab) {
       return;
@@ -4219,6 +4283,7 @@ export default function ChatView(props: ChatViewProps) {
             canCreateChatTab={isServerThread}
             creatingChatTab={creatingChatTab}
             onSelectTab={navigateToThreadTab}
+            onCloseTab={closeThreadTab}
             onCreateChatTab={createChatTab}
           />
         </div>

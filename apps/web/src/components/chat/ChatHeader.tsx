@@ -157,6 +157,7 @@ export const ChatHeader = memo(function ChatHeader({
     showProjectScriptsControl ||
     showOpenInPicker ||
     showTransferToBrowser ||
+    showBrowserAnnotationButton ||
     showGitActionsControl ||
     showTerminalToggle ||
     showDiffToggle;
@@ -183,14 +184,6 @@ export const ChatHeader = memo(function ChatHeader({
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
-        )}
-        {showBrowserAnnotationButton && (
-          <div className="ml-auto shrink-0">
-            <BrowserAnnotationButton
-              activeThreadEnvironmentId={activeThreadEnvironmentId}
-              activeThreadId={activeThreadId}
-            />
-          </div>
         )}
       </div>
       {showHeaderActions && (
@@ -228,6 +221,12 @@ export const ChatHeader = memo(function ChatHeader({
               gitCwd={gitCwd}
               activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
               {...(draftId ? { draftId } : {})}
+            />
+          )}
+          {showBrowserAnnotationButton && (
+            <BrowserAnnotationButton
+              activeThreadEnvironmentId={activeThreadEnvironmentId}
+              activeThreadId={activeThreadId}
             />
           )}
           {showTerminalToggle && (
