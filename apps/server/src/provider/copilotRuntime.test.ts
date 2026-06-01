@@ -61,4 +61,18 @@ describe("buildCopilotClientOptions", () => {
     assert.equal(snapshot.auth.type, "user");
     assert.equal(snapshot.auth.label, "@octocat - github.com");
   });
+
+  it("prefers the richer authenticated status message when it differs from the raw login", () => {
+    const snapshot = authSnapshotFromCopilotSdk({
+      isAuthenticated: true,
+      authType: "gh-cli",
+      host: "https://github.com",
+      statusMessage: "zortos293 (via gh)",
+      login: "zortos293",
+    });
+
+    assert.equal(snapshot.auth.status, "authenticated");
+    assert.equal(snapshot.auth.type, "gh-cli");
+    assert.equal(snapshot.auth.label, "zortos293 (via gh)");
+  });
 });
