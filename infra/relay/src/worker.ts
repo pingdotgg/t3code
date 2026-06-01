@@ -105,12 +105,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     //
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
-    const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
-
     const cloudMintKeyPair = yield* CloudMintKeyPair;
-    const hyperdrive = yield* Cloudflare.Hyperdrive.bind(yield* RelayHyperdrive);
     const managedEndpointZone = yield* ManagedEndpointZone;
-    const managedEndpointTunnelBinding = yield* Cloudflare.TunnelReadWrite.bind();
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
     const observability = yield* RelayObservability;
 
@@ -126,6 +122,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
     const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
+    const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.ingestToken.token;
@@ -135,8 +132,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
+    const hyperdrive = yield* Cloudflare.Hyperdrive.bind(yield* RelayHyperdrive);
     const db = yield* Drizzle.postgres(hyperdrive.connectionString);
 
+    const managedEndpointTunnelBinding = yield* Cloudflare.TunnelReadWrite.bind();
     const managedEndpointZoneId = yield* managedEndpointZone.zoneId;
     const managedEndpointDNSToken = yield* managedEndpointZone.dnsToken;
 
