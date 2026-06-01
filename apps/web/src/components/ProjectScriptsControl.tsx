@@ -9,6 +9,7 @@ import {
   FlaskConicalIcon,
   HammerIcon,
   ListChecksIcon,
+  MonitorUpIcon,
   PlayIcon,
   PlusIcon,
   SettingsIcon,
@@ -40,6 +41,7 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { DraftInput } from "./ui/draft-input";
 import {
   Dialog,
   DialogDescription,
@@ -52,7 +54,7 @@ import {
 import { Group, GroupSeparator } from "./ui/group";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
@@ -100,6 +102,7 @@ export interface RunProjectScriptOptions {
 
 interface ProjectScriptsControlProps {
   scripts: ProjectScript[];
+  previewUrl: string | null | undefined;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   runningScriptIds?: ReadonlySet<string>;
@@ -107,10 +110,12 @@ interface ProjectScriptsControlProps {
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
   onDeleteScript: (scriptId: string) => Promise<void> | void;
+  onUpdatePreviewUrl: (previewUrl: string) => Promise<void> | void;
 }
 
 export default function ProjectScriptsControl({
   scripts,
+  previewUrl,
   keybindings,
   preferredScriptId = null,
   runningScriptIds = EMPTY_RUNNING_SCRIPT_IDS,
@@ -118,10 +123,14 @@ export default function ProjectScriptsControl({
   onAddScript,
   onUpdateScript,
   onDeleteScript,
+  onUpdatePreviewUrl,
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
+  const projectSettingsFormId = React.useId();
+  const previewUrlInputId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
@@ -130,6 +139,7 @@ export default function ProjectScriptsControl({
   const [pinnedToTopBar, setPinnedToTopBar] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [projectSettingsError, setProjectSettingsError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const primaryScript = useMemo(() => {
@@ -216,6 +226,11 @@ export default function ProjectScriptsControl({
     setDialogOpen(true);
   };
 
+  const openProjectSettings = () => {
+    setProjectSettingsError(null);
+    setProjectSettingsOpen(true);
+  };
+
   const openEditDialog = (script: ProjectScript) => {
     setEditingScriptId(script.id);
     setName(script.name);
@@ -235,6 +250,18 @@ export default function ProjectScriptsControl({
     setDialogOpen(false);
     void onDeleteScript(editingScriptId);
   }, [editingScriptId, onDeleteScript]);
+
+  const commitPreviewUrl = useCallback(
+    (nextPreviewUrl: string) => {
+      setProjectSettingsError(null);
+      void Promise.resolve(onUpdatePreviewUrl(nextPreviewUrl)).catch((error) => {
+        setProjectSettingsError(
+          error instanceof Error ? error.message : "Failed to save preview URL.",
+        );
+      });
+    },
+    [onUpdatePreviewUrl],
+  );
 
   return (
     <>
@@ -361,6 +388,11 @@ export default function ProjectScriptsControl({
                   </MenuItem>
                 );
               })}
+              <MenuSeparator />
+              <MenuItem className={dropdownItemClassName} onClick={openProjectSettings}>
+                <SettingsIcon className="size-4" />
+                Project settings
+              </MenuItem>
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 Add action
@@ -369,11 +401,70 @@ export default function ProjectScriptsControl({
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
-          <PlusIcon className="size-3.5" />
-          <span className="ml-0.5">Add action</span>
-        </Button>
+        <Group aria-label="Project actions">
+          <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
+            <PlusIcon className="size-3.5" />
+            <span className="ml-0.5">Add action</span>
+          </Button>
+          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="outline"
+                  onClick={openProjectSettings}
+                  aria-label="Project settings"
+                  title="Project settings"
+                />
+              }
+            >
+              <SettingsIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Project settings</TooltipPopup>
+          </Tooltip>
+        </Group>
       )}
+
+      <Dialog open={projectSettingsOpen} onOpenChange={setProjectSettingsOpen}>
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Project Settings</DialogTitle>
+            <DialogDescription>Stored in .t3code/project.json.</DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <form id={projectSettingsFormId} className="space-y-2">
+              <Label htmlFor={previewUrlInputId} className="flex items-center gap-2">
+                <MonitorUpIcon className="size-4 text-muted-foreground" />
+                Preview URL
+              </Label>
+              <DraftInput
+                id={previewUrlInputId}
+                value={previewUrl ?? ""}
+                onCommit={commitPreviewUrl}
+                placeholder="http://localhost:3000/"
+                spellCheck={false}
+                inputMode="url"
+                type="url"
+                aria-label="Preview URL"
+              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                Leave empty to use the detected or inferred project dev-server URL.
+              </p>
+              {projectSettingsError ? (
+                <p className="text-xs leading-5 text-destructive" role="alert">
+                  {projectSettingsError}
+                </p>
+              ) : null}
+            </form>
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProjectSettingsOpen(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <Dialog
         onOpenChange={(open) => {

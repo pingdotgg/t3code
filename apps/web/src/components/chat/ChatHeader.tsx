@@ -28,7 +28,6 @@ import {
   usePrimaryEnvironmentId,
 } from "../../environments/primary";
 import { shouldShowBrowserAgentControls } from "../../browserAgents";
-import { useSettings } from "../../hooks/useSettings";
 import { topBarMainProjectScript } from "../../projectScripts";
 
 interface ChatHeaderProps {
@@ -57,6 +56,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onUpdateProjectPreviewUrl: (previewUrl: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
   onSubmitGitPrompt: (prompt: string) => boolean | Promise<boolean>;
@@ -92,12 +92,9 @@ export function shouldShowPreviewButton(input: {
   readonly browserAgentSidebarMode: boolean;
   readonly mainActionRunning: boolean;
   readonly projectPreviewUrl?: string | null | undefined;
-  readonly customPreviewUrl: string;
 }): boolean {
   return (
-    (input.mainActionRunning ||
-      (input.projectPreviewUrl?.trim().length ?? 0) > 0 ||
-      input.customPreviewUrl.trim().length > 0) &&
+    (input.mainActionRunning || (input.projectPreviewUrl?.trim().length ?? 0) > 0) &&
     !input.browserAgentSidebarMode &&
     shouldShowBrowserAgentControls(input)
   );
@@ -135,12 +132,12 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onUpdateProjectPreviewUrl,
   onToggleTerminal,
   onToggleDiff,
   onSubmitGitPrompt,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const customPreviewUrl = useSettings((settings) => settings.browserAgentPreviewUrl);
   const [currentSessionRole, setCurrentSessionRole] = useState<AuthSessionRole | null>(() =>
     typeof window !== "undefined" && window.desktopBridge ? "owner" : null,
   );
@@ -188,7 +185,6 @@ export const ChatHeader = memo(function ChatHeader({
     browserAgentSidebarMode,
     mainActionRunning: mainProjectScriptRunning,
     projectPreviewUrl,
-    customPreviewUrl,
   });
   const showBrowserAnnotationButton = shouldShowBrowserAnnotationButton({
     activeProjectName,
@@ -240,10 +236,12 @@ export const ChatHeader = memo(function ChatHeader({
               keybindings={keybindings}
               preferredScriptId={preferredScriptId}
               runningScriptIds={runningProjectScriptIds}
+              previewUrl={projectPreviewUrl}
               onRunScript={onRunProjectScript}
               onAddScript={onAddProjectScript}
               onUpdateScript={onUpdateProjectScript}
               onDeleteScript={onDeleteProjectScript}
+              onUpdatePreviewUrl={onUpdateProjectPreviewUrl}
             />
           )}
           {showOpenInPicker && (

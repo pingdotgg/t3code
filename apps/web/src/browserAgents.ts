@@ -195,17 +195,12 @@ export function inferBrowserAgentDevServerUrl(
 
 export function resolveBrowserAgentPreviewUrl(input: {
   readonly projectPreviewUrl?: string | null | undefined;
-  readonly customPreviewUrl: string;
   readonly detectedDevServerUrl: string | null;
   readonly scripts: readonly ProjectScript[] | undefined;
 }): string {
   const projectPreviewUrl = normalizeBrowserAgentPreviewUrl(input.projectPreviewUrl ?? "");
-  const customPreviewUrl = normalizeBrowserAgentPreviewUrl(input.customPreviewUrl);
   return (
-    projectPreviewUrl ||
-    customPreviewUrl ||
-    input.detectedDevServerUrl ||
-    inferBrowserAgentDevServerUrl(input.scripts)
+    projectPreviewUrl || input.detectedDevServerUrl || inferBrowserAgentDevServerUrl(input.scripts)
   );
 }
 

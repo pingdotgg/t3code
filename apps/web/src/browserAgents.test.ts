@@ -96,31 +96,19 @@ describe("normalizeBrowserAgentPreviewUrl", () => {
 });
 
 describe("resolveBrowserAgentPreviewUrl", () => {
-  it("uses the project preview URL before custom, detected, or inferred URLs", () => {
+  it("uses the project preview URL before detected or inferred URLs", () => {
     expect(
       resolveBrowserAgentPreviewUrl({
         projectPreviewUrl: "localhost:4444",
-        customPreviewUrl: "localhost:4000",
         detectedDevServerUrl: "http://localhost:5173/",
         scripts: [script("pnpm next dev")],
       }),
     ).toBe("http://localhost:4444");
   });
 
-  it("uses the custom preview URL before detected or inferred URLs", () => {
-    expect(
-      resolveBrowserAgentPreviewUrl({
-        customPreviewUrl: "localhost:4000",
-        detectedDevServerUrl: "http://localhost:5173/",
-        scripts: [script("pnpm next dev")],
-      }),
-    ).toBe("http://localhost:4000");
-  });
-
   it("falls back to detected then inferred project dev-server URLs", () => {
     expect(
       resolveBrowserAgentPreviewUrl({
-        customPreviewUrl: "",
         detectedDevServerUrl: "http://localhost:5173/",
         scripts: [script("pnpm next dev")],
       }),
@@ -128,7 +116,6 @@ describe("resolveBrowserAgentPreviewUrl", () => {
 
     expect(
       resolveBrowserAgentPreviewUrl({
-        customPreviewUrl: "   ",
         detectedDevServerUrl: null,
         scripts: [script("pnpm next dev")],
       }),

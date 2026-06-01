@@ -12,7 +12,6 @@ import {
   isNoBrowserAgentConnectedError,
 } from "../../browserAgentPairing";
 import { getPrimaryEnvironmentConnection } from "../../environments/runtime";
-import { useSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -43,16 +42,14 @@ export const PreviewButton = memo(function PreviewButton({
 }) {
   const [isOpeningPreview, setIsOpeningPreview] = useState(false);
   const [extensionDownloadUrl, setExtensionDownloadUrl] = useState<string | null>(null);
-  const customPreviewUrl = useSettings((settings) => settings.browserAgentPreviewUrl);
   const devServerUrl = useMemo(
     () =>
       resolveBrowserAgentPreviewUrl({
         projectPreviewUrl,
-        customPreviewUrl,
         detectedDevServerUrl,
         scripts: activeProjectScripts,
       }),
-    [activeProjectScripts, customPreviewUrl, detectedDevServerUrl, projectPreviewUrl],
+    [activeProjectScripts, detectedDevServerUrl, projectPreviewUrl],
   );
 
   const openPreviewInBrowser = () => {

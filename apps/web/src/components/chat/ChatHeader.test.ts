@@ -136,20 +136,6 @@ describe("shouldShowPreviewButton", () => {
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
-        customPreviewUrl: "",
-      }),
-    ).toBe(true);
-  });
-
-  it("shows when a custom preview URL is configured", () => {
-    expect(
-      shouldShowPreviewButton({
-        activeProjectName: "codething-mvp",
-        activeThreadEnvironmentId: primaryEnvironmentId,
-        primaryEnvironmentId,
-        browserAgentSidebarMode: false,
-        mainActionRunning: false,
-        customPreviewUrl: "http://localhost:4000/",
       }),
     ).toBe(true);
   });
@@ -163,7 +149,6 @@ describe("shouldShowPreviewButton", () => {
         browserAgentSidebarMode: false,
         mainActionRunning: false,
         projectPreviewUrl: "http://localhost:5173/",
-        customPreviewUrl: "",
       }),
     ).toBe(true);
   });
@@ -176,7 +161,6 @@ describe("shouldShowPreviewButton", () => {
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: false,
-        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
@@ -189,7 +173,6 @@ describe("shouldShowPreviewButton", () => {
         primaryEnvironmentId,
         browserAgentSidebarMode: true,
         mainActionRunning: true,
-        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
@@ -202,7 +185,6 @@ describe("shouldShowPreviewButton", () => {
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
-        customPreviewUrl: "",
       }),
     ).toBe(false);
   });
@@ -215,7 +197,6 @@ describe("shouldShowPreviewButton", () => {
         primaryEnvironmentId,
         browserAgentSidebarMode: false,
         mainActionRunning: true,
-        customPreviewUrl: "",
       }),
     ).toBe(false);
   });

@@ -289,3 +289,46 @@ index 811a8a8..f9cf2eb 100644
 -//# sourceMappingURL=RpcClient.js.map
 \ No newline at end of file
 +//# sourceMappingURL=RpcClient.js.map
+diff --git a/package.json b/package.json
+index 95e3bc4..0ed68b8 100644
+--- a/package.json
++++ b/package.json
+@@ -27,30 +27,36 @@
+   ],
+   "sideEffects": [],
+   "exports": {
+     "./package.json": "./package.json",
+-    ".": "./dist/index.js",
++    ".": {
++      "types": "./dist/index.d.ts",
++      "default": "./dist/index.js"
++    },
+     "./testing": "./dist/testing/index.js",
+     "./unstable/ai": "./dist/unstable/ai/index.js",
+     "./unstable/cli": "./dist/unstable/cli/index.js",
+     "./unstable/cluster": "./dist/unstable/cluster/index.js",
+     "./unstable/devtools": "./dist/unstable/devtools/index.js",
+     "./unstable/encoding": "./dist/unstable/encoding/index.js",
+     "./unstable/eventlog": "./dist/unstable/eventlog/index.js",
+     "./unstable/http": "./dist/unstable/http/index.js",
+     "./unstable/httpapi": "./dist/unstable/httpapi/index.js",
+     "./unstable/observability": "./dist/unstable/observability/index.js",
+     "./unstable/persistence": "./dist/unstable/persistence/index.js",
+     "./unstable/process": "./dist/unstable/process/index.js",
+     "./unstable/reactivity": "./dist/unstable/reactivity/index.js",
+     "./unstable/rpc": "./dist/unstable/rpc/index.js",
+     "./unstable/schema": "./dist/unstable/schema/index.js",
+     "./unstable/socket": "./dist/unstable/socket/index.js",
+     "./unstable/sql": "./dist/unstable/sql/index.js",
+     "./unstable/workflow": "./dist/unstable/workflow/index.js",
+     "./unstable/workers": "./dist/unstable/workers/index.js",
+-    "./*": "./dist/*.js",
++    "./*": {
++      "types": "./dist/*.d.ts",
++      "default": "./dist/*.js"
++    },
+     "./internal/*": null,
+     "./unstable/cli/internal/*": null,
+     "./unstable/cluster/internal/*": null,
+     "./*/index": null
+   },

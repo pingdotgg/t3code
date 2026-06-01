@@ -18,7 +18,6 @@ import {
   type UploadChatAttachment,
   OrchestrationThreadActivity,
   PROJECT_CONFIG_RELATIVE_PATH,
-  PROJECT_CONFIG_SCHEMA_URL,
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
@@ -63,6 +62,7 @@ import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
+import { normalizeBrowserAgentPreviewUrl } from "../browserAgents";
 import {
   deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
@@ -208,6 +208,7 @@ import {
   PullRequestCommentSeenStateSchema,
   pullRequestCommentSeenScopeKey,
 } from "~/pullRequestReviewComments";
+import { updateProjectConfigJson } from "../projectConfigFile";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
   useServerAvailableEditors,
@@ -2670,54 +2671,24 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const writeProjectConfigScripts = useCallback(
+  const writeProjectConfig = useCallback(
     async (input: {
       api: NonNullable<ReturnType<typeof readEnvironmentApi>>;
       projectCwd: string;
-      scripts: ProjectScript[];
-      browserPreviewUrl: string | null | undefined;
+      scripts?: readonly ProjectScript[] | undefined;
+      browserPreviewUrl?: string | null | undefined;
     }) => {
       const existing = await input.api.projects.readFile({
         cwd: input.projectCwd,
         relativePath: PROJECT_CONFIG_RELATIVE_PATH,
       });
-      const trimmedContents = existing.contents?.trim() ?? "";
-      let config: Record<string, unknown>;
-      if (trimmedContents.length === 0) {
-        config = {};
-      } else {
-        try {
-          const parsed = JSON.parse(trimmedContents) as unknown;
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            throw new Error("Project config must be a JSON object.");
-          }
-          config = { ...parsed };
-        } catch (error) {
-          throw new Error(
-            error instanceof Error
-              ? `Invalid ${PROJECT_CONFIG_RELATIVE_PATH}: ${error.message}`
-              : `Invalid ${PROJECT_CONFIG_RELATIVE_PATH}.`,
-            { cause: error },
-          );
-        }
-      }
-
-      config.$schema =
-        typeof config.$schema === "string" ? config.$schema : PROJECT_CONFIG_SCHEMA_URL;
-      if (
-        !("browser" in config) &&
-        input.browserPreviewUrl !== undefined &&
-        input.browserPreviewUrl !== null &&
-        input.browserPreviewUrl.trim().length > 0
-      ) {
-        config.browser = { previewUrl: input.browserPreviewUrl };
-      }
-      config.scripts = input.scripts;
-
       await input.api.projects.writeFile({
         cwd: input.projectCwd,
         relativePath: PROJECT_CONFIG_RELATIVE_PATH,
-        contents: `${JSON.stringify(config, null, 2)}\n`,
+        contents: updateProjectConfigJson(existing.contents, {
+          scripts: input.scripts,
+          browserPreviewUrl: input.browserPreviewUrl,
+        }),
       });
     },
     [],
@@ -2727,7 +2698,6 @@ export default function ChatView(props: ChatViewProps) {
     async (input: {
       projectId: ProjectId;
       projectCwd: string;
-      previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
       browserPreviewUrl: string | null | undefined;
       keybinding?: string | null;
@@ -2736,7 +2706,7 @@ export default function ChatView(props: ChatViewProps) {
       const api = readEnvironmentApi(environmentId);
       if (!api) return;
 
-      await writeProjectConfigScripts({
+      await writeProjectConfig({
         api,
         projectCwd: input.projectCwd,
         scripts: input.nextScripts,
@@ -2763,7 +2733,7 @@ export default function ChatView(props: ChatViewProps) {
         await localApi.server.upsertKeybinding(keybindingRule);
       }
     },
-    [environmentId, writeProjectConfigScripts],
+    [environmentId, writeProjectConfig],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -2792,7 +2762,6 @@ export default function ChatView(props: ChatViewProps) {
       await persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
         browserPreviewUrl: activeProject.browserPreviewUrl,
         keybinding: input.keybinding,
@@ -2828,7 +2797,6 @@ export default function ChatView(props: ChatViewProps) {
       await persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
         browserPreviewUrl: activeProject.browserPreviewUrl,
         keybinding: input.keybinding,
@@ -2848,7 +2816,6 @@ export default function ChatView(props: ChatViewProps) {
         await persistProjectScripts({
           projectId: activeProject.id,
           projectCwd: activeProject.cwd,
-          previousScripts: activeProject.scripts,
           nextScripts,
           browserPreviewUrl: activeProject.browserPreviewUrl,
           keybinding: null,
@@ -2869,6 +2836,32 @@ export default function ChatView(props: ChatViewProps) {
       }
     },
     [activeProject, persistProjectScripts],
+  );
+  const updateProjectPreviewUrl = useCallback(
+    async (rawPreviewUrl: string) => {
+      if (!activeProject) return;
+      const api = readEnvironmentApi(environmentId);
+      if (!api) return;
+
+      const normalizedPreviewUrl = normalizeBrowserAgentPreviewUrl(rawPreviewUrl);
+      const nextBrowserPreviewUrl =
+        normalizedPreviewUrl.trim().length > 0 ? normalizedPreviewUrl : null;
+
+      await writeProjectConfig({
+        api,
+        projectCwd: activeProject.cwd,
+        scripts: activeProject.scripts,
+        browserPreviewUrl: nextBrowserPreviewUrl,
+      });
+
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: activeProject.id,
+        browserPreviewUrl: nextBrowserPreviewUrl,
+      });
+    },
+    [activeProject, environmentId, writeProjectConfig],
   );
 
   const handleRuntimeModeChange = useCallback(
@@ -4652,6 +4645,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onUpdateProjectPreviewUrl={updateProjectPreviewUrl}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
           onSubmitGitPrompt={onSubmitGitPrompt}

@@ -14,25 +14,20 @@ import {
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
-const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-
-describe("ClientSettings browser preview", () => {
-  it("defaults to automatic preview URL detection", () => {
-    expect(DEFAULT_CLIENT_SETTINGS.browserAgentPreviewUrl).toBe("");
-    expect(decodeClientSettings({}).browserAgentPreviewUrl).toBe("");
-  });
-
-  it("trims custom preview URLs while decoding patches", () => {
-    const patch = decodeClientSettingsPatch({
-      browserAgentPreviewUrl: "  http://localhost:5173/app  ",
-    });
-
-    expect(patch.browserAgentPreviewUrl).toBe("http://localhost:5173/app");
-  });
-});
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 
 describe("ClientSettings running message delivery", () => {
+  it("ignores legacy global preview URL settings", () => {
+    const decoded = decodeClientSettings({
+      browserAgentPreviewUrl: "http://localhost:5173/",
+      runningMessageDeliveryMode: "steer",
+    });
+
+    expect(decoded).not.toHaveProperty("browserAgentPreviewUrl");
+    expect(decoded.runningMessageDeliveryMode).toBe("steer");
+  });
+
   it("queues messages sent while an agent is working by default", () => {
     expect(DEFAULT_CLIENT_SETTINGS.runningMessageDeliveryMode).toBe("queue");
     expect(decodeClientSettings({}).runningMessageDeliveryMode).toBe("queue");
