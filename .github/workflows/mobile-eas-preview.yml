@@ -2,8 +2,6 @@ name: Mobile EAS Preview
 
 on:
   pull_request:
-    paths:
-      - "apps/mobile/**"
 
 jobs:
   preview:
