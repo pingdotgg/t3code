@@ -208,8 +208,9 @@ it.layer(NodeServices.layer)("ServerSecretStoreLive", (it) => {
       const persisted = yield* secretStore.get("session-signing-key");
 
       assert.isTrue(Option.isSome(persisted));
-      assert.deepEqual(Array.from(first), Array.from(persisted.value));
-      assert.deepEqual(Array.from(second), Array.from(persisted.value));
+      const persistedBytes = Option.getOrThrow(persisted);
+      assert.deepEqual(Array.from(first), Array.from(persistedBytes));
+      assert.deepEqual(Array.from(second), Array.from(persistedBytes));
     }).pipe(Effect.provide(makeConcurrentCreateSecretStoreLayer())),
   );
 
