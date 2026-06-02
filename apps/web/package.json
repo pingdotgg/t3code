@@ -8,8 +8,8 @@
     "build": "vite build",
     "preview": "vp preview",
     "typecheck": "tsgo --noEmit",
-    "test": "vp test run --passWithNoTests",
-    "test:browser": "node scripts/run-browser-tests.mjs",
+    "test": "node ./node_modules/vite-plus/bin/vp test run --passWithNoTests --project unit",
+    "test:browser": "node ./node_modules/vite-plus/bin/vp test run --project browser",
     "test:browser:install": "playwright install chromium"
   },
   "dependencies": {

@@ -4,7 +4,7 @@ import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { playwright } from "vite-plus/test/browser-playwright";
 import "vite-plus/test/config";
-import { defineConfig } from "vite-plus";
+import { defineConfig, defineProject } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
@@ -27,13 +27,19 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
-const buildSourcemap =
+const buildSourcemap: boolean | "hidden" =
   sourcemapEnv === "0" || sourcemapEnv === "false"
     ? false
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
-const BROWSER_TEST_MODE = "browser";
+
+type ProjectConfig = Parameters<typeof defineProject>[0];
+type InheritedProjectConfig = ProjectConfig & { extends: true };
+
+function defineInheritedProject(config: InheritedProjectConfig) {
+  return defineProject(config as ProjectConfig);
+}
 
 function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
   if (!wsUrl) {
@@ -58,9 +64,7 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
-export default defineConfig(({ mode }) => {
-  const isBrowserTestMode = mode === BROWSER_TEST_MODE;
-
+export default defineConfig(() => {
   return {
     plugins: [
       tanstackRouter(),
@@ -97,9 +101,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host,
       port,
-      // The app dev server uses a fixed port, but browser tests need to allow
-      // concurrent runs to claim the next available port.
-      strictPort: !isBrowserTestMode,
+      strictPort: true,
       ...(devProxyTarget
         ? {
             proxy: {
@@ -132,14 +134,30 @@ export default defineConfig(({ mode }) => {
       sourcemap: buildSourcemap,
     },
     test: {
-      // The web runtime suite exercises auth bootstrap, saved environments,
-      // and websocket subscription lifecycles. Under the full monorepo test
-      // run, those async tests can exceed Vitest's default 5s budget.
-      hookTimeout: isBrowserTestMode ? 30_000 : 15_000,
-      testTimeout: isBrowserTestMode ? 30_000 : 15_000,
-      ...(isBrowserTestMode
-        ? {
+      projects: [
+        defineInheritedProject({
+          extends: true,
+          test: {
+            name: "unit",
+            include: ["src/**/*.test.{ts,tsx}"],
+            // The web runtime suite exercises auth bootstrap, saved environments,
+            // and websocket subscription lifecycles. Under the full monorepo test
+            // run, those async tests can exceed Vitest's default 5s budget.
+            hookTimeout: 15_000,
+            testTimeout: 15_000,
+          },
+        }),
+        defineInheritedProject({
+          extends: true,
+          server: {
+            // Browser tests need concurrent runs to claim the next available port.
+            strictPort: false,
+          },
+          test: {
+            name: "browser",
             include: ["src/components/**/*.browser.tsx"],
+            hookTimeout: 30_000,
+            testTimeout: 30_000,
             browser: {
               enabled: true,
               provider: playwright() as never,
@@ -150,8 +168,9 @@ export default defineConfig(({ mode }) => {
               },
             },
             fileParallelism: false,
-          }
-        : {}),
+          },
+        }),
+      ],
     },
   };
 });
