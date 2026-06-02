@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm install -g vite-plus && vp install --filter '@t3tools/marketing'",
-  "buildCommand": "vp run --filter @t3tools/marketing build && rm -rf dist && cp -R apps/marketing/dist dist",
+  "buildCommand": "vp run --filter @t3tools/marketing build",
   "outputDirectory": "dist"
 }

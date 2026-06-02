@@ -100,7 +100,7 @@ jobs:
           unset ELECTRON_SKIP_BINARY_DOWNLOAD
           electron_dir="$(dirname "$(node -p "require.resolve('./apps/desktop/node_modules/electron/package.json')")")"
           rm -rf "$electron_dir/dist" "$electron_dir/path.txt"
-          env -u ELECTRON_SKIP_BINARY_DOWNLOAD node "$electron_dir/install.js"
+          env -u ELECTRON_SKIP_BINARY_DOWNLOAD force_no_cache=true node "$electron_dir/install.js"
           node - "$electron_dir" <<'NODE'
           const fs = require("node:fs");
           const path = require("node:path");
