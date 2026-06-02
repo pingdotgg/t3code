@@ -253,7 +253,9 @@ describe("desktop update UI helpers", () => {
       availableVersion: "1.1.0",
     };
 
-    expect(getArm64IntelBuildWarningDescription(state, "darwin")).toContain("Download the available update");
+    expect(getArm64IntelBuildWarningDescription(state, "darwin")).toContain(
+      "Download the available update",
+    );
   });
 
   it("includes the downloaded version in the install confirmation copy", () => {

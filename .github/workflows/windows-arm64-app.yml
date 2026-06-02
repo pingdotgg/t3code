@@ -86,7 +86,7 @@ jobs:
 
             Built from `${{ github.repository }}@${{ github.sha }}`.
             Upstream sync source: `pingdotgg/t3code@main`.
-          make_latest: true
+          make_latest: false
           files: |
             release/*.exe
             release/*.blockmap

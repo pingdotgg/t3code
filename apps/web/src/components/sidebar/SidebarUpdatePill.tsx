@@ -34,7 +34,14 @@ export function SidebarUpdatePill() {
   const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
   const arm64Description =
     state && showArm64Warning
-      ? getArm64IntelBuildWarningDescription(state, navigator.platform.startsWith("Win") ? "win32" : "darwin")
+      ? getArm64IntelBuildWarningDescription(
+          state,
+          navigator.platform.startsWith("Win")
+            ? "win32"
+            : navigator.platform.startsWith("Mac")
+              ? "darwin"
+              : null,
+        )
       : null;
 
   const handleAction = useCallback(() => {
@@ -117,7 +124,9 @@ export function SidebarUpdatePill() {
           <AlertTitle>
             {state?.hostArch === "arm64" && navigator.platform.startsWith("Win")
               ? "x64 build on ARM64"
-              : "Intel build on Apple Silicon"}
+              : navigator.platform.startsWith("Mac")
+                ? "Intel build on Apple Silicon"
+                : "x64 build on ARM64"}
           </AlertTitle>
           <AlertDescription>{arm64Description}</AlertDescription>
         </Alert>

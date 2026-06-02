@@ -3322,7 +3322,14 @@ export default function Sidebar() {
     isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
   const arm64IntelBuildWarningDescription =
     desktopUpdateState && showArm64IntelBuildWarning
-      ? getArm64IntelBuildWarningDescription(desktopUpdateState, navigator.platform.startsWith("Win") ? "win32" : "darwin")
+      ? getArm64IntelBuildWarningDescription(
+          desktopUpdateState,
+          navigator.platform.startsWith("Win")
+            ? "win32"
+            : navigator.platform.startsWith("Mac")
+              ? "darwin"
+              : null,
+        )
       : null;
   const commandPaletteShortcutLabel = shortcutLabelForCommand(
     keybindings,

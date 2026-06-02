@@ -72,7 +72,7 @@ describe("DesktopEnvironment", () => {
       );
       assert.deepEqual(environment.devRemoteT3ServerEntryPath, Option.some("/remote/server.mjs"));
       assert.deepEqual(environment.configuredBackendPort, Option.some(4949));
-      assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abc"));
+      assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abcdef"));
       assert.deepEqual(environment.otlpTracesUrl, Option.some("http://127.0.0.1:4318/v1/traces"));
       assert.equal(environment.otlpExportIntervalMs, 2500);
     }),

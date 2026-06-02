@@ -126,10 +126,11 @@ function resolveWindowsHostArch(
 ): DesktopRuntimeArch | undefined {
   const appArch = normalizeDesktopArch(processArch);
   if (appArch === "arm64") return "arm64";
-  for (const envValue of windowsProcessorArchitectures) {
-    const resolved = normalizeWindowsArch(envValue);
-    if (resolved !== undefined) return resolved;
-  }
+  const resolved = windowsProcessorArchitectures
+    .map(normalizeWindowsArch)
+    .filter((v): v is DesktopRuntimeArch => v !== undefined);
+  if (resolved.includes("arm64")) return "arm64";
+  if (resolved.includes("x64")) return "x64";
   return undefined;
 }
 
