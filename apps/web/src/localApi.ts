@@ -1,4 +1,9 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  type ContextMenuItem,
+  type ContextMenuStyle,
+  type LocalApi,
+} from "@t3tools/contracts";
 import type { WsRpcClient } from "@t3tools/client-runtime";
 
 import { resetVcsStatusStateForTests } from "./lib/vcsStatusState";
@@ -30,6 +35,27 @@ let cachedApi: LocalApi | undefined;
 
 function unavailableLocalBackendError(): Error {
   return new Error("Local backend API is unavailable before a backend is paired.");
+}
+
+async function readContextMenuStyle(): Promise<ContextMenuStyle> {
+  try {
+    const settings = window.desktopBridge
+      ? await window.desktopBridge.getClientSettings()
+      : readBrowserClientSettings();
+    return settings?.contextMenuStyle ?? DEFAULT_CLIENT_SETTINGS.contextMenuStyle;
+  } catch {
+    return DEFAULT_CLIENT_SETTINGS.contextMenuStyle;
+  }
+}
+
+function shouldUseNativeContextMenu(style: ContextMenuStyle): boolean {
+  if (style === "custom") {
+    return false;
+  }
+  if (style === "native") {
+    return true;
+  }
+  return Boolean(window.desktopBridge);
 }
 
 function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
@@ -68,8 +94,13 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        const style = await readContextMenuStyle();
+        if (shouldUseNativeContextMenu(style) && window.desktopBridge) {
+          try {
+            return (await window.desktopBridge.showContextMenu(items, position)) as T | null;
+          } catch {
+            return null;
+          }
         }
         return showContextMenuFallback(items, position);
       },
