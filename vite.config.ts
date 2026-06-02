@@ -1,32 +1,7 @@
 import "vite-plus/test/config";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite-plus";
 
-const webSrcPath = fileURLToPath(new URL("./apps/web/src", import.meta.url));
-const contractsSrcPath = fileURLToPath(
-  new URL("./packages/contracts/src/index.ts", import.meta.url),
-);
-const vitePlusRunnerPath = fileURLToPath(
-  new URL("./node_modules/vitest/dist/@vitest/runner/index.js", import.meta.url),
-);
-
 export default defineConfig({
-  resolve: {
-    alias: [
-      {
-        find: /^@t3tools\/contracts$/,
-        replacement: contractsSrcPath,
-      },
-      {
-        find: "~",
-        replacement: webSrcPath,
-      },
-      {
-        find: /^@vitest\/runner$/,
-        replacement: vitePlusRunnerPath,
-      },
-    ],
-  },
   test: {
     environment: "node",
     hookTimeout: 60_000,
