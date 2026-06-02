@@ -128,6 +128,16 @@ function isPrMergeable(pr: NonNullable<VcsStatusResult["pr"]>): boolean {
   );
 }
 
+function isPrWaitingOnChecks(pr: NonNullable<VcsStatusResult["pr"]>): boolean {
+  return (
+    pr.state === "open" &&
+    pr.mergeStatus === "mergeable" &&
+    pr.checks !== undefined &&
+    pr.checks.pending > 0 &&
+    pr.checks.failed === 0
+  );
+}
+
 function formatYesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
@@ -582,8 +592,8 @@ export function resolveQuickAction(
   if (hasOpenPr && pr?.checks && pr.checks.pending > 0) {
     return {
       label: formatChecksLabel(pr.checks),
-      disabled: true,
-      kind: "show_hint",
+      disabled: !isPrWaitingOnChecks(pr),
+      kind: isPrWaitingOnChecks(pr) ? "open_pr" : "show_hint",
       hint: "Checks are still running.",
       tone: "warning",
     };

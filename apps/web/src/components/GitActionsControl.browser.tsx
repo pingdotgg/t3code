@@ -101,6 +101,12 @@ vi.mock("~/lib/sourceControlActions", () => ({
     resetError: vi.fn(),
     run: vi.fn(),
   })),
+  useVcsSyncBaseAction: vi.fn(() => ({
+    error: null,
+    isPending: false,
+    resetError: vi.fn(),
+    run: vi.fn(),
+  })),
 }));
 
 vi.mock("~/lib/vcsStatusState", () => ({
@@ -293,7 +299,7 @@ function Harness() {
   );
 }
 
-describe("GitActionsControl thread-scoped progress toast", () => {
+describe("GitActionsControl thread-scoped actions", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -306,9 +312,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     document.body.innerHTML = "";
   });
 
-  it("keeps an in-flight git action toast pinned to the thread ref that started it", async () => {
-    vi.useFakeTimers();
-
+  it("keeps a quick git action prompt toast pinned to the thread ref that started it", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const screen = await render(<Harness />, { container: host });
@@ -324,20 +328,13 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       expect(toastAddSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
-          title: "Pushing...",
-          type: "loading",
+          title: "Prompt added to composer.",
+          type: "success",
         }),
       );
-
-      await vi.advanceTimersByTimeAsync(1_000);
-
-      expect(toastUpdateSpy).toHaveBeenLastCalledWith(
-        "toast-1",
-        expect.objectContaining({
-          data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
-          title: "Pushing...",
-          type: "loading",
-        }),
+      expect(setComposerDraftPromptSpy).toHaveBeenCalledWith(
+        scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
+        expect.stringContaining("Create a pull request for the current branch."),
       );
 
       const switchEnvironmentButton = findButtonByText("Switch environment");
@@ -349,20 +346,15 @@ describe("GitActionsControl thread-scoped progress toast", () => {
         throw new Error('Unable to find button containing "Switch environment"');
       }
       switchEnvironmentButton.click();
-      await vi.advanceTimersByTimeAsync(1_000);
 
-      expect(toastUpdateSpy).toHaveBeenLastCalledWith(
-        "toast-1",
+      expect(toastAddSpy).toHaveBeenLastCalledWith(
         expect.objectContaining({
           data: { threadRef: scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID) },
-          title: "Pushing...",
-          type: "loading",
+          title: "Prompt added to composer.",
+          type: "success",
         }),
       );
     } finally {
-      activeRunStackedActionDeferredRef.current.reject(new Error("test cleanup"));
-      await Promise.resolve();
-      vi.useRealTimers();
       await screen.unmount();
       host.remove();
     }
@@ -556,7 +548,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     }
   });
 
-  it("requires a second click before archiving a merged pull request thread", async () => {
+  it("archives a merged pull request thread on click", async () => {
     vcsStatusOverrideRef.current = {
       data: {
         isRepo: true,
@@ -607,20 +599,6 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       }
 
       mergedButton.click();
-
-      await vi.waitFor(() => {
-        expect(findButtonByText("Archive")).toBeTruthy();
-      });
-      expect(archiveThreadSpy).not.toHaveBeenCalled();
-
-      const archiveButton = findButtonByText("Archive");
-      expect(archiveButton, 'Unable to find button containing "Archive"').toBeTruthy();
-      if (!(archiveButton instanceof HTMLButtonElement)) {
-        throw new Error('Unable to find button containing "Archive"');
-      }
-      expect(archiveButton.className).toContain("border-destructive");
-
-      archiveButton.click();
 
       await vi.waitFor(() => {
         expect(archiveThreadSpy).toHaveBeenCalledWith(

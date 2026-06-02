@@ -182,7 +182,7 @@ describe("when: PR status has merge metadata", () => {
     });
   });
 
-  it("resolveQuickAction disables while checks are still running", () => {
+  it("resolveQuickAction lets mergeable PRs with pending checks arm merge", () => {
     const quick = resolveQuickAction(
       status({
         pr: {
@@ -198,6 +198,36 @@ describe("when: PR status has merge metadata", () => {
             completed: 2,
             successful: 2,
             failed: 0,
+            pending: 2,
+          },
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "open_pr",
+      label: "2 / 4 Checks",
+      tone: "warning",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction keeps failed pending checks disabled", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 21,
+          title: "Pending checks",
+          url: "https://example.com/pr/21",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "mergeable",
+          checks: {
+            total: 4,
+            completed: 2,
+            successful: 1,
+            failed: 1,
             pending: 2,
           },
         },

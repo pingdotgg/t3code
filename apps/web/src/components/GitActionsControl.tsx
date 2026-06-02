@@ -24,7 +24,6 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
-  ArchiveIcon,
   MessageSquareTextIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -360,7 +359,6 @@ function GitQuickActionIcon({
   SourceControlIcon: ReturnType<typeof getSourceControlPresentation>["Icon"];
 }) {
   const iconClassName = "size-3.5";
-  if (quickAction.label === "Archive") return <ArchiveIcon className={iconClassName} />;
   if (quickAction.kind === "open_pr") return <SourceControlIcon className={iconClassName} />;
   if (quickAction.kind === "prompt_ai") return <SourceControlIcon className={iconClassName} />;
   if (quickAction.kind === "open_publish") return <CloudUploadIcon className={iconClassName} />;
@@ -1082,9 +1080,9 @@ export default function GitActionsControl({
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [mergedArchiveArmedThreadKey, setMergedArchiveArmedThreadKey] = useState<string | null>(
-    null,
-  );
+  const [pendingChecksMergeArmedThreadKey, setPendingChecksMergeArmedThreadKey] = useState<
+    string | null
+  >(null);
   const [isArchivingMergedThread, setIsArchivingMergedThread] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
@@ -1245,12 +1243,17 @@ export default function GitActionsControl({
   );
   const isMergedQuickAction =
     gitStatusForActions?.pr?.state === "merged" && quickAction.tone === "merged";
-  const isMergedArchiveArmed =
-    isMergedQuickAction &&
+  const isPendingChecksMergeAction =
+    gitStatusForActions?.pr?.state === "open" &&
+    gitStatusForActions.pr.mergeStatus === "mergeable" &&
+    quickAction.kind === "open_pr" &&
+    quickAction.tone === "warning";
+  const isPendingChecksMergeArmed =
+    isPendingChecksMergeAction &&
     activeThreadKey !== null &&
-    mergedArchiveArmedThreadKey === activeThreadKey;
-  const renderedQuickAction: GitQuickAction = isMergedArchiveArmed
-    ? { ...quickAction, label: "Archive", tone: "destructive" }
+    pendingChecksMergeArmedThreadKey === activeThreadKey;
+  const renderedQuickAction: GitQuickAction = isPendingChecksMergeArmed
+    ? { ...quickAction, label: "Merge", tone: "success" }
     : quickAction;
   const quickActionToneClassName = gitQuickActionToneClassName(renderedQuickAction.tone);
   const quickActionClassName =
@@ -1282,14 +1285,14 @@ export default function GitActionsControl({
   }, [updateActiveProgressToast]);
 
   useEffect(() => {
-    setMergedArchiveArmedThreadKey(null);
+    setPendingChecksMergeArmedThreadKey(null);
   }, [activeThreadKey]);
 
   useEffect(() => {
-    if (!isMergedQuickAction) {
-      setMergedArchiveArmedThreadKey(null);
+    if (!isPendingChecksMergeAction) {
+      setPendingChecksMergeArmedThreadKey(null);
     }
-  }, [isMergedQuickAction]);
+  }, [isPendingChecksMergeAction]);
 
   useEffect(() => {
     if (gitCwd === null) {
@@ -1738,19 +1741,6 @@ export default function GitActionsControl({
   };
 
   const runQuickAction = () => {
-    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
-      const promptIntent = quickActionPromptIntent(renderedQuickAction);
-      if (promptIntent) {
-        promptAi(
-          buildAgentPrompt(
-            promptIntent,
-            renderedQuickAction.prompt ? { promptHint: renderedQuickAction.prompt } : undefined,
-          ),
-        );
-        return;
-      }
-    }
-
     if (isMergedQuickAction) {
       if (!activeThreadRef || !activeThreadKey) {
         toastManager.add({
@@ -1760,14 +1750,10 @@ export default function GitActionsControl({
         });
         return;
       }
-      if (!isMergedArchiveArmed) {
-        setMergedArchiveArmedThreadKey(activeThreadKey);
-        return;
-      }
       setIsArchivingMergedThread(true);
       void archiveThread(activeThreadRef)
         .then(() => {
-          setMergedArchiveArmedThreadKey(null);
+          setPendingChecksMergeArmedThreadKey(null);
         })
         .catch((err: unknown) => {
           toastManager.add(
@@ -1784,6 +1770,38 @@ export default function GitActionsControl({
         });
       return;
     }
+
+    if (isPendingChecksMergeAction && !isPendingChecksMergeArmed) {
+      if (!activeThreadKey) {
+        toastManager.add({
+          type: "error",
+          title: "No active thread for this pull request.",
+          data: threadToastData,
+        });
+        return;
+      }
+      setPendingChecksMergeArmedThreadKey(activeThreadKey);
+      return;
+    }
+
+    if (renderedQuickAction.kind === "open_pr" && renderedQuickAction.label.startsWith("View ")) {
+      void openExistingPr();
+      return;
+    }
+
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      const promptIntent = quickActionPromptIntent(renderedQuickAction);
+      if (promptIntent) {
+        promptAi(
+          buildAgentPrompt(
+            promptIntent,
+            renderedQuickAction.prompt ? { promptHint: renderedQuickAction.prompt } : undefined,
+          ),
+        );
+        return;
+      }
+    }
+
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
       return;
@@ -1860,6 +1878,10 @@ export default function GitActionsControl({
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
+    if (item.kind === "open_pr" && item.label.startsWith("View ")) {
+      void openExistingPr();
+      return;
+    }
     if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
       const promptIntent = menuItemPromptIntent(item);
       if (promptIntent) {
