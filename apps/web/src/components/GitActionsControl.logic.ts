@@ -65,6 +65,7 @@ export type GitAgentPromptIntent =
   | "sync_base"
   | "publish_repository"
   | "inspect_pr"
+  | "finish_pr"
   | "merge_pr"
   | "resolve_conflicts"
   | "review_pr_comments"
@@ -257,6 +258,15 @@ function resolveAgentTask(input: BuildGitAgentPromptInput): string[] {
       return [
         `Inspect the current ${terms.singular}.`,
         "Summarize state, checks, review comments, and any required follow-up work.",
+      ];
+    case "finish_pr":
+      return [
+        `Finish the current branch all the way through ${terms.singular} merge.`,
+        "Commit the relevant local changes first, generating a concise conventional commit message from the actual diff.",
+        "Update the branch against its base/default branch before publishing; prefer a rebase when it is safe for this branch.",
+        "Resolve any conflicts carefully, run the relevant checks, and push the updated branch.",
+        `Create a ${terms.singular} if one does not already exist, or use the existing one if it does.`,
+        `Verify checks, review state, base/head refs, and repository policy, then merge the ${terms.singular} only if it is safe and appropriate.`,
       ];
     case "merge_pr":
       return [
@@ -541,25 +551,21 @@ export function resolveQuickAction(
     };
   }
 
-  if (isBehindBase) {
-    if (hasChanges) {
+  if (hasChanges) {
+    if (isBehindBase) {
       return {
-        label: "Update from base",
-        disabled: true,
-        kind: "show_hint",
-        hint: "Commit or stash local changes before updating from the base branch.",
+        label: `Finish ${terminology.shortLabel}`,
+        disabled: false,
+        kind: "prompt_ai",
+        prompt: buildGitAgentPrompt({
+          intent: "finish_pr",
+          cwd: null,
+          gitStatus,
+          threadRef: null,
+        }),
         tone: "warning",
       };
     }
-    return {
-      label: "Update from base",
-      disabled: false,
-      kind: "run_sync_base",
-      tone: "warning",
-    };
-  }
-
-  if (hasChanges) {
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
@@ -576,6 +582,15 @@ export function resolveQuickAction(
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
+    };
+  }
+
+  if (isBehindBase) {
+    return {
+      label: "Update from base",
+      disabled: false,
+      kind: "run_sync_base",
+      tone: "warning",
     };
   }
 

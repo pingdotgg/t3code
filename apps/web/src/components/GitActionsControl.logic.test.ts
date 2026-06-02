@@ -651,18 +651,21 @@ describe("when: ref is behind its base branch", () => {
     });
   });
 
-  it("resolveQuickAction asks for a clean tree before updating from base", () => {
+  it("resolveQuickAction finishes the PR workflow when local changes block updating from base", () => {
     const quick = resolveQuickAction(
       status({ hasWorkingTreeChanges: true, behindOfDefaultCount: 1 }),
       false,
     );
-    assert.deepEqual(quick, {
-      label: "Update from base",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Commit or stash local changes before updating from the base branch.",
+    assert.deepInclude(quick, {
+      label: "Finish PR",
+      disabled: false,
+      kind: "prompt_ai",
       tone: "warning",
     });
+    assert.include(quick.prompt ?? "", "Commit the relevant local changes first");
+    assert.include(quick.prompt ?? "", "Update the branch against its base/default branch");
+    assert.include(quick.prompt ?? "", "Create a pull request if one does not already exist");
+    assert.include(quick.prompt ?? "", "then merge the pull request only if it is safe");
   });
 
   it("buildMenuItems disables push and create PR", () => {
