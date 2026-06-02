@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,7 +14,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -89,7 +89,7 @@ export interface DesktopAppSettingsShape {
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   DesktopAppSettingsShape
->()("t3/desktop/AppSettings") {}
+>()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
   return {
@@ -222,10 +222,10 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   readonly settingsPath: string;
   readonly settings: DesktopSettings;
   readonly defaultSettings: DesktopSettings;
+  readonly suffix: string;
 }): Effect.fn.Return<void, PlatformError.PlatformError | Schema.SchemaError> {
   const directory = input.path.dirname(input.settingsPath);
-  const suffix = (yield* Random.nextUUIDv4).replace(/-/g, "");
-  const tempPath = `${input.settingsPath}.${process.pid}.${suffix}.tmp`;
+  const tempPath = `${input.settingsPath}.${process.pid}.${input.suffix}.tmp`;
   const encoded = yield* encodeDesktopSettingsJson(
     toDesktopSettingsDocument(input.settings, input.defaultSettings),
   );
@@ -240,6 +240,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
     const persist = (
@@ -251,13 +252,18 @@ export const layer = Layer.effect(
           return Effect.succeed([settingsChange(settings, false), settings] as const);
         }
 
-        return writeSettings({
-          fileSystem,
-          path,
-          settingsPath: environment.desktopSettingsPath,
-          settings: nextSettings,
-          defaultSettings: environment.defaultDesktopSettings,
-        }).pipe(
+        return crypto.randomUUIDv4.pipe(
+          Effect.map((uuid) => uuid.replace(/-/g, "")),
+          Effect.flatMap((suffix) =>
+            writeSettings({
+              fileSystem,
+              path,
+              settingsPath: environment.desktopSettingsPath,
+              settings: nextSettings,
+              defaultSettings: environment.defaultDesktopSettings,
+              suffix,
+            }),
+          ),
           Effect.mapError((cause) => new DesktopSettingsWriteError({ cause })),
           Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
         );

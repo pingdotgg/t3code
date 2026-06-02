@@ -35,10 +35,13 @@ export function parseBase64DataUrl(
   const match = /^data:([^,]+),([a-z0-9+/=\r\n ]+)$/i.exec(dataUrl.trim());
   if (!match) return null;
 
-  const headerParts = (match[1] ?? "")
-    .split(";")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const headerParts: Array<string> = [];
+  for (const part of (match[1] ?? "").split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) {
+      headerParts.push(trimmed);
+    }
+  }
   if (headerParts.length < 2) {
     return null;
   }

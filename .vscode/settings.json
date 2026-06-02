@@ -5,5 +5,13 @@
     "source.fixAll.oxc": "always"
   },
   "oxc.unusedDisableDirectives": "warn",
-  "js/ts.tsdk.path": "node_modules/typescript/lib"
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "typescript.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "javascript.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "files.watcherExclude": {
+    ".repos/**": true
+  },
+  "search.exclude": {
+    ".repos/**": true
+  }
 }

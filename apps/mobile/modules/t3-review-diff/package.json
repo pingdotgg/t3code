@@ -1,0 +1,12 @@
+{
+  "name": "@t3tools/mobile-review-diff-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "T3ReviewDiffModule"
+      ]
+    }
+  }
+}

@@ -43,6 +43,12 @@ export interface EnvironmentState {
   projectIds: ProjectId[];
   projectById: Record<ProjectId, Project>;
 
+  // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+  // Web still stores shell snapshots and thread details in this denormalized
+  // Zustand shape. Mobile uses createShellSnapshotManager and
+  // createThreadDetailManager from @t3tools/client-runtime. New shared behavior
+  // belongs in those managers/reducers, with a web adapter layered on top.
+  //
   // ---------------------------------------------------------------------------
   // Thread bookkeeping — written by BOTH shell stream and detail stream.
   // Both streams ensure the thread is registered here; the bookkeeping is
@@ -1120,6 +1126,9 @@ export function syncServerShellSnapshot(
   snapshot: OrchestrationShellSnapshot,
   environmentId: EnvironmentId,
 ): AppState {
+  // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+  // Keep web-specific projection here only until the store can consume
+  // createShellSnapshotManager or a shared adapter over its reducer.
   return commitEnvironmentState(
     state,
     environmentId,
@@ -1136,6 +1145,9 @@ export function syncServerThreadDetail(
   thread: OrchestrationThread,
   environmentId: EnvironmentId,
 ): AppState {
+  // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+  // Keep web-specific projection here only until the store can consume
+  // createThreadDetailManager or a shared adapter over its reducer.
   const environmentState = getStoredEnvironmentState(state, environmentId);
   const previousThread = getThreadFromEnvironmentState(environmentState, thread.id);
   return commitEnvironmentState(

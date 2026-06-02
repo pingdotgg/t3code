@@ -33,12 +33,38 @@ import { useStore } from "../store";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
-vi.mock("../lib/gitStatusState", () => ({
-  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
-  useGitStatuses: () => new Map(),
-  refreshGitStatus: () => Promise.resolve(null),
-  resetGitStatusStateForTests: () => undefined,
-}));
+vi.mock("../lib/vcsStatusState", () => {
+  const status = {
+    data: {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: true,
+      refName: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    },
+    error: null,
+    cause: null,
+    isPending: false,
+  };
+
+  return {
+    getVcsStatusSnapshot: () => status,
+    useVcsStatus: () => status,
+    useVcsStatuses: () => new Map(),
+    refreshVcsStatus: () => Promise.resolve(null),
+    resetVcsStatusStateForTests: () => undefined,
+  };
+});
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;

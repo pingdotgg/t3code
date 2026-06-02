@@ -64,11 +64,16 @@ export const makeAuthControlPlane = Effect.gen(function* () {
 
   const listPairingLinks: AuthControlPlaneShape["listPairingLinks"] = (input) =>
     bootstrapCredentials.listActive().pipe(
-      Effect.map((pairingLinks) =>
-        pairingLinks
-          .filter((pairingLink) => (input?.role ? pairingLink.role === input.role : true))
-          .filter((pairingLink) => !input?.excludeSubjects?.includes(pairingLink.subject))
-          .map((pairingLink) =>
+      Effect.map((pairingLinks) => {
+        const activeLinks: Array<AuthPairingLink> = [];
+        for (const pairingLink of pairingLinks) {
+          if (input?.role && pairingLink.role !== input.role) {
+            continue;
+          }
+          if (input?.excludeSubjects?.includes(pairingLink.subject)) {
+            continue;
+          }
+          activeLinks.push(
             pairingLink.label
               ? ({
                   id: pairingLink.id,
@@ -87,11 +92,12 @@ export const makeAuthControlPlane = Effect.gen(function* () {
                   createdAt: pairingLink.createdAt,
                   expiresAt: pairingLink.expiresAt,
                 } satisfies AuthPairingLink),
-          )
-          .toSorted(
-            (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
-          ),
-      ),
+          );
+        }
+        return activeLinks.toSorted(
+          (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
+        );
+      }),
       Effect.mapError(toAuthControlPlaneError("Failed to list pairing links.")),
     );
 

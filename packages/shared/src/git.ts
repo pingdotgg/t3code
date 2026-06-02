@@ -6,8 +6,8 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -86,8 +86,10 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
+export function buildTemporaryWorktreeBranchName(
+  randomHex: (byteLength: number) => string,
+): string {
+  const token = randomHex(4).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -172,7 +174,9 @@ export function dedupeRemoteBranchesWithLocalMatches(
   refs: ReadonlyArray<VcsRef>,
 ): ReadonlyArray<VcsRef> {
   const localBranchNames = new Set(
-    refs.filter((refName) => !refName.isRemote).map((refName) => refName.name),
+    Arr.filterMap(refs, (refName) =>
+      refName.isRemote ? Result.failVoid : Result.succeed(refName.name),
+    ),
   );
 
   return refs.filter((refName) => {

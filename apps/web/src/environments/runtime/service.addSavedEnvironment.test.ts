@@ -9,6 +9,7 @@ const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
 const mockIsRemoteEnvironmentAuthHttpError = vi.fn((_: unknown) => false);
 const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
+const mockRemoteHttpRunPromise = vi.fn((effect: Promise<unknown>) => effect);
 const mockBootstrapSshBearerSession = vi.fn();
 const mockFetchSshSessionState = vi.fn();
 const mockPersistSavedEnvironmentRecord = vi.fn();
@@ -56,16 +57,15 @@ const mockClientGetConfig = vi.fn(async () => ({
   },
 }));
 
-vi.mock("../remote/target", () => ({
+vi.mock("@t3tools/shared/remote", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/shared/remote")>()),
   resolveRemotePairingTarget: mockResolveRemotePairingTarget,
 }));
 
-vi.mock("../remote/api", () => ({
-  bootstrapRemoteBearerSession: mockBootstrapRemoteBearerSession,
-  fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
-  fetchRemoteSessionState: mockFetchRemoteSessionState,
-  isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
-  resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
+vi.mock("../../lib/runtime", () => ({
+  remoteHttpRuntime: {
+    runPromise: mockRemoteHttpRunPromise,
+  },
 }));
 
 vi.mock("~/localApi", () => ({
@@ -105,20 +105,33 @@ vi.mock("./catalog", () => ({
   writeSavedEnvironmentBearerToken: mockWriteSavedEnvironmentBearerToken,
 }));
 
-vi.mock("./connection", () => ({
+vi.mock("./connection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./connection")>()),
   createEnvironmentConnection: mockCreateEnvironmentConnection,
 }));
 
-vi.mock("../../rpc/wsRpcClient", () => ({
-  createWsRpcClient: vi.fn(() => ({
-    server: {
-      getConfig: mockClientGetConfig,
-    },
-    orchestration: {
-      subscribeThread: vi.fn(() => () => {}),
-    },
-  })),
-}));
+vi.mock("@t3tools/client-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@t3tools/client-runtime")>();
+  return {
+    ...actual,
+    bootstrapRemoteBearerSession: mockBootstrapRemoteBearerSession,
+    createWsRpcClient: vi.fn(() => ({
+      server: {
+        getConfig: mockClientGetConfig,
+      },
+      terminal: {
+        onMetadata: vi.fn(() => () => undefined),
+      },
+      orchestration: {
+        subscribeThread: vi.fn(() => () => {}),
+      },
+    })),
+    fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
+    fetchRemoteSessionState: mockFetchRemoteSessionState,
+    isRemoteEnvironmentAuthHttpError: mockIsRemoteEnvironmentAuthHttpError,
+    resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
+  };
+});
 
 vi.mock("../../rpc/wsTransport", () => ({
   WsTransport: vi.fn(),
@@ -501,7 +514,11 @@ describe("addSavedEnvironment", () => {
       knownEnvironment: {
         environmentId: EnvironmentId.make("environment-1"),
       },
-      client: {},
+      client: {
+        terminal: {
+          onMetadata: vi.fn(() => () => undefined),
+        },
+      },
       ensureBootstrapped: async () => undefined,
       reconnect: vi.fn(async () => {
         throw new Error("socket closed");
