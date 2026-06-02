@@ -43,6 +43,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@rolldown/plugin-babel": "^0.2.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
@@ -51,7 +52,7 @@
     "@types/react-dom": "~19.2.3",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.0.0",
-    "@vitest/browser-playwright": "^4.0.18",
+    "@vitest/browser-playwright": "catalog:",
     "babel-plugin-react-compiler": "1.0.0",
     "msw": "2.12.11",
     "playwright": "^1.58.2",

@@ -1,4 +1,8 @@
-import { AuthSessionId } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthSessionId,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,9 +10,8 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
-import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
-import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
-import type { AuthControlPlaneShape } from "../auth/Services/AuthControlPlane.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+
 import {
   formatIssuedPairingCredential,
   formatIssuedSession,
@@ -23,9 +26,9 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithAuthControlPlane = <A, E>(
+const runWithEnvironmentAuth = <A, E>(
   flags: CliAuthLocationFlags,
-  run: (authControlPlane: AuthControlPlaneShape) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuthShape) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -35,11 +38,11 @@ const runWithAuthControlPlane = <A, E>(
     const config = yield* resolveCliAuthConfig(flags, logLevel);
     const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
     return yield* Effect.gen(function* () {
-      const authControlPlane = yield* AuthControlPlane;
-      return yield* run(authControlPlane);
+      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      return yield* run(environmentAuth);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(AuthControlPlaneRuntimeLive).pipe(
+        Layer.mergeAll(EnvironmentAuth.runtimeLayer).pipe(
           Layer.provide(Layer.succeed(ServerConfig, config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),
@@ -56,11 +59,6 @@ const ttlFlag = Flag.string("ttl").pipe(
 const jsonFlag = Flag.boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
   Flag.withDefault(false),
-);
-
-const sessionRoleFlag = Flag.choice("role", ["owner", "client"]).pipe(
-  Flag.withDescription("Role for the issued bearer session."),
-  Flag.withDefault("owner"),
 );
 
 const labelFlag = Flag.string("label").pipe(
@@ -92,12 +90,12 @@ const pairingCreateCommand = Command.make("create", {
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(
+    runWithEnvironmentAuth(
       flags,
-      (authControlPlane) =>
+      (environmentAuth) =>
         Effect.gen(function* () {
-          const issued = yield* authControlPlane.createPairingLink({
-            role: "client",
+          const issued = yield* environmentAuth.createPairingLink({
+            scopes: AuthStandardClientScopes,
             subject: "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
@@ -121,11 +119,13 @@ const pairingListCommand = Command.make("list", {
 }).pipe(
   Command.withDescription("List active client pairing tokens without revealing their secrets."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(
+    runWithEnvironmentAuth(
       flags,
-      (authControlPlane) =>
+      (environmentAuth) =>
         Effect.gen(function* () {
-          const pairingLinks = yield* authControlPlane.listPairingLinks({ role: "client" });
+          const pairingLinks = yield* environmentAuth.listPairingLinks({
+            excludeSubjects: [EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT],
+          });
           yield* Console.log(formatPairingCredentialList(pairingLinks, { json: flags.json }));
         }),
       {
@@ -141,9 +141,9 @@ const pairingRevokeCommand = Command.make("revoke", {
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(flags, (authControlPlane) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* authControlPlane.revokePairingLink(flags.id);
+        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
         yield* Console.log(
           revoked
             ? `Revoked pairing credential ${flags.id}.\n`
@@ -162,20 +162,19 @@ const pairingCommand = Command.make("pairing").pipe(
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
   ttl: ttlFlag,
-  role: sessionRoleFlag,
   label: labelFlag,
   subject: subjectFlag,
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Issue a bearer session token for headless or remote clients."),
+  Command.withDescription("Issue a scoped bearer access token for headless or remote clients."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(
+    runWithEnvironmentAuth(
       flags,
-      (authControlPlane) =>
+      (environmentAuth) =>
         Effect.gen(function* () {
-          const issued = yield* authControlPlane.issueSession({
-            role: flags.role,
+          const issued = yield* environmentAuth.issueSession({
+            scopes: AuthAdministrativeScopes,
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
@@ -200,11 +199,11 @@ const sessionListCommand = Command.make("list", {
 }).pipe(
   Command.withDescription("List active sessions without revealing bearer tokens."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(
+    runWithEnvironmentAuth(
       flags,
-      (authControlPlane) =>
+      (environmentAuth) =>
         Effect.gen(function* () {
-          const sessions = yield* authControlPlane.listSessions();
+          const sessions = yield* environmentAuth.listSessions();
           yield* Console.log(formatSessionList(sessions, { json: flags.json }));
         }),
       {
@@ -223,9 +222,9 @@ const sessionRevokeCommand = Command.make("revoke", {
 }).pipe(
   Command.withDescription("Revoke an active session."),
   Command.withHandler((flags) =>
-    runWithAuthControlPlane(flags, (authControlPlane) =>
+    runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* authControlPlane.revokeSession(flags.sessionId);
+        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`

@@ -73,6 +73,22 @@ export interface OtlpTraceRecord extends BaseTraceRecord {
 
 export type TraceRecord = EffectTraceRecord | OtlpTraceRecord;
 
+function taggedErrorName(error: unknown): string {
+  return typeof error === "object" && error !== null && "_tag" in error
+    ? String(error._tag)
+    : error instanceof Error
+      ? error.name
+      : typeof error;
+}
+
+export function causeErrorTag(cause: Cause.Cause<unknown>): string {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isSome(failure)) {
+    return taggedErrorName(failure.value);
+  }
+  return cause.reasons[0]?._tag ?? "Empty";
+}
+
 export interface TraceSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;

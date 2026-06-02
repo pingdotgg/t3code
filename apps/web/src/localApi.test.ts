@@ -202,8 +202,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     fetchSshSessionState: async () => {
       throw new Error("fetchSshSessionState not implemented in test");
     },
-    issueSshWebSocketToken: async () => {
-      throw new Error("issueSshWebSocketToken not implemented in test");
+    issueSshWebSocketTicket: async () => {
+      throw new Error("issueSshWebSocketTicket not implemented in test");
     },
     onSshPasswordPrompt: () => () => undefined,
     resolveSshPasswordPrompt: async () => undefined,
@@ -289,7 +289,7 @@ const baseServerConfig: ServerConfig = {
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
-    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-access-token"],
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",

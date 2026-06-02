@@ -32,4 +32,6 @@ export {
   __resetServerAuthBootstrapForTests,
 } from "./auth";
 
+export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
+
 export { resolvePrimaryEnvironmentHttpUrl, isLoopbackHostname } from "./target";

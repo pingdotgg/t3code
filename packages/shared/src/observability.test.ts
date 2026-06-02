@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,11 +13,26 @@ import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 
 import {
+  causeErrorTag,
   compactTraceAttributes,
   makeLocalFileTracer,
   makeTraceSink,
   type TraceRecord,
 } from "./observability.ts";
+
+describe("causeErrorTag", () => {
+  it("reports the tagged failure value instead of the Cause reason wrapper", () => {
+    assert.equal(
+      causeErrorTag(Cause.fail({ _tag: "ServerAuthInvalidCredentialError" })),
+      "ServerAuthInvalidCredentialError",
+    );
+  });
+
+  it("reports structural cause kinds when no typed failure exists", () => {
+    assert.equal(causeErrorTag(Cause.die(new Error("unexpected"))), "Die");
+    assert.equal(causeErrorTag(Cause.interrupt()), "Interrupt");
+  });
+});
 
 const TraceRecordLine = Schema.Struct({
   name: Schema.String,

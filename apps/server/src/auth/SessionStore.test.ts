@@ -5,12 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { ServerConfigShape } from "../../config.ts";
-import { ServerConfig } from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { SessionCredentialService } from "../Services/SessionCredentialService.ts";
-import { ServerSecretStoreLive } from "./ServerSecretStore.ts";
-import { SessionCredentialServiceLive } from "./SessionCredentialService.ts";
+import type { ServerConfigShape } from "../config.ts";
+import { ServerConfig } from "../config.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { AuthSessionRepository } from "../persistence/Services/AuthSessions.ts";
+import * as SessionStore from "./SessionStore.ts";
+import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const makeServerConfigLayer = (
   overrides?: Partial<Pick<ServerConfigShape, "desktopBootstrapToken">>,
@@ -26,22 +27,46 @@ const makeServerConfigLayer = (
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-session-test-" })));
 
-const makeSessionCredentialLayer = (
+const makeSessionStoreLayer = (
   overrides?: Partial<Pick<ServerConfigShape, "desktopBootstrapToken">>,
 ) =>
-  SessionCredentialServiceLive.pipe(
+  SessionStore.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
-    Layer.provide(ServerSecretStoreLive),
+    Layer.provide(ServerSecretStore.layer),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
-it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
+const repositoryFailure = new PersistenceSqlError({
+  operation: "AuthSessionRepository.getById:query",
+  detail: "sqlite is unavailable",
+});
+
+const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessionRepository, {
+  create: () => Effect.void,
+  getById: () => Effect.fail(repositoryFailure),
+  listActive: () => Effect.succeed([]),
+  revoke: () => Effect.succeed(false),
+  revokeAllExcept: () => Effect.succeed([]),
+  setLastConnectedAt: () => Effect.void,
+});
+
+const failingSessionLookupCredentialLayer = Layer.effect(
+  SessionStore.SessionStore,
+  SessionStore.make(),
+).pipe(
+  Layer.provide(failingSessionLookupRepositoryLayer),
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(makeServerConfigLayer()),
+);
+
+it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
   it.effect("issues and verifies signed browser session tokens", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
+      const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
         subject: "desktop-bootstrap",
-        role: "owner",
+        scopes: ["orchestration:read", "access:write"],
         client: {
           label: "Desktop app",
           deviceType: "desktop",
@@ -54,41 +79,65 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
 
       expect(verified.method).toBe("browser-session-cookie");
       expect(verified.subject).toBe("desktop-bootstrap");
-      expect(verified.role).toBe("owner");
+      expect(verified.scopes).toEqual(["orchestration:read", "access:write"]);
       expect(verified.client.label).toBe("Desktop app");
       expect(verified.client.browser).toBe("Electron");
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
-    }).pipe(Effect.provide(makeSessionCredentialLayer())),
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
   it.effect("rejects malformed session tokens", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
+      const sessions = yield* SessionStore.SessionStore;
       const error = yield* Effect.flip(sessions.verify("not-a-session-token"));
 
-      expect(error._tag).toBe("SessionCredentialError");
+      expect(error._tag).toBe("SessionCredentialInvalidError");
       expect(error.message).toContain("Malformed session token");
-    }).pipe(Effect.provide(makeSessionCredentialLayer())),
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+  it.effect("preserves repository failures while verifying session and websocket credentials", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "repository-failure",
+      });
+      const websocket = yield* sessions.issueWebSocketToken(issued.sessionId);
+
+      const sessionError = yield* Effect.flip(sessions.verify(issued.token));
+      const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+
+      expect(sessionError._tag).toBe("SessionCredentialInternalError");
+      expect(websocketError._tag).toBe("SessionCredentialInternalError");
+      expect(sessionError.cause).toBe(repositoryFailure);
+      expect(websocketError.cause).toBe(repositoryFailure);
+    }).pipe(Effect.provide(failingSessionLookupCredentialLayer)),
   );
   it.effect("verifies session tokens against the Effect clock", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
+      const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
-        method: "bearer-session-token",
+        method: "bearer-access-token",
         subject: "test-clock",
       });
       const verified = yield* sessions.verify(issued.token);
 
-      expect(verified.method).toBe("bearer-session-token");
+      expect(verified.method).toBe("bearer-access-token");
       expect(verified.subject).toBe("test-clock");
-      expect(verified.role).toBe("client");
-    }).pipe(Effect.provide(Layer.merge(makeSessionCredentialLayer(), TestClock.layer()))),
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+      ]);
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
+      const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
-        method: "bearer-session-token",
+        method: "bearer-access-token",
         subject: "short-lived",
         ttl: Duration.seconds(1),
       });
@@ -98,15 +147,15 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
 
       const error = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
       expect(error.message).toContain("expired");
-    }).pipe(Effect.provide(Layer.merge(makeSessionCredentialLayer(), TestClock.layer()))),
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
   it.effect("lists active sessions, tracks connectivity, and revokes other sessions", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
-      const owner = yield* sessions.issue({
+      const sessions = yield* SessionStore.SessionStore;
+      const administrative = yield* sessions.issue({
         subject: "desktop-bootstrap",
-        role: "owner",
+        scopes: ["orchestration:read", "access:write"],
         client: {
           label: "Desktop app",
           deviceType: "desktop",
@@ -116,7 +165,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       });
       const client = yield* sessions.issue({
         subject: "one-time-token",
-        role: "client",
+        scopes: ["orchestration:read"],
         client: {
           label: "Julius iPhone",
           deviceType: "mobile",
@@ -128,7 +177,7 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
 
       yield* sessions.markConnected(client.sessionId);
       const beforeRevoke = yield* sessions.listActive();
-      const revokedCount = yield* sessions.revokeAllExcept(owner.sessionId);
+      const revokedCount = yield* sessions.revokeAllExcept(administrative.sessionId);
       const afterRevoke = yield* sessions.listActive();
       const revokedClient = yield* Effect.flip(sessions.verify(client.token));
 
@@ -140,21 +189,22 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
         "Julius iPhone",
       );
       expect(
-        beforeRevoke.find((entry) => entry.sessionId === owner.sessionId)?.client.deviceType,
+        beforeRevoke.find((entry) => entry.sessionId === administrative.sessionId)?.client
+          .deviceType,
       ).toBe("desktop");
       expect(revokedCount).toBe(1);
       expect(afterRevoke).toHaveLength(1);
-      expect(afterRevoke[0]?.sessionId).toBe(owner.sessionId);
+      expect(afterRevoke[0]?.sessionId).toBe(administrative.sessionId);
       expect(revokedClient.message).toContain("revoked");
-    }).pipe(Effect.provide(makeSessionCredentialLayer())),
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 
   it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>
     Effect.gen(function* () {
-      const sessions = yield* SessionCredentialService;
+      const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
         subject: "reconnect-test",
-        method: "bearer-session-token",
+        method: "bearer-access-token",
       });
 
       const beforeConnect = yield* sessions.listActive();
@@ -188,6 +238,6 @@ it.layer(NodeServices.layer)("SessionCredentialServiceLive", (it) => {
       expect(afterReconnect[0]?.connected).toBe(true);
       expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
       expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
-    }).pipe(Effect.provide(Layer.merge(makeSessionCredentialLayer(), TestClock.layer()))),
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 });

@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import { AuthEnvironmentScopes } from "@t3tools/contracts";
 
 import type { AuthPairingLinkRepositoryError } from "../Errors.ts";
 
@@ -9,7 +10,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   id: Schema.String,
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
-  role: Schema.Literals(["owner", "client"]),
+  scopes: Schema.fromJsonString(AuthEnvironmentScopes),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -23,7 +24,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   id: Schema.String,
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
-  role: Schema.Literals(["owner", "client"]),
+  scopes: AuthEnvironmentScopes,
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,

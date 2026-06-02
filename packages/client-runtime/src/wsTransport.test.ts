@@ -170,13 +170,13 @@ describe("WsTransport", () => {
   });
 
   it("supports async websocket url providers", async () => {
-    const transport = createTransport(async () => "wss://remote.example.com/?wsToken=dynamic");
+    const transport = createTransport(async () => "wss://remote.example.com/?wsTicket=dynamic");
 
     await waitFor(() => {
       expect(sockets).toHaveLength(1);
     });
 
-    expect(getSocket().url).toBe("wss://remote.example.com/ws?wsToken=dynamic");
+    expect(getSocket().url).toBe("wss://remote.example.com/ws?wsTicket=dynamic");
     await transport.dispose();
   });
 

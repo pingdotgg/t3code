@@ -1,34 +1,43 @@
-import type {
-  AuthBearerBootstrapResult,
-  AuthSessionState,
-  AuthWebSocketTokenResult,
-  ExecutionEnvironmentDescriptor,
+import {
+  AuthAccessTokenType,
+  type AuthClientPresentationMetadata,
+  AuthEnvironmentBootstrapTokenType,
+  AuthTokenExchangeGrantType,
+  type AuthEnvironmentScope,
+  EnvironmentHttpApi,
+  EnvironmentHttpCommonError,
 } from "@t3tools/contracts";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import type {
+  EnvironmentAuthInvalidError,
+  EnvironmentInternalError,
+  EnvironmentOperationForbiddenError,
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
+} from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { identity } from "effect/Function";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
-const RemoteAuthErrorBody = Schema.Struct({
-  error: Schema.optional(Schema.String),
-});
-const decodeRemoteAuthErrorBody = decodeJsonResult(RemoteAuthErrorBody);
+const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
 const remoteEndpointUrl = (httpBaseUrl: string, pathname: string): string => {
   const url = new URL(httpBaseUrl);
   url.pathname = pathname;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+};
+
+const remoteApiBaseUrl = (httpBaseUrl: string): string => {
+  const url = new URL(httpBaseUrl);
+  url.pathname = "/";
   url.search = "";
   url.hash = "";
   return url.toString();
@@ -41,13 +50,6 @@ export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
   readonly cause: unknown;
 }> {}
 
-export class RemoteEnvironmentAuthResponseReadError extends Data.TaggedError(
-  "RemoteEnvironmentAuthResponseReadError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
-
 export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
   "RemoteEnvironmentAuthInvalidJsonError",
 )<{
@@ -55,14 +57,19 @@ export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
   readonly cause: unknown;
 }> {}
 
-export class RemoteEnvironmentAuthHttpError extends Data.TaggedError(
-  "RemoteEnvironmentAuthHttpError",
+export class RemoteEnvironmentAuthUndeclaredStatusError extends Data.TaggedError(
+  "RemoteEnvironmentAuthUndeclaredStatusError",
 )<{
   readonly message: string;
   readonly status: number;
+  readonly requestUrl: string;
 }> {
-  constructor(message: string, status: number) {
-    super({ message, status });
+  constructor(requestUrl: string, status: number) {
+    super({
+      message: `Remote auth endpoint ${requestUrl} returned undeclared status ${status}.`,
+      requestUrl,
+      status,
+    });
   }
 }
 
@@ -83,87 +90,67 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 }
 
 export type RemoteEnvironmentAuthError =
+  | EnvironmentRequestInvalidError
+  | EnvironmentAuthInvalidError
+  | EnvironmentScopeRequiredError
+  | EnvironmentOperationForbiddenError
+  | EnvironmentInternalError
   | RemoteEnvironmentAuthFetchError
-  | RemoteEnvironmentAuthResponseReadError
   | RemoteEnvironmentAuthInvalidJsonError
-  | RemoteEnvironmentAuthHttpError
+  | RemoteEnvironmentAuthUndeclaredStatusError
   | RemoteEnvironmentAuthTimeoutError;
-
-export const isRemoteEnvironmentAuthHttpError = (
-  error: unknown,
-): error is RemoteEnvironmentAuthHttpError => error instanceof RemoteEnvironmentAuthHttpError;
-
-const readRemoteAuthErrorMessage = (
-  response: HttpClientResponse.HttpClientResponse,
-  fallbackMessage: string,
-): Effect.Effect<string, RemoteEnvironmentAuthResponseReadError> =>
-  response.text.pipe(
-    Effect.mapError(
-      (cause) =>
-        new RemoteEnvironmentAuthResponseReadError({
-          message: "Remote auth endpoint returned an unreadable error response.",
-          cause,
-        }),
-    ),
-    Effect.map((text) => {
-      if (!text) {
-        return fallbackMessage;
-      }
-
-      const decoded = decodeRemoteAuthErrorBody(text);
-      if (Result.isSuccess(decoded) && decoded.success.error) {
-        return decoded.success.error;
-      }
-
-      return text;
-    }),
-  );
-
-const readRemoteJson = <T>(
-  response: HttpClientResponse.HttpClientResponse,
-  requestUrl: string,
-): Effect.Effect<T, RemoteEnvironmentAuthInvalidJsonError> =>
-  response.json.pipe(
-    Effect.mapError(
-      (cause) =>
-        new RemoteEnvironmentAuthInvalidJsonError({
-          message: `Remote auth endpoint returned invalid JSON from ${requestUrl}.`,
-          cause,
-        }),
-    ),
-    Effect.map((value) => value as T),
-  );
 
 export const remoteHttpClientLayer = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
   FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)));
 
-const fetchRemoteJson = Effect.fn("clientRuntime.remote.fetchRemoteJson")(function* <T>(input: {
-  readonly httpBaseUrl: string;
-  readonly pathname: string;
-  readonly method?: "GET" | "POST";
-  readonly bearerToken?: string;
-  readonly body?: unknown;
-  readonly timeoutMs?: number;
-}) {
-  const requestUrl = remoteEndpointUrl(input.httpBaseUrl, input.pathname);
-  const method = input.method ?? "GET";
-  const timeoutMs = input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS;
-  const request = HttpClientRequest.make(method)(requestUrl).pipe(
-    input.bearerToken ? HttpClientRequest.bearerToken(input.bearerToken) : identity,
-    input.body !== undefined ? HttpClientRequest.bodyJsonUnsafe(input.body) : identity,
+const failRemoteRequest = (
+  requestUrl: string,
+  cause: unknown,
+): Effect.Effect<never, RemoteEnvironmentAuthError> => {
+  if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
+    return Effect.fail(cause);
+  }
+  if (isEnvironmentHttpCommonError(cause)) {
+    return Effect.fail(cause);
+  }
+  if (Schema.isSchemaError(cause)) {
+    return Effect.fail(
+      new RemoteEnvironmentAuthInvalidJsonError({
+        message: `Remote auth endpoint returned an invalid response from ${requestUrl}.`,
+        cause,
+      }),
+    );
+  }
+  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
+    const response = cause.response;
+    if (response.status < 200 || response.status >= 300) {
+      return Effect.fail(
+        new RemoteEnvironmentAuthUndeclaredStatusError(requestUrl, response.status),
+      );
+    }
+    return Effect.fail(
+      new RemoteEnvironmentAuthInvalidJsonError({
+        message: `Remote auth endpoint returned an invalid response from ${requestUrl}.`,
+        cause,
+      }),
+    );
+  }
+  return Effect.fail(
+    new RemoteEnvironmentAuthFetchError({
+      message: `Failed to fetch remote auth endpoint ${requestUrl} (${String(cause)}).`,
+      cause,
+    }),
   );
+};
 
-  const client = yield* HttpClient.HttpClient;
-  const response = yield* client.execute(request).pipe(
-    Effect.mapError(
-      (cause) =>
-        new RemoteEnvironmentAuthFetchError({
-          message: `Failed to fetch remote auth endpoint ${requestUrl} (${String(cause)}).`,
-          cause,
-        }),
-    ),
+const executeRemoteRequest = <A, E, R>(
+  requestUrl: string,
+  timeoutMs: number,
+  request: Effect.Effect<A, E, R>,
+): Effect.Effect<A, RemoteEnvironmentAuthError, R> =>
+  request.pipe(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({
@@ -171,38 +158,46 @@ const fetchRemoteJson = Effect.fn("clientRuntime.remote.fetchRemoteJson")(functi
         onSome: Effect.succeed,
       }),
     ),
+    Effect.catch((cause) => failRemoteRequest(requestUrl, cause)),
   );
 
-  if (response.status < 200 || response.status >= 300) {
-    return yield* readRemoteAuthErrorMessage(
-      response,
-      `Remote auth request failed (${response.status}).`,
-    ).pipe(
-      Effect.flatMap((message) =>
-        Effect.fail(new RemoteEnvironmentAuthHttpError(message, response.status)),
-      ),
-    );
-  }
-
-  return yield* readRemoteJson<T>(response, requestUrl);
-});
+export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    return yield* HttpApiClient.makeWith(EnvironmentHttpApi, {
+      httpClient,
+      baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    });
+  });
 
 export const bootstrapRemoteBearerSession = Effect.fn(
   "clientRuntime.remote.bootstrapRemoteBearerSession",
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly credential: string;
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly timeoutMs?: number;
 }) {
-  return yield* fetchRemoteJson<AuthBearerBootstrapResult>({
-    httpBaseUrl: input.httpBaseUrl,
-    pathname: "/api/auth/bootstrap/bearer",
-    method: "POST",
-    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-    body: {
-      credential: input.credential,
-    },
-  });
+  const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+  return yield* executeRemoteRequest(
+    remoteEndpointUrl(input.httpBaseUrl, "/oauth/token"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.auth.token({
+      payload: {
+        grant_type: AuthTokenExchangeGrantType,
+        subject_token: input.credential,
+        subject_token_type: AuthEnvironmentBootstrapTokenType,
+        requested_token_type: AuthAccessTokenType,
+        ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
+        ...(input.clientMetadata?.label ? { client_label: input.clientMetadata.label } : {}),
+        ...(input.clientMetadata?.deviceType
+          ? { client_device_type: input.clientMetadata.deviceType }
+          : {}),
+        ...(input.clientMetadata?.os ? { client_os: input.clientMetadata.os } : {}),
+      },
+    }),
+  );
 });
 
 export const fetchRemoteSessionState = Effect.fn("clientRuntime.remote.fetchRemoteSessionState")(
@@ -211,39 +206,47 @@ export const fetchRemoteSessionState = Effect.fn("clientRuntime.remote.fetchRemo
     readonly bearerToken: string;
     readonly timeoutMs?: number;
   }) {
-    return yield* fetchRemoteJson<AuthSessionState>({
-      httpBaseUrl: input.httpBaseUrl,
-      pathname: "/api/auth/session",
-      bearerToken: input.bearerToken,
-      ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-    });
+    const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+    return yield* executeRemoteRequest(
+      remoteEndpointUrl(input.httpBaseUrl, "/api/auth/session"),
+      input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+      client.auth.session({
+        headers: {
+          authorization: `Bearer ${input.bearerToken}`,
+        },
+      }),
+    );
   },
 );
 
 export const fetchRemoteEnvironmentDescriptor = Effect.fn(
   "clientRuntime.remote.fetchRemoteEnvironmentDescriptor",
 )(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
-  return yield* fetchRemoteJson<ExecutionEnvironmentDescriptor>({
-    httpBaseUrl: input.httpBaseUrl,
-    pathname: "/.well-known/t3/environment",
-    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-  });
+  const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+  return yield* executeRemoteRequest(
+    remoteEndpointUrl(input.httpBaseUrl, "/.well-known/t3/environment"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.metadata.descriptor(),
+  );
 });
 
-export const issueRemoteWebSocketToken = Effect.fn(
-  "clientRuntime.remote.issueRemoteWebSocketToken",
+export const issueRemoteWebSocketTicket = Effect.fn(
+  "clientRuntime.remote.issueRemoteWebSocketTicket",
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly bearerToken: string;
   readonly timeoutMs?: number;
 }) {
-  return yield* fetchRemoteJson<AuthWebSocketTokenResult>({
-    httpBaseUrl: input.httpBaseUrl,
-    pathname: "/api/auth/ws-token",
-    method: "POST",
-    bearerToken: input.bearerToken,
-    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-  });
+  const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+  return yield* executeRemoteRequest(
+    remoteEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.auth.webSocketTicket({
+      headers: {
+        authorization: `Bearer ${input.bearerToken}`,
+      },
+    }),
+  );
 });
 
 export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
@@ -254,7 +257,7 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   readonly bearerToken: string;
   readonly timeoutMs?: number;
 }) {
-  const issued = yield* issueRemoteWebSocketToken({
+  const issued = yield* issueRemoteWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     bearerToken: input.bearerToken,
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
@@ -264,6 +267,6 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   if (url.pathname === "" || url.pathname === "/") {
     url.pathname = "/ws";
   }
-  url.searchParams.set("wsToken", issued.token);
+  url.searchParams.set("wsTicket", issued.ticket);
   return url.toString();
 });
