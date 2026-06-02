@@ -59,9 +59,22 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Comm
   }
 });
 
+function redactOtpArgs(args: ReadonlyArray<string>): ReadonlyArray<string> {
+  return args.map((arg, index) => {
+    if (args[index - 1] === "--otp") return "<redacted>";
+    if (arg.startsWith("--otp=")) return "--otp=<redacted>";
+    return arg;
+  });
+}
+
 interface PublishIconBackup {
   readonly targetPath: string;
   readonly backupPath: string;
+}
+
+interface PublishRootFileBackup {
+  readonly targetPath: string;
+  readonly backupPath: string | null;
 }
 
 const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(function* (
@@ -100,6 +113,42 @@ const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(functio
   return backups as ReadonlyArray<PublishIconBackup>;
 });
 
+const copyPublishRootFiles = Effect.fn("copyPublishRootFiles")(function* (
+  repoRoot: string,
+  serverDir: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const backupDirectory = yield* fs.makeTempDirectoryScoped({
+    prefix: "salchi-publish-root-files-",
+  });
+  const backups: PublishRootFileBackup[] = [];
+
+  for (const filename of ["README.md", "LICENSE"]) {
+    const sourcePath = path.join(repoRoot, filename);
+    const targetPath = path.join(serverDir, filename);
+
+    if (!(yield* fs.exists(sourcePath))) {
+      return yield* new CliError({
+        message: `Missing publish root file source: ${sourcePath}`,
+      });
+    }
+
+    const backupPath = (yield* fs.exists(targetPath))
+      ? path.join(backupDirectory, `${backups.length}-${filename}`)
+      : null;
+    if (backupPath) {
+      yield* fs.copyFile(targetPath, backupPath);
+    }
+
+    yield* fs.copyFile(sourcePath, targetPath);
+    backups.push({ targetPath, backupPath });
+  }
+
+  yield* Effect.log("[cli] Copied README.md and LICENSE into package root");
+  return backups as ReadonlyArray<PublishRootFileBackup>;
+});
+
 const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(function* (
   backups: ReadonlyArray<PublishIconBackup>,
 ) {
@@ -109,6 +158,22 @@ const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(fun
       continue;
     }
     yield* fs.rename(backup.backupPath, backup.targetPath);
+  }
+});
+
+const restorePublishRootFiles = Effect.fn("restorePublishRootFiles")(function* (
+  backups: ReadonlyArray<PublishRootFileBackup>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  for (const backup of backups) {
+    if (backup.backupPath) {
+      if (yield* fs.exists(backup.backupPath)) {
+        yield* fs.rename(backup.backupPath, backup.targetPath);
+      }
+      continue;
+    }
+
+    yield* fs.remove(backup.targetPath, { force: true });
   }
 });
 
@@ -190,6 +255,10 @@ const publishCmd = Command.make(
     tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
     access: Flag.string("access").pipe(Flag.withDefault("public")),
     appVersion: Flag.string("app-version").pipe(Flag.optional),
+    otp: Flag.string("otp").pipe(
+      Flag.withDescription("One-time password for npm two-factor authentication."),
+      Flag.optional,
+    ),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
@@ -246,7 +315,8 @@ const publishCmd = Command.make(
           yield* Effect.log("[cli] Prepared package.json for publish");
 
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
-          return { iconBackups };
+          const rootFileBackups = yield* copyPublishRootFiles(repoRoot, serverDir);
+          return { iconBackups, rootFileBackups };
         }),
         // Use: npm publish
         () =>
@@ -254,8 +324,9 @@ const publishCmd = Command.make(
             const args = ["publish", "--access", config.access, "--tag", config.tag];
             if (config.provenance) args.push("--provenance");
             if (config.dryRun) args.push("--dry-run");
+            if (Option.isSome(config.otp)) args.push("--otp", config.otp.value);
 
-            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+            yield* Effect.log(`[cli] Running: npm ${redactOtpArgs(args).join(" ")}`);
             yield* runCommand(
               ChildProcess.make("npm", [...args], {
                 cwd: serverDir,
@@ -267,8 +338,16 @@ const publishCmd = Command.make(
             );
           }),
         // Release: restore
-        (resource: { readonly iconBackups: ReadonlyArray<PublishIconBackup> }) =>
+        (resource: {
+          readonly iconBackups: ReadonlyArray<PublishIconBackup>;
+          readonly rootFileBackups: ReadonlyArray<PublishRootFileBackup>;
+        }) =>
           Effect.gen(function* () {
+            yield* restorePublishRootFiles(resource.rootFileBackups).pipe(
+              Effect.catch((error) =>
+                Effect.logError(`[cli] Failed to restore publish root files: ${String(error)}`),
+              ),
+            );
             yield* restorePublishIconOverrides(resource.iconBackups).pipe(
               Effect.catch((error) =>
                 Effect.logError(`[cli] Failed to restore publish icon overrides: ${String(error)}`),

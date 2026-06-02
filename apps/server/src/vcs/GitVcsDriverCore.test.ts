@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, describe } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -10,6 +13,7 @@ import * as Scope from "effect/Scope";
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { statusUpstreamRefreshCacheTimeToLive } from "./GitVcsDriverCore.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -265,6 +269,11 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it("does not cache interrupted upstream status refreshes", () => {
+      const ttl = statusUpstreamRefreshCacheTimeToLive(Exit.failCause(Cause.interrupt()));
+      assert.equal(Duration.toMillis(ttl), 0);
+    });
 
     it.effect("reuses the no-upstream fallback ahead count for default-branch delta", () =>
       Effect.gen(function* () {

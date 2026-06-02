@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -186,10 +187,24 @@ export const layer = Layer.effect(
       return yield* updateCachedLocalStatus(cwd, local);
     });
 
+    const readRemoteStatus = Effect.fn("VcsStatusBroadcaster.readRemoteStatus")(function* (
+      cwd: string,
+    ) {
+      return yield* workflow
+        .remoteStatus({ cwd })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? getCachedStatus(cwd).pipe(Effect.map((cached) => cached?.remote?.value ?? null))
+              : Effect.failCause(cause),
+          ),
+        );
+    });
+
     const loadRemoteStatus = Effect.fn("VcsStatusBroadcaster.loadRemoteStatus")(function* (
       cwd: string,
     ) {
-      const remote = yield* workflow.remoteStatus({ cwd });
+      const remote = yield* readRemoteStatus(cwd);
       return yield* updateCachedRemoteStatus(cwd, remote);
     });
 
@@ -239,7 +254,7 @@ export const layer = Layer.effect(
       cwd: string,
     ) {
       yield* workflow.invalidateRemoteStatus(cwd);
-      const remote = yield* workflow.remoteStatus({ cwd });
+      const remote = yield* readRemoteStatus(cwd);
       return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
     });
 
@@ -271,6 +286,10 @@ export const layer = Layer.effect(
 
           const exit = yield* refreshRemoteStatus(cwd).pipe(Effect.exit);
           if (Exit.isSuccess(exit)) {
+            yield* Ref.set(consecutiveFailuresRef, 0);
+            return activeInterval;
+          }
+          if (Cause.hasInterruptsOnly(exit.cause)) {
             yield* Ref.set(consecutiveFailuresRef, 0);
             return activeInterval;
           }

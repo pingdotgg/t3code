@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -33,6 +34,9 @@ import {
 import { ServerConfig } from "../config.ts";
 const isGitCommandError = Schema.is(GitCommandError);
 
+const ignoreInterruptOnlyCause = <E>(cause: Cause.Cause<E>): Effect.Effect<void, E> =>
+  Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause);
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -47,6 +51,11 @@ const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+export const statusUpstreamRefreshCacheTimeToLive = <A, E>(exit: Exit.Exit<A, E>) => {
+  if (Exit.isSuccess(exit)) return STATUS_UPSTREAM_REFRESH_INTERVAL;
+  if (Cause.hasInterruptsOnly(exit.cause)) return Duration.zero;
+  return STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN;
+};
 const NON_INTERACTIVE_GIT_AUTH_ENV = Object.freeze({
   SSH_ASKPASS_REQUIRE: "never",
   GIT_TERMINAL_PROMPT: "0",
@@ -1101,10 +1110,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
     // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
-    timeToLive: (exit) =>
-      Exit.isSuccess(exit)
-        ? STATUS_UPSTREAM_REFRESH_INTERVAL
-        : STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN,
+    // Pure interrupts are expected cancellation, so do not cache them as failed refreshes.
+    timeToLive: statusUpstreamRefreshCacheTimeToLive,
   });
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
@@ -1519,6 +1526,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd) {
       yield* refreshStatusUpstreamIfStale(cwd).pipe(
         Effect.catchIf(isMissingGitCwdError, () => Effect.void),
+        Effect.catchCause(ignoreInterruptOnlyCause),
         Effect.ignoreCause({ log: true }),
       );
       return yield* readStatusDetailsLocal(cwd);
