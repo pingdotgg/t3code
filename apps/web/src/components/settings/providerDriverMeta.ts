@@ -3,10 +3,11 @@ import {
   CodexSettings,
   CursorSettings,
   OpenCodeSettings,
+  GrokBuildSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ClaudeAI, CursorIcon, type Icon, OpenAI, OpenCodeIcon, GrokIcon } from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -58,6 +59,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("grok-build"),
+    label: "Grok Build",
+    icon: GrokIcon,
+    settingsSchema: GrokBuildSettings,
   },
 ];
 
