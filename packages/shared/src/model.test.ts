@@ -94,7 +94,7 @@ describe("resolveModelSlugForProvider", () => {
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
       DEFAULT_MODEL,
     );
-    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok-build"), undefined)).toBe(
       "grok-build",
     );
   });

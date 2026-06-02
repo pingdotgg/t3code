@@ -166,6 +166,13 @@ function createBaseServerConfig(): ServerConfig {
           serverPassword: "",
           customModels: [],
         },
+        "grok-build": {
+          enabled: true,
+          command: "",
+          args: [],
+          envJson: "",
+          customModels: [],
+        },
       },
     },
   };

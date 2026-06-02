@@ -1172,8 +1172,10 @@ export function ProviderSettingsPanel() {
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider] ?? {
+      enabled: false,
+    };
+    const legacyConfig = legacyProviders[providerSettings.provider] ?? defaultLegacyConfig;
     const effectiveInstance: ProviderInstanceConfig =
       explicitInstance ??
       ({

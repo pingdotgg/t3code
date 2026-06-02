@@ -37,6 +37,8 @@ export interface AcpSpawnInput {
   readonly env?: NodeJS.ProcessEnv;
 }
 
+export type AcpSessionSetModelStrategy = "configOption" | "sessionSetModel";
+
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
@@ -47,6 +49,12 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId: string;
+  /**
+   * Controls how `setModel` behaves when the session has no `modelConfigId`.
+   * Defaults to `configOption` so existing ACP providers keep using
+   * `session/set_config_option` with id `"model"`.
+   */
+  readonly setModelStrategy?: AcpSessionSetModelStrategy;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -543,8 +551,26 @@ const makeAcpSessionRuntime = (
       setConfigOption,
       setModel: (model) =>
         getStartedState.pipe(
-          Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
-          Effect.asVoid,
+          Effect.flatMap((started) => {
+            if (started.modelConfigId) {
+              return setConfigOption(started.modelConfigId, model).pipe(Effect.asVoid);
+            }
+            const strategy = options.setModelStrategy ?? "configOption";
+            if (strategy === "sessionSetModel") {
+              return runLoggedRequest(
+                "session/set_model",
+                {
+                  sessionId: started.sessionId,
+                  modelId: model,
+                },
+                acp.agent.setSessionModel({
+                  sessionId: started.sessionId,
+                  modelId: model,
+                }),
+              ).pipe(Effect.asVoid);
+            }
+            return setConfigOption("model", model).pipe(Effect.asVoid);
+          }),
         ),
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),

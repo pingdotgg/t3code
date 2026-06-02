@@ -102,19 +102,21 @@ describe("instance-scoped model selection", () => {
   });
 
   it("includes Grok custom models from the selected provider instance", () => {
-    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("grok-build"), instanceId: "grok-build" }),
+    ];
     const settings: UnifiedSettings = {
       ...settingsWithProviderInstances(),
       providerInstances: {
         ...settingsWithProviderInstances().providerInstances,
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
+        [ProviderInstanceId.make("grok-build")]: {
+          driver: ProviderDriverKind.make("grok-build"),
           config: { customModels: ["grok-test-custom-model"] },
         },
       },
     };
     const grok = deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.instanceId === "grok",
+      (entry) => entry.instanceId === "grok-build",
     )!;
 
     expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
