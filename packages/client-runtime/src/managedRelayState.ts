@@ -67,6 +67,52 @@ export function setManagedRelaySession(
   registry.set(managedRelaySessionAtom, session);
 }
 
+function readSessionClerkToken(
+  session: ManagedRelaySession,
+): Effect.Effect<string, ManagedRelaySessionError> {
+  return session.readClerkToken().pipe(
+    Effect.flatMap((token) =>
+      token
+        ? Effect.succeed(token)
+        : Effect.fail(
+            new ManagedRelaySessionError({
+              message: "The T3 Cloud session token is unavailable.",
+            }),
+          ),
+    ),
+  );
+}
+
+export function waitForManagedRelayClerkToken(
+  registry: AtomRegistry.AtomRegistry,
+): Effect.Effect<string, ManagedRelaySessionError> {
+  return Effect.callback<string, ManagedRelaySessionError>((resume) => {
+    let unsubscribe: (() => void) | undefined;
+    let completed = false;
+    const readCurrentSession = () => {
+      if (completed) {
+        return true;
+      }
+      const session = registry.get(managedRelaySessionAtom);
+      if (!session) {
+        return false;
+      }
+      completed = true;
+      unsubscribe?.();
+      resume(readSessionClerkToken(session));
+      return true;
+    };
+
+    if (readCurrentSession()) {
+      return;
+    }
+
+    unsubscribe = registry.subscribe(managedRelaySessionAtom, readCurrentSession);
+    readCurrentSession();
+    return Effect.sync(() => unsubscribe?.());
+  });
+}
+
 function requireClerkToken(
   get: Atom.AtomContext,
   accountId: string,
@@ -79,17 +125,7 @@ function requireClerkToken(
       }),
     );
   }
-  return session.readClerkToken().pipe(
-    Effect.flatMap((token) =>
-      token
-        ? Effect.succeed(token)
-        : Effect.fail(
-            new ManagedRelaySessionError({
-              message: "The T3 Cloud session token is unavailable.",
-            }),
-          ),
-    ),
-  );
+  return readSessionClerkToken(session);
 }
 
 function statusKey(input: {

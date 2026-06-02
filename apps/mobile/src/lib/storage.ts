@@ -5,7 +5,11 @@ import * as Schema from "effect/Schema";
 import * as SecureStore from "expo-secure-store";
 import { EnvironmentId, OrchestrationShellSnapshot } from "@t3tools/contracts";
 
-import type { SavedRemoteConnection } from "./connection";
+import {
+  isRelayManagedConnection,
+  type SavedRemoteConnection,
+  toStableSavedRemoteConnection,
+} from "./connection";
 
 const CONNECTIONS_KEY = "t3code.connections";
 const PREFERENCES_KEY = "t3code.preferences";
@@ -136,22 +140,22 @@ export async function loadSavedConnections(): Promise<ReadonlyArray<SavedRemoteC
   return pipe(
     parsed.connections ?? [],
     Arr.filter(
-      (c) =>
-        !!c.environmentId &&
-        (!!c.bearerToken?.trim() ||
-          (c.authenticationMethod === "dpop" && !!c.dpopAccessToken?.trim())),
+      (c) => !!c.environmentId && (!!c.bearerToken?.trim() || isRelayManagedConnection(c)),
     ),
   );
 }
 
 export async function saveConnection(connection: SavedRemoteConnection): Promise<void> {
   const current = await loadSavedConnections();
+  const stableConnection = toStableSavedRemoteConnection(connection);
   const next = current.some((entry) => entry.environmentId === connection.environmentId)
     ? pipe(
         current,
-        Arr.map((entry) => (entry.environmentId === connection.environmentId ? connection : entry)),
+        Arr.map((entry) =>
+          entry.environmentId === connection.environmentId ? stableConnection : entry,
+        ),
       )
-    : pipe(current, Arr.append(connection));
+    : pipe(current, Arr.append(stableConnection));
 
   await writeStorageItem(CONNECTIONS_KEY, JSON.stringify({ connections: next }));
 }

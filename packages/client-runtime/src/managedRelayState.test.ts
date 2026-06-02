@@ -13,8 +13,10 @@ import { ManagedRelayClient, type ManagedRelayClientShape } from "./managedRelay
 import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
+  managedRelaySessionAtom,
   readManagedRelaySnapshotState,
   setManagedRelaySession,
+  waitForManagedRelayClerkToken,
 } from "./managedRelayState.ts";
 
 let registry = AtomRegistry.make();
@@ -92,6 +94,15 @@ function setSession() {
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
+
+  it("waits for the current cloud session before reading its token", async () => {
+    const token = Effect.runPromise(waitForManagedRelayClerkToken(registry));
+
+    setSession();
+
+    await expect(token).resolves.toBe("clerk-token");
+    expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
+  });
 
   it("keeps environment snapshots cached and refreshes them explicitly", async () => {
     const listEnvironments = vi.fn(() => Effect.succeed([environment]));

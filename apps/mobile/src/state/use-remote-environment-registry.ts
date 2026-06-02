@@ -14,6 +14,7 @@ import {
   remoteEndpointUrl,
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
+  waitForManagedRelayClerkToken,
 } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -27,7 +28,9 @@ import {
   type SavedRemoteConnection,
   bootstrapRemoteConnection,
   isRelayManagedConnection,
+  toStableSavedRemoteConnection,
 } from "../lib/connection";
+import { refreshCloudEnvironmentConnection } from "../features/cloud/linkEnvironment";
 import { terminalDebugLog } from "../features/terminal/terminalDebugLog";
 import {
   clearCachedShellSnapshot,
@@ -223,6 +226,9 @@ export function connectSavedEnvironment(
   return Effect.gen(function* () {
     const connectionAttempt = environmentConnectionAttempts.begin(connection.environmentId);
     const isCurrentAttempt = connectionAttempt.isCurrent;
+    let activeConnection = connection;
+    let initialDpopAccessToken =
+      options?.persist === false ? undefined : connection.dpopAccessToken;
 
     yield* disconnectEnvironment(connection.environmentId, {
       preserveShellSnapshot: true,
@@ -233,32 +239,54 @@ export function connectSavedEnvironment(
     }
 
     if (options?.persist !== false) {
-      yield* fromPromise(() => saveConnection(connection));
+      yield* fromPromise(() => saveConnection(toStableSavedRemoteConnection(connection)));
       if (!isCurrentAttempt()) {
         return;
       }
     }
 
-    upsertSavedConnection(connection);
+    upsertSavedConnection(toStableSavedRemoteConnection(connection));
     setEnvironmentConnectionStatus(connection.environmentId, "connecting", null);
     shellSnapshotManager.markPending({ environmentId: connection.environmentId });
 
-    const dpopAccessToken =
-      connection.authenticationMethod === "dpop" ? connection.dpopAccessToken : undefined;
     const transport = new WsTransport(
       () =>
         mobileRuntime.runPromise(
-          dpopAccessToken
+          isRelayManagedConnection(connection)
             ? Effect.gen(function* () {
+                let dpopAccessToken = initialDpopAccessToken;
+                initialDpopAccessToken = undefined;
+                if (!dpopAccessToken) {
+                  const clerkToken = yield* waitForManagedRelayClerkToken(appAtomRegistry);
+                  const refreshedConnection = yield* refreshCloudEnvironmentConnection({
+                    clerkToken,
+                    connection: activeConnection,
+                  });
+                  const stableConnection = toStableSavedRemoteConnection(refreshedConnection);
+                  activeConnection = refreshedConnection;
+                  if (isCurrentAttempt()) {
+                    yield* fromPromise(() => saveConnection(stableConnection));
+                    upsertSavedConnection(stableConnection);
+                  }
+                  dpopAccessToken = refreshedConnection.dpopAccessToken;
+                }
+                if (!dpopAccessToken) {
+                  return yield* Effect.fail(
+                    new Error("Managed environment connection did not return a DPoP access token."),
+                  );
+                }
                 const signer = yield* ManagedRelayDpopSigner;
                 const dpop = yield* signer.createProof({
                   method: "POST",
-                  url: remoteEndpointUrl(connection.httpBaseUrl, "/api/auth/websocket-ticket"),
+                  url: remoteEndpointUrl(
+                    activeConnection.httpBaseUrl,
+                    "/api/auth/websocket-ticket",
+                  ),
                   accessToken: dpopAccessToken,
                 });
                 return yield* resolveRemoteDpopWebSocketConnectionUrl({
-                  wsBaseUrl: connection.wsBaseUrl,
-                  httpBaseUrl: connection.httpBaseUrl,
+                  wsBaseUrl: activeConnection.wsBaseUrl,
+                  httpBaseUrl: activeConnection.httpBaseUrl,
                   accessToken: dpopAccessToken,
                   dpopProof: dpop,
                 });
@@ -423,7 +451,7 @@ export function connectSavedEnvironment(
     terminalDebugLog("registry:terminal-metadata-subscribed", {
       environmentId: connection.environmentId,
     });
-    startAgentAwarenessForEnvironment(connection);
+    startAgentAwarenessForEnvironment(toStableSavedRemoteConnection(activeConnection));
     notifyEnvironmentConnectionListeners();
   });
 }

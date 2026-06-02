@@ -465,9 +465,10 @@ export function listCloudEnvironmentsWithStatus(input: {
   });
 }
 
-export function connectCloudEnvironment(input: {
+function connectRelayManagedEnvironment(input: {
   readonly clerkToken: string;
-  readonly environment: RelayClientEnvironmentRecord;
+  readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+  readonly expectedEnvironment?: RelayClientEnvironmentRecord;
 }): Effect.Effect<
   SavedRemoteConnection,
   CloudEnvironmentLinkError,
@@ -485,25 +486,27 @@ export function connectCloudEnvironment(input: {
       .connectEnvironment({
         clerkToken: input.clerkToken,
         scopes: [RelayEnvironmentConnectScope],
-        environmentId: input.environment.environmentId,
+        environmentId: input.environmentId,
         deviceId,
       })
       .pipe(
         Effect.mapError(
           decodedRelayClientError(
-            `${relayUrl}/v1/environments/${encodeURIComponent(input.environment.environmentId)}/connect failed`,
+            `${relayUrl}/v1/environments/${encodeURIComponent(input.environmentId)}/connect failed`,
           ),
         ),
       );
-    if (connect.environmentId !== input.environment.environmentId) {
+    if (connect.environmentId !== input.environmentId) {
       return yield* new CloudEnvironmentLinkError({
         message: "Relay returned credentials for a different environment.",
       });
     }
-    yield* ensureConnectEndpointMatchesEnvironment({
-      environment: input.environment,
-      connect,
-    });
+    if (input.expectedEnvironment) {
+      yield* ensureConnectEndpointMatchesEnvironment({
+        environment: input.expectedEnvironment,
+        connect,
+      });
+    }
 
     const descriptor = yield* fetchRemoteEnvironmentDescriptor({
       httpBaseUrl: connect.endpoint.httpBaseUrl,
@@ -549,5 +552,34 @@ export function connectCloudEnvironment(input: {
       dpopAccessToken: bootstrap.access_token,
       relayManaged: true,
     };
+  });
+}
+
+export function connectCloudEnvironment(input: {
+  readonly clerkToken: string;
+  readonly environment: RelayClientEnvironmentRecord;
+}): Effect.Effect<
+  SavedRemoteConnection,
+  CloudEnvironmentLinkError,
+  HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner
+> {
+  return connectRelayManagedEnvironment({
+    clerkToken: input.clerkToken,
+    environmentId: input.environment.environmentId,
+    expectedEnvironment: input.environment,
+  });
+}
+
+export function refreshCloudEnvironmentConnection(input: {
+  readonly clerkToken: string;
+  readonly connection: SavedRemoteConnection;
+}): Effect.Effect<
+  SavedRemoteConnection,
+  CloudEnvironmentLinkError,
+  HttpClient.HttpClient | ManagedRelayClient | ManagedRelayDpopSigner
+> {
+  return connectRelayManagedEnvironment({
+    clerkToken: input.clerkToken,
+    environmentId: input.connection.environmentId,
   });
 }

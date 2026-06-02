@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
-import { ManagedRelayDpopSigner } from "@t3tools/client-runtime";
+import {
+  createManagedRelaySession,
+  ManagedRelayDpopSigner,
+  setManagedRelaySession,
+} from "@t3tools/client-runtime";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vitest";
 
@@ -23,10 +27,11 @@ const mocks = vi.hoisted(() => {
     resolveRemoteDpopWebSocketConnectionUrl: vi.fn(),
     remoteEndpointUrl: vi.fn((baseUrl: string, path: string) => new URL(path, baseUrl).toString()),
     createDpopProof: vi.fn(),
+    refreshCloudEnvironmentConnection: vi.fn(),
     bootstrapRemoteConnection: vi.fn(),
     clearCachedShellSnapshot: vi.fn(() => Promise.resolve()),
     clearSavedConnection: vi.fn(() => Promise.resolve()),
-    saveConnection: vi.fn(() => Promise.resolve()),
+    saveConnection: vi.fn((_connection?: unknown) => Promise.resolve()),
     saveCachedShellSnapshot: vi.fn(() => Promise.resolve()),
     mobileRunPromise: vi.fn((_effect?: unknown) =>
       Promise.resolve("wss://desktop.example/ws?wsTicket=token"),
@@ -71,8 +76,13 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
   };
 });
 
-vi.mock("../lib/connection", () => ({
+vi.mock("../lib/connection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/connection")>()),
   bootstrapRemoteConnection: mocks.bootstrapRemoteConnection,
+}));
+
+vi.mock("../features/cloud/linkEnvironment", () => ({
+  refreshCloudEnvironmentConnection: mocks.refreshCloudEnvironmentConnection,
 }));
 
 vi.mock("../lib/storage", () => ({
@@ -142,6 +152,7 @@ vi.mock("./use-terminal-session", () => ({
 }));
 
 import { connectSavedEnvironment, disconnectEnvironment } from "./use-remote-environment-registry";
+import { appAtomRegistry } from "./atom-registry";
 
 const environmentId = EnvironmentId.make("env-mobile-test");
 
@@ -165,9 +176,11 @@ describe("mobile remote environment registry effects", () => {
     mocks.removeEnvironmentSession.mockReturnValue(null);
     mocks.mobileRunPromise.mockResolvedValue("wss://desktop.example/ws?wsTicket=token");
     mocks.createDpopProof.mockReturnValue(Effect.succeed("dpop-proof"));
+    mocks.refreshCloudEnvironmentConnection.mockReturnValue(Effect.die("unexpected refresh"));
     mocks.resolveRemoteDpopWebSocketConnectionUrl.mockReturnValue(
       Effect.succeed("wss://desktop.example/ws?wsTicket=dpop-token"),
     );
+    setManagedRelaySession(appAtomRegistry, null);
   });
 
   it.effect("connects a saved managed endpoint environment through Effect-wrapped APIs", () =>
@@ -232,6 +245,76 @@ describe("mobile remote environment registry effects", () => {
         dpopProof: "dpop-proof",
       });
       expect(mocks.resolveRemoteWebSocketConnectionUrl).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("refreshes a persisted managed connection before reconnecting", () =>
+    Effect.gen(function* () {
+      const savedDpopConnection = {
+        ...connection,
+        bearerToken: null,
+        authenticationMethod: "dpop",
+        relayManaged: true,
+      } as const;
+      const refreshedConnection = {
+        ...savedDpopConnection,
+        displayUrl: "https://rotated-desktop.example/",
+        httpBaseUrl: "https://rotated-desktop.example/",
+        wsBaseUrl: "wss://rotated-desktop.example/",
+        dpopAccessToken: "fresh-environment-dpop-token",
+      } as const;
+      setManagedRelaySession(
+        appAtomRegistry,
+        createManagedRelaySession({
+          accountId: "account-1",
+          readClerkToken: () => Promise.resolve("fresh-clerk-token"),
+        }),
+      );
+      mocks.refreshCloudEnvironmentConnection.mockReturnValue(Effect.succeed(refreshedConnection));
+      mocks.mobileRunPromise.mockImplementationOnce((effect?: unknown) =>
+        Effect.runPromise(
+          (effect as Effect.Effect<string, unknown, ManagedRelayDpopSigner>).pipe(
+            Effect.provideService(
+              ManagedRelayDpopSigner,
+              ManagedRelayDpopSigner.of({
+                thumbprint: Effect.succeed("mobile-key-thumbprint"),
+                createProof: mocks.createDpopProof,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* connectSavedEnvironment(savedDpopConnection, { persist: false });
+      const openSocket = mocks.wsTransportConstructor.mock.calls[0]?.[0] as
+        | (() => Promise<string>)
+        | undefined;
+      expect(openSocket).toBeDefined();
+      yield* Effect.promise(() => openSocket!());
+
+      expect(mocks.refreshCloudEnvironmentConnection).toHaveBeenCalledWith({
+        clerkToken: "fresh-clerk-token",
+        connection: savedDpopConnection,
+      });
+      const persistedConnection = mocks.saveConnection.mock.calls[0]?.[0];
+      expect(persistedConnection).toMatchObject({
+        ...savedDpopConnection,
+        displayUrl: refreshedConnection.displayUrl,
+        httpBaseUrl: refreshedConnection.httpBaseUrl,
+        wsBaseUrl: refreshedConnection.wsBaseUrl,
+      });
+      expect(persistedConnection).not.toHaveProperty("dpopAccessToken");
+      expect(mocks.createDpopProof).toHaveBeenCalledWith({
+        method: "POST",
+        url: "https://rotated-desktop.example/api/auth/websocket-ticket",
+        accessToken: "fresh-environment-dpop-token",
+      });
+      expect(mocks.resolveRemoteDpopWebSocketConnectionUrl).toHaveBeenCalledWith({
+        wsBaseUrl: refreshedConnection.wsBaseUrl,
+        httpBaseUrl: refreshedConnection.httpBaseUrl,
+        accessToken: "fresh-environment-dpop-token",
+        dpopProof: "dpop-proof",
+      });
     }),
   );
 

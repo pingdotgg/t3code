@@ -19,6 +19,7 @@ import {
   listCloudEnvironments,
   listCloudEnvironmentsWithStatus,
   normalizeRelayBaseUrl,
+  refreshCloudEnvironmentConnection,
 } from "./linkEnvironment";
 
 vi.mock("expo-constants", () => ({
@@ -841,6 +842,81 @@ describe("mobile cloud link environment client", () => {
           url: "https://desktop.example.test/oauth/token",
         });
       }),
+  );
+
+  it.effect("refreshes a saved environment against a rotated managed endpoint", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: string | URL) => {
+          if (String(url).endsWith("/v1/client/dpop-token")) {
+            return Promise.resolve(
+              Response.json(validDpopAccessTokenResponse("environment:connect")),
+            );
+          }
+          if (String(url).endsWith("/.well-known/t3/environment")) {
+            return Promise.resolve(
+              Response.json({
+                environmentId: "env-1",
+                label: "Rotated Desktop",
+                platform: { os: "darwin", arch: "arm64" },
+                serverVersion: "0.0.0-test",
+                capabilities: { repositoryIdentity: true },
+              }),
+            );
+          }
+          if (String(url).endsWith("/oauth/token")) {
+            return Promise.resolve(
+              Response.json({
+                access_token: "fresh-environment-dpop-token",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "DPoP",
+                expires_in: 3600,
+                scope: "orchestration:read orchestration:operate terminal:operate review:write",
+              }),
+            );
+          }
+          return Promise.resolve(
+            Response.json({
+              environmentId: "env-1",
+              endpoint: {
+                httpBaseUrl: "https://rotated-desktop.example.test/",
+                wsBaseUrl: "wss://rotated-desktop.example.test/ws",
+                providerKind: "cloudflare_tunnel",
+              },
+              credential: "rotated-one-time-cloud-credential",
+              expiresAt: "2026-05-25T00:05:00.000Z",
+            }),
+          );
+        }),
+      );
+
+      const connection = yield* withCloudServices(
+        refreshCloudEnvironmentConnection({
+          clerkToken: "clerk-token",
+          connection: {
+            environmentId: EnvironmentId.make("env-1"),
+            environmentLabel: "Desktop",
+            pairingUrl: "https://desktop.example.test/",
+            displayUrl: "https://desktop.example.test/",
+            httpBaseUrl: "https://desktop.example.test/",
+            wsBaseUrl: "wss://desktop.example.test/ws",
+            bearerToken: null,
+            authenticationMethod: "dpop",
+            relayManaged: true,
+          },
+        }),
+      );
+
+      expect(connection).toMatchObject({
+        environmentId: "env-1",
+        environmentLabel: "Rotated Desktop",
+        displayUrl: "https://rotated-desktop.example.test/",
+        httpBaseUrl: "https://rotated-desktop.example.test/",
+        wsBaseUrl: "wss://rotated-desktop.example.test/ws",
+        dpopAccessToken: "fresh-environment-dpop-token",
+      });
+    }),
   );
 
   it.effect("rejects relay connect responses for a different environment", () =>

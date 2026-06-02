@@ -49,6 +49,17 @@ export function isRelayManagedConnection(
   return connection.relayManaged === true || connection.authenticationMethod === "dpop";
 }
 
+export function toStableSavedRemoteConnection(
+  connection: SavedRemoteConnection,
+): SavedRemoteConnection {
+  if (!isRelayManagedConnection(connection) || !connection.dpopAccessToken) {
+    return connection;
+  }
+
+  const { dpopAccessToken: _, ...stableConnection } = connection;
+  return stableConnection;
+}
+
 export async function bootstrapRemoteConnection(
   input: RemoteConnectionInput,
 ): Promise<SavedRemoteConnection> {
