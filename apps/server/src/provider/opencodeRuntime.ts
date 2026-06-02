@@ -141,6 +141,7 @@ export interface OpenCodeRuntimeShape {
     readonly baseUrl: string;
     readonly directory: string;
     readonly serverPassword?: string;
+    readonly sseMaxRetryAttempts?: number;
   }) => OpencodeClient;
   readonly loadOpenCodeInventory: (
     client: OpencodeClient,
@@ -504,6 +505,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               Authorization: `Basic ${Buffer.from(`opencode:${input.serverPassword}`, "utf8").toString("base64")}`,
             },
           }
+        : {}),
+      ...(input.sseMaxRetryAttempts !== undefined
+        ? { sseMaxRetryAttempts: input.sseMaxRetryAttempts }
         : {}),
       throwOnError: true,
     });

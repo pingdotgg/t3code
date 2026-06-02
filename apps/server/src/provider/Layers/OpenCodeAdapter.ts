@@ -1051,6 +1051,7 @@ export function makeOpenCodeAdapter(
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
+                sseMaxRetryAttempts: 1,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
               const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
