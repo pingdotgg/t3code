@@ -1,0 +1,18 @@
+services:
+  pg:
+    image: postgres:alpine # Using a lightweight Postgres image
+    environment:
+      POSTGRES_DB: effect_cluster
+      POSTGRES_USER: cluster
+      POSTGRES_PASSWORD: cluster
+    ports:
+      - "5432:5432" # Map host port 5432 to container port 5432
+    volumes:
+      - db_data:/var/lib/postgresql/data # Persist data in a named volume
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  db_data: # Define the named volume

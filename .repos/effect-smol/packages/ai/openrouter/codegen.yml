@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../../tools/ai-codegen/codegen.schema.json
+spec: https://openrouter.ai/openapi.yaml
+output: src/Generated.ts
+name: OpenRouterClient
+header: |
+  /**
+   * @since 1.0.0
+   */
+excludeAnnotations:
+  - default
+disableAdditionalProperties: true
+patches:
+  # Replace OpenResponsesStreamEvent with a flat oneOf of $refs.
+  # The original uses allOf wrappers that inline OpenResponsesNonStreamingResponse
+  # into each variant, producing lines over 1M chars that crash dprint.
+  - '[{"op":"replace","path":"/components/schemas/OpenResponsesStreamEvent","value":{"oneOf":[{"$ref":"#/components/schemas/OpenResponsesCreatedEvent"},{"$ref":"#/components/schemas/OpenResponsesInProgressEvent"},{"$ref":"#/components/schemas/OpenResponsesCompletedEvent"},{"$ref":"#/components/schemas/OpenResponsesIncompleteEvent"},{"$ref":"#/components/schemas/OpenResponsesFailedEvent"},{"$ref":"#/components/schemas/OpenResponsesErrorEvent"},{"$ref":"#/components/schemas/OpenResponsesOutputItemAddedEvent"},{"$ref":"#/components/schemas/OpenResponsesOutputItemDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesContentPartAddedEvent"},{"$ref":"#/components/schemas/OpenResponsesContentPartDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesTextDeltaEvent"},{"$ref":"#/components/schemas/OpenResponsesTextDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesRefusalDeltaEvent"},{"$ref":"#/components/schemas/OpenResponsesRefusalDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesOutputTextAnnotationAddedEvent"},{"$ref":"#/components/schemas/OpenResponsesFunctionCallArgumentsDeltaEvent"},{"$ref":"#/components/schemas/OpenResponsesFunctionCallArgumentsDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningDeltaEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningSummaryPartAddedEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningSummaryPartDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningSummaryTextDeltaEvent"},{"$ref":"#/components/schemas/OpenResponsesReasoningSummaryTextDoneEvent"},{"$ref":"#/components/schemas/OpenResponsesImageGenCallInProgress"},{"$ref":"#/components/schemas/OpenResponsesImageGenCallGenerating"},{"$ref":"#/components/schemas/OpenResponsesImageGenCallPartialImage"},{"$ref":"#/components/schemas/OpenResponsesImageGenCallCompleted"}]}}]'
+  # Fix AssistantMessage images to include type:"image_url" discriminator and nullable
+  - '[{"op":"replace","path":"/components/schemas/AssistantMessage/properties/images","value":{"anyOf":[{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"image_url"},"image_url":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}},"required":["type","image_url"]}},{"type":"null"}]}}]'
+  # Add images to ChatStreamingMessageChunk (streaming delta)
+  - '[{"op":"add","path":"/components/schemas/ChatStreamingMessageChunk/properties/images","value":{"anyOf":[{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","const":"image_url"},"image_url":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}},"required":["type","image_url"]}},{"type":"null"}]}}]'
+  # Add annotations to AssistantMessage (non-streaming)
+  - '[{"op":"add","path":"/components/schemas/AssistantMessage/properties/annotations","value":{"anyOf":[{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"url_citation"},"url_citation":{"type":"object","properties":{"url":{"type":"string"},"title":{"type":"string"},"start_index":{"type":"number"},"end_index":{"type":"number"},"content":{"type":"string"}},"required":["url"]}},"required":["type","url_citation"]},{"type":"object","properties":{"type":{"type":"string","const":"file_annotation"},"file_annotation":{"type":"object","properties":{"file_id":{"type":"string"},"quote":{"type":"string"}},"required":["file_id"]}},"required":["type","file_annotation"]},{"type":"object","properties":{"type":{"type":"string","const":"file"},"file":{"type":"object","properties":{"hash":{"type":"string"},"name":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"text":{"type":"string"}},"required":["type"]}}},"required":["hash","name"]}},"required":["type","file"]}]}},{"type":"null"}]}}]'
+  # Add annotations to ChatStreamingMessageChunk (streaming delta)
+  - '[{"op":"add","path":"/components/schemas/ChatStreamingMessageChunk/properties/annotations","value":{"anyOf":[{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"url_citation"},"url_citation":{"type":"object","properties":{"url":{"type":"string"},"title":{"type":"string"},"start_index":{"type":"number"},"end_index":{"type":"number"},"content":{"type":"string"}},"required":["url"]}},"required":["type","url_citation"]},{"type":"object","properties":{"type":{"type":"string","const":"file_annotation"},"file_annotation":{"type":"object","properties":{"file_id":{"type":"string"},"quote":{"type":"string"}},"required":["file_id"]}},"required":["type","file_annotation"]},{"type":"object","properties":{"type":{"type":"string","const":"file"},"file":{"type":"object","properties":{"hash":{"type":"string"},"name":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"text":{"type":"string"}},"required":["type"]}}},"required":["hash","name"]}},"required":["type","file"]}]}},{"type":"null"}]}}]'
+  # Make tool call delta fields nullable (models like kimi-k2.5, minimax-m2.5 send null)
+  - '[{"op":"replace","path":"/components/schemas/ChatStreamingMessageToolCall/properties/id","value":{"anyOf":[{"type":"string"},{"type":"null"}]}},{"op":"replace","path":"/components/schemas/ChatStreamingMessageToolCall/properties/type","value":{"anyOf":[{"type":"string","const":"function"},{"type":"null"}]}},{"op":"replace","path":"/components/schemas/ChatStreamingMessageToolCall/properties/function/properties/name","value":{"anyOf":[{"type":"string"},{"type":"null"}]}}]'
+  # Make finish_reason optional (only present on final streaming chunk)
+  - '[{"op":"remove","path":"/components/schemas/ChatStreamingChoice/required/1"}]'
+replacements:
+  # Schema.Unknown doesn't work with Schema.toCodecJson (used by HttpClientResponse.schemaBodyJson)
+  # Replace with Schema.Json which properly handles arbitrary JSON values
+  - from: "Schema.Record(Schema.String, Schema.Unknown)"
+    to: "Schema.Record(Schema.String, Schema.Json)"
+  - from: "{ readonly [x: string]: unknown }"
+    to: "{ readonly [x: string]: Schema.Json }"

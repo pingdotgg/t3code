@@ -1,0 +1,127 @@
+{
+  "name": "effect",
+  "type": "module",
+  "version": "4.0.0-beta.73",
+  "license": "MIT",
+  "description": "The missing standard library for TypeScript, for writing production-grade software.",
+  "homepage": "https://effect.website",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "directory": "packages/effect"
+  },
+  "bugs": {
+    "url": "https://github.com/Effect-TS/effect-smol/issues"
+  },
+  "tags": [
+    "typescript",
+    "error-handling",
+    "concurrency",
+    "observability"
+  ],
+  "keywords": [
+    "typescript",
+    "error-handling",
+    "concurrency",
+    "observability"
+  ],
+  "sideEffects": [],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./unstable/ai": "./src/unstable/ai/index.ts",
+    "./unstable/cli": "./src/unstable/cli/index.ts",
+    "./unstable/cluster": "./src/unstable/cluster/index.ts",
+    "./unstable/devtools": "./src/unstable/devtools/index.ts",
+    "./unstable/encoding": "./src/unstable/encoding/index.ts",
+    "./unstable/eventlog": "./src/unstable/eventlog/index.ts",
+    "./unstable/http": "./src/unstable/http/index.ts",
+    "./unstable/httpapi": "./src/unstable/httpapi/index.ts",
+    "./unstable/observability": "./src/unstable/observability/index.ts",
+    "./unstable/persistence": "./src/unstable/persistence/index.ts",
+    "./unstable/process": "./src/unstable/process/index.ts",
+    "./unstable/reactivity": "./src/unstable/reactivity/index.ts",
+    "./unstable/rpc": "./src/unstable/rpc/index.ts",
+    "./unstable/schema": "./src/unstable/schema/index.ts",
+    "./unstable/socket": "./src/unstable/socket/index.ts",
+    "./unstable/sql": "./src/unstable/sql/index.ts",
+    "./unstable/workflow": "./src/unstable/workflow/index.ts",
+    "./unstable/workers": "./src/unstable/workers/index.ts",
+    "./*": "./src/*.ts",
+    "./internal/*": null,
+    "./unstable/cli/internal/*": null,
+    "./unstable/cluster/internal/*": null,
+    "./*/index": null
+  },
+  "files": [
+    "src/**/*.ts",
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      "./package.json": "./package.json",
+      ".": "./dist/index.js",
+      "./testing": "./dist/testing/index.js",
+      "./unstable/ai": "./dist/unstable/ai/index.js",
+      "./unstable/cli": "./dist/unstable/cli/index.js",
+      "./unstable/cluster": "./dist/unstable/cluster/index.js",
+      "./unstable/devtools": "./dist/unstable/devtools/index.js",
+      "./unstable/encoding": "./dist/unstable/encoding/index.js",
+      "./unstable/eventlog": "./dist/unstable/eventlog/index.js",
+      "./unstable/http": "./dist/unstable/http/index.js",
+      "./unstable/httpapi": "./dist/unstable/httpapi/index.js",
+      "./unstable/observability": "./dist/unstable/observability/index.js",
+      "./unstable/persistence": "./dist/unstable/persistence/index.js",
+      "./unstable/process": "./dist/unstable/process/index.js",
+      "./unstable/reactivity": "./dist/unstable/reactivity/index.js",
+      "./unstable/rpc": "./dist/unstable/rpc/index.js",
+      "./unstable/schema": "./dist/unstable/schema/index.js",
+      "./unstable/socket": "./dist/unstable/socket/index.js",
+      "./unstable/sql": "./dist/unstable/sql/index.js",
+      "./unstable/workflow": "./dist/unstable/workflow/index.js",
+      "./unstable/workers": "./dist/unstable/workers/index.js",
+      "./*": "./dist/*.js",
+      "./internal/*": null,
+      "./unstable/cli/internal/*": null,
+      "./unstable/cluster/internal/*": null,
+      "./*/index": null
+    }
+  },
+  "scripts": {
+    "codegen": "effect-utils codegen",
+    "build": "tsc -b tsconfig.json && pnpm babel",
+    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
+    "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest --sequence.concurrent=false",
+    "coverage": "vitest --run --coverage --sequence.concurrent=false"
+  },
+  "devDependencies": {
+    "@types/ini": "^4.1.1",
+    "@types/node": "^25.7.0",
+    "ajv": "^8.20.0",
+    "arktype": "^2.2.0",
+    "ast-types": "^0.14.2",
+    "immer": "^11.1.8",
+    "tinybench": "^6.0.1",
+    "valibot": "^1.4.0"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "fast-check": "^4.8.0",
+    "find-my-way-ts": "^0.1.6",
+    "ini": "^7.0.0",
+    "kubernetes-types": "^1.30.0",
+    "msgpackr": "^2.0.1",
+    "multipasta": "^0.2.7",
+    "toml": "^4.1.1",
+    "uuid": "^14.0.0",
+    "yaml": "^2.9.0"
+  }
+}

@@ -1,0 +1,34 @@
+name: Snapshot
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  snapshot:
+    name: Snapshot
+    if: github.repository_owner == 'Effect-Ts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
+        uses: ./.github/actions/setup
+      - name: Set strip internals config
+        run: |
+          sed -i 's/"stripInternal": false/"stripInternal": true/' tsconfig.base.json
+      - name: Run codemods
+        run: pnpm codemod
+      - name: Build package
+        run: pnpm build:tsgo
+      - name: Create snapshot
+        id: snapshot
+        run: pnpx pkg-pr-new@0.0.62 publish --pnpm --comment=off ./packages/* ./packages/atom/* ./packages/ai/* ./packages/sql/* ./packages/tools/*

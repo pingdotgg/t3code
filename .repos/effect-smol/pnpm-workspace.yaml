@@ -1,0 +1,10 @@
+packages:
+  - ai-docs
+  - scratchpad
+  - scripts
+  - packages/*
+  - packages/ai/*
+  - packages/atom/*
+  - packages/sql/*
+  - packages/tools/*
+  - examples/*

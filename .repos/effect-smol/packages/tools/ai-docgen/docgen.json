@@ -1,0 +1,4 @@
+{
+  "$schema": "../../../node_modules/@effect/docgen/schema.json",
+  "exclude": ["**/*.ts"]
+}
