@@ -36,6 +36,7 @@ export const SidebarProjectFolder = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   projectKeys: Schema.Array(TrimmedNonEmptyString),
+  iconProjectKey: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type SidebarProjectFolder = typeof SidebarProjectFolder.Type;
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;

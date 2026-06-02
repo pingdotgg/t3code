@@ -115,6 +115,7 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import {
   Dialog,
   DialogDescription,
@@ -175,6 +176,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  reorderSidebarFolderProjectKeys,
   removeSidebarProjectFromFolders,
   orderItemsByPreferredIds,
   sidebarProjectFolderKey,
@@ -2655,6 +2657,27 @@ const SidebarProjectFolderRow = memo(function SidebarProjectFolderRow(
     });
   }, [folderEntry.folder.id, sidebarProjectFolders, updateSettings]);
 
+  const setFolderIconProjectKey = useCallback(
+    (iconProjectKey: string | null) => {
+      updateSettings({
+        sidebarProjectFolders: sidebarProjectFolders.map((folder) => {
+          if (folder.id !== folderEntry.folder.id) {
+            return folder;
+          }
+          if (iconProjectKey === null) {
+            const { iconProjectKey: _iconProjectKey, ...nextFolder } = folder;
+            return nextFolder;
+          }
+          return {
+            ...folder,
+            iconProjectKey,
+          };
+        }),
+      });
+    },
+    [folderEntry.folder.id, sidebarProjectFolders, updateSettings],
+  );
+
   const handleFolderContextMenu = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -2663,9 +2686,41 @@ const SidebarProjectFolderRow = memo(function SidebarProjectFolderRow(
         if (!api) {
           return;
         }
+        const actionHandlers = new Map<string, () => void>();
+        actionHandlers.set("rename", () => {
+          setRenameOpen(true);
+        });
+        actionHandlers.set("delete", () => {
+          deleteFolder();
+        });
+        actionHandlers.set("icon:auto", () => {
+          setFolderIconProjectKey(null);
+        });
+        const iconItems: ContextMenuItem<string>[] = [
+          {
+            id: "icon:auto",
+            label: folderEntry.folder.iconProjectKey ? "Automatic" : "Automatic (current)",
+          },
+        ];
+        for (const project of folderEntry.projects) {
+          const projectIconKey = getSidebarProjectPhysicalKeys(project)[0];
+          if (!projectIconKey) {
+            continue;
+          }
+          const id = `icon:${projectIconKey}`;
+          const isSelected = projectIconKey === folderEntry.folder.iconProjectKey;
+          actionHandlers.set(id, () => {
+            setFolderIconProjectKey(projectIconKey);
+          });
+          iconItems.push({
+            id,
+            label: isSelected ? `${project.displayName} (current)` : project.displayName,
+          });
+        }
         const clicked = await api.contextMenu.show(
           [
             { id: "rename", label: "Rename folder" },
+            { id: "icon:submenu", label: "Folder icon", children: iconItems },
             { id: "delete", label: "Remove folder" },
           ],
           {
@@ -2673,16 +2728,15 @@ const SidebarProjectFolderRow = memo(function SidebarProjectFolderRow(
             y: event.clientY,
           },
         );
-        if (clicked === "rename") {
-          setRenameOpen(true);
-          return;
-        }
-        if (clicked === "delete") {
-          deleteFolder();
-        }
+        actionHandlers.get(clicked ?? "")?.();
       })();
     },
-    [deleteFolder],
+    [
+      deleteFolder,
+      folderEntry.folder.iconProjectKey,
+      folderEntry.projects,
+      setFolderIconProjectKey,
+    ],
   );
 
   const handleFolderClick = useCallback(
@@ -2780,23 +2834,49 @@ const SidebarProjectFolderRow = memo(function SidebarProjectFolderRow(
         </span>
       </SidebarMenuButton>
 
-      {folderExpanded ? (
-        <SidebarMenuSub className="mx-3 py-0.5 pr-0">
-          {folderEntry.projects.map((project) => (
-            <SidebarProjectListRow
-              key={project.projectKey}
-              {...projectItemProps}
-              project={project}
-              isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-              activeRouteThreadKey={
-                activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-              }
-              isManualProjectSorting={false}
-              dragHandleProps={null}
-            />
-          ))}
-        </SidebarMenuSub>
-      ) : null}
+      <Collapsible open={folderExpanded}>
+        <CollapsibleContent>
+          <SidebarMenuSub className="mx-3 py-0.5 pr-0">
+            {isManualProjectSorting ? (
+              <SortableContext
+                items={folderEntry.projects.map((project) => project.projectKey)}
+                strategy={verticalListSortingStrategy}
+              >
+                {folderEntry.projects.map((project) => (
+                  <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
+                    {(folderProjectDragHandleProps) => (
+                      <SidebarProjectItem
+                        {...projectItemProps}
+                        project={project}
+                        isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                        activeRouteThreadKey={
+                          activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                        }
+                        isManualProjectSorting={true}
+                        dragHandleProps={folderProjectDragHandleProps}
+                      />
+                    )}
+                  </SortableProjectItem>
+                ))}
+              </SortableContext>
+            ) : (
+              folderEntry.projects.map((project) => (
+                <SidebarProjectListRow
+                  key={project.projectKey}
+                  {...projectItemProps}
+                  project={project}
+                  isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                  activeRouteThreadKey={
+                    activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                  }
+                  isManualProjectSorting={false}
+                  dragHandleProps={null}
+                />
+              ))
+            )}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
 
       <Dialog
         open={renameOpen}
@@ -3699,8 +3779,34 @@ export default function Sidebar() {
       dragInProgressRef.current = false;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
+      const activeProject = sidebarProjectByKey.get(String(active.id));
+      const overProject = sidebarProjectByKey.get(String(over.id));
+      if (activeProject && overProject) {
+        const activeFolder = findSidebarProjectFolderForProject(
+          sidebarProjectFolders,
+          activeProject,
+        );
+        const overFolder = findSidebarProjectFolderForProject(sidebarProjectFolders, overProject);
+        if (activeFolder && overFolder && activeFolder.id === overFolder.id) {
+          const nextProjectKeys = reorderSidebarFolderProjectKeys({
+            projectKeys: activeFolder.projectKeys,
+            draggedProjectKeys: getSidebarProjectPhysicalKeys(activeProject),
+            targetProjectKeys: getSidebarProjectPhysicalKeys(overProject),
+          });
+          if (!stringArraysEqual(activeFolder.projectKeys, nextProjectKeys)) {
+            updateSettings({
+              sidebarProjectFolders: sidebarProjectFolders.map((folder) =>
+                folder.id === activeFolder.id
+                  ? { ...folder, projectKeys: nextProjectKeys }
+                  : folder,
+              ),
+            });
+          }
+          return;
+        }
+      }
       const getProjectOrderKeys = (entryId: string): readonly string[] => {
-        const project = sidebarProjects.find((candidate) => candidate.projectKey === entryId);
+        const project = sidebarProjectByKey.get(entryId);
         if (project) {
           return project.memberProjects.map((member) => member.physicalProjectKey);
         }
@@ -3719,7 +3825,7 @@ export default function Sidebar() {
       sidebarProjectFolders,
       sidebarProjectSortOrder,
       reorderProjects,
-      sidebarProjects,
+      sidebarProjectByKey,
       updateSettings,
     ],
   );

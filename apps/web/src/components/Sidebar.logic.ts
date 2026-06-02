@@ -27,6 +27,7 @@ export type SidebarProjectFolderSettings = {
   id: string;
   name: string;
   projectKeys: readonly string[];
+  iconProjectKey?: string;
 };
 export type SidebarFolderableProject = {
   projectKey: string;
@@ -335,11 +336,16 @@ export function buildSidebarProjectFolderEntries<TProject extends SidebarFoldera
       assignedProjectKeys.add(project.projectKey);
     }
 
+    const iconProject =
+      folder.iconProjectKey !== undefined && folder.projectKeys.includes(folder.iconProjectKey)
+        ? (projectByPhysicalKey.get(folder.iconProjectKey) ?? folderProjects[0]!)
+        : folderProjects[0]!;
+
     folderEntryById.set(folder.id, {
       kind: "folder",
       folder,
       folderKey: sidebarProjectFolderKey(folder.id),
-      iconProject: folderProjects[0]!,
+      iconProject,
       projects: folderProjects,
     });
   }
@@ -399,6 +405,47 @@ export function removeSidebarProjectFromFolders(input: {
     ...folder,
     projectKeys: folder.projectKeys.filter((key) => !removingKeys.has(key)),
   }));
+}
+
+export function reorderSidebarFolderProjectKeys(input: {
+  projectKeys: readonly string[];
+  draggedProjectKeys: readonly string[];
+  targetProjectKeys: readonly string[];
+}): string[] {
+  if (input.draggedProjectKeys.length === 0) {
+    return [...input.projectKeys];
+  }
+
+  const draggedSet = new Set(input.draggedProjectKeys);
+  const targetSet = new Set(input.targetProjectKeys);
+  if (input.draggedProjectKeys.every((key) => targetSet.has(key))) {
+    return [...input.projectKeys];
+  }
+
+  const originalTargetIndex = input.projectKeys.findIndex((key) => targetSet.has(key));
+  if (originalTargetIndex < 0) {
+    return [...input.projectKeys];
+  }
+
+  const nextProjectKeys = [...input.projectKeys];
+  const removed: string[] = [];
+  let draggedBeforeTarget = 0;
+  for (let index = nextProjectKeys.length - 1; index >= 0; index--) {
+    if (draggedSet.has(nextProjectKeys[index]!)) {
+      removed.unshift(nextProjectKeys.splice(index, 1)[0]!);
+      if (index < originalTargetIndex) {
+        draggedBeforeTarget++;
+      }
+    }
+  }
+
+  if (removed.length === 0) {
+    return [...input.projectKeys];
+  }
+
+  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  nextProjectKeys.splice(insertIndex, 0, ...removed);
+  return nextProjectKeys;
 }
 
 export function getVisibleSidebarThreadIds<TThreadId>(

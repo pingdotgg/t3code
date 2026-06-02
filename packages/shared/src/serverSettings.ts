@@ -84,6 +84,18 @@ export function applyServerSettingsPatch(
       ? { providerInstances: patch.providerInstances }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+    ...(patch.sidebarProjectGroupingOverrides !== undefined
+      ? { sidebarProjectGroupingOverrides: patch.sidebarProjectGroupingOverrides }
+      : {}),
+    ...(patch.sidebarProjectFolders !== undefined
+      ? { sidebarProjectFolders: patch.sidebarProjectFolders }
+      : {}),
+    ...(patch.sidebarProjectExpandedById !== undefined
+      ? { sidebarProjectExpandedById: patch.sidebarProjectExpandedById }
+      : {}),
+    ...(patch.sidebarProjectOrder !== undefined
+      ? { sidebarProjectOrder: patch.sidebarProjectOrder }
+      : {}),
   };
   if (!selectionPatch) {
     return nextWithReplacements;
