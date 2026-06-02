@@ -121,7 +121,15 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  PencilIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+  XIcon,
+} from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -219,6 +227,7 @@ import { retainThreadDetailSubscription } from "../environments/runtime/service"
 import { RightPanelSheet } from "./RightPanelSheet";
 import { Button } from "./ui/button";
 import { Sheet, SheetPopup } from "./ui/sheet";
+import { Textarea } from "./ui/textarea";
 import { ThreadTabStrip } from "./thread-tabs/ThreadTabStrip";
 import {
   buildThreadContentTabs,
@@ -375,6 +384,171 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+
+const QueuedRunningTurnMessagePanel = memo(function QueuedRunningTurnMessagePanel({
+  messages,
+  dispatchingMessageId,
+  onUpdateText,
+  onDelete,
+}: QueuedRunningTurnMessagePanelProps) {
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mx-auto mb-2 grid w-full max-w-208 gap-2">
+      {messages.map((message, index) => (
+        <QueuedRunningTurnMessageItem
+          key={message.messageId}
+          message={message}
+          queuePosition={index + 1}
+          queueCount={messages.length}
+          isDispatching={dispatchingMessageId === message.messageId}
+          onUpdateText={onUpdateText}
+          onDelete={onDelete}
+        />
+      ))}
+    </div>
+  );
+});
+
+function QueuedRunningTurnMessageItem({
+  message,
+  queuePosition,
+  queueCount,
+  isDispatching,
+  onUpdateText,
+  onDelete,
+}: {
+  readonly message: QueuedRunningTurnMessage;
+  readonly queuePosition: number;
+  readonly queueCount: number;
+  readonly isDispatching: boolean;
+  readonly onUpdateText: (messageId: MessageId, text: string) => void;
+  readonly onDelete: (messageId: MessageId) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftText, setDraftText] = useState(message.text);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftText(message.text);
+    }
+  }, [isEditing, message.text]);
+
+  const attachmentCount = message.optimisticAttachments?.length ?? 0;
+  const canSave = draftText.trim().length > 0 && draftText !== message.text && !isDispatching;
+
+  return (
+    <div className="rounded-lg border border-border bg-card/95 px-3 py-2 shadow-sm">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs">
+            <span className="font-medium text-foreground">Queued</span>
+            {queueCount > 1 ? <span>#{queuePosition}</span> : null}
+            {attachmentCount > 0 ? (
+              <span>
+                {attachmentCount} attachment{attachmentCount === 1 ? "" : "s"}
+              </span>
+            ) : null}
+            {isDispatching ? <span>Sending...</span> : null}
+          </div>
+          {isEditing ? (
+            <Textarea
+              size="sm"
+              value={draftText}
+              disabled={isDispatching}
+              onChange={(event) => setDraftText(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDraftText(message.text);
+                  setIsEditing(false);
+                }
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && canSave) {
+                  event.preventDefault();
+                  onUpdateText(message.messageId, draftText);
+                  setIsEditing(false);
+                }
+              }}
+              aria-label="Queued message text"
+            />
+          ) : (
+            <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-5">
+              {message.text}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {isEditing ? (
+            <>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                title="Cancel edit"
+                aria-label="Cancel queued message edit"
+                disabled={isDispatching}
+                onClick={() => {
+                  setDraftText(message.text);
+                  setIsEditing(false);
+                }}
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-xs"
+                title="Save edit"
+                aria-label="Save queued message edit"
+                disabled={!canSave}
+                onClick={() => {
+                  onUpdateText(message.messageId, draftText);
+                  setIsEditing(false);
+                }}
+              >
+                <CheckIcon className="size-3.5" />
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                title="Edit queued message"
+                aria-label="Edit queued message"
+                disabled={isDispatching}
+                onClick={() => setIsEditing(true)}
+              >
+                <PencilIcon className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                title="Delete queued message"
+                aria-label="Delete queued message"
+                disabled={isDispatching}
+                onClick={() => onDelete(message.messageId)}
+              >
+                <Trash2Icon className="size-3.5" />
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function revokeQueuedRunningTurnMessagePreviewUrls(message: QueuedRunningTurnMessage): void {
+  const attachments = message.optimisticAttachments;
+  if (!attachments) {
+    return;
+  }
+  for (const attachment of attachments) {
+    if (attachment.type === "image") {
+      revokeBlobPreviewUrl(attachment.previewUrl);
+    }
+  }
+}
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -410,10 +584,18 @@ interface QueuedRunningTurnMessage {
   readonly createdAt: string;
   readonly text: string;
   readonly attachments: Promise<UploadChatAttachment[]>;
+  readonly optimisticAttachments: ChatMessage["attachments"] | undefined;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly titleSeed: string;
+}
+
+interface QueuedRunningTurnMessagePanelProps {
+  readonly messages: QueuedRunningTurnMessage[];
+  readonly dispatchingMessageId: MessageId | null;
+  readonly onUpdateText: (messageId: MessageId, text: string) => void;
+  readonly onDelete: (messageId: MessageId) => void;
 }
 
 function useLocalDispatchState(input: {
@@ -952,6 +1134,8 @@ export default function ChatView(props: ChatViewProps) {
   const [queuedRunningTurnMessages, setQueuedRunningTurnMessages] = useState<
     QueuedRunningTurnMessage[]
   >([]);
+  const [queuedRunningTurnDispatchingMessageId, setQueuedRunningTurnDispatchingMessageId] =
+    useState<MessageId | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -3107,11 +3291,67 @@ export default function ChatView(props: ChatViewProps) {
       }
       return [];
     });
-    setQueuedRunningTurnMessages([]);
+    setQueuedRunningTurnMessages((existing) => {
+      for (const message of existing) {
+        revokeQueuedRunningTurnMessagePreviewUrls(message);
+      }
+      return [];
+    });
     queuedRunningTurnDispatchInFlightRef.current = null;
+    setQueuedRunningTurnDispatchingMessageId(null);
     resetLocalDispatch();
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
+
+  const activeThreadQueuedRunningTurnMessages = useMemo(
+    () =>
+      activeThread
+        ? queuedRunningTurnMessages.filter((message) => message.threadId === activeThread.id)
+        : [],
+    [activeThread, queuedRunningTurnMessages],
+  );
+
+  const updateQueuedRunningTurnMessageText = useCallback((messageId: MessageId, text: string) => {
+    if (queuedRunningTurnDispatchInFlightRef.current === messageId || text.trim().length === 0) {
+      return;
+    }
+    setQueuedRunningTurnMessages((existing) =>
+      existing.map((message) =>
+        message.messageId === messageId
+          ? {
+              ...message,
+              text,
+              titleSeed: truncate(text.trim()),
+            }
+          : message,
+      ),
+    );
+  }, []);
+
+  const deleteQueuedRunningTurnMessage = useCallback((messageId: MessageId) => {
+    if (queuedRunningTurnDispatchInFlightRef.current === messageId) {
+      return;
+    }
+    setQueuedRunningTurnMessages((existing) => {
+      const next: QueuedRunningTurnMessage[] = [];
+      for (const message of existing) {
+        if (message.messageId === messageId) {
+          revokeQueuedRunningTurnMessagePreviewUrls(message);
+        } else {
+          next.push(message);
+        }
+      }
+      return next.length === existing.length ? existing : next;
+    });
+    setOptimisticUserMessages((existing) => {
+      const removed = existing.filter((message) => message.id === messageId);
+      for (const message of removed) {
+        revokeUserMessagePreviewUrls(message);
+      }
+      const next = existing.filter((message) => message.id !== messageId);
+      return next.length === existing.length ? existing : next;
+    });
+  }, []);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -3694,17 +3934,19 @@ export default function ChatView(props: ChatViewProps) {
     setShowScrollToBottom(false);
     await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+    if (!shouldQueueRunningTurn) {
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+    }
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -3735,6 +3977,8 @@ export default function ChatView(props: ChatViewProps) {
           createdAt: messageCreatedAt,
           text: outgoingMessageText,
           attachments: turnAttachmentsPromise,
+          optimisticAttachments:
+            optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
           modelSelection: ctxSelectedModelSelection,
           runtimeMode,
           interactionMode,
@@ -3897,9 +4141,27 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     queuedRunningTurnDispatchInFlightRef.current = queuedMessage.messageId;
+    setQueuedRunningTurnDispatchingMessageId(queuedMessage.messageId);
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
     setThreadError(queuedMessage.threadId, null);
+    setOptimisticUserMessages((existing) =>
+      existing.some((message) => message.id === queuedMessage.messageId)
+        ? existing
+        : [
+            ...existing,
+            {
+              id: queuedMessage.messageId,
+              role: "user",
+              text: queuedMessage.text,
+              ...(queuedMessage.optimisticAttachments
+                ? { attachments: queuedMessage.optimisticAttachments }
+                : {}),
+              createdAt: queuedMessage.createdAt,
+              streaming: false,
+            },
+          ],
+    );
 
     void (async () => {
       try {
@@ -3951,6 +4213,7 @@ export default function ChatView(props: ChatViewProps) {
       } finally {
         sendInFlightRef.current = false;
         queuedRunningTurnDispatchInFlightRef.current = null;
+        setQueuedRunningTurnDispatchingMessageId(null);
       }
     })();
   }, [
@@ -4726,6 +4989,12 @@ export default function ChatView(props: ChatViewProps) {
           >
             <div className="relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              <QueuedRunningTurnMessagePanel
+                messages={activeThreadQueuedRunningTurnMessages}
+                dispatchingMessageId={queuedRunningTurnDispatchingMessageId}
+                onUpdateText={updateQueuedRunningTurnMessageText}
+                onDelete={deleteQueuedRunningTurnMessage}
+              />
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}
