@@ -19,6 +19,7 @@ import {
   moveSidebarProjectToFolder,
   orderItemsByPreferredIds,
   removeSidebarProjectFromFolders,
+  reorderSidebarFolderProjectKeys,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -188,6 +189,44 @@ describe("sidebar project folders", () => {
     expect(entries[1]).toEqual({ kind: "project", project: projectGamma });
   });
 
+  it("uses the selected project as the folder icon", () => {
+    const entries = buildSidebarProjectFolderEntries(
+      [projectAlpha, projectBeta, projectGamma],
+      [
+        {
+          id: "folder-1",
+          name: "Core",
+          projectKeys: ["local:/work/beta", "local:/work/alpha"],
+          iconProjectKey: "local:/work/alpha",
+        },
+      ],
+    );
+
+    const folderEntry = entries[0];
+    expect(folderEntry?.kind).toBe("folder");
+    if (folderEntry?.kind !== "folder") return;
+    expect(folderEntry.iconProject).toBe(projectAlpha);
+  });
+
+  it("falls back to the first contained project when the selected folder icon is stale", () => {
+    const entries = buildSidebarProjectFolderEntries(
+      [projectAlpha, projectBeta, projectGamma],
+      [
+        {
+          id: "folder-1",
+          name: "Core",
+          projectKeys: ["local:/work/beta", "local:/work/alpha"],
+          iconProjectKey: "local:/work/missing",
+        },
+      ],
+    );
+
+    const folderEntry = entries[0];
+    expect(folderEntry?.kind).toBe("folder");
+    if (folderEntry?.kind !== "folder") return;
+    expect(folderEntry.iconProject).toBe(projectBeta);
+  });
+
   it("moves project physical keys between folders without duplicating membership", () => {
     const moved = moveSidebarProjectToFolder({
       folders: [
@@ -222,6 +261,31 @@ describe("sidebar project folders", () => {
       { id: "folder-1", name: "One", projectKeys: [] },
       { id: "folder-2", name: "Two", projectKeys: ["local:/work/beta"] },
     ]);
+  });
+
+  it("reorders projects within a folder", () => {
+    expect(
+      reorderSidebarFolderProjectKeys({
+        projectKeys: ["local:/work/alpha", "local:/work/beta", "local:/work/gamma"],
+        draggedProjectKeys: ["local:/work/gamma"],
+        targetProjectKeys: ["local:/work/alpha"],
+      }),
+    ).toEqual(["local:/work/gamma", "local:/work/alpha", "local:/work/beta"]);
+  });
+
+  it("keeps grouped project keys together when reordering within a folder", () => {
+    expect(
+      reorderSidebarFolderProjectKeys({
+        projectKeys: [
+          "local:/work/alpha",
+          "remote:/work/alpha",
+          "local:/work/beta",
+          "local:/work/gamma",
+        ],
+        draggedProjectKeys: ["local:/work/gamma"],
+        targetProjectKeys: ["local:/work/alpha", "remote:/work/alpha"],
+      }),
+    ).toEqual(["local:/work/gamma", "local:/work/alpha", "remote:/work/alpha", "local:/work/beta"]);
   });
 });
 

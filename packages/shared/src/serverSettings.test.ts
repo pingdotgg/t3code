@@ -194,4 +194,63 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("replaces sidebar organization fields so removed entries are cleared", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarProjectGroupingOverrides: {
+        "env-local:/repo-a": "separate" as const,
+        "env-local:/repo-b": "repository_path" as const,
+      },
+      sidebarProjectFolders: [
+        {
+          id: "folder-1",
+          name: "Core",
+          projectKeys: ["env-local:/repo-a", "env-local:/repo-b"],
+        },
+        {
+          id: "folder-2",
+          name: "Old",
+          projectKeys: ["env-local:/repo-c"],
+        },
+      ],
+      sidebarProjectExpandedById: {
+        "folder:folder-1": false,
+        "env-local:/repo-a": false,
+      },
+      sidebarProjectOrder: ["env-local:/repo-a", "env-local:/repo-b", "env-local:/repo-c"],
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      sidebarProjectGroupingOverrides: {
+        "env-local:/repo-b": "repository_path",
+      },
+      sidebarProjectFolders: [
+        {
+          id: "folder-1",
+          name: "Core",
+          projectKeys: ["env-local:/repo-b"],
+        },
+      ],
+      sidebarProjectExpandedById: {
+        "env-local:/repo-a": false,
+      },
+      sidebarProjectOrder: ["env-local:/repo-b"],
+    });
+
+    expect(next.sidebarProjectGroupingOverrides).toEqual({
+      "env-local:/repo-b": "repository_path",
+    });
+    expect(next.sidebarProjectFolders).toEqual([
+      {
+        id: "folder-1",
+        name: "Core",
+        projectKeys: ["env-local:/repo-b"],
+      },
+    ]);
+    expect(next.sidebarProjectExpandedById).toEqual({
+      "env-local:/repo-a": false,
+    });
+    expect(next.sidebarProjectOrder).toEqual(["env-local:/repo-b"]);
+  });
 });

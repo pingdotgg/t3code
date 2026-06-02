@@ -59,6 +59,7 @@ describe("ClientSettings sidebar project folders", () => {
           id: " folder-1 ",
           name: " Work ",
           projectKeys: [" local:/repo-a ", "local:/repo-b"],
+          iconProjectKey: " local:/repo-b ",
         },
       ],
     });
@@ -68,6 +69,7 @@ describe("ClientSettings sidebar project folders", () => {
         id: "folder-1",
         name: "Work",
         projectKeys: ["local:/repo-a", "local:/repo-b"],
+        iconProjectKey: "local:/repo-b",
       },
     ]);
   });
@@ -79,6 +81,7 @@ describe("ClientSettings sidebar project folders", () => {
           id: "folder-1",
           name: "Work",
           projectKeys: ["local:/repo-a"],
+          iconProjectKey: "local:/repo-a",
         },
       ],
     });
@@ -88,6 +91,7 @@ describe("ClientSettings sidebar project folders", () => {
         id: "folder-1",
         name: "Work",
         projectKeys: ["local:/repo-a"],
+        iconProjectKey: "local:/repo-a",
       },
     ]);
   });
