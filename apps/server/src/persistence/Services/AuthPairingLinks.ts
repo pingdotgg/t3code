@@ -49,6 +49,12 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
 
+export const DeleteExpiredAuthPairingLinksInput = Schema.Struct({
+  now: Schema.DateTimeUtcFromString,
+  subject: Schema.String,
+});
+export type DeleteExpiredAuthPairingLinksInput = typeof DeleteExpiredAuthPairingLinksInput.Type;
+
 export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
   credential: Schema.String,
 });
@@ -67,6 +73,9 @@ export interface AuthPairingLinkRepositoryShape {
   readonly revoke: (
     input: RevokeAuthPairingLinkInput,
   ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+  readonly deleteExpired: (
+    input: DeleteExpiredAuthPairingLinksInput,
+  ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
   readonly getByCredential: (
     input: GetAuthPairingLinkByCredentialInput,
   ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;

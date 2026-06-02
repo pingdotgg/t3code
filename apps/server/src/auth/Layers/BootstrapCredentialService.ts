@@ -149,6 +149,9 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       const ttl = input?.ttl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES;
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
+      if (input?.subject === "desktop-bootstrap") {
+        yield* pairingLinks.deleteExpired({ now, subject: input.subject });
+      }
       const issued: IssuedBootstrapCredential = {
         id,
         credential,
