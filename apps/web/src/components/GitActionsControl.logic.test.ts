@@ -1,6 +1,7 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vitest";
 import {
+  buildGitAgentPrompt,
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
@@ -30,6 +31,73 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("buildGitAgentPrompt", () => {
+  it("includes workspace, repo, branch, PR, and selected file context", () => {
+    const prompt = buildGitAgentPrompt({
+      intent: "commit_push_pr",
+      cwd: "/repo/t3code",
+      threadRef: {
+        environmentId: EnvironmentId.make("env-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      commitMessage: "feat: route github actions through prompts",
+      filePaths: ["apps/web/src/components/GitActionsControl.tsx"],
+      gitStatus: status({
+        refName: "feature/prompt-github-actions",
+        hasWorkingTreeChanges: true,
+        aheadCount: 2,
+        behindCount: 0,
+        aheadOfDefaultCount: 3,
+        behindOfDefaultCount: 1,
+        sourceControlProvider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        workingTree: {
+          files: [
+            {
+              path: "apps/web/src/components/GitActionsControl.tsx",
+              insertions: 120,
+              deletions: 20,
+            },
+          ],
+          insertions: 120,
+          deletions: 20,
+        },
+        pr: {
+          number: 42,
+          title: "Prompt GitHub actions",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          baseRef: "main",
+          headRef: "feature/prompt-github-actions",
+          state: "open",
+          mergeStatus: "behind",
+          checks: {
+            total: 3,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 1,
+          },
+        },
+      }),
+    });
+
+    assert.include(prompt, "Workspace path: /repo/t3code");
+    assert.include(prompt, "Repository: pingdotgg/t3code");
+    assert.include(prompt, "Source control provider: GitHub (github, https://github.com)");
+    assert.include(prompt, "Current ref: feature/prompt-github-actions");
+    assert.include(prompt, "Ahead/behind base: 3 ahead / 1 behind");
+    assert.include(prompt, "apps/web/src/components/GitActionsControl.tsx (+120 / -20)");
+    assert.include(prompt, "User-selected file scope");
+    assert.include(prompt, "Pull request: #42 Prompt GitHub actions");
+    assert.include(prompt, "Checks: 2/3 complete, 2 successful, 0 failed, 1 pending");
+    assert.include(prompt, "git status --short --branch");
+    assert.include(prompt, "git remote -v");
+  });
+});
 
 describe("when: ref is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {
@@ -91,6 +159,176 @@ describe("when: ref is clean and has an open PR", () => {
   });
 });
 
+describe("when: PR status has merge metadata", () => {
+  it("resolveQuickAction shows merged PRs as merged", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 20,
+          title: "Merged PR",
+          url: "https://example.com/pr/20",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "merged",
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "open_pr",
+      label: "Merged",
+      tone: "merged",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction disables while checks are still running", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 21,
+          title: "Pending checks",
+          url: "https://example.com/pr/21",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "mergeable",
+          checks: {
+            total: 4,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 2,
+          },
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "show_hint",
+      label: "2 / 4 Checks",
+      tone: "warning",
+      disabled: true,
+    });
+  });
+
+  it("buildMenuItems keeps View PR available while checks are still running", () => {
+    const items = buildMenuItems(
+      status({
+        pr: {
+          number: 21,
+          title: "Pending checks",
+          url: "https://example.com/pr/21",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "mergeable",
+          checks: {
+            total: 4,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 2,
+          },
+        },
+      }),
+      false,
+    );
+
+    assert.deepInclude(items[2] ?? {}, {
+      id: "pr",
+      kind: "open_pr",
+      label: "View PR",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction prompts the agent for conflicts", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 22,
+          title: "Conflict PR",
+          url: "https://example.com/pr/22",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "conflicting",
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "prompt_ai",
+      label: "Resolve conflicts",
+      tone: "destructive",
+      disabled: false,
+    });
+    assert.include(quick.prompt ?? "", "Resolve the merge conflicts");
+  });
+
+  it("resolveQuickAction prefers conflicts over running checks", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 22,
+          title: "Conflict PR",
+          url: "https://example.com/pr/22",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "conflicting",
+          checks: {
+            total: 4,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 2,
+          },
+        },
+      }),
+      false,
+    );
+
+    assert.deepInclude(quick, {
+      kind: "prompt_ai",
+      label: "Resolve conflicts",
+      tone: "destructive",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction shows merge when a clean PR is mergeable", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 23,
+          title: "Mergeable PR",
+          url: "https://example.com/pr/23",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "mergeable",
+          checks: {
+            total: 2,
+            completed: 2,
+            successful: 2,
+            failed: 0,
+            pending: 0,
+          },
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "open_pr",
+      label: "Merge",
+      tone: "success",
+      disabled: false,
+    });
+  });
+});
+
 describe("when: actions are busy", () => {
   it("resolveQuickAction returns running disabled state", () => {
     const quick = resolveQuickAction(status(), true);
@@ -130,6 +368,29 @@ describe("when: actions are busy", () => {
         dialogAction: "create_pr",
       },
     ]);
+  });
+
+  it("buildMenuItems keeps existing PR links enabled while actions are busy", () => {
+    const items = buildMenuItems(
+      status({
+        pr: {
+          number: 24,
+          title: "Open PR",
+          url: "https://example.com/pr/24",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+        },
+      }),
+      true,
+    );
+
+    assert.deepInclude(items[2] ?? {}, {
+      id: "pr",
+      label: "View PR",
+      disabled: false,
+      kind: "open_pr",
+    });
   });
 });
 
@@ -342,7 +603,7 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
 describe("when: ref is behind upstream", () => {
   it("resolveQuickAction returns pull", () => {
     const quick = resolveQuickAction(status({ behindCount: 2 }), false);
-    assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
+    assert.deepInclude(quick, { kind: "run_pull", label: "Rebase / pull", disabled: false });
   });
 
   it("buildMenuItems disables push and create PR", () => {
@@ -376,14 +637,53 @@ describe("when: ref is behind upstream", () => {
   });
 });
 
+describe("when: ref is behind its base branch", () => {
+  it("resolveQuickAction returns update from base", () => {
+    const quick = resolveQuickAction(
+      status({ aheadOfDefaultCount: 1, behindOfDefaultCount: 2 }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_sync_base",
+      label: "Update from base",
+      disabled: false,
+      tone: "warning",
+    });
+  });
+
+  it("resolveQuickAction asks for a clean tree before updating from base", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true, behindOfDefaultCount: 1 }),
+      false,
+    );
+    assert.deepEqual(quick, {
+      label: "Update from base",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Commit or stash local changes before updating from the base branch.",
+      tone: "warning",
+    });
+  });
+
+  it("buildMenuItems disables push and create PR", () => {
+    const items = buildMenuItems(
+      status({ aheadCount: 1, aheadOfDefaultCount: 1, behindOfDefaultCount: 1, pr: null }),
+      false,
+    );
+    assert.equal(items.find((item) => item.id === "push")?.disabled, true);
+    assert.equal(items.find((item) => item.id === "pr")?.disabled, true);
+  });
+});
+
 describe("when: ref has diverged from upstream", () => {
   it("resolveQuickAction returns a disabled sync hint", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
     assert.deepEqual(quick, {
-      label: "Sync ref",
+      label: "Rebase / pull",
       disabled: true,
       kind: "show_hint",
       hint: "Branch has diverged from upstream. Rebase/merge first.",
+      tone: "warning",
     });
   });
 });
@@ -431,7 +731,37 @@ describe("when: working tree has local changes", () => {
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push",
-      label: "Commit & push",
+      label: "Commit and push",
+    });
+  });
+
+  it("resolveQuickAction returns commit and push when open PR checks are pending", () => {
+    const quick = resolveQuickAction(
+      status({
+        hasWorkingTreeChanges: true,
+        pr: {
+          number: 16,
+          title: "Existing PR",
+          url: "https://example.com/pr/16",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+          mergeStatus: "mergeable",
+          checks: {
+            total: 2,
+            completed: 1,
+            successful: 1,
+            failed: 0,
+            pending: 1,
+          },
+        },
+      }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit and push",
     });
   });
 
@@ -518,7 +848,7 @@ describe("when: on default ref without open PR", () => {
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push",
-      label: "Commit & push",
+      label: "Commit and push",
       disabled: false,
     });
   });
@@ -539,15 +869,15 @@ describe("when: on default ref without open PR", () => {
 });
 
 describe("when: working tree has local changes and ref is behind upstream", () => {
-  it("resolveQuickAction still prefers commit, push, and create PR", () => {
+  it("resolveQuickAction prefers pull over commit, push, and create PR", () => {
     const quick = resolveQuickAction(
       status({ hasWorkingTreeChanges: true, behindCount: 1 }),
       false,
     );
     assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
+      kind: "run_pull",
+      label: "Rebase / pull",
+      disabled: false,
     });
   });
 

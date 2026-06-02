@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import type {
   GitActionProgressEvent,
@@ -23,6 +24,9 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  ArchiveIcon,
+  MessageSquareTextIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -30,8 +34,10 @@ import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import {
+  buildGitAgentPrompt,
   buildGitActionProgressStages,
   buildMenuItems,
+  type GitAgentPromptIntent,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -56,7 +62,7 @@ import {
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
 import { Input } from "~/components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -69,22 +75,34 @@ import {
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
   useVcsPullAction,
+  useVcsSyncBaseAction,
 } from "~/lib/sourceControlActions";
 import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
+import { useThreadActions } from "~/hooks/useThreadActions";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  pullRequestCommentsAction?: GitPullRequestCommentsAction;
+  onSubmitPrompt?: (prompt: string) => boolean | Promise<boolean>;
+}
+
+export interface GitPullRequestCommentsAction {
+  readonly unreadCount: number;
+  readonly isFetching: boolean;
+  readonly hasError: boolean;
+  readonly onOpen: () => void;
 }
 
 interface PendingDefaultBranchAction {
@@ -127,7 +145,15 @@ interface RunGitActionWithToastInput {
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
-const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const RUNNING_SOURCE_CONTROL_ACTIONS = [
+  "runStackedAction",
+  "pull",
+  "syncBase",
+  "publishRepository",
+] as const;
+const USE_AGENT_PROMPTS_FOR_GIT_ACTIONS = true;
+const PULL_QUICK_ACTION_CLASS_NAME =
+  "border-cyan-500/50 bg-cyan-500/12 text-cyan-700 shadow-cyan-500/20 shadow-sm [:hover,[data-pressed]]:bg-cyan-500/18 dark:border-cyan-300/45 dark:bg-cyan-300/12 dark:text-cyan-100 dark:shadow-cyan-300/20 dark:[:hover,[data-pressed]]:bg-cyan-300/18";
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
@@ -251,6 +277,7 @@ function getMenuActionDisabledReason({
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
+  const isBehindBase = (gitStatus.behindOfDefaultCount ?? 0) > 0 && !gitStatus.isDefaultRef;
   const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
 
   if (item.id === "commit") {
@@ -270,6 +297,9 @@ function getMenuActionDisabledReason({
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
+    if (isBehindBase) {
+      return "Branch is behind base. Update from base before pushing.";
+    }
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return 'Add an "origin" remote before pushing.';
     }
@@ -280,6 +310,9 @@ function getMenuActionDisabledReason({
   }
 
   if (hasOpenPr) {
+    if (gitStatus.pr?.checks && gitStatus.pr.checks.pending > 0) {
+      return "Checks are still running.";
+    }
     return `View ${terminology.singular} is currently unavailable.`;
   }
   if (!hasBranch) {
@@ -296,6 +329,9 @@ function getMenuActionDisabledReason({
   }
   if (isBehind) {
     return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+  }
+  if (isBehindBase) {
+    return `Branch is behind base. Update from base before creating a ${terminology.singular}.`;
   }
   return `Create ${terminology.singular} is currently unavailable.`;
 }
@@ -324,9 +360,12 @@ function GitQuickActionIcon({
   SourceControlIcon: ReturnType<typeof getSourceControlPresentation>["Icon"];
 }) {
   const iconClassName = "size-3.5";
+  if (quickAction.label === "Archive") return <ArchiveIcon className={iconClassName} />;
   if (quickAction.kind === "open_pr") return <SourceControlIcon className={iconClassName} />;
+  if (quickAction.kind === "prompt_ai") return <SourceControlIcon className={iconClassName} />;
   if (quickAction.kind === "open_publish") return <CloudUploadIcon className={iconClassName} />;
   if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
+  if (quickAction.kind === "run_sync_base") return <RefreshCwIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
@@ -336,6 +375,70 @@ function GitQuickActionIcon({
   }
   if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
   return <InfoIcon className={iconClassName} />;
+}
+
+function gitStackedActionToPromptIntent(action: GitStackedAction): GitAgentPromptIntent {
+  switch (action) {
+    case "commit":
+      return "commit";
+    case "push":
+      return "push";
+    case "create_pr":
+      return "create_pr";
+    case "commit_push":
+      return "commit_push";
+    case "commit_push_pr":
+      return "commit_push_pr";
+  }
+}
+
+function quickActionPromptIntent(quickAction: GitQuickAction): GitAgentPromptIntent | null {
+  if (quickAction.label === "Archive") return "archive_merged_thread";
+  if (quickAction.kind === "prompt_ai") {
+    if (quickAction.label === "Resolve conflicts") return "resolve_conflicts";
+    return "sync_base";
+  }
+  if (quickAction.kind === "open_pr") {
+    if (quickAction.label === "Merge") return "merge_pr";
+    if (quickAction.label === "Merged") return "archive_merged_thread";
+    return "inspect_pr";
+  }
+  if (quickAction.kind === "open_publish") return "publish_repository";
+  if (quickAction.kind === "run_pull") return "pull";
+  if (quickAction.kind === "run_sync_base") return "sync_base";
+  if (quickAction.kind === "run_action" && quickAction.action) {
+    return gitStackedActionToPromptIntent(quickAction.action);
+  }
+  return null;
+}
+
+function menuItemPromptIntent(item: GitActionMenuItem): GitAgentPromptIntent | null {
+  if (item.id === "commit") return "commit";
+  if (item.id === "push") return "push";
+  if (item.id === "pr") {
+    if (item.kind === "open_pr") {
+      if (item.label === "Merged") return "archive_merged_thread";
+      return "inspect_pr";
+    }
+    return "create_pr";
+  }
+  return null;
+}
+
+function gitQuickActionToneClassName(tone: GitQuickAction["tone"]): string | undefined {
+  if (tone === "success") {
+    return "border-success/45 bg-success/10 text-success-foreground hover:bg-success/16 dark:text-success";
+  }
+  if (tone === "merged") {
+    return "border-violet-500/40 bg-violet-500/10 text-violet-700 hover:bg-violet-500/16 dark:text-violet-300";
+  }
+  if (tone === "warning") {
+    return "border-warning/40 bg-warning/10 text-warning-foreground hover:bg-warning/16 dark:text-warning";
+  }
+  if (tone === "destructive") {
+    return "border-destructive/40 bg-destructive/8 text-destructive-foreground hover:bg-destructive/12 dark:text-destructive";
+  }
+  return undefined;
 }
 
 interface PublishRepositoryDialogProps {
@@ -949,6 +1052,8 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
+  pullRequestCommentsAction,
+  onSubmitPrompt,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
@@ -967,19 +1072,31 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const composerRef = useComposerHandleContext();
   const setThreadBranch = useStore((store) => store.setThreadBranch);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+  const [mergedArchiveArmedThreadKey, setMergedArchiveArmedThreadKey] = useState<string | null>(
+    null,
+  );
+  const [isArchivingMergedThread, setIsArchivingMergedThread] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
   const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
+  const { archiveThread } = useThreadActions();
   const sourceControlScope = useMemo(
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
+  );
+  const activeThreadKey = useMemo(
+    () => (activeThreadRef ? scopedThreadKey(activeThreadRef) : null),
+    [activeThreadRef],
   );
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
@@ -1080,6 +1197,7 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
+  const syncBaseAction = useVcsSyncBaseAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
@@ -1125,8 +1243,21 @@ export default function GitActionsControl({
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
   );
-  const quickActionDisabledReason = quickAction.disabled
-    ? (quickAction.hint ?? "This action is currently unavailable.")
+  const isMergedQuickAction =
+    gitStatusForActions?.pr?.state === "merged" && quickAction.tone === "merged";
+  const isMergedArchiveArmed =
+    isMergedQuickAction &&
+    activeThreadKey !== null &&
+    mergedArchiveArmedThreadKey === activeThreadKey;
+  const renderedQuickAction: GitQuickAction = isMergedArchiveArmed
+    ? { ...quickAction, label: "Archive", tone: "destructive" }
+    : quickAction;
+  const quickActionToneClassName = gitQuickActionToneClassName(renderedQuickAction.tone);
+  const quickActionClassName =
+    quickActionToneClassName ??
+    (renderedQuickAction.kind === "run_pull" ? PULL_QUICK_ACTION_CLASS_NAME : undefined);
+  const quickActionDisabledReason = renderedQuickAction.disabled
+    ? (renderedQuickAction.hint ?? "This action is currently unavailable.")
     : null;
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
@@ -1149,6 +1280,16 @@ export default function GitActionsControl({
       window.clearInterval(interval);
     };
   }, [updateActiveProgressToast]);
+
+  useEffect(() => {
+    setMergedArchiveArmedThreadKey(null);
+  }, [activeThreadKey]);
+
+  useEffect(() => {
+    if (!isMergedQuickAction) {
+      setMergedArchiveArmedThreadKey(null);
+    }
+  }, [isMergedQuickAction]);
 
   useEffect(() => {
     if (gitCwd === null) {
@@ -1195,11 +1336,11 @@ export default function GitActionsControl({
       });
       return;
     }
-    const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
+    const prUrl = gitStatusForActions?.pr?.url ?? null;
     if (!prUrl) {
       toastManager.add({
         type: "error",
-        title: "No open pull request found.",
+        title: "No pull request found.",
         data: threadToastData,
       });
       return;
@@ -1215,6 +1356,99 @@ export default function GitActionsControl({
       );
     });
   }, [gitStatusForActions, threadToastData]);
+
+  const promptAi = useCallback(
+    (prompt: string | undefined) => {
+      const nextPrompt = prompt?.trim();
+      if (!nextPrompt) {
+        return;
+      }
+      const composerDraftTarget = draftId ?? activeThreadRef;
+      if (!composerDraftTarget) {
+        toastManager.add({
+          type: "error",
+          title: "Composer is unavailable.",
+          data: threadToastData,
+        });
+        return;
+      }
+      if (onSubmitPrompt) {
+        void Promise.resolve(onSubmitPrompt(nextPrompt))
+          .then((submitted) => {
+            if (submitted) {
+              return;
+            }
+            toastManager.add({
+              type: "error",
+              title: "Unable to send prompt.",
+              description: "The thread is busy or unavailable.",
+              data: threadToastData,
+            });
+          })
+          .catch((err: unknown) => {
+            toastManager.add({
+              type: "error",
+              title: "Unable to send prompt.",
+              description: err instanceof Error ? err.message : "An error occurred.",
+              data: threadToastData,
+            });
+          });
+        return;
+      }
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      const stagedDraft = getComposerDraft(composerDraftTarget);
+      if (stagedDraft?.prompt !== nextPrompt) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add prompt to composer.",
+          data: threadToastData,
+        });
+        return;
+      }
+      composerRef?.current?.resetCursorState({ cursor: nextPrompt.length, prompt: nextPrompt });
+      composerRef?.current?.focusAtEnd();
+      toastManager.add({
+        type: "success",
+        title: "Prompt added to composer.",
+        description: "Review and send it to start the AI action.",
+        data: threadToastData,
+      });
+    },
+    [
+      activeThreadRef,
+      composerRef,
+      draftId,
+      getComposerDraft,
+      onSubmitPrompt,
+      setComposerDraftPrompt,
+      threadToastData,
+    ],
+  );
+
+  const buildAgentPrompt = useCallback(
+    (
+      intent: GitAgentPromptIntent,
+      options?: {
+        readonly commitMessage?: string;
+        readonly filePaths?: readonly string[];
+        readonly promptHint?: string;
+        readonly unreadCommentCount?: number;
+      },
+    ) =>
+      buildGitAgentPrompt({
+        intent,
+        cwd: gitCwd,
+        gitStatus: gitStatusForActions,
+        threadRef: activeThreadRef,
+        ...(options?.commitMessage ? { commitMessage: options.commitMessage } : {}),
+        ...(options?.filePaths ? { filePaths: options.filePaths } : {}),
+        ...(options?.promptHint ? { promptHint: options.promptHint } : {}),
+        ...(options?.unreadCommentCount !== undefined
+          ? { unreadCommentCount: options.unreadCommentCount }
+          : {}),
+      }),
+    [activeThreadRef, gitCwd, gitStatusForActions],
+  );
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -1475,28 +1709,91 @@ export default function GitActionsControl({
   const runDialogActionOnNewBranch = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const filePaths = !allSelected ? selectedFiles.map((f) => f.path) : undefined;
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
 
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      promptAi(
+        buildAgentPrompt("commit", {
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
+          promptHint:
+            "Create a new feature ref before committing. Pick a descriptive branch name from the actual change.",
+        }),
+      );
+      return;
+    }
+
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
   };
 
   const runQuickAction = () => {
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      const promptIntent = quickActionPromptIntent(renderedQuickAction);
+      if (promptIntent) {
+        promptAi(
+          buildAgentPrompt(
+            promptIntent,
+            renderedQuickAction.prompt ? { promptHint: renderedQuickAction.prompt } : undefined,
+          ),
+        );
+        return;
+      }
+    }
+
+    if (isMergedQuickAction) {
+      if (!activeThreadRef || !activeThreadKey) {
+        toastManager.add({
+          type: "error",
+          title: "No active thread to archive.",
+          data: threadToastData,
+        });
+        return;
+      }
+      if (!isMergedArchiveArmed) {
+        setMergedArchiveArmedThreadKey(activeThreadKey);
+        return;
+      }
+      setIsArchivingMergedThread(true);
+      void archiveThread(activeThreadRef)
+        .then(() => {
+          setMergedArchiveArmedThreadKey(null);
+        })
+        .catch((err: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive thread",
+              description: err instanceof Error ? err.message : "An error occurred.",
+              ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+            }),
+          );
+        })
+        .finally(() => {
+          setIsArchivingMergedThread(false);
+        });
+      return;
+    }
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
       return;
     }
     if (quickAction.kind === "open_publish") {
       setIsPublishDialogOpen(true);
+      return;
+    }
+    if (quickAction.kind === "prompt_ai") {
+      promptAi(quickAction.prompt);
       return;
     }
     if (quickAction.kind === "run_pull") {
@@ -1523,6 +1820,30 @@ export default function GitActionsControl({
       void promise.catch(() => undefined);
       return;
     }
+    if (quickAction.kind === "run_sync_base") {
+      const promise = syncBaseAction.run();
+      void toastManager.promise<Awaited<ReturnType<typeof syncBaseAction.run>>, ThreadToastData>(
+        promise,
+        {
+          loading: { title: "Updating from base...", data: threadToastData },
+          success: (result) => ({
+            title: result.status === "rebased" ? "Updated from base" : "Already up to date",
+            description:
+              result.status === "rebased"
+                ? `Rebased ${result.refName} onto ${result.baseRef}.`
+                : `${result.refName} already includes ${result.baseRef}.`,
+            data: threadToastData,
+          }),
+          error: (err) => ({
+            title: "Base update failed",
+            description: err instanceof Error ? err.message : "An error occurred.",
+            data: threadToastData,
+          }),
+        },
+      );
+      void promise.catch(() => undefined);
+      return;
+    }
     if (quickAction.kind === "show_hint") {
       toastManager.add({
         type: "info",
@@ -1539,8 +1860,21 @@ export default function GitActionsControl({
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      const promptIntent = menuItemPromptIntent(item);
+      if (promptIntent) {
+        promptAi(
+          buildAgentPrompt(promptIntent, item.prompt ? { promptHint: item.prompt } : undefined),
+        );
+        return;
+      }
+    }
     if (item.kind === "open_pr") {
       void openExistingPr();
+      return;
+    }
+    if (item.kind === "prompt_ai") {
+      promptAi(item.prompt);
       return;
     }
     if (item.dialogAction === "push") {
@@ -1559,14 +1893,26 @@ export default function GitActionsControl({
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
+    const filePaths = !allSelected ? selectedFiles.map((f) => f.path) : undefined;
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
+
+    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+      promptAi(
+        buildAgentPrompt("commit", {
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(filePaths ? { filePaths } : {}),
+        }),
+      );
+      return;
+    }
+
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...(filePaths ? { filePaths } : {}),
     });
   };
 
@@ -1608,6 +1954,10 @@ export default function GitActionsControl({
           size="xs"
           disabled={initAction.isPending}
           onClick={() => {
+            if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+              promptAi(buildAgentPrompt("initialize"));
+              return;
+            }
             void initAction.run();
           }}
         >
@@ -1622,19 +1972,20 @@ export default function GitActionsControl({
                 render={
                   <Button
                     aria-disabled="true"
-                    className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
+                    className={cn(
+                      "min-w-0 max-w-56 cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none",
+                      quickActionClassName,
+                    )}
                     size="xs"
                     variant="outline"
                   />
                 }
               >
                 <GitQuickActionIcon
-                  quickAction={quickAction}
+                  quickAction={renderedQuickAction}
                   SourceControlIcon={SourceControlIcon}
                 />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                  {quickAction.label}
-                </span>
+                <span className="ml-0.5 min-w-0 truncate">{renderedQuickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -1644,13 +1995,17 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
-              disabled={isGitActionRunning || quickAction.disabled}
+              className={cn("min-w-0 max-w-56", quickActionClassName)}
+              disabled={
+                isGitActionRunning || renderedQuickAction.disabled || isArchivingMergedThread
+              }
               onClick={runQuickAction}
             >
-              <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                {quickAction.label}
-              </span>
+              <GitQuickActionIcon
+                quickAction={renderedQuickAction}
+                SourceControlIcon={SourceControlIcon}
+              />
+              <span className="ml-0.5 min-w-0 truncate">{renderedQuickAction.label}</span>
             </Button>
           )}
           <GroupSeparator className="hidden @3xl/header-actions:block" />
@@ -1665,8 +2020,14 @@ export default function GitActionsControl({
             }}
           >
             <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
-              disabled={isGitActionRunning}
+              render={
+                <Button
+                  aria-label="Git action options"
+                  className={quickActionClassName}
+                  size="icon-xs"
+                  variant="outline"
+                />
+              }
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
@@ -1714,10 +2075,53 @@ export default function GitActionsControl({
                   </MenuItem>
                 );
               })}
+              {pullRequestCommentsAction ? (
+                <>
+                  <MenuSeparator />
+                  <MenuItem
+                    aria-label={
+                      pullRequestCommentsAction.unreadCount > 0
+                        ? `PR comments, ${pullRequestCommentsAction.unreadCount} unread`
+                        : "PR comments"
+                    }
+                    onClick={() => {
+                      if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+                        promptAi(
+                          buildAgentPrompt("review_pr_comments", {
+                            unreadCommentCount: pullRequestCommentsAction.unreadCount,
+                          }),
+                        );
+                        return;
+                      }
+                      pullRequestCommentsAction.onOpen();
+                    }}
+                  >
+                    {pullRequestCommentsAction.isFetching ? (
+                      <Spinner className="size-4" />
+                    ) : (
+                      <MessageSquareTextIcon />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">PR comments</span>
+                    {pullRequestCommentsAction.hasError ? (
+                      <span className="ms-auto rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive">
+                        Error
+                      </span>
+                    ) : pullRequestCommentsAction.unreadCount > 0 ? (
+                      <span className="ms-auto rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                        {pullRequestCommentsAction.unreadCount} unread
+                      </span>
+                    ) : null}
+                  </MenuItem>
+                </>
+              ) : null}
               {canPublishRepository ? (
                 <MenuItem
                   disabled={isGitActionRunning}
                   onClick={() => {
+                    if (USE_AGENT_PROMPTS_FOR_GIT_ACTIONS) {
+                      promptAi(buildAgentPrompt("publish_repository"));
+                      return;
+                    }
                     setIsPublishDialogOpen(true);
                   }}
                 >
@@ -1738,6 +2142,16 @@ export default function GitActionsControl({
                 gitStatusForActions.aheadCount === 0 && (
                   <p className="px-2 py-1.5 text-xs text-warning">
                     Behind upstream. Pull/rebase first.
+                  </p>
+                )}
+              {gitStatusForActions &&
+                gitStatusForActions.refName !== null &&
+                !gitStatusForActions.isDefaultRef &&
+                !gitStatusForActions.hasWorkingTreeChanges &&
+                gitStatusForActions.behindCount === 0 &&
+                (gitStatusForActions.behindOfDefaultCount ?? 0) > 0 && (
+                  <p className="px-2 py-1.5 text-xs text-warning">
+                    Behind base. Update from base first.
                   </p>
                 )}
               {gitStatusError && (

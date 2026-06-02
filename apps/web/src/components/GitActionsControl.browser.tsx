@@ -25,12 +25,17 @@ function createDeferredPromise<T>() {
 const {
   activeRunStackedActionDeferredRef,
   activeDraftThreadRef,
+  composerDraftsByKeyRef,
   hasServerThreadRef,
+  vcsStatusOverrideRef,
+  archiveThreadSpy,
   invalidateSourceControlStateSpy,
   refreshVcsStatusSpy,
   runStackedActionSpy,
+  setComposerDraftPromptSpy,
   setDraftThreadContextSpy,
   setThreadBranchSpy,
+  submitPromptSpy,
   toastAddSpy,
   toastCloseSpy,
   toastPromiseSpy,
@@ -38,12 +43,17 @@ const {
 } = vi.hoisted(() => ({
   activeRunStackedActionDeferredRef: { current: createDeferredPromise<never>() },
   activeDraftThreadRef: { current: null as unknown },
+  composerDraftsByKeyRef: { current: {} as Record<string, { prompt: string }> },
   hasServerThreadRef: { current: true },
+  vcsStatusOverrideRef: { current: null as unknown },
+  archiveThreadSpy: vi.fn(() => Promise.resolve()),
   invalidateSourceControlStateSpy: vi.fn(() => Promise.resolve()),
   refreshVcsStatusSpy: vi.fn(() => Promise.resolve(null)),
   runStackedActionSpy: vi.fn(() => activeRunStackedActionDeferredRef.current.promise),
+  setComposerDraftPromptSpy: vi.fn(),
   setDraftThreadContextSpy: vi.fn(),
   setThreadBranchSpy: vi.fn(),
+  submitPromptSpy: vi.fn(() => true),
   toastAddSpy: vi.fn(() => "toast-1"),
   toastCloseSpy: vi.fn(),
   toastPromiseSpy: vi.fn(),
@@ -96,26 +106,36 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/lib/vcsStatusState", () => ({
   refreshVcsStatus: refreshVcsStatusSpy,
   resetVcsStatusStateForTests: () => undefined,
-  useVcsStatus: vi.fn(() => ({
-    data: {
-      isRepo: true,
-      sourceControlProvider: {
-        kind: "github",
-        name: "GitHub",
-        baseUrl: "https://github.com",
+  useVcsStatus: vi.fn(
+    () =>
+      vcsStatusOverrideRef.current ?? {
+        data: {
+          isRepo: true,
+          sourceControlProvider: {
+            kind: "github",
+            name: "GitHub",
+            baseUrl: "https://github.com",
+          },
+          hasPrimaryRemote: true,
+          isDefaultRef: false,
+          refName: BRANCH_NAME,
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+          hasUpstream: true,
+          aheadCount: 1,
+          behindCount: 0,
+          pr: null,
+        },
+        error: null,
+        cause: null,
+        isPending: false,
       },
-      hasPrimaryRemote: true,
-      isDefaultRef: false,
-      refName: BRANCH_NAME,
-      hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
-      hasUpstream: true,
-      aheadCount: 1,
-      behindCount: 0,
-      pr: null,
-    },
-    error: null,
-    isPending: false,
+  ),
+}));
+
+vi.mock("~/hooks/useThreadActions", () => ({
+  useThreadActions: vi.fn(() => ({
+    archiveThread: archiveThreadSpy,
   })),
 }));
 
@@ -126,13 +146,23 @@ vi.mock("~/localApi", () => ({
   readLocalApi: vi.fn(() => null),
 }));
 
+function composerDraftKey(target: string | { environmentId: string; threadId: string }) {
+  return typeof target === "string" ? target : `${target.environmentId}:${target.threadId}`;
+}
+
 vi.mock("~/composerDraftStore", async () => {
   const draftStoreState = {
+    getComposerDraft: (target: string | { environmentId: string; threadId: string }) =>
+      composerDraftsByKeyRef.current[composerDraftKey(target)] ?? null,
     getDraftThreadByRef: () => activeDraftThreadRef.current,
     getDraftSession: () => activeDraftThreadRef.current,
     getDraftThread: () => activeDraftThreadRef.current,
     getDraftSessionByLogicalProjectKey: () => null,
     setDraftThreadContext: setDraftThreadContextSpy,
+    setPrompt: (target: string | { environmentId: string; threadId: string }, prompt: string) => {
+      setComposerDraftPromptSpy(target, prompt);
+      composerDraftsByKeyRef.current[composerDraftKey(target)] = { prompt };
+    },
     setLogicalProjectDraftThreadId: vi.fn(),
     setProjectDraftThreadId: vi.fn(),
     hasDraftThreadsInEnvironment: () => false,
@@ -269,7 +299,10 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     vi.clearAllMocks();
     activeRunStackedActionDeferredRef.current = createDeferredPromise<never>();
     activeDraftThreadRef.current = null;
+    composerDraftsByKeyRef.current = {};
     hasServerThreadRef.current = true;
+    vcsStatusOverrideRef.current = null;
+    archiveThreadSpy.mockClear();
     document.body.innerHTML = "";
   });
 
@@ -448,6 +481,152 @@ describe("GitActionsControl thread-scoped progress toast", () => {
 
       expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
       expect(setThreadBranchSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("submits a conflicting pull request prompt", async () => {
+    vcsStatusOverrideRef.current = {
+      data: {
+        isRepo: true,
+        sourceControlProvider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        hasPrimaryRemote: true,
+        isDefaultRef: false,
+        refName: BRANCH_NAME,
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: true,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: {
+          number: 43,
+          title: "Conflict PR",
+          url: "https://github.com/example/repo/pull/43",
+          baseRef: "main",
+          headRef: BRANCH_NAME,
+          state: "open",
+          mergeStatus: "conflicting",
+        },
+      },
+      error: null,
+      cause: null,
+      isPending: false,
+    };
+
+    const threadRef = scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={threadRef}
+        onSubmitPrompt={submitPromptSpy}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      const resolveConflictsButton = findButtonByText("Resolve conflicts");
+      expect(
+        resolveConflictsButton,
+        'Unable to find button containing "Resolve conflicts"',
+      ).toBeTruthy();
+      if (!(resolveConflictsButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Resolve conflicts"');
+      }
+
+      resolveConflictsButton.click();
+
+      expect(submitPromptSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Resolve the merge conflicts for PR #43 (Conflict PR)."),
+      );
+      expect(setComposerDraftPromptSpy).not.toHaveBeenCalled();
+      expect(toastAddSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("requires a second click before archiving a merged pull request thread", async () => {
+    vcsStatusOverrideRef.current = {
+      data: {
+        isRepo: true,
+        sourceControlProvider: {
+          kind: "github",
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        hasPrimaryRemote: true,
+        isDefaultRef: false,
+        refName: BRANCH_NAME,
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: true,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: {
+          number: 42,
+          title: "Merged PR",
+          url: "https://github.com/example/repo/pull/42",
+          baseRef: "main",
+          headRef: BRANCH_NAME,
+          state: "merged",
+        },
+      },
+      error: null,
+      cause: null,
+      isPending: false,
+    };
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      {
+        container: host,
+      },
+    );
+
+    try {
+      const mergedButton = findButtonByText("Merged");
+      expect(mergedButton, 'Unable to find button containing "Merged"').toBeTruthy();
+      if (!(mergedButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Merged"');
+      }
+
+      mergedButton.click();
+
+      await vi.waitFor(() => {
+        expect(findButtonByText("Archive")).toBeTruthy();
+      });
+      expect(archiveThreadSpy).not.toHaveBeenCalled();
+
+      const archiveButton = findButtonByText("Archive");
+      expect(archiveButton, 'Unable to find button containing "Archive"').toBeTruthy();
+      if (!(archiveButton instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Archive"');
+      }
+      expect(archiveButton.className).toContain("border-destructive");
+
+      archiveButton.click();
+
+      await vi.waitFor(() => {
+        expect(archiveThreadSpy).toHaveBeenCalledWith(
+          scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
+        );
+      });
     } finally {
       await screen.unmount();
       host.remove();
