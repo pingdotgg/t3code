@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveTerminalSelectionActionPosition,
-  selectPendingTerminalEventEntries,
-  selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
@@ -73,65 +71,5 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 0)).toBe(true);
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
-  });
-
-  it("replays only terminal events newer than the open snapshot", () => {
-    expect(
-      selectTerminalEventEntriesAfterSnapshot(
-        [
-          {
-            id: 1,
-            event: {
-              threadId: "thread-1",
-              terminalId: "default",
-              createdAt: "2026-04-02T20:00:00.000Z",
-              type: "output",
-              data: "before",
-            },
-          },
-          {
-            id: 2,
-            event: {
-              threadId: "thread-1",
-              terminalId: "default",
-              createdAt: "2026-04-02T20:00:01.000Z",
-              type: "output",
-              data: "after",
-            },
-          },
-        ],
-        "2026-04-02T20:00:00.500Z",
-      ).map((entry) => entry.id),
-    ).toEqual([2]);
-  });
-
-  it("applies only terminal events that have not already been consumed", () => {
-    expect(
-      selectPendingTerminalEventEntries(
-        [
-          {
-            id: 1,
-            event: {
-              threadId: "thread-1",
-              terminalId: "default",
-              createdAt: "2026-04-02T20:00:00.000Z",
-              type: "output",
-              data: "one",
-            },
-          },
-          {
-            id: 2,
-            event: {
-              threadId: "thread-1",
-              terminalId: "default",
-              createdAt: "2026-04-02T20:00:01.000Z",
-              type: "output",
-              data: "two",
-            },
-          },
-        ],
-        1,
-      ).map((entry) => entry.id),
-    ).toEqual([2]);
   });
 });

@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -77,6 +78,30 @@ const initRepoWithCommit = (
   });
 
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+  describe("review diff previews", () => {
+    it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
+      Effect.sync(() => {
+        const paths = splitNullSeparatedGitStdoutPaths({
+          stdout: "complete.txt\0partial",
+          stdoutTruncated: true,
+        });
+
+        assert.deepStrictEqual(paths, ["complete.txt"]);
+      }),
+    );
+
+    it.effect("keeps the final path when NUL-separated git output is complete", () =>
+      Effect.sync(() => {
+        const paths = splitNullSeparatedGitStdoutPaths({
+          stdout: "complete.txt\0final.txt",
+          stdoutTruncated: false,
+        });
+
+        assert.deepStrictEqual(paths, ["complete.txt", "final.txt"]);
+      }),
+    );
+  });
+
   describe("repository status", () => {
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {

@@ -48,12 +48,14 @@ const makeTerminalManagerLayer = (input: {
 }) =>
   Layer.succeed(TerminalManager, {
     open: input.open,
+    attachStream: () => Effect.die(new Error("unused")),
     write: input.write,
     resize: () => Effect.void,
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
     close: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),
+    subscribeMetadata: () => Effect.succeed(() => undefined),
   });
 
 const makeRunner = (input: {
@@ -106,6 +108,7 @@ describe("ProjectSetupScriptRunner", () => {
         history: "",
         exitCode: null,
         exitSignal: null,
+        label: "setup-setup",
         updatedAt: "2026-01-01T00:00:00.000Z",
       }),
     );
