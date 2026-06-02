@@ -10,7 +10,7 @@
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests",
     "test:browser": "node scripts/run-browser-tests.mjs",
-    "test:browser:install": "playwright install --with-deps chromium"
+    "test:browser:install": "playwright install chromium"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
