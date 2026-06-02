@@ -4,6 +4,7 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -246,4 +247,6 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
 });
 
 export const layer = (input: MakeDesktopEnvironmentInput) =>
-  Layer.effect(DesktopEnvironment, makeDesktopEnvironment(input));
+  Layer.effect(DesktopEnvironment, makeDesktopEnvironment(input)).pipe(
+    Layer.provide(input.platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+  );
