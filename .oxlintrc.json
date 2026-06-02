@@ -3,6 +3,7 @@
   "ignorePatterns": [
     "dist",
     "dist-electron",
+    ".repos/**",
     "node_modules",
     "bun.lock",
     "*.tsbuildinfo",

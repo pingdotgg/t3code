@@ -43,7 +43,7 @@
     "build:marketing": "turbo run build --filter=@t3tools/marketing",
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
     "typecheck": "turbo run typecheck",
-    "lint": "oxlint --report-unused-disable-directives",
+    "lint": "oxlint --disable-nested-config --report-unused-disable-directives",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
@@ -60,7 +60,8 @@
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
+    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
+    "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
