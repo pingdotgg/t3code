@@ -14,6 +14,7 @@ import * as CodexClient from "./client.ts";
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );
+const mockPeerArgs = (path: string) => ["--experimental-strip-types", path];
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
   const makeHandle = () =>
@@ -21,7 +22,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const peerCwd = path.join(import.meta.dirname, "..");
-      const command = ChildProcess.make("bun", ["run", yield* mockPeerPath], {
+      const command = ChildProcess.make("node", mockPeerArgs(yield* mockPeerPath), {
         cwd: peerCwd,
         shell: process.platform === "win32",
       });

@@ -45,7 +45,7 @@ function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
       '  printf "%s\\n" "unexpected args: $*" >&2',
       "  exit 11",
       "fi",
-      `exec bun ${JSON.stringify(mockAgentPath)}`,
+      `exec node --experimental-strip-types ${JSON.stringify(mockAgentPath)}`,
       "",
     ].join("\n"),
     "utf8",
