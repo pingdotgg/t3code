@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 
 import {
   type EnvironmentRuntimeState,
@@ -44,6 +44,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { mobileRuntime } from "../lib/runtime";
 import {
   drainEnvironmentSessions,
+  getEnvironmentSession,
   notifyEnvironmentConnectionListeners,
   removeEnvironmentSession,
   setEnvironmentSession,
@@ -70,6 +71,8 @@ import { subscribeTerminalMetadata, terminalSessionManager } from "./use-termina
 const terminalMetadataUnsubscribers = new Map<EnvironmentId, () => void>();
 const environmentConnectionAttempts = createEnvironmentConnectionAttemptRegistry();
 const SAVED_CONNECTION_BOOTSTRAP_TIMEOUT_MS = 8_000;
+const APP_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
+let lastAppResumeReconnectAt = Number.NEGATIVE_INFINITY;
 
 interface RemoteEnvironmentLocalState {
   readonly isLoadingSavedConnection: boolean;
@@ -456,6 +459,71 @@ export function connectSavedEnvironment(
   });
 }
 
+export function reconnectEnvironmentConnectionsAfterAppResume(reason: string): void {
+  const now = Date.now();
+  if (now - lastAppResumeReconnectAt < APP_RESUME_RECONNECT_COOLDOWN_MS) {
+    return;
+  }
+
+  for (const connection of Object.values(getSavedConnectionsById())) {
+    const session = getEnvironmentSession(connection.environmentId);
+    if (session?.client.isHeartbeatFresh()) {
+      continue;
+    }
+
+    lastAppResumeReconnectAt = now;
+    terminalDebugLog("registry:app-resume-reconnect", {
+      environmentId: connection.environmentId,
+      reason,
+      hasSession: session !== null,
+    });
+
+    if (!session) {
+      void mobileRuntime
+        .runPromise(
+          connectSavedEnvironment(connection, {
+            persist: false,
+            suppressBootstrapError: true,
+          }),
+        )
+        .catch((error: unknown) => {
+          terminalDebugLog("registry:app-resume-reconnect-failed", {
+            environmentId: connection.environmentId,
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      continue;
+    }
+
+    setEnvironmentConnectionStatus(connection.environmentId, "reconnecting", null);
+    shellSnapshotManager.markPending({ environmentId: connection.environmentId });
+    void session.connection.reconnect().catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to reconnect remote environment.";
+      setEnvironmentConnectionStatus(connection.environmentId, "disconnected", message);
+      terminalDebugLog("registry:app-resume-reconnect-failed", {
+        environmentId: connection.environmentId,
+        reason,
+        error: message,
+      });
+    });
+  }
+}
+
+function subscribeAppResumeReconnects(): () => void {
+  let previousAppState = AppState.currentState;
+  const subscription = AppState.addEventListener("change", (nextAppState) => {
+    const wasInactive = previousAppState !== "active";
+    previousAppState = nextAppState;
+    if (nextAppState === "active" && wasInactive) {
+      reconnectEnvironmentConnectionsAfterAppResume("appstate");
+    }
+  });
+
+  return () => subscription.remove();
+}
+
 const environmentsSortOrder = Order.mapInput(
   Order.Struct({
     environmentLabel: Order.String,
@@ -488,6 +556,7 @@ function deriveConnectedEnvironments(
 export function useRemoteEnvironmentBootstrap() {
   useEffect(() => {
     let cancelled = false;
+    const unsubscribeAppResumeReconnects = subscribeAppResumeReconnects();
 
     void (async () => {
       try {
@@ -537,6 +606,7 @@ export function useRemoteEnvironmentBootstrap() {
 
     return () => {
       cancelled = true;
+      unsubscribeAppResumeReconnects();
       for (const session of drainEnvironmentSessions()) {
         void session.connection.dispose();
       }

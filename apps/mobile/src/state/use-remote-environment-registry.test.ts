@@ -15,10 +15,15 @@ const mocks = vi.hoisted(() => {
   };
   const sessionConnection = {
     dispose: vi.fn(() => Promise.resolve()),
+    reconnect: vi.fn(() => Promise.resolve()),
+  };
+  const sessionClient = {
+    isHeartbeatFresh: vi.fn(() => false),
   };
   return {
     environmentConnection,
     sessionConnection,
+    sessionClient,
     createEnvironmentConnection: vi.fn(() => environmentConnection),
     createKnownEnvironment: vi.fn((input: unknown) => input),
     createWsRpcClient: vi.fn(() => ({ rpc: true })),
@@ -37,6 +42,7 @@ const mocks = vi.hoisted(() => {
       Promise.resolve("wss://desktop.example/ws?wsTicket=token"),
     ),
     removeEnvironmentSession: vi.fn(() => null),
+    getEnvironmentSession: vi.fn(() => null),
     setEnvironmentSession: vi.fn(),
     notifyEnvironmentConnectionListeners: vi.fn(),
     stopAgentAwarenessForEnvironment: vi.fn(),
@@ -59,6 +65,10 @@ const mocks = vi.hoisted(() => {
 vi.mock("react-native", () => ({
   Alert: {
     alert: vi.fn(),
+  },
+  AppState: {
+    currentState: "active",
+    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
   },
 }));
 
@@ -102,6 +112,7 @@ vi.mock("../lib/runtime", () => ({
 
 vi.mock("./environment-session-registry", () => ({
   drainEnvironmentSessions: vi.fn(() => []),
+  getEnvironmentSession: mocks.getEnvironmentSession,
   notifyEnvironmentConnectionListeners: mocks.notifyEnvironmentConnectionListeners,
   removeEnvironmentSession: mocks.removeEnvironmentSession,
   setEnvironmentSession: mocks.setEnvironmentSession,
@@ -151,7 +162,11 @@ vi.mock("./use-terminal-session", () => ({
   },
 }));
 
-import { connectSavedEnvironment, disconnectEnvironment } from "./use-remote-environment-registry";
+import {
+  connectSavedEnvironment,
+  disconnectEnvironment,
+  reconnectEnvironmentConnectionsAfterAppResume,
+} from "./use-remote-environment-registry";
 import { appAtomRegistry } from "./atom-registry";
 
 const environmentId = EnvironmentId.make("env-mobile-test");
@@ -173,7 +188,10 @@ describe("mobile remote environment registry effects", () => {
     mocks.environmentConnection.ensureBootstrapped.mockResolvedValue(undefined);
     mocks.environmentConnection.dispose.mockResolvedValue(undefined);
     mocks.sessionConnection.dispose.mockResolvedValue(undefined);
+    mocks.sessionConnection.reconnect.mockResolvedValue(undefined);
+    mocks.sessionClient.isHeartbeatFresh.mockReturnValue(false);
     mocks.removeEnvironmentSession.mockReturnValue(null);
+    mocks.getEnvironmentSession.mockReturnValue(null);
     mocks.mobileRunPromise.mockResolvedValue("wss://desktop.example/ws?wsTicket=token");
     mocks.createDpopProof.mockReturnValue(Effect.succeed("dpop-proof"));
     mocks.refreshCloudEnvironmentConnection.mockReturnValue(Effect.die("unexpected refresh"));
@@ -359,6 +377,32 @@ describe("mobile remote environment registry effects", () => {
       expect(mocks.sessionConnection.dispose).toHaveBeenCalledTimes(1);
       expect(mocks.subscribeTerminalMetadata).not.toHaveBeenCalled();
       expect(mocks.startAgentAwarenessForEnvironment).not.toHaveBeenCalled();
+      expect(mocks.environmentRuntimePatch).toHaveBeenCalledWith(
+        { environmentId: connection.environmentId },
+        expect.any(Function),
+      );
+    }),
+  );
+
+  it.effect("reconnects a stale saved environment session after app resume", () =>
+    Effect.gen(function* () {
+      yield* connectSavedEnvironment(connection);
+      vi.clearAllMocks();
+      mocks.getEnvironmentSession.mockReturnValue({
+        client: mocks.sessionClient,
+        connection: mocks.sessionConnection,
+      } as never);
+
+      reconnectEnvironmentConnectionsAfterAppResume("test");
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(mocks.sessionConnection.reconnect).toHaveBeenCalledTimes(1);
+        }),
+      );
+      expect(mocks.shellSnapshotMarkPending).toHaveBeenCalledWith({
+        environmentId: connection.environmentId,
+      });
       expect(mocks.environmentRuntimePatch).toHaveBeenCalledWith(
         { environmentId: connection.environmentId },
         expect.any(Function),
