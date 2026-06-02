@@ -53,6 +53,7 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
+  platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
