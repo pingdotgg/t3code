@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Glyphs</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 10px;
+      }
+      .cell {
+        background: var(--alc-bg-elev-1);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 6px;
+        padding: 12px 8px;
+        text-align: center;
+      }
+      .glyph {
+        font-family: var(--alc-font-mono);
+        font-size: 22px;
+        line-height: 1;
+        margin-bottom: 6px;
+      }
+      .name {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-3);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-accent-deep)">✓</div>
+          <div class="name">success</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-accent-deep)">+</div>
+          <div class="name">create</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-warn)">~</div>
+          <div class="name">update</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-danger)">×</div>
+          <div class="name">destroy</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-info)">◉</div>
+          <div class="name">selected</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-4)">○</div>
+          <div class="name">radio</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-4)">•</div>
+          <div class="name">bullet</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-2)">→</div>
+          <div class="name">arrow</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-2)">⇄</div>
+          <div class="name">replace</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-2)">⌘</div>
+          <div class="name">kbd</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-2)">⌕</div>
+          <div class="name">search</div>
+        </div>
+        <div class="cell">
+          <div class="glyph" style="color: var(--alc-fg-2)">⟶</div>
+          <div class="name">flow</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

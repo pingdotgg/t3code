@@ -1,0 +1,42 @@
+---
+const accent = "var(--alc-accent-deep)";
+const danger = "var(--alc-danger)";
+const ok = "var(--alc-success)";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <!-- chart background -->
+  <g transform="translate(28 22)">
+    <rect width="224" height="74" rx="8" fill="var(--alc-bg-code)" stroke="var(--alc-hairline-2)" stroke-width="1" />
+
+    <!-- axis label -->
+    <text x="10" y="14" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-3)">p99 latency</text>
+    <text x="214" y="14" text-anchor="end" font-family="var(--alc-font-mono)" font-size="9" fill={danger} font-weight="700">▲ ALARM</text>
+
+    <!-- gridlines -->
+    <line x1="10" y1="32" x2="214" y2="32" stroke="var(--alc-hairline-2)" stroke-width="0.8" opacity="0.5" />
+    <line x1="10" y1="50" x2="214" y2="50" stroke="var(--alc-hairline-2)" stroke-width="0.8" opacity="0.5" />
+
+    <!-- threshold dashed -->
+    <line x1="10" y1="38" x2="214" y2="38" stroke={danger} stroke-width="1" stroke-dasharray="4 4" opacity="0.7" />
+    <text x="208" y="36" text-anchor="end" font-family="var(--alc-font-mono)" font-size="8" fill={danger} opacity="0.85">500ms</text>
+
+    <!-- sparkline rising and crossing threshold -->
+    <path
+      d="M 10 60 L 30 56 L 50 58 L 70 50 L 90 52 L 110 46 L 130 48 L 150 42 L 170 38 L 185 32 L 200 24 L 214 18"
+      stroke={danger}
+      stroke-width="1.6"
+      fill="none"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="214" cy="18" r="3" fill={danger} />
+    <!-- threshold cross marker -->
+    <circle cx="185" cy="32" r="2" fill={ok} opacity="0.7" />
+  </g>
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill={accent} font-style="italic">
+    OTel · dashboards · alarms — in code
+  </text>
+</svg>

@@ -1,0 +1,33 @@
+---
+import Button from "./Button.astro";
+import Section from "./Section.astro";
+
+interface Props {
+  heading: string;
+}
+const { heading } = Astro.props;
+---
+
+<Section padding="20px 32px 40px">
+  <div class="alc-cta">
+    <h2 class="alc-h2">{heading}</h2>
+    <div class="alc-cta__buttons">
+      <Button variant="primary" icon="arrow" href="/getting-started">Start the tutorial</Button>
+      <Button variant="secondary" href="/">Read the docs</Button>
+      <Button variant="ghost" icon="github" href="https://github.com/alchemy-run/alchemy-effect">GitHub</Button>
+    </div>
+  </div>
+</Section>
+
+<style>
+  .alc-cta {
+    text-align: center;
+  }
+  .alc-cta__buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+</style>

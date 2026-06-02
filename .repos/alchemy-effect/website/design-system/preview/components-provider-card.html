@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Provider card</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .pc {
+        background: var(--alc-bg-elev-1);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .pc:hover {
+        border-color: var(--alc-accent);
+      }
+      .pc strong {
+        font-family: var(--alc-font-sans);
+        font-weight: 600;
+        font-size: 16px;
+        color: var(--alc-fg-1);
+      }
+      .pc p {
+        margin: 0;
+        font-family: var(--alc-font-sans);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--alc-fg-3);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div class="pc">
+          <strong>Cloudflare</strong>
+          <p>
+            Workers, R2 Buckets, KV, D1, Durable Objects, Queues, Vectorize, AI
+          </p>
+        </div>
+        <div class="pc" style="border-color: var(--alc-accent)">
+          <strong>AWS</strong>
+          <p>Lambda, S3, DynamoDB, SQS, Kinesis, IAM, EC2, API Gateway</p>
+        </div>
+        <div class="pc">
+          <strong>More</strong>
+          <p>
+            GitHub, Stripe, DNS, and a growing ecosystem of community providers
+          </p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
