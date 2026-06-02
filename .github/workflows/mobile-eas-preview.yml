@@ -8,9 +8,6 @@ on:
 jobs:
   preview:
     name: EAS Preview
-    if: |
-      github.event.pull_request.user.login == 'Yash-Singh1' ||
-      github.event.pull_request.user.login == 'juliusmarminge'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -20,13 +17,6 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
       MOBILE_VERSION_POLICY: fingerprint
     steps:
-      - name: Check for EXPO_TOKEN
-        run: |
-          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "You must provide an EXPO_TOKEN secret linked to this project's Expo account in this repo's secrets. Learn more: https://docs.expo.dev/eas-update/github-actions"
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@v6
         with:
