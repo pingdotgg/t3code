@@ -259,6 +259,22 @@ const runCloudCommand = <A, E>(
     return yield* run.pipe(Effect.provide(runtimeLayer));
   });
 
+const cloudLoginCommand = Command.make("login", {
+  ...projectLocationFlags,
+}).pipe(
+  Command.withDescription("Authorize the T3 Cloud CLI without enabling cloud exposure."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const tokens = yield* CliTokenManager.CloudCliTokenManager;
+        yield* tokens.get;
+        yield* Console.log("Signed in to T3 Cloud.");
+      }),
+    ),
+  ),
+);
+
 const cloudLinkCommand = Command.make("link", {
   ...projectLocationFlags,
 }).pipe(
@@ -356,6 +372,7 @@ const cloudLogoutCommand = Command.make("logout", {
 export const cloudCommand = Command.make("cloud").pipe(
   Command.withDescription("Manage headless T3 Cloud exposure."),
   Command.withSubcommands([
+    cloudLoginCommand,
     cloudLinkCommand,
     cloudStatusCommand,
     cloudUnlinkCommand,

@@ -210,6 +210,37 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
+  it.effect("logs in to headless cloud without enabling exposure", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-login-test-"));
+      const { secretsDir } = yield* deriveServerPaths(baseDir, undefined);
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(
+        join(secretsDir, "cloud-cli-oauth-token.bin"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
+        JSON.stringify({
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        }),
+      );
+
+      const login = yield* captureStdout(runCli(["cloud", "login", "--base-dir", baseDir]));
+      const status = yield* captureStdout(
+        runCli(["cloud", "status", "--base-dir", baseDir, "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
+      const decoded = JSON.parse(status.output) as {
+        readonly desired: boolean;
+        readonly authenticated: boolean;
+      };
+
+      assert.equal(login.output, "Signed in to T3 Cloud.");
+      assert.isFalse(decoded.desired);
+      assert.isTrue(decoded.authenticated);
+    }),
+  );
+
   it.effect("disables headless cloud exposure without a running server", () =>
     Effect.gen(function* () {
       const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-unlink-test-"));
