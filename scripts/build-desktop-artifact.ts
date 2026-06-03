@@ -23,6 +23,8 @@ import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
+
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
@@ -417,7 +419,7 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
   });
 }
 
-function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
+function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -429,7 +431,46 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
 
     const iconPath = path.join(stageResourcesDir, "icon.png");
     yield* fs.copyFile(sourcePng, iconPath);
+
+    const iconsDir = path.join(stageResourcesDir, "icons");
+    yield* fs.makeDirectory(iconsDir, { recursive: true });
+    for (const iconSize of LINUX_ICON_SIZES) {
+      yield* stageLinuxIconSize(
+        sourcePng,
+        path.join(iconsDir, `${iconSize}x${iconSize}.png`),
+        iconSize,
+        verbose,
+      );
+    }
   });
+}
+
+function stageLinuxIconSize(
+  sourcePng: string,
+  targetPng: string,
+  iconSize: number,
+  verbose: boolean,
+) {
+  const resize = (command: string) =>
+    runCommand(
+      ChildProcess.make(command, [sourcePng, "-resize", `${iconSize}x${iconSize}`, targetPng], {
+        ...commandOutputOptions(verbose),
+      }),
+    );
+
+  return resize("magick").pipe(
+    Effect.catch(() =>
+      resize("convert").pipe(
+        Effect.mapError(
+          () =>
+            new BuildScriptError({
+              message:
+                "ImageMagick is required to generate Linux desktop icon sizes. Install ImageMagick so either `magick` or `convert` is available.",
+            }),
+        ),
+      ),
+    ),
+  );
 }
 
 function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
@@ -600,7 +641,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.linux = {
       target: [target],
       executableName: "t3code",
-      icon: "icon.png",
+      icon: "icons",
       category: "Development",
       desktop: {
         entry: {
@@ -639,7 +680,7 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 
   if (platform === "linux") {
-    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng);
+    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng, verbose);
     return;
   }
 
