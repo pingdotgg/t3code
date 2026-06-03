@@ -1,9 +1,6 @@
-import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 
-import { hasDeployChanges, makeDeployConfigProvider, reconcileRootEnvRelayUrl } from "./deploy.ts";
+import { hasDeployChanges, reconcileRootEnvRelayUrl } from "./deploy.ts";
 
 describe("hasDeployChanges", () => {
   it("detects resource, binding, and deletion changes", () => {
@@ -32,29 +29,6 @@ describe("hasDeployChanges", () => {
         },
       } as never),
     ).toBe(true);
-  });
-});
-
-describe("makeDeployConfigProvider", () => {
-  it("prefers injected environment values while retaining dotenv fallbacks", async () => {
-    const provider = makeDeployConfigProvider(
-      ConfigProvider.fromEnv({ env: { T3_RELAY_DOMAIN: "ci.example.test" } }),
-      ConfigProvider.fromEnv({
-        env: {
-          T3_RELAY_DOMAIN: "dotenv.example.test",
-          T3_RELAY_ZONE_NAME: "example.test",
-        },
-      }),
-    );
-    const config = Config.all({
-      relayDomain: Config.string("T3_RELAY_DOMAIN"),
-      relayZoneName: Config.string("T3_RELAY_ZONE_NAME"),
-    }).pipe(Effect.provide(ConfigProvider.layer(provider)));
-
-    await expect(Effect.runPromise(config)).resolves.toEqual({
-      relayDomain: "ci.example.test",
-      relayZoneName: "example.test",
-    });
   });
 });
 

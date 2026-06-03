@@ -3,7 +3,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { AdoptPolicy } from "alchemy/AdoptPolicy";
 import { AlchemyContext, AlchemyContextLive } from "alchemy/AlchemyContext";
-import { apply } from "alchemy/Apply";
+import * as Apply from "alchemy/Apply";
 import { provideFreshArtifactStore } from "alchemy/Artifacts";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
@@ -11,7 +11,7 @@ import { ProfileLive } from "alchemy/Auth/Profile";
 import { Cli } from "alchemy/Cli/Cli";
 import { LoggingCli } from "alchemy/Cli/LoggingCli";
 import * as Plan from "alchemy/Plan";
-import { Stage } from "alchemy/Stage";
+import * as Stage from "alchemy/Stage";
 import { TelemetryLive } from "alchemy/Telemetry/Layer";
 import { PlatformServices } from "alchemy/Util/PlatformServices";
 import * as Config from "effect/Config";
@@ -52,15 +52,6 @@ export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): st
   return `${contents}${contents.endsWith("\n") ? "" : "\n"}${entry}\n`;
 }
 
-export function makeDeployConfigProvider(
-  environmentProvider: ConfigProvider.ConfigProvider,
-  dotenvProvider?: ConfigProvider.ConfigProvider,
-) {
-  return dotenvProvider
-    ? ConfigProvider.orElse(environmentProvider, dotenvProvider)
-    : environmentProvider;
-}
-
 export function hasDeployChanges(plan: Plan.Plan): boolean {
   return (
     Object.keys(plan.deletions).length > 0 ||
@@ -81,18 +72,11 @@ const repoRoot = Effect.service(Path.Path).pipe(
 const loadDeployConfigProvider = Effect.fn("relay.deploy.loadConfigProvider")(function* (
   envFileOverride: Option.Option<string>,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* relayRoot;
   const selectedEnvFile = Option.getOrUndefined(envFileOverride);
   const envFile = selectedEnvFile ? path.resolve(root, selectedEnvFile) : path.join(root, ".env");
-  if (!(yield* fs.exists(envFile))) {
-    return makeDeployConfigProvider(ConfigProvider.fromEnv());
-  }
-  return makeDeployConfigProvider(
-    ConfigProvider.fromEnv(),
-    yield* ConfigProvider.fromDotEnv({ path: envFile }),
-  );
+  return yield* ConfigProvider.fromDotEnv({ path: envFile });
 });
 
 const relayDeployStage = Config.nonEmptyString("stage").pipe(
@@ -122,55 +106,59 @@ const deployServices = Layer.mergeAll(
   LoggingCli,
 );
 
-const runRelayDeploy = Effect.fn("relay.deploy.run")(function* (
-  options: RelayDeployOptions,
-  configProvider: ConfigProvider.ConfigProvider,
-  stage: string,
-) {
-  return yield* Effect.gen(function* () {
+const runRelayDeploy = Effect.fn("relay.deploy.run")(
+  function* (
+    options: RelayDeployOptions,
+    _configProvider: ConfigProvider.ConfigProvider,
+    _stage: string,
+  ) {
     const stack = yield* RelayStack;
-    return yield* Effect.gen(function* () {
-      const cli = yield* Cli;
-      const plan = yield* Plan.make(stack, { force: options.force });
-      if (options.dryRun) {
-        yield* cli.displayPlan(plan);
+
+    const cli = yield* Cli;
+    const plan = yield* Plan.make(stack, { force: options.force }).pipe(
+      Effect.provide(stack.services),
+    );
+    if (options.dryRun) {
+      yield* cli.displayPlan(plan);
+      return Option.none<string>();
+    }
+    if (!options.yes && hasDeployChanges(plan)) {
+      yield* cli.displayPlan(plan);
+      const approved = yield* Prompt.run(
+        Prompt.confirm({
+          message: "Apply this relay deployment?",
+        }),
+      );
+      if (!approved) {
+        yield* Console.log("Deployment cancelled.");
         return Option.none<string>();
       }
-      if (!options.yes && hasDeployChanges(plan)) {
-        yield* cli.displayPlan(plan);
-        const approved = yield* Prompt.run(
-          Prompt.confirm({
-            message: "Apply this relay deployment?",
-          }),
-        );
-        if (!approved) {
-          yield* Console.log("Deployment cancelled.");
-          return Option.none<string>();
-        }
-      }
-      const output = yield* apply(plan);
-      if (output.url === undefined) {
-        return yield* new RelayDeployError({
-          message: "Alchemy relay deploy output did not include a URL",
-        });
-      }
-      return Option.some(output.url);
-    }).pipe(provideFreshArtifactStore, Effect.provide(stack.services));
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.effect(
-          AlchemyContext,
-          AlchemyContext.pipe(Effect.map((context) => ({ ...context, adopt: options.adopt }))),
+    }
+    const output = yield* Apply.apply(plan).pipe(Effect.provide(stack.services));
+    if (output.url === undefined) {
+      return yield* new RelayDeployError({
+        message: "Alchemy relay deploy output did not include a URL",
+      });
+    }
+    return Option.some(output.url);
+  },
+  (effect, options, configProvider, stage) =>
+    effect.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            AlchemyContext,
+            AlchemyContext.pipe(Effect.map((context) => ({ ...context, adopt: options.adopt }))),
+          ),
+          Layer.succeed(AdoptPolicy, options.adopt),
+          Layer.succeed(AuthProviders, {}),
+          ConfigProvider.layer(configProvider),
+          Layer.succeed(Stage.Stage, stage),
         ),
-        Layer.succeed(AdoptPolicy, options.adopt),
-        Layer.succeed(AuthProviders, {}),
-        ConfigProvider.layer(configProvider),
-        Layer.succeed(Stage, stage),
       ),
+      provideFreshArtifactStore,
     ),
-  );
-});
+);
 
 export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployOptions) {
   const configProvider = yield* loadDeployConfigProvider(options.envFile);
