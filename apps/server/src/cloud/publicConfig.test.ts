@@ -31,6 +31,17 @@ it.effect("requires a relay URL when the server bundle has no injected value", (
   makeRelayUrlConfig("").pipe(provideEnv({}), Effect.flip),
 );
 
+it.effect("rejects an insecure runtime relay URL override", () =>
+  makeRelayUrlConfig("https://embedded.example.test").pipe(
+    provideEnv({ T3CODE_RELAY_URL: "http://runtime.example.test" }),
+    Effect.flip,
+  ),
+);
+
+it.effect("rejects an injected relay URL with a non-origin path", () =>
+  makeRelayUrlConfig("https://embedded.example.test/path").pipe(provideEnv({}), Effect.flip),
+);
+
 it.effect("derives direct Clerk OAuth endpoints from statically injected public config", () =>
   Effect.gen(function* () {
     const config = yield* makeCloudCliOAuthConfig({

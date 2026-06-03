@@ -1,5 +1,10 @@
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
+import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 
 declare const __T3CODE_BUILD_RELAY_URL__: string | undefined;
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -8,8 +13,19 @@ declare const __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: string | undefined;
 const CLOUD_CLI_OAUTH_REDIRECT_URI = "http://127.0.0.1:34338/callback";
 const CLOUD_CLI_OAUTH_SCOPES = ["openid", "profile", "email"] as const;
 
-function normalizeRelayUrl(value: string): string {
-  return value.trim().replace(/\/+$/u, "");
+function validateRelayUrl(value: string) {
+  const relayUrl = normalizeSecureRelayUrl(value);
+  return relayUrl === null
+    ? Effect.fail(
+        new Config.ConfigError(
+          new Schema.SchemaError(
+            new SchemaIssue.InvalidValue(Option.some(value), {
+              message: "Relay URL must be a secure absolute HTTPS origin.",
+            }),
+          ),
+        ),
+      )
+    : Effect.succeed(relayUrl);
 }
 
 function readBuildTimeValue(value: string | undefined): string {
@@ -19,7 +35,7 @@ function readBuildTimeValue(value: string | undefined): string {
 export const buildTimeRelayUrl =
   typeof __T3CODE_BUILD_RELAY_URL__ === "undefined"
     ? ""
-    : normalizeRelayUrl(__T3CODE_BUILD_RELAY_URL__);
+    : (normalizeSecureRelayUrl(__T3CODE_BUILD_RELAY_URL__) ?? "");
 export const buildTimeClerkPublishableKey = readBuildTimeValue(
   typeof __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
     ? undefined
@@ -34,7 +50,7 @@ export const buildTimeClerkCliOAuthClientId = readBuildTimeValue(
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
   const runtimeConfig = Config.nonEmptyString("T3CODE_RELAY_URL");
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
-    Config.map(normalizeRelayUrl),
+    Config.mapOrFail(validateRelayUrl),
   );
 }
 
@@ -88,7 +104,7 @@ export function makeCloudCliOAuthConfig({
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
 export const hasCloudPublicConfig = Boolean(
-  (normalizeRelayUrl(process.env.T3CODE_RELAY_URL ?? "") || buildTimeRelayUrl) &&
+  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
   (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
   (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
 );
