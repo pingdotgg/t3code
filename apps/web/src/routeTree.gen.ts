@@ -21,6 +21,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+import { Route as DevMobileRouteImport } from './routes/dev.mobile'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -83,6 +84,11 @@ const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   path: '/archived',
   getParentRoute: () => SettingsRoute,
 } as any)
+const DevMobileRoute = DevMobileRouteImport.update({
+  id: '/dev/mobile',
+  path: '/dev/mobile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/m': typeof MRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/dev/mobile': typeof DevMobileRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByTo {
   '/m': typeof MRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/dev/mobile': typeof DevMobileRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/m': typeof MRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/dev/mobile': typeof DevMobileRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
     | '/m'
     | '/pair'
     | '/settings'
+    | '/dev/mobile'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/m'
     | '/pair'
     | '/settings'
+    | '/dev/mobile'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/m'
     | '/pair'
     | '/settings'
+    | '/dev/mobile'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -196,6 +208,7 @@ export interface RootRouteChildren {
   MRoute: typeof MRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  DevMobileRoute: typeof DevMobileRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -284,6 +297,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsArchivedRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/dev/mobile': {
+      id: '/dev/mobile'
+      path: '/dev/mobile'
+      fullPath: '/dev/mobile'
+      preLoaderRoute: typeof DevMobileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -344,6 +364,7 @@ const rootRouteChildren: RootRouteChildren = {
   MRoute: MRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  DevMobileRoute: DevMobileRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

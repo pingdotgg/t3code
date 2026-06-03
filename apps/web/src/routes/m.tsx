@@ -12,7 +12,10 @@ function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
   const nav = navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
+  if (nav.standalone === true) return true;
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("standalone"))
+    return true;
+  return false;
 }
 
 function MobileBootstrapRouteView() {

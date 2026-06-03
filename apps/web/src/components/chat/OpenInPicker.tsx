@@ -149,15 +149,20 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
   return baseOptions.filter((option) => availableEditors.includes(option.value));
 };
 
+export type OpenInPickerSurface = "header" | "segmented";
+
 export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  surface = "header",
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  surface?: OpenInPickerSurface;
 }) {
+  const segmented = surface === "segmented";
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -197,22 +202,45 @@ export const OpenInPicker = memo(function OpenInPicker({
   }, [preferredEditor, keybindings, openInCwd]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <Group
+      aria-label="Open in editor"
+      className={segmented ? "h-full w-full min-w-0 items-stretch" : "shrink-0 items-center"}
+    >
       <Button
         size="xs"
-        variant="outline"
+        variant={segmented ? "ghost" : "outline"}
+        className={
+          segmented
+            ? "flex-1 h-full rounded-none min-w-0 px-2"
+            : "min-w-7 px-2 @3xl/header-actions:min-w-0"
+        }
         disabled={!preferredEditor || !openInCwd}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+        <span
+          className={
+            segmented
+              ? "ml-0.5"
+              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+          }
+        >
           Open
         </span>
       </Button>
-      <GroupSeparator className="hidden @3xl/header-actions:block" />
+      {!segmented && <GroupSeparator className="hidden @3xl/header-actions:block" />}
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Open in editor options"
+              size="icon-xs"
+              variant={segmented ? "ghost" : "outline"}
+              className={segmented ? "h-full rounded-none" : ""}
+            />
+          }
+        >
+          <ChevronDownIcon aria-hidden="true" className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}

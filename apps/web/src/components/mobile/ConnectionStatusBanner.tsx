@@ -16,7 +16,7 @@ export function ConnectionStatusBanner() {
       role="status"
       aria-live="polite"
       className={
-        "fixed top-0 inset-x-0 z-30 sm:hidden flex items-center gap-2 px-4 py-2 text-xs border-b pt-[env(safe-area-inset-top)] " +
+        "fixed top-0 inset-x-0 z-30 md:hidden flex items-center gap-2 px-4 py-2 text-xs border-b pt-[env(safe-area-inset-top)] " +
         (isOffline
           ? "bg-warning/10 border-warning/20 text-warning-foreground"
           : "bg-destructive/10 border-destructive/20 text-destructive-foreground")

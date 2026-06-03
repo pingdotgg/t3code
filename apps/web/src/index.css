@@ -74,6 +74,11 @@
   padding-right: max(env(safe-area-inset-right), 0px);
 }
 
+/* Height of the fixed mobile bottom nav including the safe-area inset. */
+@utility h-mobile-nav {
+  height: calc(3.5rem + max(env(safe-area-inset-bottom), 0px));
+}
+
 /* Suppress all transitions during theme changes */
 .no-transitions,
 .no-transitions *,
@@ -404,6 +409,52 @@ label:has(> select#reasoning-effort) select {
   background: transparent;
   padding: 0;
   font-size: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .chat-markdown pre {
+    padding: 0.6rem 0.7rem;
+  }
+  .chat-markdown pre code {
+    font-size: 0.6875rem;
+  }
+}
+
+
+@keyframes send-ready-pulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-send-ready-pulse="true"] {
+    animation: send-ready-pulse 260ms ease-out;
+  }
+}
+
+@keyframes mobile-action-cell-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-mobile-action-cell] {
+    animation: mobile-action-cell-enter 220ms ease-out both;
+    animation-delay: var(--cell-delay, 0ms);
+  }
 }
 
 .markdown-file-link-tooltip-scroll {

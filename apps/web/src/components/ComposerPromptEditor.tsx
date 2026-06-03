@@ -25,6 +25,7 @@ import {
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
+  INSERT_LINE_BREAK_COMMAND,
   KEY_BACKSPACE_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
@@ -869,6 +870,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  insertLineBreak: () => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1550,9 +1552,16 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      insertLineBreak: () => {
+        const rootElement = editor.getRootElement();
+        if (rootElement && document.activeElement !== rootElement) {
+          rootElement.focus({ preventScroll: true });
+        }
+        editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+      },
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [editor, focusAt, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {

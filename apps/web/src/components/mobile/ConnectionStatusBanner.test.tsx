@@ -86,7 +86,7 @@ describe("ConnectionStatusBanner", () => {
     expect(markup).toContain("Connection lost");
   });
 
-  it("has sm:hidden class so it only shows on mobile", () => {
+  it("has md:hidden class so it only shows on mobile", () => {
     vi.mocked(useWsConnectionStatus).mockReturnValue({
       ...mockStatus,
       online: false,
@@ -95,6 +95,6 @@ describe("ConnectionStatusBanner", () => {
       hasConnected: true,
     });
     const markup = renderToStaticMarkup(<ConnectionStatusBanner />);
-    expect(markup).toContain("sm:hidden");
+    expect(markup).toContain("md:hidden");
   });
 });

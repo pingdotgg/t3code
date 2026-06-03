@@ -74,6 +74,10 @@ export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
   beforeLoad: async ({ location }) => {
+    if (import.meta.env.DEV && location.pathname.startsWith("/dev/")) {
+      return { authGateState: { status: "dev-bypass" } as const };
+    }
+
     if (location.pathname === "/m") {
       const incomingUrl = new URL(window.location.href);
       const incomingToken = getPairingTokenFromUrl(incomingUrl);

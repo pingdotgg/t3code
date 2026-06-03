@@ -24,6 +24,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -82,10 +83,13 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
 
+export type GitActionsControlSurface = "header" | "segmented";
+
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  surface?: GitActionsControlSurface;
 }
 
 interface PendingDefaultBranchAction {
@@ -326,7 +330,7 @@ function GitQuickActionIcon({
   const iconClassName = "size-3.5";
   if (quickAction.kind === "open_pr") return <SourceControlIcon className={iconClassName} />;
   if (quickAction.kind === "open_publish") return <CloudUploadIcon className={iconClassName} />;
-  if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
+  if (quickAction.kind === "run_pull") return <RefreshCwIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
@@ -949,7 +953,9 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
+  surface = "header",
 }: GitActionsControlProps) {
+  const segmented = surface === "segmented";
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
@@ -1628,8 +1634,8 @@ export default function GitActionsControl({
           {initMutation.isPending ? "Initializing..." : "Initialize Git"}
         </Button>
       ) : (
-        <Group aria-label="Git actions" className="shrink-0">
-          {quickActionDisabledReason ? (
+        <Group aria-label="Git actions" className={segmented ? "min-w-0 w-full h-full" : "shrink-0"}>
+          {!segmented && (quickActionDisabledReason ? (
             <Popover>
               <PopoverTrigger
                 openOnHover
@@ -1646,7 +1652,7 @@ export default function GitActionsControl({
                   quickAction={quickAction}
                   SourceControlIcon={SourceControlIcon}
                 />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                <span className="sr-only max-md:not-sr-only max-md:ml-0.5 max-md:truncate max-md:min-w-0 @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
                   {quickAction.label}
                 </span>
               </PopoverTrigger>
@@ -1662,12 +1668,12 @@ export default function GitActionsControl({
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              <span className="sr-only max-md:not-sr-only max-md:ml-0.5 max-md:truncate max-md:min-w-0 @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
                 {quickAction.label}
               </span>
             </Button>
-          )}
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          ))}
+          {!segmented && <GroupSeparator className="max-md:block hidden @3xl/header-actions:block" />}
           <Menu
             onOpenChange={(open) => {
               if (open) {
@@ -1679,12 +1685,36 @@ export default function GitActionsControl({
             }}
           >
             <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
+              render={
+                <Button
+                  aria-label={segmented ? "Git actions" : "Git action options"}
+                  size={segmented ? "xs" : "icon-xs"}
+                  variant={segmented ? "ghost" : "outline"}
+                  className={segmented ? "flex-1 h-full rounded-none" : undefined}
+                />
+              }
               disabled={isGitActionRunning}
             >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
+              {segmented ? (
+                <>
+                  <SourceControlIcon className="size-3.5" />
+                  <span>Git</span>
+                  <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+                </>
+              ) : (
+                <ChevronDownIcon aria-hidden="true" className="size-3.5" />
+              )}
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
+              {segmented && (
+                <MenuItem
+                  disabled={isGitActionRunning || quickAction.disabled}
+                  onClick={runQuickAction}
+                >
+                  <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
+                  {quickAction.label}
+                </MenuItem>
+              )}
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({
                   item,

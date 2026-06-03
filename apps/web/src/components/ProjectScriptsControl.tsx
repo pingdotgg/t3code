@@ -86,6 +86,8 @@ export interface NewProjectScriptInput {
   keybinding: string | null;
 }
 
+export type ProjectScriptsControlSurface = "header" | "segmented";
+
 interface ProjectScriptsControlProps {
   scripts: ProjectScript[];
   keybindings: ResolvedKeybindingsConfig;
@@ -94,6 +96,7 @@ interface ProjectScriptsControlProps {
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
   onDeleteScript: (scriptId: string) => Promise<void> | void;
+  surface?: ProjectScriptsControlSurface;
 }
 
 export default function ProjectScriptsControl({
@@ -104,7 +107,9 @@ export default function ProjectScriptsControl({
   onAddScript,
   onUpdateScript,
   onDeleteScript,
+  surface = "header",
 }: ProjectScriptsControlProps) {
+  const segmented = surface === "segmented";
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -218,24 +223,25 @@ export default function ProjectScriptsControl({
   return (
     <>
       {primaryScript ? (
-        <Group aria-label="Project scripts">
+        <Group aria-label="Project scripts" className={segmented ? "h-full w-full" : ""}>
           <Button
             size="xs"
-            variant="outline"
+            variant={segmented ? "ghost" : "outline"}
             onClick={() => onRunScript(primaryScript)}
             title={`Run ${primaryScript.name}`}
+            className={segmented ? "flex-1 h-full" : undefined}
           >
             <ScriptIcon icon={primaryScript.icon} />
-            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            <span className="sr-only max-md:not-sr-only max-md:ml-0.5 @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
               {primaryScript.name}
             </span>
           </Button>
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          <GroupSeparator className="max-md:block hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={<Button size="icon-xs" variant={segmented ? "ghost" : "outline"} aria-label="Script actions" className={segmented ? "h-full" : undefined} />}
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon className="size-3.5" />
             </MenuTrigger>
             <MenuPopup align="end">
               {scripts.map((script) => {
@@ -283,16 +289,16 @@ export default function ProjectScriptsControl({
               })}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
-                Add action
+                Action
               </MenuItem>
             </MenuPopup>
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
+        <Button size="xs" variant={segmented ? "ghost" : "outline"} onClick={openAddDialog} title="Action" className={segmented ? "h-full w-full" : undefined}>
           <PlusIcon className="size-3.5" />
-          <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-            Add action
+          <span className="sr-only max-md:not-sr-only max-md:ml-0.5 @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            Action
           </span>
         </Button>
       )}

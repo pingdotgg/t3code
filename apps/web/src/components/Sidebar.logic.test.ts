@@ -594,6 +594,19 @@ describe("resolveThreadRowClassName", () => {
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
   });
+
+  it("uses a 44px tappable row on mobile that shrinks to the dense desktop height", () => {
+    for (const [isActive, isSelected] of [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ] as const) {
+      const className = resolveThreadRowClassName({ isActive, isSelected });
+      expect(className).toContain("h-11");
+      expect(className).toContain("md:h-7");
+    }
+  });
 });
 
 describe("resolveProjectStatusIndicator", () => {

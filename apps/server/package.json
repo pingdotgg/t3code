@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.24",
+  "version": "0.58.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,8 +15,8 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/bin.ts",
-    "build": "node scripts/cli.ts build",
+    "dev": "bun --watch src/bin.ts",
+    "build": "bun scripts/cli.ts build",
     "build:bundle": "tsdown",
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",

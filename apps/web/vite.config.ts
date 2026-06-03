@@ -112,6 +112,9 @@ export default defineConfig({
     "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
     "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
     "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+    // Tells the app its own dev-server origin so API fetches route through
+    // the vite proxy (required for credentials: "include" to work in a browser).
+    "import.meta.env.VITE_DEV_SERVER_URL": JSON.stringify(`http://${host}:${port}`),
   },
   resolve: {
     tsconfigPaths: true,
