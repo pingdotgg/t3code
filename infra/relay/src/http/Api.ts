@@ -188,7 +188,7 @@ export const relayClientAuthLayer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* RelayConfiguration.RelayConfiguration;
     return {
-      bearer: Effect.fn("relay.auth.client.bearer")(function* (httpEffect, { credential }) {
+      clientBearer: Effect.fn("relay.auth.client.bearer")(function* (httpEffect, { credential }) {
         const token = readHttpAuthorizationCredential(credential);
         const verified = yield* verifyRelayClientBearerToken(config, token).pipe(
           Effect.tapError((error) =>
@@ -227,7 +227,10 @@ export const relayEnvironmentAuthLayer = Layer.effect(
   Effect.gen(function* () {
     const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
     return {
-      bearer: Effect.fn("relay.auth.environment.bearer")(function* (httpEffect, { credential }) {
+      environmentBearer: Effect.fn("relay.auth.environment.bearer")(function* (
+        httpEffect,
+        { credential },
+      ) {
         const token = readHttpAuthorizationCredential(credential);
         const principal = yield* credentials
           .authenticate(token)

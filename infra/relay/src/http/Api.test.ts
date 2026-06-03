@@ -118,7 +118,7 @@ describe("relay environment authentication", () => {
     return Effect.gen(function* () {
       const auth = yield* RelayEnvironmentAuth;
       const error = yield* Effect.flip(
-        auth.bearer(Effect.succeed(HttpServerResponse.empty()), {
+        auth.environmentBearer(Effect.succeed(HttpServerResponse.empty()), {
           credential: Redacted.make("environment-credential"),
           endpoint: {} as never,
           group: {} as never,

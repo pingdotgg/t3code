@@ -490,20 +490,34 @@ export class RelayEnvironmentPrincipal extends Context.Service<
   RelayEnvironmentPrincipalShape
 >()("@t3tools/contracts/relay/RelayEnvironmentPrincipal") {}
 
+const RelayClientBearerAuthorization = HttpApiSecurity.bearer.pipe(
+  HttpApiSecurity.annotate(
+    OpenApi.Description,
+    "Clerk session or OAuth bearer token for the signed-in T3 Cloud user.",
+  ),
+);
+
 export class RelayClientAuth extends HttpApiMiddleware.Service<
   RelayClientAuth,
   { provides: RelayClientPrincipal }
 >()("RelayClientAuth", {
   error: RelayAuthInvalidError,
-  security: { bearer: HttpApiSecurity.bearer },
+  security: { clientBearer: RelayClientBearerAuthorization },
 }) {}
+
+const RelayEnvironmentBearerAuthorization = HttpApiSecurity.bearer.pipe(
+  HttpApiSecurity.annotate(
+    OpenApi.Description,
+    "Relay-issued environment credential installed when the environment is linked.",
+  ),
+);
 
 export class RelayEnvironmentAuth extends HttpApiMiddleware.Service<
   RelayEnvironmentAuth,
   { provides: RelayEnvironmentPrincipal }
 >()("RelayEnvironmentAuth", {
   error: [RelayAuthInvalidError, RelayInternalError],
-  security: { bearer: HttpApiSecurity.bearer },
+  security: { environmentBearer: RelayEnvironmentBearerAuthorization },
 }) {}
 
 const RelayDpopAuthorization = HttpApiSecurity.http({ scheme: "DPoP" }).pipe(
@@ -876,7 +890,12 @@ export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
     success: RelayDpopAccessTokenResponse,
     error: RelayAuthAndInternalErrors,
   },
-).annotate(OpenApi.Summary, "Exchange a Clerk token for a DPoP access token");
+)
+  .annotate(OpenApi.Summary, "Exchange a Clerk token for a DPoP access token")
+  .annotate(
+    OpenApi.Description,
+    "Bootstrap endpoint. Send the DPoP proof JWT in the dpop header and the Clerk token in subject_token. The returned access token is bound to the proof key.",
+  );
 
 export const RelayTokenGroup = HttpApiGroup.make("token")
   .add(RelayExchangeDpopAccessTokenEndpoint)
