@@ -28,8 +28,10 @@ describe("relayPublicDomainForStage", () => {
 });
 
 describe("relayResourceNameForStage", () => {
-  it("preserves production names and isolates personal stages", () => {
-    expect(relayResourceNameForStage("t3-code-relay-traces", "prod")).toBe("t3-code-relay-traces");
+  it("isolates production and personal stages", () => {
+    expect(relayResourceNameForStage("t3-code-relay-traces", "prod")).toBe(
+      "t3-code-relay-traces-prod",
+    );
     expect(relayResourceNameForStage("t3-code-relay-traces", "dev_julius")).toBe(
       "t3-code-relay-traces-dev-julius",
     );

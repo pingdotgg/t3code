@@ -34,7 +34,7 @@ export function relayStageSlug(stage: string): string {
 }
 
 export function relayResourceNameForStage(name: string, stage: string): string {
-  return stage === "prod" ? name : `${name}-${relayStageSlug(stage)}`;
+  return `${name}-${relayStageSlug(stage)}`;
 }
 
 export function relayPublicDomainForStage(stage: string, zoneName: string): string {
