@@ -18,6 +18,7 @@ import {
   loadPreferences,
 } from "../../lib/storage";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
+import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
@@ -38,10 +39,7 @@ export function normalizeAgentAwarenessRelayBaseUrl(
 }
 
 function readRelayConfig(): { readonly url: string } | null {
-  const relayConfig = Constants.expoConfig?.extra?.relay as
-    | { readonly url?: string | null }
-    | undefined;
-  const relayUrl = normalizeAgentAwarenessRelayBaseUrl(relayConfig?.url);
+  const relayUrl = resolveCloudPublicConfig().relayUrl;
   if (!relayUrl) {
     logRegistrationDebug("relay registration skipped; relay config missing");
     return null;

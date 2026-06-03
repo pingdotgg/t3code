@@ -4,6 +4,7 @@ import { CloudIcon, RefreshCwIcon, SmartphoneIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { updatePrimaryCloudPreferences } from "../../cloud/linkEnvironment";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useManagedRelayDevices } from "../../cloud/managedRelayState";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { isElectron } from "../../env";
@@ -49,27 +50,12 @@ function EmptyNotificationDevices() {
   );
 }
 
-function hasClerkConfig(): boolean {
-  return Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
-}
-
 function cloudErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
 export function CloudSettingsPanel() {
-  if (!hasClerkConfig()) {
-    return (
-      <SettingsPageContainer>
-        <SettingsSection title="T3 Cloud" icon={<CloudIcon className="size-3.5" />}>
-          <SettingsRow
-            title="Cloud account"
-            description="Set T3CODE_CLERK_PUBLISHABLE_KEY to enable optional cloud features."
-          />
-        </SettingsSection>
-      </SettingsPageContainer>
-    );
-  }
+  if (!hasCloudPublicConfig()) return null;
 
   return <ConfiguredCloudSettingsPanel />;
 }

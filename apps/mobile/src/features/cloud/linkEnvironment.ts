@@ -1,4 +1,3 @@
-import Constants from "expo-constants";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -35,6 +34,7 @@ import {
 import { mobileAuthClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { loadOrCreateAgentAwarenessDeviceId, loadPreferences } from "../../lib/storage";
+import { resolveCloudPublicConfig } from "./publicConfig";
 
 const RELAY_STATUS_AND_CONNECT_SCOPES = [
   RelayEnvironmentStatusScope,
@@ -50,10 +50,7 @@ export function normalizeRelayBaseUrl(value: string | null | undefined): string 
 }
 
 function readRelayUrl(): string | null {
-  const relayConfig = Constants.expoConfig?.extra?.relay as
-    | { readonly url?: string | null }
-    | undefined;
-  return normalizeRelayBaseUrl(relayConfig?.url);
+  return resolveCloudPublicConfig().relayUrl;
 }
 
 export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{

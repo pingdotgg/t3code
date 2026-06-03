@@ -37,6 +37,7 @@ import {
   resolvePrimaryEnvironmentHttpUrl,
 } from "../environments/primary";
 import { withPrimaryEnvironmentRequestInit } from "../environments/primary/requestInit";
+import { resolveCloudPublicConfig } from "./publicConfig";
 
 export function normalizeRelayBaseUrl(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
@@ -47,7 +48,7 @@ export function normalizeRelayBaseUrl(value: string | null | undefined): string 
 }
 
 function relayUrl(): string | null {
-  return normalizeRelayBaseUrl(import.meta.env.VITE_T3_RELAY_URL as string | undefined);
+  return resolveCloudPublicConfig().relayUrl;
 }
 
 export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{

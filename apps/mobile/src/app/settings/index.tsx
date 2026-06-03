@@ -14,6 +14,7 @@ import { setLiveActivityUpdatesEnabled } from "../../features/agent-awareness/li
 import { requestAgentNotificationPermission } from "../../features/agent-awareness/notificationPermissions";
 import { refreshAgentAwarenessRegistration } from "../../features/agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../../features/cloud/managedRelayState";
+import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
 import { mobileRuntime } from "../../lib/runtime";
 import { loadPreferences } from "../../lib/storage";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -23,6 +24,44 @@ type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
 export default function SettingsRouteScreen() {
+  return hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />;
+}
+
+function LocalSettingsRouteScreen() {
+  const insets = useSafeAreaInsets();
+  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const environmentCount = Object.keys(savedConnectionsById).length;
+
+  return (
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <Stack.Screen options={{ title: "Settings" }} />
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          gap: 24,
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
+          paddingHorizontal: 20,
+          paddingTop: 16,
+        }}
+      >
+        <SettingsSection title="Configuration">
+          <SettingsRow
+            icon="desktopcomputer"
+            label="Environments"
+            value={`${environmentCount}`}
+            href="/settings/environments"
+          />
+        </SettingsSection>
+
+        <AppSettingsSection />
+      </ScrollView>
+    </View>
+  );
+}
+
+function ConfiguredSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
   const { push } = useRouter();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
@@ -32,7 +71,6 @@ export default function SettingsRouteScreen() {
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
 
-  const icon = useThemeColor("--color-icon");
   const connections = useMemo(() => Object.values(savedConnectionsById), [savedConnectionsById]);
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
@@ -289,19 +327,7 @@ export default function SettingsRouteScreen() {
           />
         </SettingsSection>
 
-        <SettingsSection title="App">
-          <View className="flex-row items-center gap-4 px-4 py-4">
-            <SymbolView
-              name="info.circle"
-              size={22}
-              tintColor={icon}
-              type="monochrome"
-              weight="regular"
-            />
-            <Text className="flex-1 text-[17px] text-foreground">Version</Text>
-            <Text className="text-[17px] text-foreground-muted">Alpha</Text>
-          </View>
-        </SettingsSection>
+        <AppSettingsSection />
       </ScrollView>
     </View>
   );
@@ -323,6 +349,26 @@ function SettingsSection(props: { readonly title: string; readonly children: Rea
   );
 }
 
+function AppSettingsSection() {
+  const icon = useThemeColor("--color-icon");
+
+  return (
+    <SettingsSection title="App">
+      <View className="flex-row items-center gap-4 p-4">
+        <SymbolView
+          name="info.circle"
+          size={22}
+          tintColor={icon}
+          type="monochrome"
+          weight="regular"
+        />
+        <Text className="flex-1 text-[17px] text-foreground">Version</Text>
+        <Text className="text-[17px] text-foreground-muted">Alpha</Text>
+      </View>
+    </SettingsSection>
+  );
+}
+
 function SettingsRow(props: {
   readonly disabled?: boolean;
   readonly icon: SymbolName;
@@ -335,7 +381,7 @@ function SettingsRow(props: {
   const chevron = useThemeColor("--color-chevron");
   const content = (
     <View
-      className="flex-row items-center gap-4 px-4 py-4"
+      className="flex-row items-center gap-4 p-4"
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
@@ -386,7 +432,7 @@ function SettingsSwitchRow(props: {
 
   return (
     <View
-      className="flex-row items-center gap-4 px-4 py-4"
+      className="flex-row items-center gap-4 p-4"
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />

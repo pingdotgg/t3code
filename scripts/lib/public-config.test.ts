@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_PUBLIC_CONFIG, loadRepoEnv, resolvePublicConfig } from "./public-config.ts";
+import { loadRepoEnv, resolvePublicConfig } from "./public-config.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -15,17 +15,17 @@ afterEach(() => {
 });
 
 describe("loadRepoEnv", () => {
-  it("projects checked-in public defaults into Vite and Expo aliases", () => {
+  it("does not project cloud configuration for an unconfigured clone", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
-    expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBe(DEFAULT_PUBLIC_CONFIG.clerkPublishableKey);
-    expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBe(DEFAULT_PUBLIC_CONFIG.clerkPublishableKey);
-    expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBe(DEFAULT_PUBLIC_CONFIG.clerkPublishableKey);
-    expect(env.T3_RELAY_URL).toBe(DEFAULT_PUBLIC_CONFIG.relayUrl);
-    expect(env.VITE_T3_RELAY_URL).toBe(DEFAULT_PUBLIC_CONFIG.relayUrl);
+    expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.T3_RELAY_URL).toBeUndefined();
+    expect(env.VITE_T3_RELAY_URL).toBeUndefined();
   });
 
-  it("applies process, root local, root, and checked-in precedence in that order", () => {
+  it("applies process, root local, and root precedence in that order", () => {
     const repoRoot = makeTemporaryDirectory();
     writeFileSync(
       join(repoRoot, ".env"),
@@ -63,6 +63,20 @@ describe("loadRepoEnv", () => {
     ).toEqual({
       clerkPublishableKey: "pk_legacy",
       relayUrl: "https://legacy.example.test",
+    });
+  });
+
+  it("projects only the configured aliases", () => {
+    expect(
+      loadRepoEnv({
+        baseEnv: {
+          T3_RELAY_URL: "https://relay.example.test",
+        },
+        repoRoot: makeTemporaryDirectory(),
+      }),
+    ).toEqual({
+      T3_RELAY_URL: "https://relay.example.test",
+      VITE_T3_RELAY_URL: "https://relay.example.test",
     });
   });
 });

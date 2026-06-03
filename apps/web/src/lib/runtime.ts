@@ -12,10 +12,10 @@ import { primaryEnvironmentRequestInit } from "../environments/primary/requestIn
 
 import { browserCryptoLayer } from "../cloud/dpop";
 import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
+import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 
 function configuredRelayUrl(): string {
-  const value = (import.meta.env.VITE_T3_RELAY_URL as string | undefined)?.trim();
-  return value ? value.replace(/\/+$/g, "") : "http://relay.invalid";
+  return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
 const webHttpClientLayer = remoteHttpClientLayer(globalThis.fetch);

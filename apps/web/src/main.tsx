@@ -10,6 +10,7 @@ import "./index.css";
 import { isElectron } from "./env";
 import { DesktopClerkProvider } from "./cloud/desktopClerk";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
+import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
@@ -32,7 +33,7 @@ const app = <RouterProvider router={router} />;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {clerkPublishableKey ? (
+    {clerkPublishableKey && hasCloudPublicConfig() ? (
       isElectron ? (
         <DesktopClerkProvider publishableKey={clerkPublishableKey}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>

@@ -1,7 +1,6 @@
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { createManagedRelaySession, setManagedRelaySession } from "@t3tools/client-runtime";
-import Constants from "expo-constants";
 import { type ReactNode, useEffect, useRef } from "react";
 import { RELAY_CLERK_TOKEN_OPTIONS } from "@t3tools/shared/relayAuth";
 
@@ -12,13 +11,7 @@ import {
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
 import { refreshActiveLiveActivityRemoteRegistration } from "../agent-awareness/liveActivityController";
-
-function readClerkPublishableKey(): string | null {
-  const clerkConfig = Constants.expoConfig?.extra?.clerk as
-    | { readonly publishableKey?: string | null }
-    | undefined;
-  return clerkConfig?.publishableKey ?? null;
-}
+import { resolveCloudPublicConfig } from "./publicConfig";
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -80,16 +73,16 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 }
 
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {
-  const publishableKey = readClerkPublishableKey();
+  const { clerkPublishableKey: publishableKey, relayUrl } = resolveCloudPublicConfig();
 
   useEffect(() => {
-    if (!publishableKey) {
+    if (!publishableKey || !relayUrl) {
       setAgentAwarenessRelayTokenProvider(null);
       setManagedRelaySession(appAtomRegistry, null);
     }
-  }, [publishableKey]);
+  }, [publishableKey, relayUrl]);
 
-  if (!publishableKey) {
+  if (!publishableKey || !relayUrl) {
     return props.children;
   }
 

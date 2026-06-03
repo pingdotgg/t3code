@@ -22,6 +22,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { Badge } from "../ui/badge";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -76,7 +77,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="px-2 py-3">
           <SidebarMenu>
-            {SETTINGS_NAV_ITEMS.map((item) => {
+            {SETTINGS_NAV_ITEMS.filter(
+              (item) => item.to !== "/settings/cloud" || hasCloudPublicConfig(),
+            ).map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.to;
               return (

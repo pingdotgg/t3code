@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { connectCloudEnvironment } from "../../features/cloud/linkEnvironment";
+import { hasCloudPublicConfig } from "../../features/cloud/publicConfig";
 import {
   useManagedRelayEnvironments,
   useManagedRelayEnvironmentStatus,
@@ -26,62 +27,21 @@ import {
 } from "../../state/use-remote-environment-registry";
 
 export default function SettingsEnvironmentsRouteScreen() {
-  const { getToken, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const {
     connectedEnvironments,
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
   const insets = useSafeAreaInsets();
   const hasEnvironments = connectedEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
-  const cloudEnvironmentsState = useManagedRelayEnvironments();
-  const [connectingCloudEnvironmentId, setConnectingCloudEnvironmentId] = useState<string | null>(
-    null,
-  );
-
   const accentColor = useThemeColor("--color-icon-muted");
   const iconColor = useThemeColor("--color-icon");
 
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
-
-  const availableCloudEnvironments = useMemo(
-    () =>
-      (cloudEnvironmentsState.data ?? []).filter(
-        (environment) => savedConnectionsById[environment.environmentId] === undefined,
-      ),
-    [cloudEnvironmentsState.data, savedConnectionsById],
-  );
-
-  const handleConnectCloudEnvironment = useCallback(
-    async (environment: RelayClientEnvironmentRecord) => {
-      setConnectingCloudEnvironmentId(environment.environmentId);
-      try {
-        const token = await getToken(RELAY_CLERK_TOKEN_OPTIONS);
-        if (!token) {
-          throw new Error("Sign in to T3 Cloud before connecting.");
-        }
-        await mobileRuntime.runPromise(
-          connectCloudEnvironment({
-            clerkToken: token,
-            environment,
-          }).pipe(Effect.flatMap(connectSavedEnvironment)),
-        );
-      } catch (error) {
-        Alert.alert(
-          "Connect failed",
-          error instanceof Error ? error.message : "Could not connect to this environment.",
-        );
-      } finally {
-        setConnectingCloudEnvironmentId(null);
-      }
-    },
-    [getToken],
-  );
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -156,72 +116,109 @@ export default function SettingsEnvironmentsRouteScreen() {
           </View>
         )}
 
-        {isSignedIn ? (
-          <View collapsable={false} className="mt-5 gap-3">
-            <View className="flex-row items-center justify-between px-1">
-              <Text className="text-[13px] font-t3-bold uppercase text-foreground-muted">
-                T3 Cloud
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                disabled={cloudEnvironmentsState.isPending}
-                onPress={cloudEnvironmentsState.refresh}
-                className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-50"
-              >
-                {cloudEnvironmentsState.isPending ? (
-                  <ActivityIndicator color={iconColor} size="small" />
-                ) : (
-                  <SymbolView
-                    name="arrow.clockwise"
-                    size={14}
-                    tintColor={iconColor}
-                    type="monochrome"
-                  />
-                )}
-              </Pressable>
-            </View>
-
-            {availableCloudEnvironments.length > 0 ? (
-              <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-                {availableCloudEnvironments.map((environment, index) => (
-                  <CloudEnvironmentRow
-                    key={environment.environmentId}
-                    environment={environment}
-                    borderTop={index !== 0}
-                    isConnecting={connectingCloudEnvironmentId === environment.environmentId}
-                    onConnect={() => handleConnectCloudEnvironment(environment)}
-                  />
-                ))}
-              </View>
-            ) : cloudEnvironmentsState.data === null ? (
-              <View
-                collapsable={false}
-                className="items-center gap-3 rounded-[24px] bg-card px-6 py-6"
-              >
-                <ActivityIndicator color={iconColor} />
-                <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
-                  Loading linked cloud environments.
-                </Text>
-              </View>
-            ) : cloudEnvironmentsState.error ? (
-              <View collapsable={false} className="gap-3 rounded-[24px] bg-card px-5 py-5">
-                <Text className="text-[15px] font-t3-bold text-foreground">
-                  Could not load T3 Cloud environments
-                </Text>
-                <Text className="text-[13px] leading-[18px] text-foreground-muted">
-                  {cloudEnvironmentsState.error}
-                </Text>
-              </View>
-            ) : (
-              <View collapsable={false} className="rounded-[24px] bg-card px-5 py-5">
-                <Text className="text-[14px] leading-[20px] text-foreground-muted">
-                  No additional linked cloud environments.
-                </Text>
-              </View>
-            )}
-          </View>
-        ) : null}
+        {hasCloudPublicConfig() ? <ConfiguredCloudEnvironmentRows /> : null}
       </ScrollView>
+    </View>
+  );
+}
+
+function ConfiguredCloudEnvironmentRows() {
+  const { getToken, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const cloudEnvironmentsState = useManagedRelayEnvironments();
+  const [connectingCloudEnvironmentId, setConnectingCloudEnvironmentId] = useState<string | null>(
+    null,
+  );
+  const iconColor = useThemeColor("--color-icon");
+  const availableCloudEnvironments = useMemo(
+    () =>
+      (cloudEnvironmentsState.data ?? []).filter(
+        (environment) => savedConnectionsById[environment.environmentId] === undefined,
+      ),
+    [cloudEnvironmentsState.data, savedConnectionsById],
+  );
+
+  const handleConnectCloudEnvironment = useCallback(
+    async (environment: RelayClientEnvironmentRecord) => {
+      setConnectingCloudEnvironmentId(environment.environmentId);
+      try {
+        const token = await getToken(RELAY_CLERK_TOKEN_OPTIONS);
+        if (!token) {
+          throw new Error("Sign in to T3 Cloud before connecting.");
+        }
+        await mobileRuntime.runPromise(
+          connectCloudEnvironment({
+            clerkToken: token,
+            environment,
+          }).pipe(Effect.flatMap(connectSavedEnvironment)),
+        );
+      } catch (error) {
+        Alert.alert(
+          "Connect failed",
+          error instanceof Error ? error.message : "Could not connect to this environment.",
+        );
+      } finally {
+        setConnectingCloudEnvironmentId(null);
+      }
+    },
+    [getToken],
+  );
+
+  if (!isSignedIn) return null;
+
+  return (
+    <View collapsable={false} className="mt-5 gap-3">
+      <View className="flex-row items-center justify-between px-1">
+        <Text className="text-[13px] font-t3-bold uppercase text-foreground-muted">T3 Cloud</Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={cloudEnvironmentsState.isPending}
+          onPress={cloudEnvironmentsState.refresh}
+          className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-50"
+        >
+          {cloudEnvironmentsState.isPending ? (
+            <ActivityIndicator color={iconColor} size="small" />
+          ) : (
+            <SymbolView name="arrow.clockwise" size={14} tintColor={iconColor} type="monochrome" />
+          )}
+        </Pressable>
+      </View>
+
+      {availableCloudEnvironments.length > 0 ? (
+        <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
+          {availableCloudEnvironments.map((environment, index) => (
+            <CloudEnvironmentRow
+              key={environment.environmentId}
+              environment={environment}
+              borderTop={index !== 0}
+              isConnecting={connectingCloudEnvironmentId === environment.environmentId}
+              onConnect={() => handleConnectCloudEnvironment(environment)}
+            />
+          ))}
+        </View>
+      ) : cloudEnvironmentsState.data === null ? (
+        <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card p-6">
+          <ActivityIndicator color={iconColor} />
+          <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+            Loading linked cloud environments.
+          </Text>
+        </View>
+      ) : cloudEnvironmentsState.error ? (
+        <View collapsable={false} className="gap-3 rounded-[24px] bg-card p-5">
+          <Text className="text-[15px] font-t3-bold text-foreground">
+            Could not load T3 Cloud environments
+          </Text>
+          <Text className="text-[13px] leading-[18px] text-foreground-muted">
+            {cloudEnvironmentsState.error}
+          </Text>
+        </View>
+      ) : (
+        <View collapsable={false} className="rounded-[24px] bg-card p-5">
+          <Text className="text-[14px] leading-[20px] text-foreground-muted">
+            No additional linked cloud environments.
+          </Text>
+        </View>
+      )}
     </View>
   );
 }

@@ -128,12 +128,9 @@ import {
 } from "~/cloud/managedRelayState";
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { webRuntime } from "~/lib/runtime";
+import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-
-function hasCloudConfig(): boolean {
-  return Boolean(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
-}
 
 const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1704,24 +1701,10 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 }
 
 function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  return hasCloudConfig() ? (
-    <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />
-  ) : (
-    <SettingsRow
-      title="T3 Cloud"
-      description="Make this environment available to your other devices through T3 Cloud."
-      control={
-        <CloudLinkSwitch
-          checked={false}
-          disabled
-          disabledReason="T3 Cloud is not configured in this build."
-        />
-      }
-    />
-  );
+  return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
 }
 
-function EmptyRemoteEnvironments() {
+function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   return (
     <Empty className="min-h-52">
       <EmptyMedia variant="icon">
@@ -1730,8 +1713,9 @@ function EmptyRemoteEnvironments() {
       <EmptyHeader>
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
-          Click &ldquo;Add environment&rdquo; to pair another environment, or connect one from T3
-          Cloud.
+          {cloudEnabled
+            ? "Click “Add environment” to pair another environment, or connect one from T3 Cloud."
+            : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1840,13 +1824,13 @@ function CloudRemoteEnvironmentRows({
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
-  return hasCloudConfig() ? (
+  return hasCloudPublicConfig() ? (
     <ConfiguredCloudRemoteEnvironmentRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironmentIds={savedEnvironmentIds}
     />
   ) : savedEnvironmentIds.length === 0 ? (
-    <EmptyRemoteEnvironments />
+    <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
 

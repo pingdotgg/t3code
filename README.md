@@ -62,10 +62,9 @@ mise install
 vp install
 ```
 
-T3 Cloud public client configuration has checked-in development defaults, so a fresh clone works
-without creating app-local `.env` files. To point web, desktop, and mobile at another Clerk/relay
-deployment, copy [`.env.example`](./.env.example) to `.env` at the repository root and set the
-canonical overrides there.
+T3 Cloud is optional and disabled in a fresh clone. To enable it for web, desktop, and mobile source
+builds, copy [`.env.example`](./.env.example) to `.env` at the repository root and set the canonical
+public configuration there.
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
