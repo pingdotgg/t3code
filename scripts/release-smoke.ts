@@ -24,6 +24,10 @@ const workspaceFiles = [
   "apps/server/package.json",
   "apps/desktop/package.json",
   "apps/web/package.json",
+  "apps/mobile/package.json",
+  "apps/mobile/deps/react-native-nitro-markdown-0.5.0.tgz",
+  "apps/mobile/modules/t3-review-diff/package.json",
+  "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
@@ -44,15 +48,9 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     cpSync(sourcePath, destinationPath);
   }
 
-  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
-    readonly patchedDependencies?: Record<string, string>;
-  };
-
-  for (const relativePath of Object.values(packageJson.patchedDependencies ?? {})) {
-    const sourcePath = resolve(repoRoot, relativePath);
-    const destinationPath = resolve(targetRoot, relativePath);
-    mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+  const patchesDirectory = resolve(repoRoot, "patches");
+  if (existsSync(patchesDirectory)) {
+    cpSync(patchesDirectory, resolve(targetRoot, "patches"), { recursive: true });
   }
 }
 
