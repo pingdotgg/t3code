@@ -98,7 +98,7 @@ function Command({
 function CommandInput({
   className,
   wrapperClassName,
-  placeholder = undefined,
+  placeholder,
   ...props
 }: React.ComponentProps<typeof AutocompleteInput> & {
   wrapperClassName?: string | undefined;

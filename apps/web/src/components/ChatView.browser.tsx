@@ -29,8 +29,17 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { page } from "vitest/browser";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vite-plus/test/browser";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";

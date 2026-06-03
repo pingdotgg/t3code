@@ -1,7 +1,7 @@
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {

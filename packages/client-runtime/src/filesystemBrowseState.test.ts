@@ -1,4 +1,4 @@
-import { assert, beforeEach, it } from "vitest";
+import { assert, beforeEach, it } from "vite-plus/test";
 import type { FilesystemBrowseResult } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 

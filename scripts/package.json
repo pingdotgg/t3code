@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
@@ -16,6 +16,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   }
 }

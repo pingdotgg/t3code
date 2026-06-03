@@ -1,9 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
 import * as NodeHttp from "node:http";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

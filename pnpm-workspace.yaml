@@ -1,0 +1,62 @@
+packages:
+  - "apps/*"
+  - "oxlint-plugin-t3code"
+  - "packages/*"
+  - "scripts"
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - msgpackr-extract
+  - node-pty
+  - sharp
+
+ignoredBuiltDependencies:
+  - msw
+
+catalog:
+  effect: 4.0.0-beta.73
+  "@effect/atom-react": 4.0.0-beta.73
+  "@effect/openapi-generator": 4.0.0-beta.73
+  "@effect/platform-bun": 4.0.0-beta.73
+  "@effect/platform-node": 4.0.0-beta.73
+  "@effect/platform-node-shared": 4.0.0-beta.73
+  "@effect/sql-sqlite-bun": 4.0.0-beta.73
+  "@effect/vitest": 4.0.0-beta.73
+  "@effect/tsgo": 0.11.4
+  "@pierre/diffs": 1.1.20
+  "@vitest/runner": ^4.1.8
+  "@types/bun": ^1.3.11
+  "@types/node": 24.12.4
+  "@typescript/native-preview": 7.0.0-dev.20260527.2
+  typescript: ~6.0.3
+  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vite-plus: latest
+  yaml: ^2.9.0
+overrides:
+  "@effect/atom-react": "catalog:"
+  "@effect/platform-bun": "catalog:"
+  "@effect/platform-node": "catalog:"
+  "@effect/platform-node-shared": "catalog:"
+  "@effect/sql-sqlite-bun": "catalog:"
+  "@effect/vitest": "catalog:"
+  "@types/node": "catalog:"
+  effect: "catalog:"
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      "@vitest/runner": "catalog:"
+patchedDependencies:
+  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
+  effect@4.0.0-beta.73: patches/effect@4.0.0-beta.73.patch
+  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

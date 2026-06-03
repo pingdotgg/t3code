@@ -52,7 +52,7 @@ export function PullRequestThreadDialog({
     { wait: 450 },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
-  const { data: gitStatus = null } = useVcsStatus({ environmentId, cwd });
+  const { data: gitStatus } = useVcsStatus({ environmentId, cwd });
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
     [gitStatus?.sourceControlProvider],

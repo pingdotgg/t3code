@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 
 import { ProcessRunner, ProcessSpawnError, type ProcessRunnerShape } from "../../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";

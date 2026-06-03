@@ -45,6 +45,9 @@ import {
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
+const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
+  CursorListAvailableModelsResponse,
+);
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -547,9 +550,7 @@ const discoverCursorModelsViaListAvailableModels = (
       Effect.gen(function* () {
         yield* acp.start();
         const response = yield* acp.request("cursor/list_available_models", {});
-        const decoded = yield* Schema.decodeUnknownEffect(CursorListAvailableModelsResponse)(
-          response,
-        );
+        const decoded = yield* decodeCursorListAvailableModelsResponse(response);
         return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
       }),
     environment,

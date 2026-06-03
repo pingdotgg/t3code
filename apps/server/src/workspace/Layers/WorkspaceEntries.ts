@@ -39,6 +39,7 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   ".next",
   ".turbo",
+  ".vite-plus",
   "dist",
   "build",
   "out",

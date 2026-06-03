@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
-import { expect } from "vitest";
+import { expect } from "vite-plus/test";
 
 import { ServerConfig } from "../config.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";

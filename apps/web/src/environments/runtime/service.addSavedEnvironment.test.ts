@@ -1,6 +1,6 @@
 import { EnvironmentAuthInvalidError, EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const decodeEnvironmentAuthInvalidError = Schema.decodeUnknownSync(EnvironmentAuthInvalidError);
 

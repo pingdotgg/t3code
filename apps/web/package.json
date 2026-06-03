@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test": "vp test run --passWithNoTests --project unit",
+    "test:browser": "vp test run --project browser",
     "test:browser:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
@@ -52,12 +52,12 @@
     "@types/react-dom": "~19.2.3",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.0.0",
-    "@vitest/browser-playwright": "catalog:",
     "babel-plugin-react-compiler": "1.0.0",
     "msw": "2.12.11",
     "playwright": "^1.58.2",
     "tailwindcss": "^4.0.0",
-    "vite": "^8.0.0",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:",
     "vitest-browser-react": "^2.0.5"
   }

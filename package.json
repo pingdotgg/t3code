@@ -19,38 +19,40 @@
       "@effect/vitest": "4.0.0-beta.73",
       "@effect/tsgo": "0.11.4",
       "@pierre/diffs": "1.1.20",
+      "@vitest/runner": "^4.1.8",
       "@types/bun": "^1.3.11",
-      "@types/node": "^24.10.13",
+      "@types/node": "24.12.4",
       "@typescript/native-preview": "7.0.0-dev.20260527.2",
-      "tsdown": "^0.20.3",
       "typescript": "~6.0.3",
-      "@vitest/browser-playwright": "4.1.0",
-      "vitest": "4.1.0"
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest",
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vite-plus": "latest",
+      "yaml": "^2.9.0"
     }
   },
   "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch",
+    "prepare": "vp config && effect-tsgo patch",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
-    "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
+    "dev:marketing": "vp run --filter @t3tools/marketing dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
-    "start": "turbo run start --filter=t3",
-    "start:desktop": "turbo run start --filter=@t3tools/desktop",
-    "start:marketing": "turbo run preview --filter=@t3tools/marketing",
+    "start": "vp run --filter t3 start",
+    "start:desktop": "vp run --filter @t3tools/desktop start",
+    "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
-    "build": "turbo run build",
-    "build:marketing": "turbo run build --filter=@t3tools/marketing",
-    "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
-    "typecheck": "turbo run typecheck",
-    "lint": "oxlint --disable-nested-config --report-unused-disable-directives",
+    "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
+    "build:marketing": "vp run --filter @t3tools/marketing build",
+    "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
+    "typecheck": "vp run -r --concurrency-limit 2 typecheck",
+    "lint": "vp lint --report-unused-disable-directives",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
-    "test": "turbo run test",
-    "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
-    "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check",
-    "build:contracts": "turbo run build --filter=@t3tools/contracts",
+    "test": "vp run -r test",
+    "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "build:contracts": "vp run --filter @t3tools/contracts build",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
@@ -60,7 +62,7 @@
     "dist:desktop:win:arm64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch arm64",
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
@@ -69,10 +71,11 @@
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
-    "oxfmt": "^0.40.0",
-    "oxlint": "^1.63.0",
-    "turbo": "^2.3.3",
-    "vitest": "catalog:"
+    "@vitest/runner": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   },
   "overrides": {
     "@effect/atom-react": "catalog:",
@@ -81,26 +84,23 @@
     "@effect/platform-node-shared": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
     "effect": "catalog:",
-    "vite": "^8.0.0"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   },
   "engines": {
-    "bun": "^1.3.11",
     "node": "^24.13.1"
   },
-  "packageManager": "bun@1.3.11",
+  "packageManager": "pnpm@10.24.0",
   "msw": {
     "workerDirectory": [
       "apps/web/public"
     ]
   },
   "patchedDependencies": {
-    "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
-    "react-native-nitro-modules@0.35.4": "patches/react-native-nitro-modules@0.35.4.patch",
-    "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch"
-  },
-  "trustedDependencies": [
-    "node-pty",
-    "electron"
-  ]
+    "@pierre/diffs@1.1.20@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+    "effect@4.0.0-beta.73@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+    "react-native-nitro-modules@0.35.9@0.35.9": "patches/react-native-nitro-modules@0.35.9.patch"
+  }
 }

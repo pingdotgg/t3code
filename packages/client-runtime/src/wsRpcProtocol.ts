@@ -200,11 +200,6 @@ export function createWsRpcProtocolLayer(
   const lifecycle = resolveLifecycleHandlers(handlers, options?.telemetryLifecycle);
   const backoff = options?.backoff ?? DEFAULT_RECONNECT_BACKOFF;
   const requestTelemetry = options?.requestTelemetry;
-  const instrumentRequests =
-    requestTelemetry?.onRequestSent !== undefined ||
-    requestTelemetry?.onRequestAcknowledged !== undefined ||
-    requestTelemetry?.onClearTrackedRequests !== undefined;
-
   const resolvedUrl =
     typeof url === "function"
       ? Effect.promise(() => url()).pipe(
@@ -238,6 +233,16 @@ export function createWsRpcProtocolLayer(
         },
         { once: true },
       );
+      socket.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as { readonly _tag?: string };
+          if (message._tag === "Pong") {
+            lifecycle.onHeartbeatPong();
+          }
+        } catch {
+          // Ignore malformed messages here; the Effect RPC parser still owns protocol errors.
+        }
+      });
       socket.addEventListener(
         "close",
         (event) => {
@@ -268,107 +273,47 @@ export function createWsRpcProtocolLayer(
   );
   const protocolLayer = Layer.effect(
     RpcClient.Protocol,
-    instrumentRequests
-      ? Effect.map(
-          RpcClient.makeProtocolSocket({
-            retryPolicy,
-            retryTransientErrors: true,
+    Effect.map(
+      RpcClient.makeProtocolSocket({
+        retryPolicy,
+        retryTransientErrors: true,
+      }),
+      (protocol) => ({
+        ...protocol,
+        run: (clientId, writeResponse) =>
+          protocol.run(clientId, (response) => {
+            if (response._tag === "Chunk" || response._tag === "Exit") {
+              requestTelemetry?.onRequestAcknowledged?.(response.requestId);
+            } else if (response._tag === "ClientProtocolError" || response._tag === "Defect") {
+              requestTelemetry?.onClearTrackedRequests?.();
+            }
+            return writeResponse(response);
           }),
-          (protocol) => ({
-            ...protocol,
-            run: (clientId, writeResponse) =>
-              protocol.run(clientId, (response) => {
-                if (response._tag === "Chunk" || response._tag === "Exit") {
-                  requestTelemetry?.onRequestAcknowledged?.(response.requestId);
-                } else if (response._tag === "ClientProtocolError" || response._tag === "Defect") {
-                  requestTelemetry?.onClearTrackedRequests?.();
-                }
-                return writeResponse(response);
-              }),
-            send: (clientId, request, transferables) => {
-              if (request._tag === "Request") {
-                requestTelemetry?.onRequestSent?.(request.id, request.tag);
-              }
-              return protocol.send(clientId, request, transferables);
-            },
-          }),
-        )
-      : RpcClient.makeProtocolSocket({
-          retryPolicy,
-          retryTransientErrors: true,
-        }),
-  );
-  const requestHooksLayer = Layer.succeed(
-    RpcClient.RequestHooks,
-    RpcClient.RequestHooks.of({
-      onRequestStart: (info) =>
-        Effect.sync(() => {
-          if (!lifecycle.isActive()) {
-            return;
+        send: (clientId, request, transferables) => {
+          if (request._tag === "Request") {
+            requestTelemetry?.onRequestSent?.(request.id, request.tag);
+            if (lifecycle.isActive()) {
+              handlers?.onRequestStart?.({
+                id: request.id,
+                tag: request.tag,
+                stream: false,
+              });
+            }
           }
-          handlers?.onRequestStart?.({
-            id: String(info.id),
-            tag: info.tag,
-            stream: info.stream,
-          });
-        }),
-      onRequestChunk: (info) =>
-        Effect.sync(() => {
-          if (!lifecycle.isActive()) {
-            return;
-          }
-          handlers?.onRequestChunk?.({
-            id: String(info.id),
-            tag: info.tag,
-            chunkCount: info.chunkCount,
-          });
-        }),
-      onRequestExit: (info) =>
-        Effect.sync(() => {
-          if (!lifecycle.isActive()) {
-            return;
-          }
-          handlers?.onRequestExit?.({
-            id: String(info.id),
-            tag: info.tag,
-            stream: info.stream,
-          });
-        }),
-      onRequestInterrupt: (info) =>
-        Effect.sync(() => {
-          if (!lifecycle.isActive()) {
-            return;
-          }
-          handlers?.onRequestInterrupt?.({
-            id: String(info.id),
-            ...(info.tag === undefined ? {} : { tag: info.tag }),
-          });
-        }),
-    }),
+          return protocol.send(clientId, request, transferables);
+        },
+      }),
+    ),
   );
   const connectionHooksLayer = Layer.succeed(
     RpcClient.ConnectionHooks,
     RpcClient.ConnectionHooks.of({
       onConnect: Effect.void,
       onDisconnect: Effect.void,
-      onPing: Effect.sync(() => {
-        lifecycle.onHeartbeatPing();
-      }),
-      onPong: Effect.sync(() => {
-        lifecycle.onHeartbeatPong();
-      }),
-      onPingTimeout: Effect.sync(() => {
-        requestTelemetry?.onClearTrackedRequests?.();
-        lifecycle.onHeartbeatTimeout();
-      }),
     }),
   );
 
-  return Layer.mergeAll(
-    protocolLayer.pipe(
-      Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
-    ),
-    requestHooksLayer,
-    connectionHooksLayer,
+  return protocolLayer.pipe(
+    Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
   );
 }

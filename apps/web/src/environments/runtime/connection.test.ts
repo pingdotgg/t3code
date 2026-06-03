@@ -1,5 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createEnvironmentConnection } from "./connection";
 import type { WsRpcClient } from "@t3tools/client-runtime";

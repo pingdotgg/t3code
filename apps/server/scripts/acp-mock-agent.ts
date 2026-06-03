@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
 import { appendFileSync } from "node:fs";
 

@@ -1057,7 +1057,7 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useVcsStatus({
+  const { data: gitStatus, error: gitStatusError } = useVcsStatus({
     environmentId: activeEnvironmentId,
     cwd: gitCwd,
   });

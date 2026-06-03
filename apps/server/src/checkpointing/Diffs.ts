@@ -1,4 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs";
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 
 export interface TurnDiffFileSummary {
   readonly path: string;

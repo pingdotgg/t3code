@@ -1,4 +1,4 @@
-import { assert, it } from "vitest";
+import { assert, it } from "vite-plus/test";
 
 import {
   getReviewAsyncStateSnapshot,

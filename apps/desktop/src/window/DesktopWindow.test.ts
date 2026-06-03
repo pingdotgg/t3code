@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";

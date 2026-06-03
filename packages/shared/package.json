@@ -114,7 +114,7 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
@@ -124,6 +124,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   }
 }

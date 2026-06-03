@@ -55,7 +55,7 @@ Before local development, prepare the environment and install dependencies:
 ```bash
 # Optional: only needed if you use mise for dev tool management.
 mise install
-bun install .
+vp install
 ```
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.

@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 const SHARED_THREAD_ID = ThreadId.make("thread-shared");

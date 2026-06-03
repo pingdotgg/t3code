@@ -5,13 +5,11 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
-    "dev:bundle": "tsdown --watch",
-    "dev:electron": "node scripts/dev-electron.mjs",
-    "build": "tsdown",
+    "build": "vp pack",
+    "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
@@ -28,7 +26,8 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "tsdown": "catalog:",
+    "cross-env": "^10.1.0",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "productName": "T3 Code (Alpha)"

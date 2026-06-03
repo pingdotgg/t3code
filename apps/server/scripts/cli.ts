@@ -17,8 +17,8 @@ import {
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
+import { parse as parseYaml } from "yaml";
 
 interface PackageJson {
   name: string;
@@ -39,6 +39,11 @@ interface PackageJson {
 const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
 const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
+interface WorkspaceConfig {
+  readonly catalog?: Record<string, string>;
+  readonly overrides?: Record<string, string>;
+}
+
 class CliError extends Data.TaggedError("CliError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -47,6 +52,14 @@ class CliError extends Data.TaggedError("CliError")<{
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
 );
+
+const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const repoRoot = yield* RepoRoot;
+  const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
+  return parseYaml(workspaceYaml) as WorkspaceConfig;
+});
 
 const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -215,6 +228,9 @@ const publishCmd = Command.make(
         // Acquire: backup package.json, resolve catalog dependencies, and strip devDependencies/scripts
         Effect.gen(function* () {
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+          const workspaceConfig = yield* readWorkspaceConfig();
+          const workspaceCatalog = workspaceConfig.catalog ?? {};
+          const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
             name: serverPackageJson.name,
             repository: serverPackageJson.repository,
@@ -225,12 +241,12 @@ const publishCmd = Command.make(
             files: serverPackageJson.files,
             dependencies: resolveCatalogDependencies(
               serverPackageJson.dependencies,
-              rootPackageJson.workspaces.catalog,
+              workspaceCatalog,
               "apps/server",
             ),
             overrides: resolveCatalogDependencies(
-              rootPackageJson.overrides,
-              rootPackageJson.workspaces.catalog,
+              workspaceOverrides,
+              workspaceCatalog,
               "apps/server",
             ),
           };

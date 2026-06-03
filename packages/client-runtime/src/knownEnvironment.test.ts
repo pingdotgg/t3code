@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { createKnownEnvironment, getKnownEnvironmentHttpBaseUrl } from "./knownEnvironment.ts";
 import {

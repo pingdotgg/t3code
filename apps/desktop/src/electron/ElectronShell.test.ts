@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 
 const { openExternalMock, writeTextMock } = vi.hoisted(() => ({
   openExternalMock: vi.fn(),

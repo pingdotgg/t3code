@@ -85,26 +85,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
       - name: Ensure Electron runtime is installed
-        run: |
-          if ! node -e "require('./apps/desktop/node_modules/electron')" >/dev/null 2>&1; then
-            rm -rf apps/desktop/node_modules/electron/dist apps/desktop/node_modules/electron/path.txt
-            bun apps/desktop/node_modules/electron/install.js
-          fi
-          node -e "require('./apps/desktop/node_modules/electron')"
+        run: vp run --filter @t3tools/desktop ensure:electron
 
       - id: release_meta
         name: Resolve release version
@@ -160,14 +152,14 @@ jobs:
             fi
           fi
 
-      - name: Lint
-        run: bun run lint
+      - name: Check
+        run: vp check
 
       - name: Typecheck
-        run: bun run typecheck
+        run: vp run typecheck
 
       - name: Test
-        run: bun run test
+        run: vp run test
 
       - id: previous_tag
         name: Resolve previous release tag
@@ -219,18 +211,15 @@ jobs:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -390,7 +379,7 @@ jobs:
             echo "Signing disabled for ${{ matrix.platform }}."
           fi
 
-          bun run dist:desktop:artifact -- "${args[@]}"
+          vp run dist:desktop:artifact -- "${args[@]}"
 
       - name: Collect release assets
         shell: bash
@@ -452,28 +441,29 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          bun-version-file: package.json
+          node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: package.json
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
+        run: vp install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
       - name: Build web package
-        run: bun --filter=@t3tools/web run build
+        run: vp run --filter @t3tools/web build
 
       - name: Build CLI package
-        run: bun --filter=t3 run build
+        run: vp run --filter t3 build
 
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
@@ -498,18 +488,15 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: vp install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -619,24 +606,21 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install release tooling dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts --filter=@t3tools/web
+        run: vp install --frozen-lockfile --filter=@t3tools/scripts --filter=@t3tools/web
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
       - name: Refresh release lockfile
-        run: bun install --lockfile-only --ignore-scripts
+        run: vp install --lockfile-only --ignore-scripts
 
       - name: Deploy and alias channel
         shell: bash
@@ -668,7 +652,7 @@ jobs:
 
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
-            bunx vercel@53.1.1 deploy \
+            vp dlx vercel@53.1.1 deploy \
               --prod \
               --skip-domain \
               --yes \
@@ -680,13 +664,13 @@ jobs:
           )"
 
           echo "Aliasing $deployment_url to $channel_domain."
-          bunx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
+          vp dlx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
             --token "$VERCEL_TOKEN" \
             "${vercel_scope_args[@]}"
 
           if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
             echo "Aliasing $deployment_url to router domain $router_domain."
-            bunx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
+            vp dlx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
               --token "$VERCEL_TOKEN" \
               "${vercel_scope_args[@]}"
           fi
@@ -724,18 +708,15 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: vp install --frozen-lockfile --filter=@t3tools/scripts
 
       - id: update_versions
         name: Update version strings
@@ -745,11 +726,11 @@ jobs:
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+        run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
-        run: bun install --lockfile-only --ignore-scripts
+        run: vp install --lockfile-only --ignore-scripts
 
       - name: Commit and push version bump
         if: steps.update_versions.outputs.changed == 'true'
@@ -757,7 +738,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -765,7 +746,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
 
@@ -786,18 +767,15 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+        run: vp install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'
