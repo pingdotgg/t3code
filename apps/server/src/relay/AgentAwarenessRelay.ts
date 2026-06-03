@@ -277,14 +277,14 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
     if (!publishAgentActivity) {
-      yield* Effect.logDebug("agent awareness relay publish skipped; publication disabled", {
+      yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
         threadId,
       });
       return;
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent awareness relay publish skipped; relay config missing", {
+      yield* Effect.logDebug("agent activity publish skipped; T3 Cloud config missing", {
         threadId,
       });
       return;
@@ -307,7 +307,7 @@ const make = Effect.gen(function* () {
           jti: yield* crypto.randomUUIDv4,
         });
 
-        yield* Effect.logInfo("agent awareness relay publishing thread", {
+        yield* Effect.logInfo("publishing agent activity for thread", {
           environmentId,
           threadId,
           projectId: input.projectId,
@@ -327,7 +327,7 @@ const make = Effect.gen(function* () {
           },
         });
 
-        yield* Effect.logInfo("agent awareness relay publish completed", {
+        yield* Effect.logInfo("agent activity publish completed", {
           environmentId,
           threadId,
           ok: response.ok,
@@ -348,7 +348,7 @@ const make = Effect.gen(function* () {
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (publishedStateByThread.get(threadId) === publishIdentity) {
-      yield* Effect.logDebug("agent awareness relay publish skipped; projected state unchanged", {
+      yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
         reason: snapshot.reason,
@@ -357,12 +357,12 @@ const make = Effect.gen(function* () {
     }
 
     if (snapshot.reason === "thread-not-found") {
-      yield* Effect.logDebug("agent awareness relay publishing tombstone; thread not found", {
+      yield* Effect.logDebug("publishing agent activity tombstone; thread not found", {
         environmentId,
         threadId,
       });
     } else if (snapshot.reason === "project-not-found") {
-      yield* Effect.logDebug("agent awareness relay publishing tombstone; project not found", {
+      yield* Effect.logDebug("publishing agent activity tombstone; project not found", {
         environmentId,
         threadId,
         projectId: snapshot.projectId,
@@ -384,7 +384,7 @@ const make = Effect.gen(function* () {
   const publishThread: AgentAwarenessRelayShape["publishThread"] = (threadId) =>
     publishThreadUnsafe(threadId).pipe(
       Effect.catchCause((cause) => {
-        return Effect.logWarning("agent awareness relay publish failed", {
+        return Effect.logWarning("agent activity publish failed", {
           threadId,
           cause: Cause.pretty(cause),
         });
@@ -397,12 +397,12 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
     if (!publishAgentActivity) {
-      yield* Effect.logDebug("agent awareness relay active snapshot skipped; publication disabled");
+      yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
       return false;
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent awareness relay active snapshot skipped; relay config missing");
+      yield* Effect.logDebug("agent activity snapshot skipped; T3 Cloud config missing");
       return false;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
@@ -413,10 +413,10 @@ const make = Effect.gen(function* () {
       threads: snapshot.threads,
     });
     if (activeThreadIds.length === 0) {
-      yield* Effect.logDebug("agent awareness relay active snapshot has no publishable threads");
+      yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return true;
     }
-    yield* Effect.logInfo("agent awareness relay publishing active snapshot", {
+    yield* Effect.logInfo("publishing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
     yield* Effect.forEach(activeThreadIds, publishThread, { concurrency: 4, discard: true });
@@ -440,9 +440,9 @@ const make = Effect.gen(function* () {
     function* () {
       const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
       if (!relayConfig) {
-        yield* Effect.logInfo("agent awareness relay standby; relay config missing");
+        yield* Effect.logInfo("agent activity publishing standby; T3 Cloud config missing");
       } else {
-        yield* Effect.logInfo("agent awareness relay enabled", {
+        yield* Effect.logInfo("agent activity publishing enabled", {
           relayUrl: relayConfig.url,
         });
       }
@@ -453,20 +453,20 @@ const make = Effect.gen(function* () {
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
           if (threadId === null) {
-            return Effect.logDebug("agent awareness relay ignored event without thread id", {
+            return Effect.logDebug("agent activity publishing ignored event without thread id", {
               eventType: event.type,
             });
           }
           if (!shouldPublishAgentAwarenessEvent(event)) {
             return Effect.logDebug(
-              "agent awareness relay ignored event without awareness changes",
+              "agent activity publishing ignored event without activity changes",
               {
                 eventType: event.type,
                 threadId,
               },
             );
           }
-          return Effect.logDebug("agent awareness relay queued thread publish", {
+          return Effect.logDebug("agent activity publishing queued thread publish", {
             eventType: event.type,
             threadId,
           }).pipe(Effect.andThen(worker.enqueue(threadId)));
