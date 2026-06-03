@@ -81,7 +81,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
   connector
     ? Scope.close(connector.scope, Exit.void).pipe(
         Effect.tap(() =>
-          Effect.logInfo("Cloudflare managed endpoint connector stopped", {
+          Effect.logInfo("Relay client stopped", {
             pid: Number(connector.child.pid),
           }),
         ),
@@ -126,7 +126,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
             return;
           }
 
-          yield* Effect.logWarning("Cloudflare managed endpoint connector exited; restarting", {
+          yield* Effect.logWarning("Relay client exited; restarting", {
             pid: Number(connector.child.pid),
             ...(Result.isSuccess(result)
               ? { exitCode: Number(result.success) }
@@ -138,9 +138,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
         }),
       );
     }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Cloudflare managed endpoint connector supervisor failed", { cause }),
-      ),
+      Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
@@ -177,7 +175,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
         providerKind: "cloudflare_tunnel",
         reason:
           executable.status === "unsupported"
-            ? `Managed relay client is unsupported on ${executable.platform}-${executable.arch}.`
+            ? `Relay client is unsupported on ${executable.platform}-${executable.arch}.`
             : "The relay client is not installed.",
         ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
         ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
@@ -201,13 +199,13 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
       .pipe(
         Effect.provideService(Scope.Scope, connectorScope),
         Effect.tap(() =>
-          Effect.logInfo("Cloudflare managed endpoint connector started", {
+          Effect.logInfo("Relay client started", {
             tunnelId: config.tunnelId,
             tunnelName: config.tunnelName,
           }),
         ),
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to start Cloudflare managed endpoint connector", {
+          Effect.logWarning("Failed to start relay client", {
             cause,
             tunnelId: config.tunnelId,
             tunnelName: config.tunnelName,
@@ -249,7 +247,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
     return {
       status: "failed",
       providerKind: "cloudflare_tunnel",
-      reason: "Cloudflare connector did not start.",
+      reason: "Relay client did not start.",
       ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
       ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
     } satisfies CloudManagedEndpointRuntimeStatus;
