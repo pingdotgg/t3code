@@ -17,7 +17,7 @@
     },
     "apps/desktop": {
       "name": "@t3tools/desktop",
-      "version": "0.0.24",
+      "version": "0.0.26",
       "dependencies": {
         "@effect/platform-node": "catalog:",
         "@t3tools/contracts": "workspace:*",
@@ -48,7 +48,7 @@
     },
     "apps/server": {
       "name": "salchi",
-      "version": "0.0.24",
+      "version": "0.0.26",
       "bin": {
         "salchi": "./dist/bin.mjs",
       },
@@ -81,7 +81,7 @@
     },
     "apps/web": {
       "name": "@t3tools/web",
-      "version": "0.0.24",
+      "version": "0.0.26",
       "dependencies": {
         "@base-ui/react": "^1.4.1",
         "@dnd-kit/core": "^6.3.1",
@@ -159,7 +159,7 @@
     },
     "packages/contracts": {
       "name": "@t3tools/contracts",
-      "version": "0.0.24",
+      "version": "0.0.26",
       "dependencies": {
         "effect": "catalog:",
       },

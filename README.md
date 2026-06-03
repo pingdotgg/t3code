@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/salchi/salchi-logo-transparent.png" alt="Salchi app icon" width="128" height="128" />
+  <img src="https://raw.githubusercontent.com/JoseRFelix/salchi/main/assets/salchi/salchi-icon-1024.png" alt="Salchi app icon" width="128" height="128" />
 </p>
 
 # Salchi
