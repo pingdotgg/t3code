@@ -19,9 +19,9 @@ import { Switch } from "../ui/switch";
 import { ScientificGraphRenderer } from "./ScientificGraphRenderer";
 
 const modes = [
-  { value: "compound_profile", label: "Compound profile" },
-  { value: "receptor_explorer", label: "Receptor explorer" },
-  { value: "stack_checker", label: "Stack checker" },
+  { value: "compound_profile", label: "Compound analysis" },
+  { value: "receptor_explorer", label: "Receptor analysis" },
+  { value: "stack_checker", label: "Interaction check" },
 ] satisfies ReadonlyArray<{ value: NeuropharmAnalysisMode; label: string }>;
 
 export function ResearchConsole() {
@@ -39,7 +39,7 @@ export function ResearchConsole() {
     try {
       const api = primaryEnvironmentId ? readEnvironmentApi(primaryEnvironmentId) : undefined;
       if (!api) {
-        throw new Error("Research API is not connected yet.");
+        throw new Error("Neuropharm database not connected.");
       }
       const analysis = await api.neuropharm.analyze({
         mode,
@@ -65,13 +65,13 @@ export function ResearchConsole() {
           onValueChange={(value) => setMode(value as NeuropharmAnalysisMode)}
           items={modes}
         >
-          <SelectTrigger className="w-48" aria-label="Analysis mode">
+          <SelectTrigger className="w-48" aria-label="Analysis type">
             <ActivityIcon className="size-3.5" />
             <SelectValue />
           </SelectTrigger>
           <SelectPopup>
             <SelectGroup>
-              <SelectGroupLabel>Analysis mode</SelectGroupLabel>
+              <SelectGroupLabel>Analysis type</SelectGroupLabel>
               {modes.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
                   {item.label}
@@ -86,15 +86,15 @@ export function ResearchConsole() {
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
             aria-label="Research query"
-            placeholder="Compound, receptor, pathway, or stack"
+            placeholder="Enter compound name or receptor (e.g., modafinil, DAT, 5-HT2A)"
           />
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Enables extrapolation with confidence labels">
           <Switch checked={powerUser} onCheckedChange={setPowerUser} />
-          Power user
+          Research mode
         </label>
         <Button type="button" onClick={runAnalysis} disabled={running || query.trim().length === 0}>
-          {running ? "Analyzing..." : "Run analysis"}
+          {running ? "Analyzing pharmacology..." : "Analyze"}
         </Button>
       </div>
 
@@ -121,7 +121,7 @@ export function ResearchConsole() {
             <div className="rounded-md border border-border/70 p-3">
               <div className="mb-2 flex items-center gap-1.5 font-medium">
                 <NetworkIcon className="size-3.5 text-emerald-600" />
-                Evidence graph
+                Evidence sources
               </div>
               <div className="text-muted-foreground">
                 {result.graphNodes.length} nodes, {result.graphEdges.length} edges,{" "}
@@ -131,7 +131,7 @@ export function ResearchConsole() {
             <div className="rounded-md border border-border/70 p-3">
               <div className="mb-2 flex items-center gap-1.5 font-medium">
                 <ShieldAlertIcon className="size-3.5 text-amber-600" />
-                Safety notices
+                Safety warnings
               </div>
               <ul className="space-y-1 text-muted-foreground">
                 {result.safetyNotices.map((notice) => (
@@ -143,7 +143,7 @@ export function ResearchConsole() {
               <div className="rounded-md border border-border/70 p-3">
                 <div className="mb-2 flex items-center gap-1.5 font-medium">
                   <FileTextIcon className="size-3.5 text-sky-600" />
-                  LaTeX report
+                  Export preview
                 </div>
                 <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground">
                   {result.latex.latex}
