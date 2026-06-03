@@ -1,6 +1,26 @@
 import { defineConfig } from "vite-plus";
 
+const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+
 export default defineConfig({
+  run: {
+    tasks: {
+      dev: {
+        command: "T3CODE_DESKTOP_DEV=1 vp pack --watch",
+        dependsOn: ["t3#build"],
+        cache: false,
+      },
+      "dev:bundle": {
+        command: "vp pack --watch",
+        cache: false,
+      },
+      "dev:electron": {
+        command: "node scripts/dev-electron.mjs",
+        dependsOn: ["t3#build"],
+        cache: false,
+      },
+    },
+  },
   pack: [
     {
       format: "cjs",
@@ -10,6 +30,7 @@ export default defineConfig({
       entry: ["src/main.ts"],
       clean: true,
       noExternal: (id) => id.startsWith("@t3tools/"),
+      ...(shouldLaunchElectronAfterPack ? { onSuccess: "node scripts/dev-electron.mjs" } : {}),
     },
     {
       format: "cjs",

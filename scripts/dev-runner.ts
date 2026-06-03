@@ -39,13 +39,17 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "dev", "--filter=t3"],
   "dev:web": ["run", "dev", "--filter=@t3tools/web"],
-  "dev:desktop": ["run", "dev", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "--parallel"],
+  "dev:desktop": ["run", "dev", "--filter=@t3tools/desktop", "--filter=@t3tools/web"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
 type PortAvailabilityCheck<R = never> = (port: number) => Effect.Effect<boolean, never, R>;
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
+
+export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
+  return MODE_ARGS[mode];
+}
 
 class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly message: string;

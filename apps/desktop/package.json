@@ -5,9 +5,6 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "dev:bundle": "vp pack --watch",
-    "dev:electron": "node scripts/dev-electron.mjs",
     "build": "vp pack",
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsgo --noEmit",
