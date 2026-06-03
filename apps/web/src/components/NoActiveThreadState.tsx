@@ -20,13 +20,13 @@ export function NoActiveThreadState() {
         >
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
-              No active analysis
+              Neuropharm Research
             </span>
           ) : (
             <div className="flex items-center gap-2">
               <SidebarTrigger className="size-7 shrink-0 md:hidden" />
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                No active analysis
+                Neuropharm Research
               </span>
             </div>
           )}
@@ -39,8 +39,9 @@ export function NoActiveThreadState() {
                 Neuropharm research workspace
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Build compound profiles, receptor maps, stack checks, evidence graphs, diagrams,
-                standardized figures, and LaTeX reports from local-first research evidence.
+                Analyze pharmacological compounds, receptor interactions, and cognitive effects
+                using curated databases from PubChem, ChEMBL, IUPHAR, and PubMed. Generate
+                evidence-based reports with standardized figures and confidence ratings.
               </EmptyDescription>
             </EmptyHeader>
             <div className="mt-6">
@@ -52,15 +53,11 @@ export function NoActiveThreadState() {
             <div className="mt-6">
               <DatabaseConsole />
             </div>
-            <div className="mt-6 grid gap-2 text-left text-xs text-muted-foreground sm:grid-cols-3">
-              <div className="rounded-md border border-border/60 bg-background/60 p-3">
-                Power-user mode can extrapolate, but unsupported claims stay labeled.
-              </div>
-              <div className="rounded-md border border-border/60 bg-background/60 p-3">
-                Concrete pharmacology claims should carry citations or low-confidence markers.
-              </div>
-              <div className="rounded-md border border-border/60 bg-background/60 p-3">
-                Research protocol ranges are not personalized medical instructions.
+            <div className="mt-6">
+              <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
+                Research mode: All pharmacological claims are labeled with evidence strength.
+                Unsupported extrapolations and low-confidence predictions are clearly marked. This
+                tool generates research summaries, not medical advice.
               </div>
             </div>
           </div>
