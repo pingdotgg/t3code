@@ -543,8 +543,23 @@ const makeAcpSessionRuntime = (
       setConfigOption,
       setModel: (model) =>
         getStartedState.pipe(
-          Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
-          Effect.asVoid,
+          Effect.flatMap((started) => {
+            if (started.modelConfigId) {
+              return setConfigOption(started.modelConfigId, model);
+            } else {
+              return runLoggedRequest(
+                "session/set_model",
+                {
+                  sessionId: started.sessionId,
+                  modelId: model,
+                },
+                acp.agent.setSessionModel({
+                  sessionId: started.sessionId,
+                  modelId: model,
+                }),
+              ).pipe(Effect.asVoid);
+            }
+          }),
         ),
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),

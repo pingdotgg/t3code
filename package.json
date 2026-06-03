@@ -64,6 +64,9 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
+  "dependencies": {
+    "@t3tools/monorepo": "."
+  },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@oxlint/plugins": "^1.63.0",

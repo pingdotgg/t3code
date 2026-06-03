@@ -618,16 +618,53 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
   const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-  const showHeader = hasOverflow || !onlyToolEntries;
+  const showHeader = true;
   const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
+
+  const copyText = useMemo(() => {
+    return groupedEntries
+      .map((entry) => {
+        const heading = toolWorkEntryHeading(entry);
+        const rawPreview = workEntryPreview(entry, workspaceRoot);
+        const preview =
+          rawPreview &&
+          normalizeCompactToolLabel(rawPreview).toLowerCase() ===
+            normalizeCompactToolLabel(heading).toLowerCase()
+            ? null
+            : rawPreview;
+        const mainText = preview ? `${heading} - ${preview}` : heading;
+
+        const rawCommand = workEntryRawCommand(entry);
+        const commandPart = rawCommand ? `\n  Command: ${rawCommand}` : "";
+
+        const detailPart =
+          entry.detail && entry.detail !== rawPreview ? `\n  Detail: ${entry.detail}` : "";
+
+        const fileList =
+          entry.changedFiles && entry.changedFiles.length > 0
+            ? `\n  Files:\n${entry.changedFiles.map((f) => `    - ${f}`).join("\n")}`
+            : "";
+        const prefix = entry.tone === "error" ? "❌ " : "";
+        return `- ${prefix}${mainText}${commandPart}${detailPart}${fileList}`;
+      })
+      .join("\n");
+  }, [groupedEntries, workspaceRoot]);
 
   return (
     <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
-            {groupLabel} ({groupedEntries.length})
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
+              {groupLabel} ({groupedEntries.length})
+            </p>
+            <MessageCopyButton
+              text={copyText}
+              size="icon-xs"
+              variant="ghost"
+              className="h-4 w-4 text-muted-foreground/45 hover:text-foreground/75"
+            />
+          </div>
           {hasOverflow && (
             <button
               type="button"
