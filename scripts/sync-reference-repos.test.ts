@@ -17,6 +17,7 @@ import {
 
 const encoder = new TextEncoder();
 const effectSmol = referenceRepos[0]!;
+const alchemyEffect = referenceRepos[1]!;
 
 function mockHandle() {
   return ChildProcessSpawner.makeHandle({
@@ -84,6 +85,23 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
     }),
   );
 
+  it.effect("resolves the alchemy-effect tag from the relay package", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const rootDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "sync-reference-repos-alchemy-version-",
+      });
+      yield* fs.makeDirectory(path.join(rootDir, "infra", "relay"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(rootDir, "infra", "relay", "package.json"),
+        '{"dependencies":{"alchemy":"2.0.0-beta.49"}}',
+      );
+
+      assert.equal(yield* resolveReferenceRepoRef(alchemyEffect, rootDir, false), "v2.0.0-beta.49");
+    }),
+  );
+
   it.effect("plans an add for a missing subtree and a pull for an existing subtree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -126,7 +144,9 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
         '{"workspaces":{"catalog":{"effect":"4.0.0-beta.73"}}}',
       );
 
-      yield* syncReferenceRepos({ rootDir }).pipe(Effect.provide(mockSpawnerLayer(commands)));
+      yield* syncReferenceRepos({ rootDir, repoId: "effect-smol" }).pipe(
+        Effect.provide(mockSpawnerLayer(commands)),
+      );
 
       assert.deepStrictEqual(commands, [
         {
@@ -153,7 +173,7 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
 
       assert.equal(
         error.message,
-        "Unknown reference repo 'missing'. Expected one of: effect-smol.",
+        "Unknown reference repo 'missing'. Expected one of: effect-smol, alchemy-effect.",
       );
     }),
   );

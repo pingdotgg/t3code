@@ -1,0 +1,99 @@
+{
+  "files": [],
+  "exclude": ["node_modules", "dist"],
+  "references": [
+    {
+      "path": "./tsconfig.scripts.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.bin.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.test.json"
+    },
+    {
+      "path": "./packages/better-auth/tsconfig.json"
+    },
+    {
+      "path": "./packages/pr-package/tsconfig.json"
+    },
+    // TODO(sam): fix by upgrading starlight to ^0.39.2
+    // {
+    //   "path": "./website/tsconfig.json"
+    // },
+    {
+      "path": "./examples/aws-ec2/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-ecs/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-eks/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda-httpapi/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-rest-api/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda-rpc/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-rds/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-static-site/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-vite/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-static-site/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-tanstack/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-worker/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-email/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-neon-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-planetscale-mysql-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-planetscale-postgres-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-secrets-store/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-worker-async/tsconfig.json"
+    },
+    {
+      "path": "./examples/monorepo-single-stack/tsconfig.json"
+    },
+    {
+      "path": "./examples/monorepo-multi-stack/tsconfig.json"
+    }
+  ],
+  "compilerOptions": {
+    "plugins": [
+      // ... other LSPs (if any) and as last
+      {
+        "name": "@effect/language-service"
+      }
+    ]
+  }
+}

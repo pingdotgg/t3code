@@ -1,0 +1,275 @@
+---
+title: Deploy a Lambda Function
+description: Stand up an AWS Lambda Function from a single Effect, expose it over a Function URL, and call it from a test.
+sidebar:
+  order: 1
+---
+
+In this part you'll stand up the smallest piece of compute AWS
+offers — a single **Lambda Function** with a public **Function
+URL** — and grow it across the rest of this section into S3,
+DynamoDB, SQS, and Kinesis.
+
+## Prerequisites
+
+- [Bun](https://bun.sh) (recommended) or Node.js 22+.
+- An AWS account with credentials available locally (an SSO
+  profile, `~/.aws/credentials`, or `AWS_*` environment variables).
+- The AWS profile you want to use exported as `AWS_PROFILE` (or
+  `default` will be used).
+
+## Create a project
+
+Start with an empty directory and install Alchemy and Effect:
+
+```sh
+mkdir my-app && cd my-app && bun init -y
+bun add alchemy@next effect @effect/platform-bun
+```
+
+## Create the Stack
+
+Every Alchemy app has an `alchemy.run.ts` at the root that
+declares the resources to deploy. Create one with the AWS
+providers wired in:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: AWS.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    return {};
+  }),
+);
+```
+
+`Alchemy.Stack` is the root of every app. The first argument
+(`"MyApp"`) doubles as a logical id and as the prefix Alchemy
+uses when AWS asks for physical resource names.
+
+`providers: AWS.providers()` registers every AWS resource and
+IAM policy binding that ships with Alchemy, and resolves
+credentials from the ambient `AWS_PROFILE` (defaulting to
+`default`).
+
+`state: Alchemy.localState()` stores deploy state under
+`.alchemy/` next to your code — good enough for local iteration;
+remote state for CI is covered later.
+
+The trailing `Effect.gen` block is where you'll declare the
+resources to deploy. It's empty for now.
+
+:::tip[Pinning a region or profile per stage]
+`AWS.providers()` reads `AWS_PROFILE` and `AWS_REGION` at deploy
+time. To pin a different profile or region per stage, wrap the
+layer with `Layer.provide(AWS.makeEnvironment({ profile, region }))`.
+:::
+
+## Declare a Lambda Function
+
+A Lambda Function in Alchemy is a class. Create `src/api.ts`
+with the smallest possible declaration — just the class
+ceremony, an entrypoint, and an empty runtime:
+
+```typescript
+// src/api.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The `<Api>` type argument plus the empty `()` is a one-time bit
+of ceremony — it lets TypeScript reason about `Api` as a typed
+handle that other resources can later bind against. The rest of
+your code looks completely normal.
+
+`main: import.meta.filename` tells Alchemy this same file is the
+bundle entrypoint. At deploy time it'll be bundled with Rolldown
+into a zip and uploaded as the function's code.
+
+## Serve HTTP from a Function URL
+
+The empty function compiles, but it doesn't do anything yet.
+Add a `fetch` field — Alchemy treats anything returned from the
+`Effect.gen` block as the runtime API, and `fetch` specifically
+is wired up to handle incoming HTTP requests:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
++    };
+  }),
+) {}
+```
+
+`HttpServerResponse.text(...)` is the same `effect/unstable/http`
+API used everywhere else — Alchemy adapts it to the Lambda event
+envelope under the hood, so your handler never sees the raw
+`APIGatewayProxyEvent` shape.
+
+## Expose a public URL
+
+`fetch` exists, but no one can call it yet. Set `url: true` on
+the props to ask AWS for a public **Function URL** — no API
+Gateway, no auth, just a public HTTPS endpoint:
+
+```diff lang="typescript"
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+-  { main: import.meta.filename },
++  { main: import.meta.filename, url: true },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+    };
+  }),
+) {}
+```
+
+The resolved `Api` resource will now expose a `functionUrl`
+field carrying that endpoint — we'll surface it from the Stack
+in a moment.
+
+## Customize per stage
+
+Lambda has knobs you'll want to tune per stage — memory,
+timeout, log retention. Swap the static props object for
+`Stack.useSync`, which gives you a synchronous accessor for any
+value in the surrounding Effect context:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "alchemy/AWS";
++import { Stack } from "alchemy/Stack";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+-  { main: import.meta.filename, url: true },
++  Stack.useSync((stack) => ({
++    main: import.meta.filename,
++    url: true,
++    memory: stack.stage === "prod" ? 1024 : 512,
++  })),
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+    };
+  }),
+) {}
+```
+
+`Stack.useSync` is the synchronous accessor for any value in the
+surrounding Effect context — handy for stack-level config like
+`stage`, `appName`, or anything else you'd want to vary per
+environment.
+
+## Wire the function into the Stack
+
+The `Api` class is just a typed identifier — yielding it inside
+the Stack's Effect is what registers the resource and starts the
+deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
++import Api from "./src/api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: AWS.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
++    const api = yield* Api;
++    return { url: api.functionUrl };
+-    return {};
+  }),
+);
+```
+
+Yielding `Api` returns the resolved Lambda outputs — the function
+ARN, role ARN, log group, and the public Function URL we asked
+for with `url: true`. We surface `functionUrl` as the Stack's
+`url` so the test harness can find it.
+
+## Deploy
+
+```sh
+bun alchemy deploy
+```
+
+Alchemy bundles `src/api.ts` with Rolldown, packages it into a
+zip, creates the IAM execution role, uploads the function, and
+provisions the Function URL. The first deploy takes a moment
+because of role propagation; subsequent deploys are seconds.
+
+## Verify
+
+Drop a quick integration test that hits the Function URL and
+checks the body:
+
+```typescript
+// test/integ.test.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: AWS.providers(),
+  state: Alchemy.localState(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
+test(
+  "Api responds over Function URL",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const response = yield* HttpClient.get(url);
+    expect(yield* response.text).toBe("Hello from Lambda!");
+  }),
+);
+```
+
+```sh
+bun test test/integ.test.ts
+```
+
+You now have a deployable Lambda with a public URL. Next we'll
+add an [S3 Bucket](/tutorial/aws/s3) and bind read/write
+operations into the function — IAM policies generated from the
+call sites, no policy JSON to hand-write.

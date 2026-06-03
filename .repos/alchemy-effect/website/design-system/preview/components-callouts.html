@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Callouts</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .box {
+        border: 1px solid;
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        display: flex;
+        gap: 10px;
+      }
+      .box .icon {
+        font-family: var(--alc-font-mono);
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .box .body {
+        font-family: var(--alc-font-sans);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--alc-fg-2);
+      }
+      .box strong {
+        color: var(--alc-fg-1);
+        font-weight: 600;
+      }
+      .tip {
+        border-color: rgba(92, 122, 62, 0.5);
+        background: rgba(92, 122, 62, 0.18);
+      }
+      .tip .icon {
+        color: var(--alc-accent-deep);
+      }
+      .note {
+        border-color: rgba(74, 122, 138, 0.5);
+        background: rgba(74, 122, 138, 0.18);
+      }
+      .note .icon {
+        color: var(--alc-info);
+      }
+      .warn {
+        border-color: rgba(179, 70, 46, 0.5);
+        background: rgba(179, 70, 46, 0.18);
+      }
+      .warn .icon {
+        color: var(--alc-danger);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="box tip">
+        <span class="icon">✓</span>
+        <span class="body"
+          ><strong>Tip.</strong> We recommend Bun for the best development
+          experience, but Node.js works too.</span
+        >
+      </div>
+      <div class="box note">
+        <span class="icon">i</span>
+        <span class="body"
+          ><strong>Note.</strong> By convention, Alchemy looks for
+          <code style="font-family: var(--alc-font-mono)">alchemy.run.ts</code>
+          at the root of your project.</span
+        >
+      </div>
+      <div class="box warn">
+        <span class="icon">!</span>
+        <span class="body"
+          ><strong>Alpha.</strong> alchemy is in alpha and not ready for
+          production use. Expect breaking changes.</span
+        >
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+---
+import { alchemyVersion } from "../../versions";
+---
+
+<div class="alc-beta-badge">
+  <span class="alc-beta-badge__dot"></span>
+  <span class="alc-beta-badge__label">BETA</span>
+  <span class="alc-beta-badge__sep">·</span>
+  v{alchemyVersion}
+</div>
+
+<style>
+  .alc-beta-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+    border: 1px solid var(--alc-terracotta-deep);
+    background: var(--alc-bg-elev-1);
+    font-family: var(--alc-font-mono);
+    font-size: 11.5px;
+    color: var(--alc-fg-3);
+    letter-spacing: 0.02em;
+  }
+  .alc-beta-badge__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--alc-terracotta);
+  }
+  .alc-beta-badge__label {
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--alc-terracotta-deep);
+  }
+  .alc-beta-badge__sep {
+    color: var(--alc-fg-4);
+  }
+</style>

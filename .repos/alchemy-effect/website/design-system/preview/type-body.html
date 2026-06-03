@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Body + mono</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+        margin-bottom: 14px;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-4);
+        width: 90px;
+        flex-shrink: 0;
+        padding-top: 3px;
+      }
+      .body-lg {
+        font-family: var(--alc-font-sans);
+        font-size: 18px;
+        line-height: 1.6;
+        color: var(--alc-fg-2);
+      }
+      .body {
+        font-family: var(--alc-font-sans);
+        font-size: 15px;
+        line-height: 1.6;
+        color: var(--alc-fg-2);
+      }
+      .small {
+        font-family: var(--alc-font-sans);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--alc-fg-3);
+      }
+      .mono {
+        font-family: var(--alc-font-mono);
+        font-size: 13px;
+        color: var(--alc-fg-1);
+      }
+      .eyebrow {
+        font-family: var(--alc-font-mono);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        font-weight: 500;
+        color: var(--alc-accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="label">eyebrow</div>
+        <div class="eyebrow">Getting Started</div>
+      </div>
+      <div class="row">
+        <div class="label">body-lg 18</div>
+        <div class="body-lg">
+          Your infrastructure and application logic in a single, type-safe
+          program.
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">body 15</div>
+        <div class="body">
+          Resources are declared as Effects and composed with
+          <code
+            style="
+              font-family: var(--alc-font-mono);
+              font-size: 13px;
+              color: var(--alc-fg-1);
+            "
+            >yield*</code
+          >.
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">small 13</div>
+        <div class="small">
+          New to Alchemy? Follow the hands-on tutorial from zero to CI/CD.
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">mono 13</div>
+        <div class="mono">bun alchemy deploy --stage prod</div>
+      </div>
+    </div>
+  </body>
+</html>

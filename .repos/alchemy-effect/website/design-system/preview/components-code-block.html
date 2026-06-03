@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Code block</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .wrap {
+        background: var(--alc-bg-code);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: var(--alc-shadow);
+      }
+      .head {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 14px;
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-code-comment);
+        border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+      }
+      .pre {
+        font-family: var(--alc-font-mono);
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--alc-code-var);
+        padding: 14px 18px;
+        margin: 0;
+      }
+      .k {
+        color: var(--alc-code-keyword);
+      }
+      .s {
+        color: var(--alc-code-string);
+      }
+      .f {
+        color: var(--alc-code-fn);
+      }
+      .t {
+        color: var(--alc-code-type);
+      }
+      .c {
+        color: var(--alc-code-comment);
+        font-style: italic;
+      }
+      .add {
+        background: rgba(143, 177, 94, 0.18);
+        display: block;
+        padding: 0 18px;
+        margin: 0 -18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="wrap">
+        <div class="head">
+          <span>alchemy.run.ts</span><span>typescript</span>
+        </div>
+        <pre
+          class="pre"
+        ><span class="k">import</span> * <span class="k">as</span> Alchemy <span class="k">from</span> <span class="s">"alchemy"</span>;
+<span class="k">import</span> * <span class="k">as</span> Cloudflare <span class="k">from</span> <span class="s">"alchemy/Cloudflare"</span>;
+
+<span class="k">export default</span> Alchemy.<span class="f">Stack</span>(<span class="s">"MyApp"</span>, {
+<span class="add">  providers: Cloudflare.<span class="f">providers</span>(),</span>
+}, Effect.<span class="f">gen</span>(<span class="k">function</span>* () {
+  <span class="k">const</span> bucket = <span class="k">yield</span>* Cloudflare.<span class="f">R2Bucket</span>(<span class="s">"Bucket"</span>);
+}));</pre>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,137 @@
+name: Deploy Website
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "website/**"
+      - "packages/alchemy/**"
+      - "bun.lock"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+    paths:
+      - "website/**"
+      - "packages/alchemy/**"
+      - "bun.lock"
+      - ".github/workflows/deploy.yml"
+
+concurrency:
+  group: deploy-website-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: ${{ github.event_name == 'pull_request' && format('pr-{0}',
+    github.event.number) || (github.ref == 'refs/heads/main' && 'prod' ||
+    github.ref_name) }}
+
+jobs:
+  deploy:
+    if: ${{ github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Mint a token for the alchemy-version-bot GitHub App so the PR
+      # preview comment (created via GitHub.Comment in alchemy.run.ts)
+      # posts under the bot's identity instead of `github-actions[bot]`.
+      # Same App as release.yml — its installation scopes already cover
+      # PR comments.
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install
+
+      # Build the website ahead of `alchemy deploy`. The
+      # Cloudflare.StaticSite resource declares the same `bun run build`
+      # in its config and runs it as part of the create lifecycle, but
+      # on update plans alchemy reads `dist/` during plan.diff before
+      # the embedded Build resource gets a chance to (re)run, causing
+      # a NotFound on a fresh CI checkout. Building here makes the
+      # workflow correct under both create and update plans.
+      - name: Build website
+        working-directory: website
+        run: bun run build
+
+      - name: Deploy
+        working-directory: website
+        run: bun alchemy deploy --stage ${{ env.STAGE }} --yes
+        env:
+          # Alchemy's Cloudflare auth provider accepts either a scoped
+          # API token (CLOUDFLARE_API_TOKEN) or the legacy global API
+          # key paired with email (CLOUDFLARE_API_KEY +
+          # CLOUDFLARE_EMAIL). We use the latter here so CI matches
+          # the credentials in Doppler / .env, where only the admin
+          # global key is provisioned.
+          CLOUDFLARE_API_KEY: ${{ secrets.ADMIN_CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.ADMIN_CLOUDFLARE_EMAIL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.STAGE == 'prod' &&
+            secrets.PROD_CLOUDFLARE_ACCOUNT_ID ||
+            secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+          PULL_REQUEST: ${{ github.event.number }}
+          # On `pull_request` events GitHub Actions' built-in
+          # `GITHUB_SHA` is the synthetic merge commit (PR head merged
+          # into base) — that SHA never shows up in the PR's git log.
+          # `GITHUB_SHA` is also a reserved env var, so a step-level
+          # override is silently ignored. Pass the PR head SHA under
+          # a non-reserved name and read it from alchemy.run.ts.
+          BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if:
+      ${{ github.event_name == 'pull_request' && github.event.action == 'closed'
+      }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Safety Check
+        run: |-
+          if [ "${{ env.STAGE }}" = "prod" ]; then
+            echo "ERROR: Cannot destroy prod environment in cleanup job"
+            exit 1
+          fi
+
+      - name: Destroy Preview Environment
+        working-directory: website
+        run: bun alchemy destroy --stage ${{ env.STAGE }} --yes
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.ADMIN_CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.ADMIN_CLOUDFLARE_EMAIL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+          PULL_REQUEST: ${{ github.event.number }}
+          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}

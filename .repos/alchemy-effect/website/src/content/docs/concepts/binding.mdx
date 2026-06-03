@@ -1,0 +1,249 @@
+---
+title: Binding
+description: A binding connects a resource to a Worker or Lambda. It generates IAM policies, env vars, and a typed SDK in one call.
+sidebar:
+  order: 7
+---
+
+A **Binding** connects a [Resource](/concepts/resource) to a
+[Platform](/concepts/platform) — a Worker, a Lambda Function, a
+Container. One `bind()` call generates the IAM policies, the
+environment variables, **and** the typed SDK wrapper your handler
+uses. You don't write any of that by hand.
+
+This page covers the mechanics. For the bigger picture of how
+bindings fit into a Platform's runtime, see
+[Platform › Bindings in action](/concepts/platform#bindings-in-action).
+
+## A binding in one line
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+
+// later, in fetch:
+yield* bucket.put("hello.txt", "world");
+```
+
+`bucket` here is the resource itself, presented as a typed client.
+There is no `env.BUCKET`, no `BUCKET_NAME` lookup — the binding **is**
+the SDK.
+
+## Effect style vs async style
+
+Bindings work in both handler styles a Platform supports. Pick
+whichever your Worker / Lambda is using.
+
+**Effect style** — `bind()` inside the init Effect, returns a typed
+handle:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    return {
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("key");
+        // ...
+      }),
+    };
+  }),
+);
+```
+
+**Async style** — declare bindings on the resource's `env` prop,
+type the env with `InferEnv`:
+
+```typescript
+// alchemy.run.ts
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket, KV },
+});
+
+// src/worker.ts
+export default {
+  async fetch(request: Request, env: WorkerEnv) {
+    const obj = await env.Bucket.get("key");
+    // ...
+  },
+};
+```
+
+The rest of this page walks through the Effect style; the same
+deploy-time mechanics apply to both.
+
+## What `.bind()` does at deploy time
+
+Each call records three things on the platform's plan:
+
+1. **Permissions** — IAM (AWS) or Worker bindings (Cloudflare)
+2. **Environment / configuration** — physical names, ARNs, URLs
+3. **A typed SDK wrapper** — bundled into the handler
+
+### Automatic IAM (AWS)
+
+Each binding maps to specific IAM actions on the exact resource
+ARNs. Alchemy generates **least-privilege** policies — `Resource:
+"*"` is only used when the API genuinely doesn't support
+resource-level scoping.
+
+| Binding                        | IAM Actions        | Resource                     |
+| ------------------------------ | ------------------ | ---------------------------- |
+| `S3.GetObject.bind(bucket)`    | `s3:GetObject`     | `arn:aws:s3:::bucket-name/*` |
+| `S3.PutObject.bind(bucket)`    | `s3:PutObject`     | `arn:aws:s3:::bucket-name/*` |
+| `SQS.SendMessage.bind(queue)`  | `sqs:SendMessage`  | Queue ARN                    |
+| `DynamoDB.GetItem.bind(table)` | `dynamodb:GetItem` | Table ARN                    |
+| `DynamoDB.PutItem.bind(table)` | `dynamodb:PutItem` | Table ARN                    |
+
+Multi-resource bindings enumerate every ARN they touch:
+
+```typescript
+const get = yield* DynamoDB.GetItem.bind(JobsTable, AuditTable);
+// → policy enumerates both table ARNs explicitly
+```
+
+### Automatic environment variables
+
+Bindings inject the env vars the SDK wrapper needs — `BUCKET_NAME`,
+`QUEUE_URL`, `TABLE_ARN`, etc. You don't read these yourself; the
+typed wrapper takes care of it.
+
+## Cloudflare bindings
+
+On Cloudflare, the same call attaches a native Worker binding (R2,
+KV, D1, Durable Object…) instead of an IAM policy:
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+const kv = yield* Cloudflare.KVNamespace.bind(Sessions);
+```
+
+The runtime API is identical to the AWS counterpart — code that
+consumes one consumes the other.
+
+## Event sources
+
+An **event source** is a binding that triggers your function when
+something happens on a resource. It hands you the records as an
+Effect `Stream`, so the whole event loop becomes a value you can map,
+filter, batch, and pipe:
+
+```typescript
+yield* SQS.messages(InboundQueue).subscribe((records) =>
+  records.pipe(
+    Stream.map((r) => r.body),
+    Stream.runForEach(Console.log),
+  ),
+);
+```
+
+The other event sources have the same shape — only the record type
+and the entry-point name change:
+
+| Source                    | Entry point                | Stream element        |
+| ------------------------- | -------------------------- | --------------------- |
+| `SQS.messages(queue)`     | `.subscribe(fn)`           | `SQSRecord`           |
+| `Kinesis.records(stream)` | `.process(fn)`             | `KinesisStreamRecord` |
+| `DynamoDB.stream(table)`  | `.process(fn)`             | `StreamRecord<T>`     |
+
+One call wires the event-source mapping, the IAM (or Cloudflare
+binding), and the typed `Stream`.
+
+## Sinks
+
+A **sink** is the dual of an event source: a binding for *writing*
+that exposes the resource as an Effect [`Sink`](https://effect.website/docs/sink/introduction/).
+It batches input chunks into the underlying batch API
+(`SendMessageBatch`, `PutRecords`, `PublishBatch`) and emits the
+minimal IAM to go with it.
+
+```typescript
+const sink = yield* SQS.QueueSink.bind(OutboundQueue);
+// → Sink<void, string, readonly string[], never>
+// → policy: sqs:SendMessage + sqs:SendMessageBatch on OutboundQueue's ARN
+
+yield* Stream.fromIterable(["a", "b", "c"]).pipe(Stream.run(sink));
+```
+
+Sinks are typed by the element they accept, so the type system stops
+you from feeding the wrong shape in: `QueueSink` and `TopicSink` take
+`string`, `StreamSink` takes `PutRecordsRequestEntry` (you keep
+control of `PartitionKey`).
+
+### Source → transform → sink
+
+Where the model pays off is when you compose them. Because every step
+is just `Stream` / `Sink`, the whole pipe-and-transform pipeline is
+one expression:
+
+```typescript
+const outbound = yield* SQS.Queue("Outbound");
+const sink = yield* SQS.QueueSink.bind(outbound);
+
+yield* DynamoDB.stream(OrdersTable, {
+  streamViewType: "NEW_AND_OLD_IMAGES",
+  startingPosition: "LATEST",
+}).process<Order>((records) =>
+  records.pipe(
+    Stream.filterMap((r) => Option.fromNullable(r.dynamodb.NewImage)),
+    Stream.filter((order) => order.status === "PAID"),
+    Stream.map((order) => JSON.stringify({ orderId: order.id })),
+    Stream.run(sink),
+  ),
+);
+```
+
+Two `bind()` calls, one pipeline. Alchemy generates **both** sides
+of the policy automatically — `dynamodb:DescribeStream` /
+`GetRecords` / `GetShardIterator` on `OrdersTable`'s stream,
+`sqs:SendMessageBatch` on `Outbound` — plus the event-source
+mapping. There is no env-var plumbing, no `SendMessageBatchCommand`
+chunking by hand, and the sink coalesces the stream into 10-message
+batches under the hood.
+
+Drop in `Effect.retry`, `Stream.throttle`, `Stream.groupedWithin`,
+or `Stream.mapEffect` anywhere along the chain — they're all the
+same `Stream` you'd write in a plain Effect program.
+
+## How it works under the hood
+
+Internally each binding splits into two layers — and which one runs
+depends on the [phase](/concepts/phases):
+
+- **`Binding.Service`** — the runtime SDK wrapper that gets bundled
+  into your function. This is what `bucket.get(...)` actually calls.
+- **`Binding.Policy`** — the deploy-time logic that emits IAM,
+  Worker bindings, and env vars. This is **not** included in the
+  runtime bundle.
+
+At plantime the Policy layer is provided, so `bind()` records what
+the function needs. At runtime the Policy layer is absent, so the
+same call resolves to just the lightweight Service wrapper. The
+runtime bundle stays small because none of the planning code ships.
+
+See [Plantime and Runtime › `Binding.Service` vs
+`Binding.Policy`](/concepts/phases#bindingservice-vs-bindingpolicy)
+for a deeper look.
+
+## All of Effect, on every binding
+
+Bindings return `Effect` values. That means `Effect.retry`,
+`timeout`, `catchTag` — they all just work, with typed error
+channels:
+
+```typescript
+const sendWithRetry = enqueue({ MessageBody: msg }).pipe(
+  Effect.retry({ times: 3, schedule: Schedule.exponential("100 millis") }),
+  Effect.timeout("5 seconds"),
+  Effect.catchTag("ThrottlingException", () => Effect.succeed(undefined)),
+);
+```
+
+Because every binding is an Effect with the same shape, you can
+hide them behind a service interface and swap implementations
+without touching handler code. That's exactly what
+[Layers](/concepts/layers) is about — read on.

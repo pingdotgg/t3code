@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Spacing scale</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 6px;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-3);
+        width: 84px;
+        flex-shrink: 0;
+      }
+      .bar {
+        background: var(--alc-accent);
+        height: 10px;
+        border-radius: 2px;
+      }
+      .px {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-4);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="label">space-1</div>
+        <div class="bar" style="width: 4px"></div>
+        <div class="px">4</div>
+      </div>
+      <div class="row">
+        <div class="label">space-2</div>
+        <div class="bar" style="width: 8px"></div>
+        <div class="px">8</div>
+      </div>
+      <div class="row">
+        <div class="label">space-3</div>
+        <div class="bar" style="width: 12px"></div>
+        <div class="px">12</div>
+      </div>
+      <div class="row">
+        <div class="label">space-4</div>
+        <div class="bar" style="width: 16px"></div>
+        <div class="px">16</div>
+      </div>
+      <div class="row">
+        <div class="label">space-5</div>
+        <div class="bar" style="width: 24px"></div>
+        <div class="px">24</div>
+      </div>
+      <div class="row">
+        <div class="label">space-6</div>
+        <div class="bar" style="width: 32px"></div>
+        <div class="px">32</div>
+      </div>
+      <div class="row">
+        <div class="label">space-7</div>
+        <div class="bar" style="width: 48px"></div>
+        <div class="px">48</div>
+      </div>
+      <div class="row">
+        <div class="label">space-8</div>
+        <div class="bar" style="width: 64px"></div>
+        <div class="px">64</div>
+      </div>
+      <div class="row">
+        <div class="label">space-9</div>
+        <div class="bar" style="width: 96px"></div>
+        <div class="px">96</div>
+      </div>
+    </div>
+  </body>
+</html>

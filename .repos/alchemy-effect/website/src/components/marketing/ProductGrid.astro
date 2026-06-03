@@ -1,0 +1,21 @@
+---
+---
+<div class="product-grid">
+  <slot />
+</div>
+
+<style>
+  .product-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  @media (max-width: 980px) {
+    .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .product-grid { grid-template-columns: 1fr; }
+  }
+</style>

@@ -1,0 +1,39 @@
+---
+import { yantraSvg } from "./yantra";
+
+interface Props {
+  size?: number;
+  stroke?: string;
+  dot?: string;
+  bg?: string;
+  strokeWidth?: number;
+  /** Inherit color from surrounding text (default true for inline use). */
+  useCurrentColor?: boolean;
+  class?: string;
+}
+
+const {
+  size = 42,
+  stroke,
+  dot,
+  bg,
+  strokeWidth,
+  useCurrentColor = true,
+  class: className,
+} = Astro.props;
+
+// Theme-aware bindu: green in light, terracotta in dark. Defined per
+// theme in tokens.css; falls back to deep moss outside the website.
+const resolvedDot = dot ?? "var(--alc-yantra-dot, #3f5a2a)";
+
+const svg = yantraSvg({
+  size,
+  stroke,
+  dot: resolvedDot,
+  bg,
+  strokeWidth,
+  useCurrentColor,
+});
+---
+
+<span class={className} aria-hidden="true" set:html={svg} />

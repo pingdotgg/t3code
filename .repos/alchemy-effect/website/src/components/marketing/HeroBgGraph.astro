@@ -1,0 +1,468 @@
+---
+/**
+ * Animated mandala background for the hero — endless lotus zoom
+ * emanating from the Yantra's bindu (center dot).
+ *
+ * The vanishing point is measured at runtime from the element matched
+ * by `center` (default `.alc-hero__mark`), so the animation truly
+ * radiates from the brand mark's dot rather than the canvas geometric
+ * center. The same coordinates are pushed back to CSS as `--alc-bg-cx`
+ * / `--alc-bg-cy` so the mask feather follows.
+ *
+ * Multiple stylistic variants live in this file. The active one is
+ * picked by the `?variant=N` query string (default 1) so we can A/B
+ * compare on the live page without editing the MDX.
+ *
+ * Only variant 1 is exposed: concentric rings + radial vesica arcs
+ * blooming back toward the bindu. The trippy/subtle baseline.
+ *
+ * Variant 2 is kept in this file as a backup (Sri-Yantra-style lotus
+ * petals from the canonical TikZ construction) but is intentionally
+ * not toggleable via `?variant=` — flip the dispatch in `draw()`
+ * manually to revisit it.
+ */
+
+interface Props {
+  /** CSS selector for the element whose center the animation emanates from. */
+  center?: string;
+  /** Stroke color. */
+  color?: string;
+  /** Multiplier on stroke alpha (0..1). */
+  intensity?: number;
+  /** Number of concurrent layers. */
+  count?: number;
+  /** Zoom rate. ~0.06 = one octave of growth per ~16s. */
+  zoom?: number;
+  /** Default variant number when no `?variant=` query is present.
+   * Only `1` is exposed in the public API; variant 2 is kept in the
+   * file as a backup but isn't toggleable from a query string. */
+  variant?: 1;
+}
+
+const {
+  center = ".alc-hero__mark",
+  color = "var(--alc-fg-1)",
+  intensity = 1,
+  count = 10,
+  zoom = 0.025,
+  variant = 1,
+} = Astro.props;
+---
+
+<canvas
+  class="alc-hero__bg-graph"
+  data-variant={variant}
+  data-center={center}
+  data-intensity={intensity}
+  data-count={count}
+  data-zoom={zoom}
+  style={`color: ${color};`}
+  aria-hidden="true"
+></canvas>
+
+<script>
+  /* eslint-disable */
+
+  const init = (canvas: HTMLCanvasElement) => {
+    const ctx = canvas.getContext("2d", { alpha: true });
+    if (!ctx) return;
+
+    const variant: number = Number(canvas.dataset.variant ?? 1);
+
+    const centerSel = canvas.dataset.center ?? ".alc-hero__mark";
+    const intensity = Number(canvas.dataset.intensity ?? 1);
+    const nLayers = Math.max(1, Number(canvas.dataset.count ?? 10));
+    const zoom = Number(canvas.dataset.zoom ?? 0.06);
+    const motionMq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reduced = motionMq.matches;
+
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let width = 0;
+    let height = 0;
+    /** Vanishing point in canvas-local CSS pixels. Updated by `resize`. */
+    let cx0 = 0;
+    let cy0 = 0;
+
+    const centerEl =
+      (centerSel && (document.querySelector(centerSel) as HTMLElement | null)) ||
+      null;
+
+    const measureCenter = () => {
+      if (centerEl) {
+        const heroRect = canvas.getBoundingClientRect();
+        const markRect = centerEl.getBoundingClientRect();
+        cx0 = markRect.left + markRect.width / 2 - heroRect.left;
+        cy0 = markRect.top + markRect.height / 2 - heroRect.top;
+        canvas.style.setProperty("--alc-bg-cx", `${cx0.toFixed(2)}px`);
+        canvas.style.setProperty("--alc-bg-cy", `${cy0.toFixed(2)}px`);
+      } else {
+        cx0 = width / 2;
+        cy0 = height / 2;
+      }
+    };
+
+    const resize = (): boolean => {
+      const rect = canvas.getBoundingClientRect();
+      const newW = rect.width;
+      const newH = rect.height;
+      const newDpr = Math.min(window.devicePixelRatio || 1, 2);
+      // iOS Safari fires `resize` continuously as the URL bar collapses
+      // / expands during scroll. Reassigning `canvas.width`/`height`
+      // wipes the bitmap *even when set to the same value*, which
+      // shows up as the mandala flashing every time you swipe. Skip
+      // when nothing actually changed; only the centerline (handled
+      // separately via ResizeObserver) needs to update on scroll.
+      if (newW === width && newH === height && newDpr === dpr) {
+        return false;
+      }
+      width = newW;
+      height = newH;
+      dpr = newDpr;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      measureCenter();
+      return true;
+    };
+
+    const resolveRGB = (): [number, number, number] => {
+      const rgb = getComputedStyle(canvas).color;
+      const m = rgb.match(/\d+(\.\d+)?/g);
+      if (!m) return [0, 0, 0];
+      return [Number(m[0]), Number(m[1]), Number(m[2])];
+    };
+
+    let rgb = resolveRGB();
+    const rgba = (a: number) =>
+      `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a.toFixed(3)})`;
+
+    /** Tiny bindu marker — drawn for every variant so the dot visually
+     * sources the emanation. */
+    const drawBindu = () => {
+      ctx.fillStyle = rgba(0.55 * intensity);
+      ctx.beginPath();
+      ctx.arc(cx0, cy0, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    // ============================================================
+    // Variant 1 — concentric rings + radial vesica arcs (original)
+    // ============================================================
+
+    /** Petal count per ring index. Grows outward so outer rings bloom
+     * into more detail while inner rings stay restful. */
+    const petalsAtRing = (i: number) => {
+      const seq = [6, 8, 12, 16, 18, 20, 24, 28, 32, 36, 40];
+      return seq[Math.min(i, seq.length - 1)];
+    };
+
+    const drawV1 = (t: number) => {
+      const minR = Math.max(width, height) * 0.02;
+      const maxR = Math.max(width, height) * 0.95;
+      const logRange = Math.log(maxR / minR);
+      const clock = ((t * 0.001 * zoom) % 1 + 1) % 1;
+      const tSec = t * 0.001;
+
+      drawBindu();
+
+      ctx.lineWidth = 1;
+      const cap = 0.32 * intensity;
+
+      for (let i = 0; i < nLayers; i++) {
+        const phase = (i / nLayers + clock) % 1;
+        const r = minR * Math.exp(phase * logRange);
+        const fade = Math.pow(Math.sin(phase * Math.PI), 1.2);
+        const a = cap * fade;
+        if (a < 0.01) continue;
+
+        // Very slow uniform drift — adjacent rings counter-rotate,
+        // but at the same gentle rate (no per-ring parallax speed-up).
+        // ~1 revolution per ~3 minutes.
+        const spin = tSec * 0.035 * (i % 2 === 0 ? 1 : -1);
+
+        // Concentric ring.
+        ctx.strokeStyle = rgba(a * 0.85);
+        ctx.beginPath();
+        ctx.arc(cx0, cy0, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Radial petal arcs — small arcs centered on points around the
+        // ring, drawing a vesica-like bloom. Arc radius scales with
+        // the ring radius so they read as part of the same petal.
+        const k = petalsAtRing(i);
+        const petalR = r * 0.35;
+        const petalSweep = Math.PI * 0.55;
+        ctx.strokeStyle = rgba(a * 0.65);
+        for (let p = 0; p < k; p++) {
+          const ang = spin + (p * 2 * Math.PI) / k;
+          const px = cx0 + Math.cos(ang) * r;
+          const py = cy0 + Math.sin(ang) * r;
+          // Arc faces back toward the bindu so each petal forms a leaf
+          // pointing outward.
+          ctx.beginPath();
+          ctx.arc(
+            px,
+            py,
+            petalR,
+            ang + Math.PI - petalSweep / 2,
+            ang + Math.PI + petalSweep / 2,
+          );
+          ctx.stroke();
+        }
+      }
+    };
+
+    // ============================================================
+    // Variant 2 (backup, not query-string toggleable) — Sri Yantra
+    // lotus rim built from the canonical TikZ construction
+    // (bhaskatripathi/SriYantra). Two cubic Beziers per side + an
+    // arc base on the inner circle, so the petal silhouette has a
+    // smooth scalloped base and a single sharp tip on the outer
+    // circle. Petal-band aspect (r1/r0 = 1.2) is decoupled from the
+    // inter-layer log spacing.
+    // ============================================================
+
+    /** Stroke a single canonical lotus petal — the TikZ Sri Yantra
+     * construction.
+     *
+     * The petal occupies angular span `[theta - halfAngle, theta +
+     * halfAngle]` on the inner circle (radius `r0`). Its tip sits on
+     * the outer circle (radius `r1`) at the petal's center angle
+     * `theta`. Two cubic Beziers form the upward + downward sides;
+     * the base is a circular arc along `r0` between the two anchor
+     * points, so neighbors share an arc segment (not a single point)
+     * — that's what gives the silhouette a smooth, rounded base
+     * rather than the spiky triangle we had before.
+     *
+     * Control radii / angular offsets follow the proportions used in
+     * the bhaskatripathi/SriYantra LaTeX source (8-petal: anchors
+     * 45° apart, controls at ±5° / ±17.5° at radii 0.7·len /
+     * 0.5·len above the inner circle). Generalized here to any
+     * petal count. */
+    const strokeLotusPetal = (
+      theta: number,
+      r0: number,
+      r1: number,
+      halfAngle: number,
+    ) => {
+      const len = r1 - r0;
+
+      // Anchor points where the petal meets the inner circle.
+      const startAng = theta + halfAngle;
+      const endAng = theta - halfAngle;
+      const sx = cx0 + Math.cos(startAng) * r0;
+      const sy = cy0 + Math.sin(startAng) * r0;
+      const ex = cx0 + Math.cos(endAng) * r0;
+      const ey = cy0 + Math.sin(endAng) * r0;
+
+      // Tip on the outer circle.
+      const tx = cx0 + Math.cos(theta) * r1;
+      const ty = cy0 + Math.sin(theta) * r1;
+
+      // First cubic: from start anchor up to the tip. Two controls
+      // bow the curve up + sideways before pinching back to the tip.
+      const c1Ang = theta + halfAngle * (7 / 9);
+      const c1R = r0 + 0.7 * len;
+      const c1x = cx0 + Math.cos(c1Ang) * c1R;
+      const c1y = cy0 + Math.sin(c1Ang) * c1R;
+
+      const c2Ang = theta + halfAngle * (2 / 9);
+      const c2R = r0 + 0.5 * len;
+      const c2x = cx0 + Math.cos(c2Ang) * c2R;
+      const c2y = cy0 + Math.sin(c2Ang) * c2R;
+
+      // Second cubic (mirror): tip down to end anchor.
+      const c3Ang = theta - halfAngle * (2 / 9);
+      const c3R = r0 + 0.5 * len;
+      const c3x = cx0 + Math.cos(c3Ang) * c3R;
+      const c3y = cy0 + Math.sin(c3Ang) * c3R;
+
+      const c4Ang = theta - halfAngle * (7 / 9);
+      const c4R = r0 + 0.7 * len;
+      const c4x = cx0 + Math.cos(c4Ang) * c4R;
+      const c4y = cy0 + Math.sin(c4Ang) * c4R;
+
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, tx, ty);
+      ctx.bezierCurveTo(c3x, c3y, c4x, c4y, ex, ey);
+      // Close the base with an arc along the inner circle from the
+      // end anchor back to the start anchor (anticlockwise=true in
+      // canvas coords traces the short arc from endAng up to
+      // startAng).
+      ctx.arc(cx0, cy0, r0, endAng, startAng, true);
+      ctx.closePath();
+      ctx.stroke();
+    };
+
+    const drawV2 = (t: number) => {
+      const minR = Math.max(width, height) * 0.015;
+      const maxR = Math.max(width, height) * 1.0;
+      const logRange = Math.log(maxR / minR);
+      // Petal-band aspect (`r1/r0`) is decoupled from inter-layer
+      // spacing — the LaTeX reference uses 1.2 for nice wide petals.
+      const petalRatio = 1.2;
+      const clock = ((t * 0.001 * zoom) % 1 + 1) % 1;
+      const tSec = t * 0.001;
+
+      drawBindu();
+
+      const cap = 0.5 * intensity;
+
+      for (let i = 0; i < nLayers; i++) {
+        const phase = (i / nLayers + clock) % 1;
+        const r0 = minR * Math.exp(phase * logRange);
+        const r1 = r0 * petalRatio;
+        // Asymmetric envelope: quick fade-in near the bindu, then a
+        // steep (1−phase)^2 falloff so outer layers dissolve faster
+        // than they grow.
+        const fadeIn = Math.min(1, phase / 0.12);
+        const fadeOut = Math.pow(1 - phase, 1.8);
+        const fade = fadeIn * fadeOut;
+        const a = cap * fade;
+        if (a < 0.01) continue;
+
+        const spinScale = 0.06 / Math.max(0.06, phase + 0.05);
+        const spin = tSec * spinScale * (i % 2 === 0 ? 1 : -1);
+
+        // Bounding circles for this lotus rim — faint so the petal
+        // silhouettes dominate (matches the block-print reference).
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = rgba(a * 0.4);
+        ctx.beginPath();
+        ctx.arc(cx0, cy0, r0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx0, cy0, r1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const k = 8;
+        const halfAngle = Math.PI / k;
+
+        ctx.lineWidth = 1.05;
+        ctx.strokeStyle = rgba(a * 0.9);
+        for (let p = 0; p < k; p++) {
+          const ang = spin + (p * 2 * Math.PI) / k;
+          strokeLotusPetal(ang, r0, r1, halfAngle);
+        }
+      }
+    };
+
+    // ============================================================
+    // Frame loop
+    // ============================================================
+
+    const draw = (t: number) => {
+      ctx.clearRect(0, 0, width, height);
+      // Variant 2 (`drawV2`) is intentionally unreachable from the
+      // public API — uncomment the case below to revisit it.
+      void drawV2;
+      switch (variant) {
+        case 1:
+        default:
+          drawV1(t);
+          break;
+      }
+    };
+
+    let raf = 0;
+    let visible = true;
+    const loop = (t: number) => {
+      draw(t);
+      if (visible && !reduced) raf = requestAnimationFrame(loop);
+    };
+
+    resize();
+    if (reduced) {
+      draw(0);
+    } else {
+      raf = requestAnimationFrame(loop);
+    }
+
+    let resizeQueued = false;
+    const onResize = () => {
+      if (resizeQueued) return;
+      resizeQueued = true;
+      requestAnimationFrame(() => {
+        resizeQueued = false;
+        const changed = resize();
+        rgb = resolveRGB();
+        // In reduced-motion mode the RAF loop is stopped, so when the
+        // canvas was actually resized we need to explicitly redraw the
+        // static frame. If `resize()` no-op'd (mobile URL-bar wiggle
+        // with unchanged dimensions) we don't need to redraw at all.
+        if (reduced && changed) draw(0);
+      });
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+
+    // The stroke color is derived from `getComputedStyle(canvas).color`,
+    // which resolves `var(--alc-fg-1)` against the current theme. When
+    // the user toggles light/dark mid-session the cached `rgb` would
+    // otherwise stay frozen on the previous theme until the next resize
+    // — observable as a flash of stale-color strokes after the theme
+    // switch. Re-resolve whenever `<html data-theme>` changes.
+    const themeObs = new MutationObserver(() => {
+      rgb = resolveRGB();
+      if (reduced) draw(0);
+    });
+    themeObs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    // Honor live changes to the user's `prefers-reduced-motion` setting.
+    // When the user enables reduced motion mid-session, stop the loop and
+    // hold a static frame; when they disable it, resume the animation.
+    const onMotionChange = (e: MediaQueryListEvent) => {
+      reduced = e.matches;
+      cancelAnimationFrame(raf);
+      if (reduced) {
+        draw(0);
+      } else if (visible) {
+        raf = requestAnimationFrame(loop);
+      }
+    };
+    motionMq.addEventListener("change", onMotionChange);
+
+    if (centerEl && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        measureCenter();
+        if (reduced) draw(0);
+      });
+      ro.observe(centerEl);
+      const hero = canvas.parentElement;
+      if (hero) ro.observe(hero);
+    }
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const wasVisible = visible;
+        visible = entries[0]?.isIntersecting ?? true;
+        if (visible && !wasVisible) {
+          // Restart the loop when the canvas scrolls back into view, or
+          // — in reduced-motion mode — redraw the single static frame
+          // (it may have been cleared / sized while off-screen).
+          if (reduced) draw(0);
+          else raf = requestAnimationFrame(loop);
+        } else if (!visible) {
+          cancelAnimationFrame(raf);
+        }
+      },
+      { threshold: 0 },
+    );
+    io.observe(canvas);
+  };
+
+  const start = () => {
+    document
+      .querySelectorAll<HTMLCanvasElement>("canvas.alc-hero__bg-graph")
+      .forEach(init);
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    start();
+  }
+</script>

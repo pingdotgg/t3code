@@ -1,0 +1,55 @@
+---
+import { highlightTS } from "./highlightTS";
+
+interface Props {
+  filename?: string;
+  code: string;
+  compact?: boolean;
+  caption?: string;
+}
+
+const { filename = "alchemy.run.ts", code, compact, caption } = Astro.props;
+const html = highlightTS(code);
+---
+
+{
+  caption ? (
+    <div class="alc-code-block__wrap">
+      <div class:list={["alc-code-block", compact && "alc-code-block--compact"]}>
+        <div class="alc-code-block__header">
+          <span
+            class="alc-code-block__dot"
+            style="background:var(--alc-danger);"
+          />
+          <span
+            class="alc-code-block__dot"
+            style="background:var(--alc-warn);"
+          />
+          <span
+            class="alc-code-block__dot"
+            style="background:var(--alc-accent-bright);"
+          />
+          <span class="alc-code-block__filename">{filename}</span>
+        </div>
+        <pre class="alc-code-block__pre" set:html={html} />
+      </div>
+      <div class="alc-code-block__caption">{caption}</div>
+    </div>
+  ) : (
+    <div class:list={["alc-code-block", compact && "alc-code-block--compact"]}>
+      <div class="alc-code-block__header">
+        <span
+          class="alc-code-block__dot"
+          style="background:var(--alc-danger);"
+        />
+        <span class="alc-code-block__dot" style="background:var(--alc-warn);" />
+        <span
+          class="alc-code-block__dot"
+          style="background:var(--alc-accent-bright);"
+        />
+        <span class="alc-code-block__filename">{filename}</span>
+      </div>
+      <pre class="alc-code-block__pre" set:html={html} />
+    </div>
+  )
+}

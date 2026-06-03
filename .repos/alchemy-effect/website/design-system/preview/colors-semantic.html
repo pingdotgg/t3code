@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+      }
+      .cell {
+        background: var(--alc-bg-elev-1);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        padding: 14px;
+        text-align: center;
+      }
+      .dot {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        margin: 0 auto 10px;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-3);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .name {
+        font-family: var(--alc-font-sans);
+        font-size: 13px;
+        color: var(--alc-fg-1);
+        font-weight: 600;
+        margin-top: 2px;
+      }
+      .hex {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-4);
+        margin-top: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div class="cell">
+          <div class="dot" style="background: var(--alc-success)"></div>
+          <div class="label">plan: create</div>
+          <div class="name">Success</div>
+          <div class="hex">#5C7A3E</div>
+        </div>
+        <div class="cell">
+          <div class="dot" style="background: var(--alc-warn)"></div>
+          <div class="label">plan: update</div>
+          <div class="name">Warn</div>
+          <div class="hex">#D49A2A</div>
+        </div>
+        <div class="cell">
+          <div class="dot" style="background: var(--alc-danger)"></div>
+          <div class="label">plan: replace</div>
+          <div class="name">Danger</div>
+          <div class="hex">#B3462E</div>
+        </div>
+        <div class="cell">
+          <div class="dot" style="background: var(--alc-info)"></div>
+          <div class="label">info</div>
+          <div class="name">Info</div>
+          <div class="hex">#4A7A8A</div>
+        </div>
+        <div class="cell">
+          <div class="dot" style="background: var(--alc-muted)"></div>
+          <div class="label">unchanged</div>
+          <div class="name">Muted</div>
+          <div class="hex">#A89572</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

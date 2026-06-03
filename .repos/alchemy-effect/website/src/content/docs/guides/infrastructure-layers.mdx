@@ -1,0 +1,322 @@
+---
+title: Building Infrastructure Layers
+description: Package resources + bindings + runtime glue into a typed Effect Layer, then swap a KV-backed implementation for an R2-backed one without touching the consumer.
+sidebar:
+  order: 7
+---
+
+A [Layer](/concepts/layers) packages infrastructure behind a typed
+service. This guide builds a `JobService` backed by a Cloudflare KV
+namespace, plugs it into a Worker, then swaps the storage backend
+to an R2 bucket — without touching the Worker.
+
+## Define the service interface
+
+Start with the abstract contract — no infrastructure, no cloud.
+
+```typescript
+// src/JobService.ts
+import * as Alchemy from "alchemy";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+
+export interface Job {
+  id: string;
+  status: "pending" | "done";
+}
+
+export class JobService extends Context.Service<
+  JobService,
+  {
+    getJob(id: string): Effect.Effect<Job | null, never, Alchemy.RuntimeContext>;
+    putJob(job: Job): Effect.Effect<void, never, Alchemy.RuntimeContext>;
+  }
+>()("JobService") {}
+```
+
+`Alchemy.RuntimeContext` on the return types marks these methods as
+runtime-only. The compiler will reject any attempt to call them
+from a deploy script.
+
+## Scaffold the Layer
+
+`Layer.effect(Tag, effect)` says "to build the service identified
+by `Tag`, run this Effect". Start with the methods stubbed out:
+
+```typescript
+// src/JobService.KV.ts
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { JobService, type Job } from "./JobService.ts";
+
+export const JobServiceKV = Layer.effect(
+  JobService,
+  Effect.gen(function* () {
+    return {
+      getJob: Effect.fn(function* (id: string) {
+        // TODO: read from KV
+      }),
+      putJob: Effect.fn(function* (job: Job) {
+        // TODO: write to KV
+      }),
+    };
+  }),
+);
+```
+
+`Effect.fn(function* …)` is sugar for an Effect-returning function;
+it preserves the inferred argument types.
+
+## Declare the KV namespace
+
+`Cloudflare.KVNamespace("Jobs")` describes a real resource. Yielding
+it inside the Layer attaches it to whichever Stack consumes the
+Layer.
+
+```diff lang="typescript"
++import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+ import { JobService, type Job } from "./JobService.ts";
+
+ export const JobServiceKV = Layer.effect(
+   JobService,
+   Effect.gen(function* () {
++    const Namespace = yield* Cloudflare.KVNamespace("Jobs");
++
+     return {
+       // ...
+     };
+   }),
+ );
+```
+
+## Bind the namespace
+
+`KVNamespaceBinding.bind(Namespace)` wires the namespace into the
+consuming Worker — binding name, IAM, env injection — and returns
+a typed client.
+
+```diff lang="typescript"
+ export const JobServiceKV = Layer.effect(
+   JobService,
+   Effect.gen(function* () {
+     const Namespace = yield* Cloudflare.KVNamespace("Jobs");
++    const kv = yield* Cloudflare.KVNamespaceBinding.bind(Namespace);
+
+     return {
+       // ...
+     };
+   }),
+ );
+```
+
+`kv.get` / `kv.put` carry an `Alchemy.RuntimeContext` requirement,
+which matches what `JobService` declared.
+
+## Implement the methods
+
+Replace the TODO bodies with calls to the typed client:
+
+```diff lang="typescript"
+     return {
+       getJob: Effect.fn(function* (id: string) {
+-        // TODO: read from KV
++        return yield* kv.get<Job>(id, "json");
+       }),
+       putJob: Effect.fn(function* (job: Job) {
+-        // TODO: write to KV
++        yield* kv.put(job.id, JSON.stringify(job));
+       }),
+     };
+```
+
+## Scaffold the Worker
+
+Start with a minimal Worker that responds to every request with a
+placeholder. Init and runtime closures are both empty.
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.filename },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+);
+```
+
+## Resolve the service
+
+Yield `JobService` in the init closure to get a typed handle, then
+call it from `fetch`:
+
+```diff lang="typescript"
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
+ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { JobService } from "./JobService.ts";
+
+ export default Cloudflare.Worker(
+   "Api",
+   { main: import.meta.filename },
+   Effect.gen(function* () {
++    const jobs = yield* JobService;
++
+     return {
+       fetch: Effect.gen(function* () {
+-        return HttpServerResponse.text("ok");
++        const job = yield* jobs.getJob("job-1");
++        return yield* HttpServerResponse.json(job);
+       }),
+     };
+   }),
+ );
+```
+
+At this point the Worker doesn't type-check — `JobService` is in the
+requirements but nothing satisfies it.
+
+## Provide the Layer
+
+`Effect.provide(JobServiceKV)` satisfies `JobService` and brings the
+KV namespace resource into the Stack:
+
+```diff lang="typescript"
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+ import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ import { JobService } from "./JobService.ts";
++import { JobServiceKV } from "./JobService.KV.ts";
+
+ export default Cloudflare.Worker(
+   "Api",
+   { main: import.meta.filename },
+   Effect.gen(function* () {
+     // ...
+-  }),
++  }).pipe(Effect.provide(JobServiceKV)),
+ );
+```
+
+The Worker still doesn't type-check — `JobServiceKV` itself depends
+on `KVNamespaceBinding`, which is satisfied by
+`KVNamespaceBindingLive`.
+
+## Provide the runtime binding
+
+`Layer.provide` satisfies `JobServiceKV`'s dependency on
+`KVNamespaceBinding` privately, so the consumer only sees `JobService`:
+
+```diff lang="typescript"
+   }).pipe(
+     Effect.provide(
+-      JobServiceKV,
++      JobServiceKV.pipe(Layer.provide(Cloudflare.KVNamespaceBindingLive)),
+     ),
+   ),
+```
+
+`KVNamespaceBindingLive` requires `WorkerEnvironment`, which the
+Cloudflare Worker runtime satisfies automatically at cold start.
+
+## Reuse a Layer across Workers
+
+A Layer is just a value. Any Worker that provides `JobServiceKV`
+shares the same KV namespace, because `Cloudflare.KVNamespace("Jobs")`
+has a stable logical id:
+
+```diff lang="typescript"
+ // src/Admin.ts
+ export default Cloudflare.Worker(
+   "Admin",
+   { main: import.meta.filename },
+   Effect.gen(function* () {
+     const jobs = yield* JobService;
+     // ...
+   }).pipe(
+     Effect.provide(
++      JobServiceKV.pipe(Layer.provide(Cloudflare.KVNamespaceBindingLive)),
+     ),
+   ),
+ );
+```
+
+The Stack ends up with one `Jobs` KV namespace, bound to both `Api`
+and `Admin` with the correct env vars on each.
+
+## Swap the backend to R2
+
+`JobService` is a contract, not a resource. The same Worker can
+run against an R2 bucket instead of a KV namespace — only the
+Layer implementation and the runtime binding provided to it
+change. Drop a second implementation alongside `JobService.KV.ts`:
+
+```typescript
+// src/JobService.R2.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { JobService, type Job } from "./JobService.ts";
+
+export const JobServiceR2 = Layer.effect(
+  JobService,
+  Effect.gen(function* () {
+    const Bucket = yield* Cloudflare.R2Bucket("Jobs");
+    const r2 = yield* Cloudflare.R2BucketBinding.bind(Bucket);
+
+    return {
+      getJob: Effect.fn(function* (id: string) {
+        const object = yield* r2.get(id);
+        if (!object) return null;
+        return yield* object.json<Job>();
+      }),
+      putJob: Effect.fn(function* (job: Job) {
+        yield* r2.put(job.id, JSON.stringify(job));
+      }),
+    };
+  }),
+);
+```
+
+Same `Layer.effect(JobService, …)` shape, same `getJob`/`putJob`
+contract — internally it yields an `R2Bucket` resource and binds
+it instead of a KV namespace.
+
+## Swap the Layer on the Worker
+
+The Worker doesn't change. Only the Layer it provides — and the
+runtime binding provided to that Layer — swap over:
+
+```diff lang="typescript"
+   }).pipe(
+     Effect.provide(
+-      JobServiceKV.pipe(Layer.provide(Cloudflare.KVNamespaceBindingLive)),
++      JobServiceR2.pipe(Layer.provide(Cloudflare.R2BucketBindingLive)),
+     ),
+   ),
+```
+
+The Worker still yields `JobService` and calls `getJob`/`putJob`;
+`fetch` is byte-for-byte unchanged. The Stack now contains a
+`Jobs` R2 bucket (no KV namespace) and the Worker is configured
+to talk to it.
+
+## Related
+
+- [Layers](/concepts/layers) — the concept behind this guide
+- [Binding](/concepts/binding) — what `.bind(...)` does under the hood
+- [Phases](/concepts/phases) — when init vs runtime code runs
+- [Circular Bindings](/guides/circular-bindings) — two Layers
+  referencing each other

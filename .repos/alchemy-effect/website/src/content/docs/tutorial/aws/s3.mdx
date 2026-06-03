@@ -1,0 +1,294 @@
+---
+title: Read & Write S3
+description: Add an S3 Bucket to your Stack, bind PutObject and GetObject as runtime capabilities, and let Alchemy mint the IAM policy for you.
+sidebar:
+  order: 2
+---
+
+The Lambda you built in [Deploy a Lambda Function](/tutorial/aws/lambda)
+serves a static string. Real services need somewhere to put data.
+In this part you'll add an **S3 Bucket** for blob storage and bind
+**PutObject** + **GetObject** to the function — Alchemy will mint
+a least-privilege IAM policy from the bindings you actually use.
+
+## Add the bucket
+
+S3 buckets are canonical Alchemy resources, so you create them
+the same way as the Lambda — yield the resource inside an Effect
+and the Stack captures it. Open `src/api.ts` and add a bucket in
+the outer init:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "alchemy/AWS";
++import * as S3 from "alchemy/AWS/S3";
+import { Stack } from "alchemy/Stack";
+import * as Effect from "effect/Effect";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  Stack.useSync((stack) => ({
+    main: import.meta.filename,
+    url: true,
+    memory: stack.stage === "prod" ? 1024 : 512,
+  })),
+  Effect.gen(function* () {
++    const bucket = yield* S3.Bucket("Blobs");
+
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+    };
+  }),
+) {}
+```
+
+`yield* S3.Bucket("Blobs")` registers the resource with the Stack
+under the logical id `Blobs` and returns a typed `Bucket` handle.
+Other resources — including this Lambda — can use that handle to
+bind operations or grant access.
+
+## Bind PutObject and GetObject
+
+S3 operations like `s3:PutObject` and `s3:GetObject` are exposed
+as **bindings**. A binding is two things:
+
+1. A typed runtime function you call from your handler.
+2. An IAM policy statement that gets attached to the function
+   role automatically — scoped to the exact bucket ARN.
+
+Bind them in the outer init, alongside the bucket:
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const bucket = yield* S3.Bucket("Blobs");
++  const putObject = yield* S3.PutObject.bind(bucket);
++  const getObject = yield* S3.GetObject.bind(bucket);
+
+  return {
+    fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
+  };
+});
+```
+
+Both `bind(bucket)` calls return a callable Effect: `putObject`
+takes a `PutObjectRequest` (the AWS SDK shape, minus the `Bucket`
+field Alchemy fills in for you) and `getObject` takes a
+`GetObjectRequest`.
+
+### One binding, one IAM statement
+
+Each `.bind(...)` call is **1:1 with an IAM policy statement**
+attached to your function's execution role. The mapping is
+deterministic:
+
+| Code                              | IAM `Action`     | IAM `Resource`           |
+| --------------------------------- | ---------------- | ------------------------ |
+| `S3.PutObject.bind(bucket)`       | `s3:PutObject`   | `bucket.bucketArn`       |
+| `S3.GetObject.bind(bucket)`       | `s3:GetObject`   | `bucket.bucketArn/*`     |
+| `DynamoDB.PutItem.bind(table)`    | `dynamodb:PutItem` | `table.tableArn`       |
+| `SQS.SendMessage.bind(queue)`     | `sqs:SendMessage` | `queue.queueArn`        |
+
+So the two `bind` calls above produce exactly two statements on
+the role:
+
+```json
+[
+  {
+    "Sid": "AWSS3PutObjectBlobs",
+    "Effect": "Allow",
+    "Action": ["s3:PutObject"],
+    "Resource": "arn:aws:s3:::myapp-prod-blobs/*"
+  },
+  {
+    "Sid": "AWSS3GetObjectBlobs",
+    "Effect": "Allow",
+    "Action": ["s3:GetObject"],
+    "Resource": "arn:aws:s3:::myapp-prod-blobs/*"
+  }
+]
+```
+
+The role is generated, never `"*"`-scoped, and regenerated from
+the call sites on every deploy — delete a `bind` call and the
+matching statement disappears next deploy. **The code is the
+policy.**
+
+## Write objects with `PUT /:key`
+
+Replace the static handler with one that takes the URL path as
+the object key and writes the request body to the bucket:
+
+```diff lang="typescript"
+return {
+-  fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
++  fetch: Effect.gen(function* () {
++    const request = yield* HttpServerRequest;
++    const key = new URL(request.url).pathname.slice(1);
++
++    if (request.method === "PUT") {
++      const body = yield* request.text;
++      yield* putObject({ Key: key, Body: body });
++      return HttpServerResponse.empty({ status: 204 });
++    }
++
++    return HttpServerResponse.text("Method not allowed", { status: 405 });
++  }),
+};
+```
+
+`putObject({ Key, Body })` is the same shape as
+`s3:PutObject` in the AWS SDK, minus the `Bucket` field — Alchemy
+fills that in from the bucket you bound, so the call site stays
+focused on what's actually variable.
+
+## Read objects with `GET /:key`
+
+Add a `GET` branch that fetches the object and pipes it back to
+the client:
+
+```diff lang="typescript"
+if (request.method === "PUT") {
+  const body = yield* request.text;
+  yield* putObject({ Key: key, Body: body });
+  return HttpServerResponse.empty({ status: 204 });
+}
+
++if (request.method === "GET") {
++  const result = yield* getObject({ Key: key });
++  return HttpServerResponse.stream(result.Body!);
++}
+
+return HttpServerResponse.text("Method not allowed", { status: 405 });
+```
+
+`result.Body` is an Effect `Stream<Uint8Array>`, not a buffered
+`Buffer`. `HttpServerResponse.stream` flushes each chunk to the
+HTTP response as it arrives, so even a multi-gigabyte object
+moves through the function without ever being held in memory.
+
+## Handle missing objects
+
+If the key doesn't exist, the AWS SDK throws `NoSuchKey`. The
+binding surfaces that as a typed error tag on the Effect, so
+`Effect.catchTag` recovers from it without inspecting strings:
+
+```diff lang="typescript"
+if (request.method === "GET") {
+-  const result = yield* getObject({ Key: key });
++  const result = yield* getObject({ Key: key }).pipe(
++    Effect.catchTag("NoSuchKey", () => Effect.succeed(undefined)),
++  );
++  if (!result?.Body) {
++    return HttpServerResponse.text("Not found", { status: 404 });
++  }
+  return HttpServerResponse.stream(result.Body!);
+}
+```
+
+Every binding's failure channel is enumerated this way: the AWS
+SDK error names become Effect tags, so the type-checker tells
+you which failures the call site needs to handle.
+
+## Convert unhandled errors to 500s
+
+Any failure you didn't `catchTag` is a programmer error — a
+missing IAM grant, a transient AWS outage, a bug. Surface those
+as 500s by applying `Effect.orDie` once at the request boundary,
+rather than per call:
+
+```diff lang="typescript"
+fetch: Effect.gen(function* () {
+  // ... PUT and GET branches ...
+  return HttpServerResponse.text("Method not allowed", { status: 405 });
+-}),
++}).pipe(Effect.orDie),
+```
+
+Applying `orDie` once at the outer layer keeps the inner code
+free of repetitive error plumbing — the only errors you handle
+explicitly are the ones you actually have a recovery for
+(`NoSuchKey`, in this case).
+
+## Provide the runtime layers
+
+Bindings declare a capability; **runtime layers** implement it.
+For S3 those are `S3.PutObjectLive` and `S3.GetObjectLive` — both
+ship in `alchemy/AWS/S3` and depend only on the AWS SDK and the
+ambient credentials. Provide them at the bottom of the function:
+
+```diff lang="typescript"
+// src/api.ts
++import * as Layer from "effect/Layer";
+// ...
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  /* ... props ... */,
+  Effect.gen(function* () {
+    /* ... bindings + fetch ... */
+-  }),
++  }).pipe(
++    Effect.provide(Layer.mergeAll(S3.PutObjectLive, S3.GetObjectLive)),
++  ),
+) {}
+```
+
+`Layer.mergeAll` unions multiple layers into one — no order
+required — and `Effect.provide` satisfies the binding requirements
+declared by `PutObject` and `GetObject`.
+
+## Deploy
+
+```sh
+bun alchemy deploy
+```
+
+Alchemy creates the bucket if it doesn't exist, attaches the
+generated IAM policy to your Lambda's execution role, and
+redeploys the function bundle.
+
+## Verify
+
+```typescript
+// test/integ.test.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: AWS.providers(),
+  state: Alchemy.localState(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
+test(
+  "S3 round-trip",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+
+    const put = yield* HttpClient.put(`${url}/hello.txt`, {
+      body: HttpBody.text("world"),
+    });
+    expect(put.status).toBe(204);
+
+    const get = yield* HttpClient.get(`${url}/hello.txt`);
+    expect(yield* get.text).toBe("world");
+  }),
+);
+```
+
+```sh
+bun test test/integ.test.ts
+```
+
+You now have a Lambda that owns a bucket, with no IAM JSON in
+sight. Next we'll [react to S3 events](/tutorial/aws/s3-events)
+so the same function can be notified whenever a new object lands
+in the bucket — wired through the same binding pipeline.

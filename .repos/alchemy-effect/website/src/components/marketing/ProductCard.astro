@@ -1,0 +1,102 @@
+---
+interface Props {
+  eyebrow: string;
+  title: string;
+  body: string;
+  href: string;
+  learnMore?: string;
+}
+const { eyebrow, title, body, href, learnMore = "Learn more" } = Astro.props;
+---
+
+<a class="product-card" href={href}>
+  <div class="product-card__art">
+    <slot />
+  </div>
+  <div class="product-card__body">
+    <div class="product-card__eyebrow">{eyebrow}</div>
+    <div class="product-card__title">{title}</div>
+    <p class="product-card__text">{body}</p>
+    <span class="product-card__cta">
+      {learnMore} <span aria-hidden>&rarr;</span>
+    </span>
+  </div>
+</a>
+
+<style>
+  .product-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline);
+    border-radius: 14px;
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    transition:
+      border-color 200ms ease,
+      transform 200ms ease,
+      box-shadow 200ms ease;
+    box-shadow: var(--alc-shadow-sm);
+  }
+  .product-card:hover {
+    border-color: var(--alc-accent-deep);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(184, 138, 74, 0.12);
+  }
+  .product-card:hover .product-card__cta {
+    color: var(--alc-accent-deep);
+  }
+  .product-card__art {
+    height: 152px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid var(--alc-hairline);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--alc-bg-nav) 90%, transparent) 0%,
+      var(--alc-bg-elev-1) 100%
+    );
+    overflow: hidden;
+    padding: 14px;
+  }
+  .product-card__body {
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+  }
+  .product-card__eyebrow {
+    font-family: var(--alc-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--alc-accent-deep);
+    font-weight: 500;
+  }
+  .product-card__title {
+    font-family: var(--alc-font-serif);
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--alc-fg-1);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    margin-top: 2px;
+  }
+  .product-card__text {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--alc-fg-2);
+    margin: 4px 0 0;
+    flex: 1;
+  }
+  .product-card__cta {
+    font-family: var(--alc-font-mono);
+    font-size: 12px;
+    color: var(--alc-fg-3);
+    margin-top: 12px;
+    transition: color 200ms ease;
+  }
+</style>

@@ -1,0 +1,42 @@
+---
+const accent = "var(--alc-accent-deep)";
+const ok = "var(--alc-success)";
+const warn = "var(--alc-warn)";
+const err = "var(--alc-danger)";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <!-- big lambda symbol -->
+  <text
+    x="36"
+    y="92"
+    font-family="var(--alc-font-serif)"
+    font-size="92"
+    font-weight="500"
+    fill={accent}
+    opacity="0.85"
+  >λ</text>
+
+  <!-- pipe to typed channels -->
+  <line x1="115" y1="65" x2="155" y2="65" stroke={accent} stroke-width="1.4" />
+
+  <!-- three typed channels -->
+  <g transform="translate(155 30)" font-family="var(--alc-font-mono)" font-size="10.5">
+    <rect x="0" y="0" width="100" height="20" rx="5" fill="rgba(76, 137, 88, 0.12)" stroke={ok} stroke-width="1.2" />
+    <circle cx="9" cy="10" r="3" fill={ok} />
+    <text x="18" y="13.5" fill="var(--alc-fg-1)">Result&lt;A&gt;</text>
+
+    <rect x="0" y="26" width="100" height="20" rx="5" fill="rgba(212, 145, 39, 0.12)" stroke={warn} stroke-width="1.2" />
+    <circle cx="9" cy="36" r="3" fill={warn} />
+    <text x="18" y="39.5" fill="var(--alc-fg-1)">Retry × 3</text>
+
+    <rect x="0" y="52" width="100" height="20" rx="5" fill="rgba(193, 84, 84, 0.12)" stroke={err} stroke-width="1.2" />
+    <circle cx="9" cy="62" r="3" fill={err} />
+    <text x="18" y="65.5" fill="var(--alc-fg-1)">Typed Error</text>
+  </g>
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill={accent} font-style="italic">
+    typed errors · retries · streams
+  </text>
+</svg>

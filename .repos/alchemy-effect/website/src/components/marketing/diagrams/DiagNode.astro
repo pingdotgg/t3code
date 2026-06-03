@@ -1,0 +1,53 @@
+---
+import { CF_COLOR, tint } from "./_colors";
+
+interface Props {
+  label: string;
+  sub?: string;
+  accent?: boolean;
+  dim?: boolean;
+  color?: string;
+}
+
+const { label, sub, accent, dim, color = CF_COLOR } = Astro.props;
+const borderColor = accent ? color : "var(--alc-hairline-2)";
+const bg = dim ? "var(--alc-bg)" : "var(--alc-bg-elev-1)";
+const shadow = accent ? `0 0 0 2px ${tint(color, 0.12)}` : "none";
+---
+
+<div
+  class="diag-node"
+  style={`background:${bg};border-color:${borderColor};box-shadow:${shadow};`}
+>
+  <slot name="icon" />
+  <div class="diag-node__label">{label}</div>
+  {sub && <div class="diag-node__sub">{sub}</div>}
+</div>
+
+<style>
+  .diag-node {
+    border-radius: 10px;
+    padding: 10px 12px 8px;
+    min-width: 92px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+    border-width: 1px;
+    border-style: solid;
+  }
+  .diag-node__label {
+    font-family: var(--alc-font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--alc-fg-1);
+    line-height: 1.2;
+  }
+  .diag-node__sub {
+    font-family: var(--alc-font-mono);
+    font-size: 10px;
+    color: var(--alc-fg-3);
+    line-height: 1.25;
+  }
+</style>

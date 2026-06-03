@@ -1,0 +1,22 @@
+/* Shared card harness — keep previews consistent. */
+@import url("../colors_and_type.css");
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--alc-bg);
+  color: var(--alc-fg-2);
+  font-family: var(--alc-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  width: 700px;
+  padding: 24px;
+}
+.card {
+  width: 100%;
+}

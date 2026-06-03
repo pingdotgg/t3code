@@ -1,0 +1,215 @@
+---
+title: Migrating from v1
+description: Migrate your Alchemy v1 (async/await) project to Alchemy v2.
+sidebar:
+  order: 0
+---
+
+Alchemy v1 uses `async/await` with top-level `await` for
+orchestration. Alchemy v2 replaces this with Effect generators for
+type-safe error handling, composable retries, and declarative
+resource wiring.
+
+Your existing `async fetch` handlers **do not need to change** — you
+can keep them as-is and still get all the benefits of the new engine.
+
+## Step 1: Replace the Stack
+
+In v1, you create an app with `await alchemy(...)` and finalize it
+at the end:
+
+```typescript
+// v1 — alchemy.run.ts
+import alchemy from "alchemy";
+import { Worker, R2Bucket } from "alchemy/cloudflare";
+
+const app = await alchemy("my-app", {});
+
+const bucket = await R2Bucket("bucket", {});
+const worker = await Worker("worker", {
+  entrypoint: "./src/worker.ts",
+  bindings: { BUCKET: bucket },
+});
+
+console.log(worker.url);
+
+await app.finalize();
+```
+
+In v2, you export a default `Alchemy.Stack` and use `yield*` instead
+of `await`:
+
+```typescript
+// v2 — alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export const Bucket = Cloudflare.R2Bucket("Bucket");
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket },
+});
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url };
+  }),
+);
+```
+
+Key differences:
+
+- `await alchemy("name")` + `await app.finalize()` → `Alchemy.Stack("name", { providers }, effect)`
+- `await R2Bucket("name", {})` → `Cloudflare.R2Bucket("name")`
+- `await Worker("name", { entrypoint })` → `Cloudflare.Worker("name", { main })`
+- `entrypoint` is now called `main`
+- Resources are declared at the top level, then `yield*`-ed inside the Stack
+- No more `finalize()` — the Stack handles lifecycle automatically
+
+## Step 2: Keep your async handler
+
+Your existing Worker runtime code does not need to change. The async
+pattern declares bindings on the Worker's `env` prop and uses
+`Cloudflare.InferEnv` to type the `env` object:
+
+```typescript twoslash
+// @noErrors
+// alchemy.run.ts
++export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket },
+});
+```
+
+Your handler stays the same — just update the type import:
+
+```typescript twoslash
+// @noErrors
+// src/worker.ts
+-import type { Env } from "../alchemy.run.ts";
++import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+- async fetch(request: Request, env: Env) {
++ async fetch(request: Request, env: WorkerEnv) {
+-   const object = await env.BUCKET.get("key");
++   const object = await env.Bucket.get("key");
+    return new Response(object?.body ?? null);
+  },
+};
+```
+
+`Cloudflare.InferEnv` derives a fully typed `env` object from the
+`env` declared on the Worker. You get type safety on the binding
+names and their APIs without using Effect in your runtime code.
+
+:::tip
+This is the recommended migration path. Get your infrastructure on v2
+first, then optionally adopt Effect for runtime code later.
+:::
+
+## Step 3: Deploy
+
+The CLI commands are the same:
+
+```sh
+alchemy deploy
+alchemy destroy
+```
+
+Your v1 state is not compatible with v2. On your first deploy, Alchemy
+creates new resources. You should destroy your v1 stack first, then
+deploy with v2.
+
+## (Optional) Adopt Effect for runtime code
+
+When you're ready, you can switch to Effect-native Workers. This
+gives you typed errors, composable retries, and Effect's `HttpServer`
+integration.
+
+Instead of declaring `env` bindings on the resource props, you bind
+resources in the Worker's Init phase using `yield*`:
+
+```typescript twoslash
+// @noErrors
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Bucket } from "./bucket.ts";
+
+-export default {
+-  async fetch(request: Request, env: WorkerEnv) {
+-    const object = await env.Bucket.get("key");
+-    return new Response(object?.body ?? null);
+-  },
+-};
++export default Cloudflare.Worker("Worker",
++  { main: import.meta.path },
++  Effect.gen(function* () {
++    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
++
++    return {
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const key = request.url.split("/").pop()!;
++        const object = yield* bucket.get(key);
++        return object
++          ? HttpServerResponse.text(yield* object.text())
++          : HttpServerResponse.text("Not found", { status: 404 });
++      }),
++    };
++  }),
++);
+```
+
+The Worker resource declaration moves from `alchemy.run.ts` into the
+Worker file itself (using `import.meta.path` as the `main`), and the
+Stack just `yield*`-s the imported Worker:
+
+```typescript twoslash
+// @noErrors
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
++import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import Worker from "./src/worker.ts";
++import { Bucket } from "./src/bucket.ts";
+
+-export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+-
+-export const Worker = Cloudflare.Worker("Worker", {
+-  main: "./src/worker.ts",
+-  env: { Bucket },
+-});
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
++   const bucket = yield* Bucket;
+    const worker = yield* Worker;
+    return { url: worker.url };
+  }),
+);
+```
+
+## Summary
+
+|              | v1 (async)                    | v2 (async style)              | v2 (Effect style)                  |
+| ------------ | ----------------------------- | ----------------------------- | ---------------------------------- |
+| Stack        | `await alchemy("name")`       | `Alchemy.Stack("name", ...)`  | `Alchemy.Stack("name", ...)`       |
+| Resources    | `await R2Bucket(...)`         | `Cloudflare.R2Bucket(...)`    | `Cloudflare.R2Bucket(...)`         |
+| Worker entry | `entrypoint`                  | `main`                        | `main: import.meta.path`           |
+| Bindings     | `bindings: { KEY: resource }` | `env: { Key: resource }`      | `yield* Resource.bind(ref)`        |
+| Runtime code | `async fetch(req, env)`       | `async fetch(req, env)`       | `Effect.gen(function* () { ... })` |
+| Lifecycle    | `await app.finalize()`        | automatic                     | automatic                          |
+| Type safety  | runtime errors                | typed `env` via `InferEnv`    | full Effect type system            |

@@ -1,0 +1,25 @@
+{
+  "name": "aws-rds-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/aws-rds"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@distilled.cloud/aws": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@types/pg": "^8.18.0",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "pg": "^8.20.0"
+  }
+}

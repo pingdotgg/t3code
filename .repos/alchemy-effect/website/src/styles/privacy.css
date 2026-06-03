@@ -1,0 +1,97 @@
+.alc-privacy {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 56px 24px 80px;
+  color: var(--alc-fg-2);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.alc-privacy h1 {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  font-size: 44px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--alc-fg-1);
+  margin: 0 0 28px;
+}
+.alc-privacy h2 {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  font-size: 26px;
+  color: var(--alc-fg-1);
+  margin: 44px 0 14px;
+  letter-spacing: -0.01em;
+}
+.alc-privacy h3 {
+  font-family: var(--alc-font-sans);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--alc-fg-1);
+  margin: 28px 0 10px;
+}
+.alc-privacy p {
+  margin: 0 0 16px;
+}
+.alc-privacy a {
+  color: var(--alc-accent-deep);
+  text-decoration: none;
+}
+.alc-privacy a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.alc-privacy ul {
+  padding-left: 22px;
+  margin: 0 0 18px;
+}
+.alc-privacy li {
+  margin: 6px 0;
+}
+.alc-privacy code {
+  font-family: var(--alc-font-mono);
+  font-size: 0.88em;
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.alc-privacy pre {
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 18px;
+}
+.alc-privacy pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.alc-privacy table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 22px;
+  font-size: 14px;
+}
+.alc-privacy th,
+.alc-privacy td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--alc-hairline);
+}
+.alc-privacy th {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--alc-fg-4);
+  font-weight: 500;
+}
+.alc-privacy strong {
+  color: var(--alc-fg-1);
+}

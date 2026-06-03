@@ -1,0 +1,11 @@
+---
+import { AWS_COLOR, tint } from "../_colors";
+interface Props { size?: number; color?: string }
+const { size = 26, color = AWS_COLOR } = Astro.props;
+const fill = tint(color);
+---
+<svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <path d="M7 8 H25 L23 26 H9 Z" fill={fill} stroke={color} stroke-width="1.5" stroke-linejoin="round" />
+  <path d="M7 8 H25" stroke={color} stroke-width="1.5" />
+  <circle cx="22" cy="11.5" r="1.2" fill={color} />
+</svg>

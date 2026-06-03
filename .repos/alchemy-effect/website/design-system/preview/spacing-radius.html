@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Radii</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 12px;
+      }
+      .cell {
+        text-align: center;
+      }
+      .box {
+        width: 72px;
+        height: 72px;
+        background: var(--alc-bg-elev-1);
+        border: 1px solid var(--alc-hairline-2);
+        margin: 0 auto 8px;
+      }
+      .name {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-1);
+      }
+      .px {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-4);
+        margin-top: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div class="cell">
+          <div class="box" style="border-radius: 2px"></div>
+          <div class="name">xs</div>
+          <div class="px">2</div>
+        </div>
+        <div class="cell">
+          <div class="box" style="border-radius: 4px"></div>
+          <div class="name">sm</div>
+          <div class="px">4</div>
+        </div>
+        <div class="cell">
+          <div class="box" style="border-radius: 8px"></div>
+          <div class="name">base</div>
+          <div class="px">8</div>
+        </div>
+        <div class="cell">
+          <div class="box" style="border-radius: 10px"></div>
+          <div class="name">md</div>
+          <div class="px">10</div>
+        </div>
+        <div class="cell">
+          <div class="box" style="border-radius: 12px"></div>
+          <div class="name">lg</div>
+          <div class="px">12</div>
+        </div>
+        <div class="cell">
+          <div class="box" style="border-radius: 16px"></div>
+          <div class="name">xl</div>
+          <div class="px">16</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

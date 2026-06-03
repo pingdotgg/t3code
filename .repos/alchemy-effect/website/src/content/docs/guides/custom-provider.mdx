@@ -1,0 +1,919 @@
+---
+title: Writing a Custom Resource Provider
+description: Add support for a new cloud or third-party API by declaring a Resource type and implementing its lifecycle as an Effect Layer.
+sidebar:
+  order: 8
+---
+
+A **provider** is what gives meaning to a [Resource](/concepts/resource)
+declaration. When you `yield*` a resource inside a Stack, Alchemy
+looks up the provider for that resource's type and calls the
+appropriate lifecycle method — `reconcile`, `delete`, and
+optionally `diff`, `read`, `precreate`, `tail`, `logs`.
+
+Providers are just Effect `Layer`s, which means **adding support for
+a new cloud or third-party API is "declare a type, implement a
+Layer"** — no codegen, no registry, no schema.
+
+This guide walks through building a Stripe `Product` provider
+end-to-end: declaring props and attributes, defining the resource
+type, implementing the lifecycle, bundling it into a `providers()`
+layer, and writing a test.
+
+See [Provider](/concepts/provider) for the conceptual overview and
+[Resource Lifecycle](/concepts/resource-lifecycle) for the semantics
+of when each lifecycle method fires.
+
+## Declare props and attributes
+
+Every resource has two sides:
+
+- **Input properties** — the desired configuration you pass in
+- **Output attributes** — the values the cloud returns after creation
+
+Start with two plain TypeScript types. Both are pure data, so
+they're trivial to share between the provider and call sites.
+
+Create `src/stripe/Product.ts`:
+
+```typescript
+// src/stripe/Product.ts
+export interface StripeProductProps {
+  name: string;
+  description?: string;
+  active?: boolean;
+}
+
+export interface StripeProductAttributes {
+  productId: string;
+  created: number;
+}
+```
+
+## Declare the Resource type
+
+A `Resource<Type, Props, Attributes>` is a phantom type that ties a
+string `Type` to its props and attributes. The string `Type` (here
+`"Stripe.Product"`) is what Alchemy uses to look up the provider at
+plan time — it must be globally unique.
+
+```diff lang="typescript"
+// src/stripe/Product.ts
++import { Resource } from "alchemy";
++
+export interface StripeProductProps {
+  name: string;
+  description?: string;
+  active?: boolean;
+}
+
+export interface StripeProductAttributes {
+  productId: string;
+  created: number;
+}
++
++export type StripeProduct = Resource<
++  "Stripe.Product",
++  StripeProductProps,
++  StripeProductAttributes
++>;
+```
+
+## Declare the Resource constructor (the "tag")
+
+`Resource<T>(type)` returns the value users actually call —
+`StripeProduct("Pro", { ... })`. It also doubles as the **tag**
+the provider Layer registers itself against, so by convention the
+type and the value share the same name.
+
+```diff lang="typescript"
+// src/stripe/Product.ts
+import { Resource } from "alchemy";
+
+// ... props / attributes / type unchanged ...
+
+export type StripeProduct = Resource<
+  "Stripe.Product",
+  StripeProductProps,
+  StripeProductAttributes
+>;
++
++export const StripeProduct = Resource<StripeProduct>("Stripe.Product");
+```
+
+You can already use this constructor in a stack — but with no
+provider registered, planning will fail with `Provider not found
+for Stripe.Product`. Let's fix that.
+
+## Scaffold the provider layer
+
+A provider layer is a `Layer<Provider<R>>` produced by
+`Provider.effect(ResourceClass, effect)`. The inner Effect
+constructs a `ProviderService` — an object with `reconcile`,
+`delete` (required) and optional hooks like `diff`, `read`,
+`precreate`.
+
+Start with stubs so the types compile, then fill them in:
+
+```diff lang="typescript"
+// src/stripe/Product.ts
+-import { Resource } from "alchemy";
++import * as Provider from "alchemy/Provider";
++import { Resource } from "alchemy";
++import * as Effect from "effect/Effect";
+
+// ... props / attributes / type / constructor unchanged ...
+
+export const StripeProduct = Resource<StripeProduct>("Stripe.Product");
++
++export const StripeProductProvider = () =>
++  Provider.effect(
++    StripeProduct,
++    Effect.gen(function* () {
++      return StripeProduct.Provider.of({
++        reconcile: () => Effect.die("not implemented"),
++        delete: () => Effect.die("not implemented"),
++      });
++    }),
++  );
+```
+
+A few patterns worth knowing:
+
+- **`Provider.effect`** wraps an Effect that returns a
+  `ProviderService` into a `Layer<Provider<StripeProduct>>`.
+- **`StripeProduct.Provider.of({...})`** is a typed constructor —
+  it forces every method's input/output to match the resource's
+  props and attributes.
+- **The outer `Effect.gen`** runs once when the layer is built. Use
+  it to acquire shared dependencies (clients, credentials, HTTP).
+
+## Acquire dependencies in the outer Effect
+
+The Stripe API needs a client, and the client needs an API key.
+Don't take the key as a constructor argument — that puts it in
+your code, your env, or your CI secret store, and ignores the
+profile/login system that makes Alchemy ergonomic across stages.
+
+Instead, declare a `StripeCredentials` service. Later we'll
+implement an `AuthProvider` that supplies it from the configured
+profile (or env on CI).
+
+Create `src/stripe/Credentials.ts`:
+
+```typescript
+// src/stripe/Credentials.ts
+import * as Context from "effect/Context";
+import * as Redacted from "effect/Redacted";
+
+export class StripeCredentials extends Context.Tag("StripeCredentials")<
+  StripeCredentials,
+  { apiKey: Redacted.Redacted<string> }
+>() {}
+```
+
+Yield it inside the provider's outer Effect, then build the SDK
+client once. Anything you yield there becomes a requirement on the
+resulting Layer:
+
+```diff lang="typescript"
+// src/stripe/Product.ts
+import * as Provider from "alchemy/Provider";
+import { Resource } from "alchemy";
+import * as Effect from "effect/Effect";
++import * as Redacted from "effect/Redacted";
++import Stripe from "stripe";
++import { StripeCredentials } from "./Credentials.ts";
+
+// ...
+
+export const StripeProductProvider = () =>
+  Provider.effect(
+    StripeProduct,
+    Effect.gen(function* () {
++      const { apiKey } = yield* StripeCredentials;
++      const stripe = new Stripe(Redacted.value(apiKey));
++
+      return StripeProduct.Provider.of({
+        reconcile: () => Effect.die("not implemented"),
+        delete: () => Effect.die("not implemented"),
+      });
+    }),
+  );
+```
+
+:::tip[Always wrap secrets in `Redacted`]
+`Redacted<string>` prevents the API key from leaking into logs,
+error messages, or `console.log`. The provider unwraps it with
+`Redacted.value(...)` only when handing it to the SDK.
+:::
+
+The provider Layer now has type
+`Layer<Provider<StripeProduct>, never, StripeCredentials>` —
+Alchemy won't let you use it in a stack without supplying
+credentials. We'll provide them via an AuthProvider in a later
+step.
+
+## Implement `reconcile`
+
+`reconcile` is the single lifecycle method that converges the
+cloud's actual state to the desired state. It runs on every apply
+— first-time provisioning, routine updates, and adoption
+takeovers — so its body must work correctly for all three.
+
+It receives `news` (resolved input props), `id` (logical ID),
+`instanceId` (deterministic suffix), `bindings`, plus two
+context-dependent inputs:
+
+- **`output: Attributes | undefined`** — `undefined` on greenfield
+  creates; defined on updates and on adoption (where the engine
+  imported an existing cloud resource via `read`).
+- **`olds: Props | undefined`** — `undefined` on greenfield AND
+  on adoption (the engine has no prior props for a resource it
+  just discovered); defined only on routine updates.
+
+A reconciler is shaped like:
+
+```
+1. Observe   — derive the physical id; read live cloud state
+2. Ensure    — if missing, create it; tolerate AlreadyExists/etc.
+3. Sync      — for each mutable aspect: read observed, diff vs
+                desired, apply only the delta
+4. Return    — fresh Attributes
+```
+
+:::warning[Don't branch the body on `output === undefined`]
+Writing `if (output === undefined) { /* create body */ } else { /* update body */ }`
+just renames the old `create`/`update` split. The reconciler must be a single
+flow that produces correct cloud state regardless of starting point. Trust
+observed cloud state, not `olds`.
+:::
+
+:::tip[Use `Effect.tryPromise`, not `Effect.promise`]
+`Effect.tryPromise` surfaces SDK errors as Effect failures the
+lifecycle machinery can report cleanly. `Effect.promise` swallows
+them and turns rejections into defects.
+:::
+
+:::note[Bindings]
+The `bindings` argument carries data attached by upstream policies
+and event sources (IAM grants, queue subscriptions, etc.). If your
+resource type supports being a binding target, read them here. See
+[Binding](/concepts/binding) for the full contract.
+:::
+
+For the Stripe product, the SDK gives us `retrieve`, `create`, and
+`update`. The reconciler observes via `retrieve`, ensures via
+`create` (catching the cached-id case), and syncs the mutable name
++ description + active flag in a single `update` call:
+
+```diff lang="typescript"
+return StripeProduct.Provider.of({
+-  reconcile: () => Effect.die("not implemented"),
++  reconcile: Effect.fnUntraced(function* ({ news, output }) {
++    // Observe — fetch live state if we have a cached id.
++    let product = output?.productId
++      ? yield* Effect.tryPromise(() =>
++          stripe.products.retrieve(output.productId),
++        ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
++      : undefined;
++
++    // Ensure — create if missing.
++    if (!product) {
++      product = yield* Effect.tryPromise(() =>
++        stripe.products.create({
++          name: news.name,
++          description: news.description,
++          active: news.active,
++        }),
++      );
++    }
++
++    // Sync — patch any mutable field that drifted from desired.
++    if (
++      product.name !== news.name ||
++      product.description !== (news.description ?? null) ||
++      product.active !== (news.active ?? true)
++    ) {
++      product = yield* Effect.tryPromise(() =>
++        stripe.products.update(product!.id, {
++          name: news.name,
++          description: news.description,
++          active: news.active,
++        }),
++      );
++    }
++
++    return {
++      productId: product.id,
++      created: product.created,
++    };
++  }),
+   delete: () => Effect.die("not implemented"),
+ });
+```
+
+The reconciler is **idempotent** by construction — running it
+twice with the same `news` and a fresh `output` cache produces
+the same end state. Alchemy may retry it if state persistence
+fails, and the same body recovers gracefully. Adoption (where
+`output` is set but `olds` is `undefined`) goes through the same
+path: `retrieve` finds the resource, the sync step rewrites any
+fields that drifted from `news`, and we're converged.
+
+## Implement `delete`
+
+`delete` runs when the resource is removed from code, replaced, or
+when `alchemy destroy` runs.
+
+:::tip[Treat 404 as success]
+Like `create`, `delete` **must be idempotent**. Alchemy may retry
+it if persistence fails between the cloud call succeeding and state
+being written. Catch "not found" errors and return `Effect.void`.
+:::
+
+```diff lang="typescript"
+return StripeProduct.Provider.of({
+   reconcile: Effect.fnUntraced(function* ({ news, output }) { /* ... */ }),
+-  delete: () => Effect.die("not implemented"),
++  delete: Effect.fnUntraced(function* ({ output }) {
++    yield* Effect.tryPromise(() =>
++      stripe.products.del(output.productId),
++    ).pipe(
++      Effect.catchAll((cause) =>
++        cause instanceof Error && cause.message.includes("No such product")
++          ? Effect.void
++          : Effect.fail(cause),
++      ),
++    );
++  }),
+ });
+```
+
+## Implement `diff` (optional)
+
+Some property changes can't be applied in place. For Stripe
+products the `name` is mutable but (hypothetically) the
+`description` is not — changing it requires recreating the
+product. Implement `diff` to tell Alchemy which kind of change to
+plan.
+
+`diff` runs at **plan time**, before `update`, and returns one of:
+
+- `{ action: "noop" }` — change is trivial, skip `update`
+- `{ action: "update", stables?: [...] }` — apply in place
+- `{ action: "replace", deleteFirst?: boolean }` — destroy and
+  recreate
+- `undefined` / `void` — fall back to default (treat as `update`)
+
+:::note[`diff` runs during planning]
+Props may still be unresolved `Output`s when `diff` is called —
+they're only fully resolved at apply time. Always guard with
+`isResolved(news)` and return `undefined` to defer to the default
+path when you can't decide.
+:::
+
+```diff lang="typescript"
++import { isResolved } from "alchemy/Diff";
++
+// ...
+
+return StripeProduct.Provider.of({
++  diff: Effect.fnUntraced(function* ({ news, olds }) {
++    if (!isResolved(news)) return undefined;
++    if (news.description !== olds.description) {
++      return { action: "replace" } as const;
++    }
++    return undefined;
++  }),
+   reconcile: Effect.fnUntraced(function* ({ news, output }) { /* ... */ }),
+   delete: Effect.fnUntraced(function* ({ output }) { /* ... */ }),
+ });
+```
+
+For attributes that are immutable across **all** updates (e.g.
+the Stripe `productId`, an ARN), declare them in
+`stables` at the top level:
+
+```diff lang="typescript"
+return StripeProduct.Provider.of({
++  stables: ["productId"],
+   diff: Effect.fnUntraced(function* ({ news, olds }) { /* ... */ }),
+   // ...
+ });
+```
+
+## Implement `read` (optional, for recovery and adoption)
+
+The engine calls `read` whenever a resource has no prior state, both
+to recover from interrupted reconciles *and* to import pre-existing
+cloud resources into a fresh state store. Returning `undefined` tells
+Alchemy the resource doesn't exist and should be created.
+
+```diff lang="typescript"
+return StripeProduct.Provider.of({
+   stables: ["productId"],
+   diff: Effect.fnUntraced(function* ({ news, olds }) { /* ... */ }),
++  read: Effect.fnUntraced(function* ({ output }) {
++    if (!output?.productId) return undefined;
++    const product = yield* Effect.tryPromise(() =>
++      stripe.products.retrieve(output.productId),
++    ).pipe(
++      Effect.catchAll(() => Effect.succeed(undefined)),
++    );
++    if (!product) return undefined;
++    return { productId: product.id, created: product.created };
++  }),
+   reconcile: Effect.fnUntraced(function* ({ news, output }) { /* ... */ }),
+   delete: Effect.fnUntraced(function* ({ output }) { /* ... */ }),
+ });
+```
+
+This Stripe example only finds resources by an ID we previously
+saved (`output.productId`) — without a prior output it can't
+locate anything, so it returns `undefined`. That's a fine default.
+
+**Ownership-aware reads.** If your provider can detect an existing
+resource from props alone (e.g. by tag-aware lookup or deterministic
+naming), brand the returned attributes with `Unowned` when they
+belong to someone else:
+
+```typescript
+import { Unowned } from "alchemy/AdoptPolicy";
+
+read: Effect.fnUntraced(function* ({ id, olds }) {
+  const live = yield* lookupByName(olds.name);
+  if (!live) return undefined;
+  const attrs = { productId: live.id, created: live.created };
+  // Compare tags/owner against this stack/stage/id.
+  return ownsResource(id, live.tags) ? attrs : Unowned(attrs);
+}),
+```
+
+The engine uses this to decide:
+
+- plain attrs → silently import the resource as our own
+- `Unowned(attrs)` → fail with `OwnedBySomeoneElse` unless the user
+  passed `--adopt` (or wrapped the effect in `adopt(true)`), in
+  which case it's a takeover.
+
+See [Resource Lifecycle › Adoption](/concepts/resource-lifecycle#adoption)
+for the full flow.
+
+## Implement an `AuthProvider`
+
+Alchemy ships a profile/login system: `alchemy login` walks the
+user through configuring credentials, stores them under
+`~/.alchemy/credentials/{profile}/{provider}.json`, and resolves
+them per-stack at deploy time. CI runs read from environment
+variables instead.
+
+Plug into it by implementing `AuthProvider`. It's a five-method
+interface — `configure`, `login`, `logout`, `prettyPrint`, `read`
+— that Alchemy's `login` command and credential-resolution layer
+both use.
+
+### Declare the config and resolved-credentials types
+
+Start with two types per supported method (env, stored, OAuth,
+etc.). The `Config` is what gets persisted under the profile; the
+`Resolved` shape is what your provider Layer consumes:
+
+```typescript
+// src/stripe/AuthProvider.ts
+import * as Redacted from "effect/Redacted";
+
+export type StripeAuthConfig =
+  | { method: "env" }
+  | { method: "stored" };
+
+export type StripeStoredCredentials = {
+  apiKey: string;
+};
+
+export type StripeResolvedCredentials = {
+  apiKey: Redacted.Redacted<string>;
+  source: { type: StripeAuthConfig["method"] };
+};
+
+export const STRIPE_AUTH_PROVIDER_NAME = "Stripe";
+const STORAGE_KEY = "stripe-stored";
+```
+
+### Build the AuthProvider layer
+
+`AuthProviderLayer<Config, Credentials>()(name, impl)` wraps your
+implementation in a Layer that registers itself into Alchemy's
+`AuthProviders` registry. `alchemy login` discovers it by name.
+
+```diff lang="typescript"
+// src/stripe/AuthProvider.ts
++import * as Console from "effect/Console";
++import * as Effect from "effect/Effect";
++import * as Match from "effect/Match";
+import * as Redacted from "effect/Redacted";
++import {
++  AuthError,
++  AuthProviderLayer,
++  type ConfigureContext,
++} from "alchemy/Auth/AuthProvider";
++import {
++  deleteCredentials,
++  displayRedacted,
++  readCredentials,
++  writeCredentials,
++} from "alchemy/Auth/Credentials";
++import { getEnvRedacted, retryOnce } from "alchemy/Auth/Env";
++import * as Clank from "alchemy/Util/Clank";
+
+// ... config / credential types unchanged ...
+
++export const StripeAuth = AuthProviderLayer<
++  StripeAuthConfig,
++  StripeResolvedCredentials
++>()(STRIPE_AUTH_PROVIDER_NAME, {
++  configure: (profileName, ctx) => configureCredentials(profileName, ctx),
++  login: (profileName, config) => login(profileName, config),
++  logout: (profileName, config) => logout(profileName, config),
++  prettyPrint: (profileName, config) => prettyPrint(profileName, config),
++  read: (profileName, config) => resolveCredentials(profileName, config),
++});
+```
+
+### `configure` — pick a method (with `Clank` prompts)
+
+`configure` runs once when the user runs `alchemy login` for a
+profile that doesn't yet have a Stripe entry. Use
+[`alchemy/Util/Clank`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Util/Clank.ts)
+for terminal prompts — it wraps `@clack/prompts` in Effect with
+proper cancellation handling.
+
+:::tip[Respect `ci`]
+The `ConfigureContext.ci` flag is `true` when running in CI.
+`configure` **must not prompt** in that case — pick a sensible
+non-interactive default (almost always `{ method: "env" }`).
+:::
+
+```diff lang="typescript"
++const configureCredentials = (profileName: string, ctx: ConfigureContext) =>
++  Effect.gen(function* () {
++    if (ctx.ci) {
++      return { method: "env" as const };
++    }
++
++    const method = yield* Clank.select({
++      message: "Stripe authentication method",
++      options: [
++        {
++          value: "env" as const,
++          label: "Environment Variables",
++          hint: "STRIPE_API_KEY",
++        },
++        {
++          value: "stored" as const,
++          label: "API Key",
++          hint: "enter interactively, stored in ~/.alchemy/credentials",
++        },
++      ],
++    }).pipe(retryOnce);
++
++    return yield* Match.value(method).pipe(
++      Match.when("env", () => Effect.succeed({ method: "env" as const })),
++      Match.when("stored", () => loginStored(profileName)),
++      Match.exhaustive,
++    );
++  }).pipe(
++    Effect.mapError(
++      (e) => new AuthError({ message: "configure failed", cause: e }),
++    ),
++  );
++
++const loginStored = Effect.fnUntraced(function* (profileName: string) {
++  const apiKey = yield* Clank.password({
++    message: "Stripe API Key",
++    validate: (v) =>
++      v.length === 0
++        ? "Required"
++        : v.startsWith("sk_") || v.startsWith("rk_")
++          ? undefined
++          : "Expected a key starting with sk_ or rk_",
++  }).pipe(retryOnce);
++
++  yield* writeCredentials<StripeStoredCredentials>(
++    profileName,
++    STORAGE_KEY,
++    { apiKey: Redacted.value(apiKey) },
++  );
++  yield* Clank.success("Stripe: credentials saved.");
++
++  return { method: "stored" as const };
++});
+```
+
+`Clank` provides `select`, `text`, `password`, `confirm`,
+`multiselect`, `success`, `info`, `warn`, `error`, and `openUrl`
+— enough to build any login flow including OAuth device codes.
+Wrap each prompt in `retryOnce` so a stray Ctrl+C doesn't abort
+the whole login.
+
+### `login` / `logout` — handle re-auth and credential removal
+
+`login` runs whenever `alchemy login` is invoked for an
+already-configured profile (e.g. to refresh an expired token).
+`logout` removes stored credentials.
+
+```diff lang="typescript"
++const login = (profileName: string, config: StripeAuthConfig) =>
++  Match.value(config).pipe(
++    Match.when({ method: "env" }, () => Effect.void),
++    Match.when({ method: "stored" }, () =>
++      readCredentials<StripeStoredCredentials>(profileName, STORAGE_KEY).pipe(
++        Effect.flatMap((creds) =>
++          creds == null ? loginStored(profileName).pipe(Effect.asVoid) : Effect.void,
++        ),
++      ),
++    ),
++    Match.exhaustive,
++  );
++
++const logout = (profileName: string, config: StripeAuthConfig) =>
++  Match.value(config).pipe(
++    Match.when({ method: "env" }, () => Effect.void),
++    Match.when({ method: "stored" }, () =>
++      deleteCredentials(profileName, STORAGE_KEY).pipe(
++        Effect.andThen(Clank.success("Stripe: stored credentials removed")),
++      ),
++    ),
++    Match.exhaustive,
++  );
+```
+
+### `read` — resolve credentials at deploy time
+
+`read` is called every deploy to materialize the credentials. For
+`env`, pull from environment variables (using `getEnvRedacted` so
+the value stays redacted); for `stored`, read from the credentials
+file under the profile.
+
+```diff lang="typescript"
++const resolveCredentials = (
++  profileName: string,
++  config: StripeAuthConfig,
++) =>
++  Match.value(config).pipe(
++    Match.when({ method: "env" }, () =>
++      Effect.gen(function* () {
++        const apiKey = yield* getEnvRedacted("STRIPE_API_KEY");
++        if (!apiKey) {
++          return yield* new AuthError({
++            message: "Stripe env credentials not found. Set STRIPE_API_KEY.",
++          });
++        }
++        return {
++          apiKey,
++          source: { type: "env" as const },
++        } satisfies StripeResolvedCredentials;
++      }),
++    ),
++    Match.when({ method: "stored" }, () =>
++      readCredentials<StripeStoredCredentials>(profileName, STORAGE_KEY).pipe(
++        Effect.flatMap((creds) =>
++          creds == null
++            ? Effect.fail(
++                new AuthError({
++                  message:
++                    "Stripe stored credentials not found. Run: alchemy login --configure",
++                }),
++              )
++            : Effect.succeed({
++                apiKey: Redacted.make(creds.apiKey),
++                source: { type: "stored" as const },
++              } satisfies StripeResolvedCredentials),
++        ),
++      ),
++    ),
++    Match.exhaustive,
++  );
+```
+
+### `prettyPrint` — show resolved credentials in `alchemy auth`
+
+```diff lang="typescript"
++const prettyPrint = (profileName: string, config: StripeAuthConfig) =>
++  resolveCredentials(profileName, config).pipe(
++    Effect.tap((creds) =>
++      Effect.all([
++        Console.log(`  apiKey: ${displayRedacted(creds.apiKey, 7)}`),
++        Console.log(`  source: ${creds.source.type}`),
++      ]),
++    ),
++    Effect.catch((e) =>
++      Console.error(`  Failed to retrieve credentials: ${e}`),
++    ),
++  );
+```
+
+## Wire credentials into the provider
+
+The provider needs `StripeCredentials`; the AuthProvider produces
+`StripeResolvedCredentials`. Bridge them with a `fromAuthProvider`
+layer that resolves the auth provider from the registry, runs
+`read`, and supplies the result as `StripeCredentials`:
+
+```typescript
+// src/stripe/Credentials.ts (additions)
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { getAuthProvider } from "alchemy/Auth/AuthProvider";
+import { ALCHEMY_PROFILE, Profile } from "alchemy/Auth/Profile";
+import {
+  STRIPE_AUTH_PROVIDER_NAME,
+  type StripeAuthConfig,
+  type StripeResolvedCredentials,
+} from "./AuthProvider.ts";
+
+export const fromAuthProvider = () =>
+  Layer.effect(
+    StripeCredentials,
+    Effect.gen(function* () {
+      const profile = yield* Profile;
+      const auth = yield* getAuthProvider<
+        StripeAuthConfig,
+        StripeResolvedCredentials
+      >(STRIPE_AUTH_PROVIDER_NAME);
+      const profileName = yield* ALCHEMY_PROFILE;
+      const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
+
+      const config = yield* profile.loadOrConfigure(auth, profileName, { ci });
+      const creds = yield* auth.read(profileName, config as StripeAuthConfig);
+      return { apiKey: creds.apiKey };
+    }),
+  );
+```
+
+`Profile.loadOrConfigure` reads any existing config for the profile, and
+falls back to `configure` (interactive in TTYs, env in CI) if
+nothing is stored yet. `ALCHEMY_PROFILE` resolves the active
+profile name (`default` unless `ALCHEMY_PROFILE` is set).
+
+## Bundle into a `providers()` layer
+
+Users expect the same one-line ergonomics as the built-ins
+(`Cloudflare.providers()`, `AWS.providers()`). Bundle everything
+into a single layer: the resource collection, every provider
+implementation, the credentials bridge, and the `AuthProviderLayer`
+so `alchemy login` can discover it.
+
+```typescript
+// src/stripe/Providers.ts
+import * as Provider from "alchemy/Provider";
+import * as Layer from "effect/Layer";
+import { StripeAuth } from "./AuthProvider.ts";
+import { fromAuthProvider } from "./Credentials.ts";
+import { StripeProduct, StripeProductProvider } from "./Product.ts";
+
+export class Providers extends Provider.ProviderCollection<Providers>()(
+  "Stripe",
+) {}
+
+export const providers = () =>
+  Layer.effect(
+    Providers,
+    Provider.collection([StripeProduct]),
+  ).pipe(
+    Layer.provide(StripeProductProvider()),
+    Layer.provideMerge(fromAuthProvider()),
+    Layer.provideMerge(StripeAuth),
+  );
+```
+
+`Layer.provide` (private) wires each resource provider to the
+collection, while `Layer.provideMerge` (public) keeps the auth
+machinery in scope so the host stack can also use it.
+
+Now users plug your providers in like any built-in — no API key in
+sight:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import * as Stripe from "./src/stripe";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Stripe.providers() },
+  Effect.gen(function* () {
+    const pro = yield* Stripe.Product("Pro", {
+      name: "Pro plan",
+      description: "Everything in Free, plus...",
+    });
+    return { productId: pro.productId };
+  }),
+);
+```
+
+The first time they deploy, Alchemy walks them through
+`alchemy login` (or reads `STRIPE_API_KEY` on CI), stores the
+result under their profile, and resolves it for every subsequent
+deploy.
+
+To mix with another cloud, merge the layers:
+
+```typescript
+import * as Layer from "effect/Layer";
+
+providers: Layer.mergeAll(Cloudflare.providers(), Stripe.providers()),
+```
+
+## Test the lifecycle
+
+Alchemy's test harness (`alchemy/Test/Vitest` or `alchemy/Test/Bun`)
+configures providers + state once at the top of the file, then
+exposes `test.provider(name, (stack) => ...)` for provider-level
+tests. Each `test.provider` body receives a fresh in-memory scratch
+stack with `.deploy(effect)` and `.destroy()` helpers.
+
+:::note[Three things the harness gives you]
+- **`Test.make({ providers })`** — wires your provider Layer into
+  every test in the file so the resource type resolves.
+- **`stack.deploy(effect)`** — runs a sub-stack with an in-memory
+  state store. The same logical ID across two `stack.deploy` calls
+  triggers an `update` (or `replace`, depending on `diff`).
+- **`stack.destroy()`** — replans against an empty desired state to
+  tear everything down. Call at the end of the test.
+:::
+
+Create `test/Product.test.ts`:
+
+```typescript
+// test/Product.test.ts
+import * as Test from "alchemy/Test/Vitest";
+import { expect } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import Stripe from "stripe";
+import * as StripeProvider from "../src/stripe";
+
+// Configure providers once per file. Credentials resolve through the
+// same AuthProvider system as `alchemy deploy` — set STRIPE_API_KEY
+// (with `method: "env"`) or run `alchemy login` against a test
+// profile beforehand.
+const { test } = Test.make({ providers: StripeProvider.providers() });
+
+const stripe = new Stripe(process.env.STRIPE_API_KEY!);
+
+test.provider(
+  "create, update, delete a product",
+  (stack) => Effect.gen(function* () {
+    // Create
+    const created = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* StripeProvider.Product("TestProduct", {
+          name: "v1",
+          description: "first version",
+        });
+      }),
+    );
+    expect(created.productId).toBeDefined();
+
+    const live1 = yield* Effect.promise(() =>
+      stripe.products.retrieve(created.productId),
+    );
+    expect(live1.name).toBe("v1");
+
+    // Update (in place)
+    const updated = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* StripeProvider.Product("TestProduct", {
+          name: "v2",
+          description: "first version",
+        });
+      }),
+    );
+    expect(updated.productId).toBe(created.productId);
+
+    const live2 = yield* Effect.promise(() =>
+      stripe.products.retrieve(updated.productId),
+    );
+    expect(live2.name).toBe("v2");
+
+    // Destroy
+    yield* stack.destroy();
+  }),
+);
+```
+
+To verify replacement semantics, change a `stables` field (or the
+field your `diff` flags as `replace`) and assert that
+`updated.productId !== created.productId`.
+
+## Reference implementations
+
+If you'd rather start from a real provider:
+
+- [`Axiom/VirtualField.ts`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Axiom/VirtualField.ts) — minimal CRUD with `diff` and `read`
+- [`Cloudflare/R2/Bucket.ts`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/R2/Bucket.ts) — production provider with bindings and replace semantics
+- [`Axiom/AuthProvider.ts`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Axiom/AuthProvider.ts) — full `AuthProvider` with `env` + `stored` methods and `Clank` prompts
+- [`Axiom/Credentials.ts`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Axiom/Credentials.ts) — `fromAuthProvider()` bridge layer
+- [`Axiom/Providers.ts`](https://github.com/sam-goodwin/alchemy-effect/blob/main/packages/alchemy/src/Axiom/Providers.ts) — example of bundling a `providers()` layer with `AuthProviderLayer`

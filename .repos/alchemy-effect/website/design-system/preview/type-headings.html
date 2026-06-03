@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Heading scale</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: flex;
+        align-items: baseline;
+        gap: 20px;
+        margin-bottom: 14px;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-3);
+        width: 100px;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .h1 {
+        font-family: var(--alc-font-serif);
+        font-size: 52px;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+        color: var(--alc-fg-1);
+        line-height: 1;
+      }
+      .h2 {
+        font-family: var(--alc-font-serif);
+        font-size: 34px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        color: var(--alc-fg-1);
+        line-height: 1.1;
+      }
+      .h3 {
+        font-family: var(--alc-font-sans);
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--alc-fg-1);
+        line-height: 1.2;
+      }
+      .h4 {
+        font-family: var(--alc-font-sans);
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--alc-fg-1);
+        line-height: 1.35;
+      }
+      .em {
+        color: var(--alc-accent-deep);
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="label">H1 · Serif 500</div>
+        <div class="h1">Resources as <span class="em">Effects</span></div>
+      </div>
+      <div class="row">
+        <div class="label">H2 · Serif 500</div>
+        <div class="h2">Plan, deploy, destroy</div>
+      </div>
+      <div class="row">
+        <div class="label">H3 · Sans 600</div>
+        <div class="h3">Type-safe from cloud to code</div>
+      </div>
+      <div class="row">
+        <div class="label">H4 · Sans 600</div>
+        <div class="h4">Local dev with hot reload</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,62 @@
+/* ============================================================
+   Terminal chrome — shared by marketing islands (DeployTerminal,
+   DevTerminal, StateStoreBootstrap, …) on the marketing layout
+   and when embedded in docs MDX. Imported from both
+   global.css (docs) and marketing.css (marketing) so a single
+   source of truth styles either context.
+
+   The React/Astro components carry `.not-content` so Starlight's
+   prose plugin leaves them alone in docs.
+   ============================================================ */
+
+.alc-term {
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+.alc-term__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.alc-term__title {
+  margin-left: 10px;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+}
+.alc-term__body {
+  margin: 0;
+  padding: 14px 18px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--alc-code-var);
+  white-space: pre-wrap;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  min-height: 296px;
+}
+.alc-term .alc-code-block__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Docs MDX context: Starlight wraps content in `.sl-markdown-content`
+   which adds vertical rhythm to direct children. Re-add a small
+   margin so embedded terminals breathe like other block elements. */
+.sl-markdown-content > .alc-term {
+  margin: 1rem 0;
+}

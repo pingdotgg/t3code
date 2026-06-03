@@ -1,0 +1,36 @@
+---
+// Two nodes in a circular reference — the differentiator.
+const accent = "var(--alc-accent-deep)";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="iac-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill={accent} />
+    </marker>
+  </defs>
+
+  <!-- left node -->
+  <g transform="translate(50 40)">
+    <rect x="0" y="0" width="60" height="46" rx="8" fill="rgba(184, 138, 74, 0.10)" stroke={accent} stroke-width="1.4" />
+    <text x="30" y="20" text-anchor="middle" font-family="var(--alc-font-sans)" font-size="11" font-weight="600" fill="var(--alc-fg-1)">Worker A</text>
+    <text x="30" y="34" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-3)">.bind(B)</text>
+  </g>
+
+  <!-- right node -->
+  <g transform="translate(170 40)">
+    <rect x="0" y="0" width="60" height="46" rx="8" fill="rgba(184, 138, 74, 0.10)" stroke={accent} stroke-width="1.4" />
+    <text x="30" y="20" text-anchor="middle" font-family="var(--alc-font-sans)" font-size="11" font-weight="600" fill="var(--alc-fg-1)">Worker B</text>
+    <text x="30" y="34" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-3)">.bind(A)</text>
+  </g>
+
+  <!-- top arrow A -> B -->
+  <path d="M 110 50 C 130 28, 150 28, 170 50" stroke={accent} stroke-width="1.4" fill="none" marker-end="url(#iac-arrow)" />
+  <!-- bottom arrow B -> A -->
+  <path d="M 170 76 C 150 98, 130 98, 110 76" stroke={accent} stroke-width="1.4" fill="none" marker-end="url(#iac-arrow)" />
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill={accent} font-style="italic">
+    circular references — supported
+  </text>
+</svg>

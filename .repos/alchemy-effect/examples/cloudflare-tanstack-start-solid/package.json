@@ -1,0 +1,34 @@
+{
+  "name": "cloudflare-tanstack-start-solid-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/cloudflare-tanstack-start-solid"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@tanstack/solid-router": "^1.170.4",
+    "@tanstack/solid-start": "^1.168.6",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "solid-js": "^1.9.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "latest",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-solid": "^2.11.12"
+  }
+}

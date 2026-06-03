@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(11, 1fr);
+        gap: 4px;
+      }
+      .sw {
+        aspect-ratio: 1/1.35;
+        border-radius: 6px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 6px;
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        border: 1px solid var(--alc-hairline);
+      }
+      .sw.dark {
+        color: var(--alc-fg-invert);
+      }
+      .sw.light {
+        color: var(--alc-fg-1);
+      }
+      .k {
+        opacity: 0.85;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div class="sw light" style="background: #faf6ec">
+          <span class="k">50</span>
+        </div>
+        <div class="sw light" style="background: #f1ead8">
+          <span class="k">100</span>
+        </div>
+        <div class="sw light" style="background: #e2d7bc">
+          <span class="k">200</span>
+        </div>
+        <div class="sw light" style="background: #c7b795">
+          <span class="k">300</span>
+        </div>
+        <div class="sw light" style="background: #a89572">
+          <span class="k">400</span>
+        </div>
+        <div class="sw dark" style="background: #85714f">
+          <span class="k">500</span>
+        </div>
+        <div class="sw dark" style="background: #68573c">
+          <span class="k">600</span>
+        </div>
+        <div class="sw dark" style="background: #4e402c">
+          <span class="k">700</span>
+        </div>
+        <div class="sw dark" style="background: #363022">
+          <span class="k">800</span>
+        </div>
+        <div class="sw dark" style="background: #2a2620">
+          <span class="k">900</span>
+        </div>
+        <div class="sw dark" style="background: #1a1813">
+          <span class="k">950</span>
+        </div>
+      </div>
+      <div
+        style="
+          margin-top: 10px;
+          font-family: var(--alc-font-mono);
+          font-size: 11px;
+          color: var(--alc-fg-3);
+        "
+      >
+        Walnut scale · --alc-walnut-{50–950}
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,359 @@
+---
+layout: ../layouts/Marketing.astro
+title: "alchemy — zero to production. TypeScript IaC on Effect."
+description: "Alchemy is the IaC tool that's actually TypeScript. Stand up your whole cloud in one program, type-check the IAM, hot-reload it locally, run tests against the real cloud, preview every PR, and ship dashboards & alarms in the same file."
+---
+
+import Section from "../components/marketing/Section.astro";
+import Eyebrow from "../components/marketing/Eyebrow.astro";
+import Button from "../components/marketing/Button.astro";
+import BetaBadge from "../components/marketing/BetaBadge.astro";
+import DiscordCallout from "../components/marketing/DiscordCallout.astro";
+import CodeBlock from "../components/marketing/CodeBlock.astro";
+import SketchLabel from "../components/marketing/SketchLabel.astro";
+import DeployTerminal from "../components/marketing-islands/DeployTerminal.tsx";
+import AsyncTabs from "../components/marketing-islands/AsyncTabs.tsx";
+import EffectPilledShowcase from "../components/marketing-islands/EffectPilledShowcase.tsx";
+import DevTerminal from "../components/marketing-islands/DevTerminal.tsx";
+import BrowserHotReload from "../components/marketing-islands/BrowserHotReload.tsx";
+import TestTerminal from "../components/marketing-islands/TestTerminal.tsx";
+import PRLifecycle from "../components/marketing-islands/PRLifecycle.tsx";
+import CopyForAgent from "../components/marketing-islands/CopyForAgent.tsx";
+import HeroCta from "../components/marketing-islands/HeroCta.tsx";
+import HeadingOrnament from "../components/marketing/HeadingOrnament.astro";
+import AlchemicalDivider from "../components/marketing/AlchemicalDivider.astro";
+import HeroBgGraph from "../components/marketing/HeroBgGraph.astro";
+import Yantra from "../brand/Yantra.astro";
+
+export const STACK_SRC = `export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const Photos = yield* Cloudflare.R2Bucket("Photos");
+    const Sessions = yield* Cloudflare.KVNamespace("Sessions");
+    const api = yield* Cloudflare.Worker("Api", {
+      main: "./src/worker.ts",
+      env: { Photos, Sessions },
+    });
+    return { url: api.url };
+  }),
+);`;
+
+export const ASYNC_RUN_SRC = `// alchemy.run.ts — declare resources, attach via env.
+export const Bucket = Cloudflare.R2Bucket("Bucket");
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket },
+});
+
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;`;
+
+export const ASYNC_WORKER_SRC = `// src/worker.ts — keep your existing async handler.
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(req: Request, env: WorkerEnv) {
+    const obj = await env.Bucket.get("hello.txt");
+    return new Response(obj?.body ?? "Not found");
+  },
+};`;
+
+export const TEST_SRC = `// test/api.test.ts — isolated stack per suite.
+const stack = beforeAll(deploy(Stack));   // real R2, real DynamoDB
+afterAll(destroy(stack));                 // torn down at the end
+
+test("PUT + GET round-trips through R2", Effect.gen(function* () {
+const { url } = yield* stack;
+const res = yield* HttpClient.get(\`\${url}/object/hello.txt\`);
+expect(yield* res.text).toBe("hi!");
+}));`;
+
+export const OTEL_SRC = `// src/Api.ts — Effect emits OpenTelemetry. Exporter is a Layer.
+const requestsTotal = Metric.counter("requests_total");
+
+export default Cloudflare.Worker(
+  "Api",
+  Effect.gen(function* () {
+    yield* Effect.logInfo("request received");
+    yield* Metric.increment(requestsTotal);
+    return { fetch: handler };
+  }).pipe(Effect.provide(Otel)),     // ← Axiom, Datadog, OTLP …
+);`;
+
+export const DASH_SRC = `// alchemy.run.ts — dashboards and alarms, in code.
+export const Dashboard = AWS.CloudWatch.Dashboard("ApiHealth", {
+  widgets: [
+    Widget.line({   title: "p99 latency",    metric: api.metrics.p99 }),
+    Widget.line({   title: "requests / sec", metric: api.metrics.rps }),
+    Widget.number({ title: "5xx ratio",      metric: api.metrics.errorRate }),
+  ],
+});
+
+export const P99Alarm = AWS.CloudWatch.Alarm("p99Latency", {
+  metric: api.metrics.p99,
+  threshold: 500,
+  evaluationPeriods: 5,
+  alarmActions: [pagerDuty, slackWebhook],
+});`;
+
+{/* ───────────────────────── HERO ───────────────────────── */}
+
+<Section padding="72px 32px 40px" class="alc-hero">
+  <HeroBgGraph />
+
+  <div style="position:relative;z-index:1;text-align:center;margin-bottom:24px;">
+    <BetaBadge />
+  </div>
+  <div class="alc-hero__inner">
+    <Yantra class="alc-hero__mark" size={42} />
+
+    <Eyebrow>typescript · effect · infrastructure as code</Eyebrow>
+    <h1 class="alc-hero__title">
+      <span style="color:var(--alc-accent-deep);font-style:italic;">Zero</span>{" "}
+      &rarr; production.
+    </h1>
+    <h2 class="alc-hero__subtitle">
+      Ship <span style="color:var(--alc-accent-deep);font-style:italic;">safely</span> with fast feedback loops, ephemeral test stacks, type-checked IAM policies, and built-in observability.
+    </h2>
+    <HeroCta client:load />
+  </div>
+</Section>
+
+<AlchemicalDivider variant="line" />
+
+{/* ───── 1 · STAND UP / TEAR DOWN ───── */}
+
+<Section padding="40px 32px 96px" id="plan-deploy-destroy">
+  <div style="text-align:center;margin-bottom:36px;">
+    <Eyebrow>plan · deploy · destroy</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">Stand up infrastructure. <span style="color:var(--alc-accent-deep);font-style:italic;">Tear it down just as fast.</span></h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
+      Your whole cloud as one TypeScript program. <code class="alc-code-inline" style="color:var(--alc-accent-deep);">plan</code> previews the diff, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">deploy</code> applies it, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">destroy</code> unwinds it — predictably, every time. <a class="alc-learn-more" href="/concepts/resource-lifecycle">Learn more &rarr;</a>
+    </p>
+  </div>
+
+<div class="stack-deploy-diagram">
+  <div class="stack-deploy-diagram__col">
+    <CodeBlock filename="alchemy.run.ts" code={STACK_SRC} />
+    <div class="stack-deploy-diagram__caption">
+      <SketchLabel>Stack</SketchLabel>
+      <span>one TypeScript program</span>
+    </div>
+  </div>
+  <div class="stack-deploy-diagram__arrow" aria-hidden>
+    <span>plan</span>
+    <span style="font-size:24px;line-height:1;">&rarr;</span>
+    <span>deploy</span>
+  </div>
+  <div class="stack-deploy-diagram__col">
+    <DeployTerminal client:visible />
+    <div class="stack-deploy-diagram__caption">
+      <SketchLabel>Resources</SketchLabel>
+      <span>live across your accounts</span>
+    </div>
+  </div>
+</div>
+
+{/* Mobile-only: just the deploy terminal — the alchemy.run.ts source
+reads poorly when stacked above it on narrow screens. */}
+
+  <div class="stack-deploy-mobile">
+    <DeployTerminal client:visible />
+  </div>
+</Section>
+
+<AlchemicalDivider variant="triangle" />
+
+{/* ───── 2 · EFFECT-PILLED MODE ───── */}
+
+<Section padding="80px 32px" id="effect-pilled">
+  <div style="text-align:center;margin-bottom:36px;">
+    <Eyebrow>effect-pilled mode</Eyebrow>
+    <h2 class="alc-section-statement">
+      Compose <span style="color:var(--alc-accent-deep);font-style:italic;">Effects</span> and <span style="color:var(--alc-accent-deep);font-style:italic;">Layers</span> into type-safe cloud applications.
+    </h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:20px auto 0;">
+      <code class="alc-code-inline" style="color:var(--alc-accent-deep);">export default</code> your function and Alchemy derives the rest: <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.bind()</code> generates the IAM and env vars, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.stream(…).process(…)</code> wires up the event sources. <span style="color:var(--alc-fg-1);font-weight:500;">No more missing policies or subscriptions.</span> <a class="alc-learn-more" href="/concepts/binding">Learn more &rarr;</a>
+    </p>
+  </div>
+
+  <EffectPilledShowcase client:visible />
+</Section>
+
+<AlchemicalDivider variant="square" />
+
+{/* ───── 3 · ASYNC FETCH ESCAPE HATCH ───── */}
+
+<Section padding="80px 32px" id="async-fetch">
+  <div style="text-align:center;margin-bottom:36px;">
+    <Eyebrow>no effect required · still fully typed</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">
+      Drop down to <code class="alc-code-inline" style="color:var(--alc-accent-deep);">async&nbsp;fetch</code> when you need it.
+    </h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:0 auto;">
+      Effect is optional. Declare resources, attach them as bindings, and Alchemy infers a fully typed <code class="alc-code-inline">env</code> for your async worker — no codegen, no <code class="alc-code-inline">wrangler types</code>, no manual interfaces. <a class="alc-learn-more" href="/guides/migrating-from-v1">Learn more &rarr;</a>
+    </p>
+  </div>
+
+<div class="alc-split-2 async-split-desktop">
+  <CodeBlock
+    filename="alchemy.run.ts"
+    code={ASYNC_RUN_SRC}
+    caption="infer your WorkerEnv"
+    compact
+  />
+  <CodeBlock
+    filename="src/worker.ts"
+    code={ASYNC_WORKER_SRC}
+    caption="import and use in your worker"
+    compact
+  />
+</div>
+
+{/* Narrow-screen replacement: a single tabbed card that auto-flips
+between the two files with a short caption explaining each step. */}
+
+  <div class="async-split-mobile">
+    <AsyncTabs
+      client:visible
+      panels={[
+        {
+          filename: "alchemy.run.ts",
+          code: ASYNC_RUN_SRC,
+          caption: "infer your WorkerEnv",
+        },
+        {
+          filename: "src/worker.ts",
+          code: ASYNC_WORKER_SRC,
+          caption: "import and use in your worker",
+        },
+      ]}
+    />
+  </div>
+</Section>
+
+<AlchemicalDivider variant="pentagon" />
+
+{/* ───── 3 · HOT RELOAD AS YOU DEVELOP ───── */}
+
+<Section padding="80px 32px" background="var(--alc-bg-nav)" id="hot-reload">
+  <div style="text-align:center;margin-bottom:32px;">
+    <Eyebrow>any vite framework · one dev loop · live cloud</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">Bring any frontend. <span style="color:var(--alc-accent-deep);font-style:italic;">Hot-reload the cloud underneath it.</span></h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:680px;margin:0 auto;">
+      Vite, Astro, TanStack, SolidStart — frontend, backend, and infra hot-reload together against real R2 / KV / D1. <a class="alc-learn-more" href="/concepts/local-development">Learn more &rarr;</a>
+    </p>
+  </div>
+
+<BrowserHotReload client:visible />
+
+  <div class="alc-stat-strip">
+    <span class="alc-stat-strip__item"><strong>TanStack · SolidStart · Nuxt · Vue</strong></span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item">infra + app in <strong>one watcher</strong></span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item"><strong>~100ms</strong> hot reload</span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item">live <strong>R2 / KV / D1</strong></span>
+  </div>
+</Section>
+
+<AlchemicalDivider variant="hexagon" />
+
+{/* ───── 4 · TEST AGAINST LIVE CLOUD ───── */}
+
+<Section padding="80px 32px" id="live-tests">
+  <div style="text-align:center;margin-bottom:32px;">
+    <Eyebrow>alchemy test · isolated stages · live cloud</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">Verify against live resources: <span style="color:var(--alc-accent-deep);font-style:italic;">deploy</span> &rarr; <span style="color:var(--alc-accent-deep);font-style:italic;">assert</span> &rarr; <span style="color:var(--alc-accent-deep);font-style:italic;">destroy</span>.</h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
+      Each suite spins up its own isolated stack — live R2, DynamoDB, Workers — runs your assertions, then tears it back down. No mocks to babysit, no drift between fixture and production. <a class="alc-learn-more" href="/concepts/testing">Learn more &rarr;</a>
+    </p>
+  </div>
+
+<div class="alc-split-2 alc-split-2--wide-left">
+  <TestTerminal client:visible />
+  <CodeBlock filename="test/api.test.ts" code={TEST_SRC} compact />
+</div>
+
+  <div class="alc-stat-strip">
+    <span class="alc-stat-strip__item"><strong>per-suite</strong> stages</span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item">vitest + bun, <strong>Effect-aware</strong></span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item">deploy → assert → <strong>destroy</strong></span>
+    <span class="alc-stat-strip__sep">·</span>
+    <span class="alc-stat-strip__item"><strong>no mocks</strong>, no fakes</span>
+  </div>
+</Section>
+
+<AlchemicalDivider variant="heptagon" />
+
+{/* ───── 5 · PR PREVIEW ENVIRONMENTS ───── */}
+
+<Section padding="80px 32px" background="var(--alc-bg-nav)" id="ci-previews">
+  <div style="text-align:center;margin-bottom:32px;">
+    <Eyebrow>github actions · per-pr environments</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">Preview every PR with an <span style="color:var(--alc-accent-deep);font-style:italic;">ephemeral</span> environment.</h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
+      An Alchemy program is just TypeScript — drop one into GitHub Actions to deploy a per-PR stack for review, then let merge or close tear it down. <a class="alc-learn-more" href="/guides/ci">Learn more &rarr;</a>
+    </p>
+  </div>
+
+  <PRLifecycle client:visible />
+</Section>
+
+<AlchemicalDivider variant="octagon" />
+
+{/* ───── 6 · PRODUCTIONIZE FROM DAY ONE ───── */}
+
+<Section padding="80px 32px" id="operational-readiness">
+  <div style="text-align:center;margin-bottom:32px;">
+    <Eyebrow>observability as iac · otel from effect</Eyebrow>
+    <h2 class="alc-h2" style="margin:10px 0 12px;">Dashboards and alarms <span style="color:var(--alc-accent-deep);font-style:italic;">ship with the resources</span>.<HeadingOrnament variant="sol" position="suffix" /></h2>
+    <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:0 auto;">
+      Effect emits logs, spans, and metrics by default. Wire dashboards and alarms in the same <code class="alc-code-inline" style="color:var(--alc-accent-deep);">alchemy.run.ts</code> as the workers they watch — swap the OTLP exporter for Axiom, Datadog, or anywhere else. <a class="alc-learn-more" href="/concepts/observability">Learn more &rarr;</a>
+    </p>
+  </div>
+
+  <div class="alc-split-2">
+    <div class="alc-ops-col">
+      <SketchLabel>OTel from Effect</SketchLabel>
+      <CodeBlock filename="src/Api.ts" code={OTEL_SRC} compact />
+      <p class="alc-ops-caption">Effect already emits logs, spans, and metrics. Swap the OTLP Layer to ship them to <strong>Axiom</strong>, <strong>Datadog</strong>, <strong>CloudWatch</strong>, or any OTLP endpoint. Your worker code doesn't change.</p>
+    </div>
+    <div class="alc-ops-col">
+      <SketchLabel>Dashboards &amp; alarms</SketchLabel>
+      <CodeBlock filename="alchemy.run.ts" code={DASH_SRC} compact />
+      <p class="alc-ops-caption">Declared next to the resources they watch. <code class="alc-code-inline" style="color:var(--alc-accent-deep);">deploy</code> ships them; <code class="alc-code-inline" style="color:var(--alc-accent-deep);">destroy</code> tears them down with the rest.</p>
+    </div>
+  </div>
+</Section>
+
+<AlchemicalDivider variant="circle" />
+
+{/* ───── OUTRO ───── */}
+
+<Section padding="56px 32px 64px" id="outro">
+  <DiscordCallout />
+  <div class="alc-cta" style="margin-top:48px;text-align:center;">
+    <h2 class="alc-h2">
+      <HeadingOrnament variant="fleuron" position="prefix" />
+      Paste this into your coding agent<br /><span style="color:var(--alc-accent-deep);font-style:italic;">to get started</span>.
+    </h2>
+    <CopyForAgent client:load />
+    <div class="cta-buttons" style="margin-top:24px;">
+      <Button variant="secondary" icon="arrow" href="/getting-started">
+        Read the tutorial
+      </Button>
+      <Button
+        variant="ghost"
+        icon="github"
+        href="https://github.com/alchemy-run/alchemy-effect"
+      >
+        GitHub
+      </Button>
+    </div>
+  </div>
+</Section>

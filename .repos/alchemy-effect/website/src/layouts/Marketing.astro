@@ -1,0 +1,126 @@
+---
+import "../styles/tokens.css";
+import "../styles/marketing.css";
+
+import Nav from "../components/marketing/Nav.astro";
+import Footer from "../components/marketing/Footer.astro";
+import PostHog from "../components/analytics/PostHog.astro";
+import ThemeProvider from "../components/ThemeProvider.astro";
+
+interface Props {
+  title?: string;
+  description?: string;
+  /**
+   * Path to the page's OG image, relative to the site root. Defaults to
+   * the build-time generated card for the current page (slug derived from
+   * the URL pathname). The OG endpoint at `/og/[...slug].png` produces
+   * these during `astro build`.
+   */
+  image?: string;
+  /**
+   * MDX/Markdown layouts receive their YAML frontmatter under this key
+   * rather than as flat props. We accept both shapes so an .astro page
+   * can pass `title=…` directly while an .mdx page's frontmatter just
+   * works.
+   */
+  frontmatter?: { title?: string; description?: string; image?: string };
+}
+
+const props = Astro.props;
+const fm = props.frontmatter ?? {};
+const title = props.title ?? fm.title ?? "alchemy";
+const description = props.description ?? fm.description;
+const image = props.image ?? fm.image;
+
+// Derive an OG image slug from the URL pathname when not explicitly set:
+//   "/"           → /og/index.png
+//   "/some/page"  → /og/some/page.png  (currently unused, but future-proof)
+const slug = (() => {
+  const p = Astro.url.pathname.replace(/^\/+|\/+$/g, "");
+  return p === "" ? "index" : p;
+})();
+const ogImage = new URL(image ?? `/og/${slug}.png`, Astro.site);
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {/* Pre-paint theme script + color-scheme/theme-color metas. Must
+        run before any paint so navigating from a docs page (where the
+        Starlight head includes the same partial) doesn't drop the
+        user's theme on a marketing page. */}
+    <ThemeProvider />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="canonical" href={canonical.href} />
+
+    {/* Brand mark — vector first, with PNG fallback for older browsers. */}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    {/* Open Graph */}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="alchemy" />
+    <meta property="og:title" content={title} />
+    {description && <meta property="og:description" content={description} />}
+    <meta property="og:url" content={canonical.href} />
+    <meta property="og:image" content={ogImage.href} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    {/* Twitter / X */}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    {description && <meta name="twitter:description" content={description} />}
+    <meta name="twitter:image" content={ogImage.href} />
+
+    <PostHog />
+  </head>
+  <body class="alc-root">
+    <header class="alc-marketing-header">
+      <Nav />
+    </header>
+    <main>
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>
+
+<style is:global>
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--alc-bg);
+    color: var(--alc-fg-2);
+    font-family: var(--alc-font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
+  }
+  a:focus-visible {
+    outline: 2px solid var(--alc-accent);
+    outline-offset: 2px;
+  }
+  .alc-marketing-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 64px;
+    padding: 0 32px;
+    background: color-mix(in srgb, var(--alc-bg-nav) 92%, transparent);
+    backdrop-filter: saturate(140%) blur(8px);
+    border-bottom: 1px solid var(--alc-hairline);
+  }
+  @media (max-width: 640px) {
+    .alc-marketing-header { padding: 0 20px; }
+  }
+  @media (max-width: 480px) {
+    .alc-marketing-header { padding: 0 16px; }
+  }
+</style>

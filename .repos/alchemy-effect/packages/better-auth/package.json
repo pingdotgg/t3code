@@ -1,0 +1,35 @@
+{
+  "name": "@alchemy.run/better-auth",
+  "version": "2.0.0-beta.49",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "packages/better-auth"
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "scripts": {
+    "build": "bun pm pack"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "default": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "dependencies": {
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "peerDependencies": {
+    "better-auth": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

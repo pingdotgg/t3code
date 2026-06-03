@@ -1,0 +1,51 @@
+---
+import Button from "./Button.astro";
+---
+
+<div class="alc-discord">
+  <span class="alc-discord__hand">hey —</span>
+  <div class="alc-discord__body">
+    alchemy is in beta. APIs are stabilizing but expect occasional breaking changes.
+    Come hang in our Discord and help shape the road to 2.0.
+  </div>
+  <Button variant="secondary" icon="discord" href="https://discord.gg/jwKw8dBJdN">Join Discord</Button>
+</div>
+
+<style>
+  .alc-discord {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 16px 20px;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--alc-font-sans);
+  }
+  .alc-discord__hand {
+    font-family: var(--alc-font-hand);
+    font-size: 30px;
+    color: var(--alc-accent-deep);
+    line-height: 1;
+  }
+  .alc-discord__body {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--alc-fg-2);
+    line-height: 1.5;
+  }
+  @media (max-width: 640px) {
+    .alc-discord {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 16px;
+    }
+    .alc-discord__hand { font-size: 26px; }
+    .alc-discord__body { font-size: 13.5px; }
+    .alc-discord :global(.alc-btn) { align-self: stretch; justify-content: center; }
+  }
+</style>

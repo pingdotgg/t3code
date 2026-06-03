@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tags / chips</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-3);
+        width: 72px;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .chip {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        border: 1px solid;
+      }
+      .create {
+        color: var(--alc-accent-deep);
+        border-color: rgba(92, 122, 62, 0.35);
+        background: rgba(92, 122, 62, 0.1);
+      }
+      .update {
+        color: #8a5e1a;
+        border-color: rgba(212, 154, 42, 0.4);
+        background: rgba(212, 154, 42, 0.12);
+      }
+      .replace {
+        color: var(--alc-terracotta-deep);
+        border-color: rgba(179, 70, 46, 0.35);
+        background: rgba(179, 70, 46, 0.1);
+      }
+      .info {
+        color: #2f5d6a;
+        border-color: rgba(74, 122, 138, 0.35);
+        background: rgba(74, 122, 138, 0.1);
+      }
+      .neutral {
+        color: var(--alc-fg-2);
+        border-color: var(--alc-hairline-3);
+        background: var(--alc-bg-elev-1);
+      }
+      .pill {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        color: var(--alc-fg-on-accent);
+        background: var(--alc-accent);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="label">status</div>
+        <span class="chip create">+ create</span>
+        <span class="chip update">~ update</span>
+        <span class="chip replace">⇄ replace</span>
+        <span class="chip neutral">no-op</span>
+      </div>
+      <div class="row">
+        <div class="label">meta</div>
+        <span class="chip info">Cloudflare.R2Bucket</span>
+        <span class="chip info">AWS.Lambda.Function</span>
+        <span class="chip neutral">v0.1.0</span>
+      </div>
+      <div class="row">
+        <div class="label">badge</div>
+        <span class="pill">alpha</span>
+        <span class="pill" style="background: var(--alc-terracotta)">beta</span>
+        <span
+          class="pill"
+          style="
+            background: transparent;
+            color: var(--alc-accent-deep);
+            border: 1px solid var(--alc-accent-40);
+          "
+          >new</span
+        >
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["bin/**/*.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./bin",
+    "rootDir": "./bin",
+    "noEmit": false,
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "rewriteRelativeImportExtensions": true
+  },
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    }
+  ]
+}

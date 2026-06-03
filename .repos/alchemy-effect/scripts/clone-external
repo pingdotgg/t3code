@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+mkdir -p .external
+cd .external
+if [ ! -d "terraform-provider-aws" ]; then
+  git clone git@github.com:hashicorp/terraform-provider-aws.git --depth=1
+fi

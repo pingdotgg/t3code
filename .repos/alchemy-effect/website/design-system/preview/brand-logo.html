@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Logo</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .cell {
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100px;
+      }
+      .cell.cream {
+        background: var(--alc-bg-elev-1);
+      }
+      .cell.moss {
+        background: var(--alc-accent-deep);
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-3);
+        margin-top: 6px;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .mark {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: var(--alc-font-serif);
+        font-weight: 500;
+        font-style: italic;
+        font-size: 34px;
+        letter-spacing: -0.02em;
+      }
+      .mark .dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+      }
+      .mark.on-cream {
+        color: var(--alc-fg-1);
+      }
+      .mark.on-cream .dot {
+        background: var(--alc-accent);
+      }
+      .mark.on-moss {
+        color: var(--alc-fg-invert);
+      }
+      .mark.on-moss .dot {
+        background: var(--alc-accent-bright);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="grid">
+        <div>
+          <div class="cell cream">
+            <div class="mark on-cream"><span class="dot"></span>alchemy</div>
+          </div>
+          <div class="label">wordmark on parchment — primary</div>
+        </div>
+        <div>
+          <div class="cell moss">
+            <div class="mark on-moss"><span class="dot"></span>alchemy</div>
+          </div>
+          <div class="label">wordmark on moss — inverse</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

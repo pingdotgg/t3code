@@ -1,0 +1,51 @@
+---
+const accent = "var(--alc-accent-deep)";
+const ok = "var(--alc-success)";
+const open = "#1A7F37";
+---
+
+<svg viewBox="0 0 280 130" width="100%" height="100%" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+  <!-- PR badge (left) -->
+  <g transform="translate(18 38)">
+    <rect width="92" height="54" rx="8" fill="var(--alc-bg-elev-1)" stroke="var(--alc-hairline-2)" stroke-width="1" />
+    <!-- pull-request glyph -->
+    <g transform="translate(10 14)" fill="none" stroke={open} stroke-width="1.6">
+      <circle cx="4" cy="4" r="3" />
+      <line x1="4" y1="7" x2="4" y2="20" />
+      <circle cx="4" cy="22" r="3" />
+      <circle cx="18" cy="22" r="3" />
+      <path d="M18 4 L18 19 M18 4 L14 8 M18 4 L22 8" />
+    </g>
+    <text x="42" y="22" font-family="var(--alc-font-sans)" font-size="11" font-weight="600" fill="var(--alc-fg-1)">PR #147</text>
+    <text x="42" y="36" font-family="var(--alc-font-mono)" font-size="9" fill="var(--alc-fg-3)">@alice</text>
+    <!-- Open badge -->
+    <g transform="translate(42 42)">
+      <rect width="38" height="12" rx="6" fill="rgba(26, 127, 55, 0.14)" stroke={open} stroke-width="0.8" />
+      <text x="19" y="9" text-anchor="middle" font-family="var(--alc-font-sans)" font-size="9" font-weight="600" fill={open}>Open</text>
+    </g>
+  </g>
+
+  <!-- arrow -->
+  <g stroke={accent} stroke-width="1.4" fill="none">
+    <path d="M 116 65 L 158 65" />
+    <path d="M 152 60 L 158 65 L 152 70" stroke-linejoin="round" stroke-linecap="round" />
+  </g>
+  <text x="137" y="58" text-anchor="middle" font-family="var(--alc-font-mono)" font-size="8" fill="var(--alc-fg-3)">deploy</text>
+
+  <!-- preview pill (right) -->
+  <g transform="translate(166 38)">
+    <rect width="96" height="54" rx="8" fill="var(--alc-bg-elev-1)" stroke={ok} stroke-width="1.2" />
+    <text x="10" y="22" font-family="var(--alc-font-sans)" font-size="11" font-weight="600" fill="var(--alc-fg-1)">preview</text>
+    <circle cx="80" cy="18" r="3.5" fill={ok} />
+    <text x="10" y="38" font-family="var(--alc-font-mono)" font-size="9" fill={accent}>pr-147.workers.dev</text>
+    <g transform="translate(10 44)">
+      <rect width="44" height="12" rx="6" fill="rgba(76, 137, 88, 0.16)" stroke={ok} stroke-width="0.8" />
+      <text x="22" y="9" text-anchor="middle" font-family="var(--alc-font-sans)" font-size="9" font-weight="600" fill={ok}>Ready</text>
+    </g>
+  </g>
+
+  <!-- caption -->
+  <text x="140" y="118" text-anchor="middle" font-family="var(--alc-font-hand)" font-size="13" fill={accent} font-style="italic">
+    every PR. preview. destroy.
+  </text>
+</svg>

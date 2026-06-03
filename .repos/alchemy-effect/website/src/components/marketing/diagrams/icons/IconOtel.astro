@@ -1,0 +1,21 @@
+---
+import { OTEL_COLOR, tint } from "../_colors";
+interface Props { size?: number; color?: string }
+const { size = 26, color = OTEL_COLOR } = Astro.props;
+const fill = tint(color);
+---
+<svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <circle cx="11" cy="21" r="6" fill={fill} stroke={color} stroke-width="1.5" />
+  <rect
+    x="17"
+    y="6"
+    width="10"
+    height="10"
+    rx="2"
+    transform="rotate(38 22 11)"
+    fill={fill}
+    stroke={color}
+    stroke-width="1.5"
+  />
+  <circle cx="11" cy="21" r="2.4" fill={color} />
+</svg>
