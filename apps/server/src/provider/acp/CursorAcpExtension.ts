@@ -3,6 +3,7 @@
  * Additional reference provided by the Cursor team: https://anysphere.enterprise.slack.com/files/U068SSJE141/F0APT1HSZRP/cursor-acp-extension-method-schemas.md
  */
 import type { UserInputQuestion } from "@t3tools/contracts";
+import * as AcpSchema from "effect-acp/schema";
 import * as Schema from "effect/Schema";
 
 const CursorAskQuestionOption = Schema.Struct({
@@ -51,6 +52,16 @@ export const CursorUpdateTodosRequest = Schema.Struct({
   toolCallId: Schema.String,
   todos: Schema.Array(CursorTodo),
   merge: Schema.Boolean,
+});
+
+const CursorAvailableModel = Schema.Struct({
+  value: Schema.String,
+  name: Schema.String,
+  configOptions: Schema.optional(Schema.Array(AcpSchema.SessionConfigOption)),
+});
+
+export const CursorListAvailableModelsResponse = Schema.Struct({
+  models: Schema.Array(CursorAvailableModel),
 });
 
 export function extractAskQuestions(
