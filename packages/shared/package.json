@@ -79,6 +79,10 @@
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
     },
+    "./oauthScope": {
+      "types": "./src/oauthScope.ts",
+      "import": "./src/oauthScope.ts"
+    },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",
       "import": "./src/searchRanking.ts"

@@ -1,6 +1,9 @@
 import {
   CommandId,
-  OrchestrationReadModel,
+  AuthAdministrativeScopes,
+  EnvironmentHttpApi,
+  EnvironmentHttpCommonError,
+  type OrchestrationReadModel,
   ProjectId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
@@ -18,16 +21,11 @@ import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
-import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
-import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
-import type { AuthControlPlaneShape } from "../auth/Services/AuthControlPlane.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -78,50 +76,53 @@ const ProjectCliRuntimeLive = Layer.mergeAll(
 );
 
 const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
-const OrchestrationHttpErrorResponse = Schema.Struct({
-  error: Schema.String,
-});
-
+const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 const withProjectCliSessionToken = <A, E, R>(
-  authControlPlane: AuthControlPlaneShape,
+  environmentAuth: EnvironmentAuth.EnvironmentAuthShape,
   run: (token: string) => Effect.Effect<A, E, R>,
 ) =>
   Effect.acquireUseRelease(
-    authControlPlane.issueSession({
-      role: "owner",
+    environmentAuth.issueSession({
+      scopes: AuthAdministrativeScopes,
       label: "t3 project cli",
     }),
     (issued) => run(issued.token),
-    (issued) => authControlPlane.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
   );
 
 const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
 
-const runLiveServerRequest = <A, E extends Error, R>(
-  request: HttpClientRequest.HttpClientRequest,
-  handle: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(request);
-    return yield* handle(response);
-  }).pipe(withProjectCliLiveServerTimeout);
-
-const decodeOrchestrationReadModelResponse = (response: HttpClientResponse.HttpClientResponse) =>
-  HttpClientResponse.schemaBodyJson(OrchestrationReadModel)(response);
-
-const readErrorMessageFromResponse = (response: HttpClientResponse.HttpClientResponse) =>
-  HttpClientResponse.schemaBodyJson(OrchestrationHttpErrorResponse)(response).pipe(
-    Effect.map((body) => body.error),
-    Effect.catch(() => Effect.succeed(null)),
-    Effect.map((body) => {
-      if (typeof body === "string" && body.trim().length > 0) {
-        return body;
-      }
-      return `Server request failed with status ${response.status}.`;
+const failLiveServerRequest = (cause: unknown) => {
+  if (isEnvironmentHttpCommonError(cause)) {
+    return Effect.fail(
+      new ProjectCommandError({
+        message: `Server request failed (${cause.code}, trace ${cause.traceId}).`,
+      }),
+    );
+  }
+  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
+    return Effect.fail(
+      new ProjectCommandError({
+        message: `Server request failed with undeclared status ${cause.response.status}.`,
+      }),
+    );
+  }
+  return Effect.fail(
+    new ProjectCommandError({
+      message: `Failed to call running server: ${String(cause)}.`,
     }),
   );
+};
+
+const makeLiveServerClient = (origin: string) =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    return yield* HttpApiClient.makeWith(EnvironmentHttpApi, {
+      baseUrl: origin,
+      httpClient,
+    });
+  });
 
 const normalizeWorkspaceRootForProjectCommand = Effect.fn(
   "normalizeWorkspaceRootForProjectCommand",
@@ -193,42 +194,25 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
 });
 
 const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
-  runLiveServerRequest(
-    HttpClientRequest.get(`${origin}/api/orchestration/snapshot`).pipe(
-      HttpClientRequest.acceptJson,
-      HttpClientRequest.bearerToken(bearerToken),
-    ),
-    HttpClientResponse.matchStatus({
-      "2xx": decodeOrchestrationReadModelResponse,
-      orElse: (response) =>
-        readErrorMessageFromResponse(response).pipe(
-          Effect.flatMap((message) => Effect.fail(new ProjectCommandError({ message }))),
-        ),
-    }),
-  );
+  Effect.gen(function* () {
+    const client = yield* makeLiveServerClient(origin);
+    return yield* client.orchestration.snapshot({
+      headers: { authorization: `Bearer ${bearerToken}` },
+    });
+  }).pipe(withProjectCliLiveServerTimeout, Effect.catch(failLiveServerRequest));
 
 const dispatchLiveOrchestrationCommand = (
   origin: string,
   bearerToken: string,
   command: ProjectCliDispatchCommand,
 ) =>
-  HttpClientRequest.post(`${origin}/api/orchestration/dispatch`).pipe(
-    HttpClientRequest.acceptJson,
-    HttpClientRequest.bearerToken(bearerToken),
-    HttpClientRequest.bodyJson(command),
-    Effect.flatMap((request) =>
-      runLiveServerRequest(
-        request,
-        HttpClientResponse.matchStatus({
-          "2xx": () => Effect.void,
-          orElse: (response) =>
-            readErrorMessageFromResponse(response).pipe(
-              Effect.flatMap((message) => Effect.fail(new ProjectCommandError({ message }))),
-            ),
-        }),
-      ),
-    ),
-  );
+  Effect.gen(function* () {
+    const client = yield* makeLiveServerClient(origin);
+    yield* client.orchestration.dispatch({
+      headers: { authorization: `Bearer ${bearerToken}` },
+      payload: command,
+    } as Parameters<typeof client.orchestration.dispatch>[0]);
+  }).pipe(withProjectCliLiveServerTimeout, Effect.catch(failLiveServerRequest));
 
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -236,13 +220,13 @@ const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
 });
 
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
-  function* (authControlPlane: AuthControlPlaneShape, config: ServerConfigShape) {
+  function* (environmentAuth: EnvironmentAuth.EnvironmentAuthShape, config: ServerConfigShape) {
     const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return Option.none<{ readonly origin: string }>();
     }
 
-    const attempt = withProjectCliSessionToken(authControlPlane, (token) =>
+    const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
       fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
         Effect.as({
           origin: runtimeState.value.origin,
@@ -279,11 +263,11 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
   const minimumLogLevel = config.logLevel;
 
   return yield* Effect.gen(function* () {
-    const authControlPlane = yield* AuthControlPlane;
-    const liveMode = yield* tryResolveLiveProjectExecutionMode(authControlPlane, config);
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const liveMode = yield* tryResolveLiveProjectExecutionMode(environmentAuth, config);
 
     if (Option.isSome(liveMode)) {
-      return yield* withProjectCliSessionToken(authControlPlane, (token) =>
+      return yield* withProjectCliSessionToken(environmentAuth, (token) =>
         Effect.gen(function* () {
           const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
           const output = yield* run({
@@ -314,7 +298,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     }).pipe(Effect.provide(offlineRuntimeLayer));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(AuthControlPlaneRuntimeLive, WorkspacePathsLive).pipe(
+      Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePathsLive).pipe(
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(Layer.succeed(ServerConfig, config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

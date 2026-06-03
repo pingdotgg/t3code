@@ -1,0 +1,385 @@
+{
+  "name": "alchemy",
+  "version": "2.0.0-beta.49",
+  "homepage": "https://alchemy.run",
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "packages/alchemy"
+  },
+  "bin": {
+    "alchemy": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "dev": "tsdown --watch",
+    "build": "bun bundle",
+    "bundle": "tsdown",
+    "bundle:watch": "tsdown --watch",
+    "publish:npm": "cp ../README.md . && bun publish && rm README.md",
+    "test:benchmark": "tsx --tsconfig tsconfig.test.json test/types.benchmark.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "bun": "./src/index.ts",
+      "worker": "./src/index.ts",
+      "import": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "bun": "./src/*.ts",
+      "worker": "./src/*.ts",
+      "import": "./lib/*.js"
+    },
+    "./Auth": {
+      "types": "./lib/Auth/index.d.ts",
+      "bun": "./src/Auth/index.ts",
+      "worker": "./src/Auth/index.ts",
+      "import": "./lib/Auth/index.js"
+    },
+    "./AWS": {
+      "types": "./lib/AWS/index.d.ts",
+      "bun": "./src/AWS/index.ts",
+      "worker": "./src/AWS/index.ts",
+      "import": "./lib/AWS/index.js"
+    },
+    "./AWS/*": {
+      "types": "./lib/AWS/*/index.d.ts",
+      "bun": "./src/AWS/*/index.ts",
+      "worker": "./src/AWS/*/index.ts",
+      "import": "./lib/AWS/*/index.js"
+    },
+    "./AWS/Credentials": {
+      "types": "./lib/AWS/Credentials/index.d.ts",
+      "bun": "./src/AWS/Credentials/index.ts",
+      "worker": "./src/AWS/Credentials/index.ts",
+      "import": "./lib/AWS/Credentials/index.js"
+    },
+    "./AWS/Endpoint": {
+      "types": "./lib/AWS/Endpoint/index.d.ts",
+      "bun": "./src/AWS/Endpoint/index.ts",
+      "worker": "./src/AWS/Endpoint/index.ts",
+      "import": "./lib/AWS/Endpoint/index.js"
+    },
+    "./AWS/Region": {
+      "types": "./lib/AWS/Region/index.d.ts",
+      "bun": "./src/AWS/Region/index.ts",
+      "worker": "./src/AWS/Region/index.ts",
+      "import": "./lib/AWS/Region/index.js"
+    },
+    "./AWS/Profile": {
+      "types": "./lib/AWS/Profile/index.d.ts",
+      "bun": "./src/AWS/Profile/index.ts",
+      "worker": "./src/AWS/Profile/index.ts",
+      "import": "./lib/AWS/Profile/index.js"
+    },
+    "./AWS/Lambda/*": {
+      "types": "./lib/AWS/Lambda/*.d.ts",
+      "bun": "./src/AWS/Lambda/*.ts",
+      "worker": "./src/AWS/Lambda/*.ts",
+      "import": "./lib/AWS/Lambda/*.js"
+    },
+    "./Build": {
+      "types": "./lib/Build/index.d.ts",
+      "bun": "./src/Build/index.ts",
+      "worker": "./src/Build/index.ts",
+      "import": "./lib/Build/index.js"
+    },
+    "./Construct": {
+      "types": "./lib/Construct/index.d.ts",
+      "bun": "./src/Construct/index.ts",
+      "worker": "./src/Construct/index.ts",
+      "import": "./lib/Construct/index.js"
+    },
+    "./Bundle": {
+      "types": "./lib/Bundle/index.d.ts",
+      "bun": "./src/Bundle/index.ts",
+      "worker": "./src/Bundle/index.ts",
+      "import": "./lib/Bundle/index.js"
+    },
+    "./ContentType": {
+      "types": "./lib/ContentType.d.ts",
+      "bun": "./src/ContentType.ts",
+      "worker": "./src/ContentType.ts",
+      "import": "./lib/ContentType.js"
+    },
+    "./Cli": {
+      "types": "./lib/Cli/index.d.ts",
+      "bun": "./src/Cli/index.ts",
+      "worker": "./src/Cli/index.ts",
+      "import": "./lib/Cli/index.js"
+    },
+    "./Cli/InkCLI": {
+      "types": "./lib/Cli/InkCLI.d.ts",
+      "bun": "./src/Cli/InkCLI.tsx",
+      "worker": "./src/Cli/InkCLI.tsx",
+      "import": "./lib/Cli/InkCLI.js"
+    },
+    "./Cloudflare": {
+      "types": "./lib/Cloudflare/index.d.ts",
+      "bun": "./src/Cloudflare/index.ts",
+      "worker": "./src/Cloudflare/index.ts",
+      "import": "./lib/Cloudflare/index.js"
+    },
+    "./Cloudflare/Bridge": {
+      "types": "./lib/Cloudflare/Bridge.d.ts",
+      "bun": "./src/Cloudflare/Bridge.ts",
+      "worker": "./src/Cloudflare/Bridge.ts",
+      "import": "./lib/Cloudflare/Bridge.js"
+    },
+    "./Cloudflare/Live": {
+      "types": "./lib/Cloudflare/Live.d.ts",
+      "bun": "./src/Cloudflare/Live.ts",
+      "worker": "./src/Cloudflare/Live.ts",
+      "import": "./lib/Cloudflare/Live.js"
+    },
+    "./Cloudflare/*": {
+      "types": "./lib/Cloudflare/*/index.d.ts",
+      "bun": "./src/Cloudflare/*/index.ts",
+      "worker": "./src/Cloudflare/*/index.ts",
+      "import": "./lib/Cloudflare/*/index.js"
+    },
+    "./Drizzle": {
+      "types": "./lib/Drizzle/index.d.ts",
+      "bun": "./src/Drizzle/index.ts",
+      "worker": "./src/Drizzle/index.ts",
+      "import": "./lib/Drizzle/index.js"
+    },
+    "./Axiom": {
+      "types": "./lib/Axiom/index.d.ts",
+      "bun": "./src/Axiom/index.ts",
+      "worker": "./src/Axiom/index.ts",
+      "import": "./lib/Axiom/index.js"
+    },
+    "./GitHub": {
+      "types": "./lib/GitHub/index.d.ts",
+      "bun": "./src/GitHub/index.ts",
+      "worker": "./src/GitHub/index.ts",
+      "import": "./lib/GitHub/index.js"
+    },
+    "./Endpoint": {
+      "types": "./lib/Endpoint/index.d.ts",
+      "bun": "./src/Endpoint/index.ts",
+      "worker": "./src/Endpoint/index.ts",
+      "import": "./lib/Endpoint/index.js"
+    },
+    "./Kubernetes": {
+      "types": "./lib/Kubernetes/index.d.ts",
+      "bun": "./src/Kubernetes/index.ts",
+      "worker": "./src/Kubernetes/index.ts",
+      "import": "./lib/Kubernetes/index.js"
+    },
+    "./Neon": {
+      "types": "./lib/Neon/index.d.ts",
+      "bun": "./src/Neon/index.ts",
+      "worker": "./src/Neon/index.ts",
+      "import": "./lib/Neon/index.js"
+    },
+    "./Neon/*": {
+      "types": "./lib/Neon/*/index.d.ts",
+      "bun": "./src/Neon/*/index.ts",
+      "worker": "./src/Neon/*/index.ts",
+      "import": "./lib/Neon/*/index.js"
+    },
+    "./Output": {
+      "types": "./lib/Output.d.ts",
+      "bun": "./src/Output.ts",
+      "worker": "./src/Output.ts",
+      "import": "./lib/Output.js"
+    },
+    "./Planetscale": {
+      "types": "./lib/Planetscale/index.d.ts",
+      "bun": "./src/Planetscale/index.ts",
+      "worker": "./src/Planetscale/index.ts",
+      "import": "./lib/Planetscale/index.js"
+    },
+    "./Planetscale/*": {
+      "types": "./lib/Planetscale/*/index.d.ts",
+      "bun": "./src/Planetscale/*/index.ts",
+      "worker": "./src/Planetscale/*/index.ts",
+      "import": "./lib/Planetscale/*/index.js"
+    },
+    "./Runtime": {
+      "types": "./lib/Runtime.d.ts",
+      "bun": "./src/Runtime.ts",
+      "worker": "./src/Runtime.ts",
+      "import": "./lib/Runtime.js"
+    },
+    "./Process": {
+      "types": "./lib/Process/index.d.ts",
+      "bun": "./src/Process/index.ts",
+      "worker": "./src/Process/index.ts",
+      "import": "./lib/Process/index.js"
+    },
+    "./SQLite": {
+      "types": "./lib/SQLite/index.d.ts",
+      "bun": "./src/SQLite/index.ts",
+      "worker": "./src/SQLite/index.ts",
+      "import": "./lib/SQLite/index.js"
+    },
+    "./TUI": {
+      "types": "./lib/TUI/index.d.ts",
+      "bun": "./src/TUI/index.ts",
+      "worker": "./src/TUI/index.ts",
+      "import": "./lib/TUI/index.js"
+    },
+    "./Server": {
+      "types": "./lib/Server/index.d.ts",
+      "bun": "./src/Server/index.ts",
+      "worker": "./src/Server/index.ts",
+      "import": "./lib/Server/index.js"
+    },
+    "./Stack": {
+      "types": "./lib/Stack.d.ts",
+      "bun": "./src/Stack.ts",
+      "worker": "./src/Stack.ts",
+      "import": "./lib/Stack.js"
+    },
+    "./State": {
+      "types": "./lib/State/index.d.ts",
+      "bun": "./src/State/index.ts",
+      "worker": "./src/State/index.ts",
+      "import": "./lib/State/index.js"
+    },
+    "./State/*": {
+      "types": "./lib/State/*.d.ts",
+      "bun": "./src/State/*.ts",
+      "worker": "./src/State/*.ts",
+      "import": "./lib/State/*.js"
+    },
+    "./Test/Bun": {
+      "types": "./lib/Test/Bun.d.ts",
+      "bun": "./src/Test/Bun.ts",
+      "worker": "./src/Test/Bun.ts",
+      "import": "./lib/Test/Bun.js"
+    },
+    "./Util": {
+      "types": "./lib/Util/index.d.ts",
+      "bun": "./src/Util/index.ts",
+      "worker": "./src/Util/index.ts",
+      "import": "./lib/Util/index.js"
+    },
+    "./Util/Clank": {
+      "types": "./lib/Util/Clank.d.ts",
+      "bun": "./src/Util/Clank.ts",
+      "worker": "./src/Util/Clank.ts",
+      "import": "./lib/Util/Clank.js"
+    },
+    "./Util/PlatformServices": {
+      "types": "./lib/Util/PlatformServices.d.ts",
+      "bun": "./src/Util/PlatformServices.ts",
+      "worker": "./src/Util/PlatformServices.ts",
+      "import": "./lib/Util/PlatformServices.js"
+    },
+    "./bin/alchemy.js": "./bin/alchemy.js",
+    "./bin/exec.ts": "./bin/exec.ts",
+    "./bin/exec.js": "./bin/exec.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@alchemy.run/node-utils": "catalog:",
+    "@aws-sdk/credential-providers": "catalog:",
+    "@clack/prompts": "^0.11.0",
+    "@distilled.cloud/aws": "catalog:",
+    "@distilled.cloud/axiom": "catalog:",
+    "@distilled.cloud/cloudflare": "catalog:",
+    "@distilled.cloud/cloudflare-rolldown-plugin": "catalog:",
+    "@distilled.cloud/cloudflare-runtime": "catalog:",
+    "@distilled.cloud/cloudflare-vite-plugin": "catalog:",
+    "@distilled.cloud/core": "catalog:",
+    "@distilled.cloud/neon": "catalog:",
+    "@distilled.cloud/planetscale": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@libsql/client": "catalog:",
+    "@octokit/rest": "^22.0.1",
+    "@smithy/node-config-provider": "catalog:",
+    "@smithy/shared-ini-file-loader": "catalog:",
+    "@smithy/types": "catalog:",
+    "@types/aws-lambda": "catalog:",
+    "aws4fetch": "catalog:",
+    "capnweb": "^0.6.1",
+    "fast-glob": "^3.3.2",
+    "fast-xml-parser": "catalog:",
+    "ink": "^6.3.1",
+    "jszip": "^3.10.1",
+    "libsodium-wrappers": "^0.8.3",
+    "magic-string": "^0.30.21",
+    "mysql2": "^3.15.3",
+    "pathe": "^2.0.3",
+    "pg": "^8.13.0",
+    "picomatch": "^4.0.4",
+    "react": "^19.2.0",
+    "rolldown": "catalog:",
+    "undici": "^7.16.0",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@clack/prompts": "^0.11.0",
+    "@cloudflare/workers-types": "catalog:",
+    "@cloudflare/puppeteer": "^1.1.0",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/platform-node-shared": "catalog:",
+    "@oxc-project/types": "^0.127.0",
+    "@types/pg": "^8.11.0",
+    "@types/aws-lambda": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/picomatch": "^4.0.0",
+    "@types/react": "^19.2.2",
+    "@types/ws": "^8.18.1",
+    "better-auth": "catalog:",
+    "effect": "catalog:",
+    "react-devtools-core": "^7.0.1",
+    "solid-js": "catalog:",
+    "tsconfig-paths": "^4.2.0",
+    "tsdown": "^0.15.4",
+    "tsx": "^4.20.6",
+    "typescript": "catalog:",
+    "ws": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "vite": "catalog:",
+    "ws": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/sql-pg": {
+      "optional": true
+    },
+    "drizzle-kit": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    }
+  }
+}

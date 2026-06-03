@@ -1,0 +1,3380 @@
+/* ============================================================
+   Marketing layout primitives. Lean — only the pieces actually
+   used by the home + product pages remain. Token defs live in
+   tokens.css; terminal chrome (shared with docs) lives in
+   terminal.css.
+   ============================================================ */
+
+@import "./terminal.css";
+
+body.alc-root,
+.alc-root {
+  background: var(--alc-bg);
+  color: var(--alc-fg-2);
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--alc-accent-soft);
+  color: var(--alc-fg-1);
+}
+
+/* Inline "Learn more →" link used at the end of section descriptions. */
+.alc-learn-more {
+  color: var(--alc-accent-deep);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: 4px;
+  transition: opacity 140ms ease;
+}
+.alc-learn-more:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================================
+   Code block — terminal-themed wrapper used by static <CodeBlock>
+   ============================================================ */
+
+.alc-code-block {
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+.alc-code-block__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  flex: 0 0 auto;
+}
+.alc-code-block__filename {
+  margin-left: 10px;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-code-comment);
+}
+/* Wrapper used when CodeBlock has a caption — keeps the block + the
+   hand-written caption visually grouped beneath the window chrome. */
+.alc-code-block__wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.alc-code-block__caption {
+  font-family: var(--alc-font-hand);
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--alc-accent-deep);
+  text-align: center;
+  letter-spacing: 0.01em;
+  animation: alc-code-caption-in 320ms ease;
+}
+@keyframes alc-code-caption-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alc-code-block__caption {
+    animation: none;
+  }
+}
+.alc-code-block__pre {
+  margin: 0;
+  padding: 18px 20px;
+  font-family: var(--alc-font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--alc-code-var);
+  overflow-x: auto;
+}
+.alc-code-block--compact .alc-code-block__pre {
+  padding: 12px 16px;
+  font-size: 12px;
+}
+
+/* ============================================================
+   Bindings → IAM / EventSource animation (/product/providers/aws)
+   Code on the left, animated arrows in the middle, resources
+   on the right, generated IAM policy below.
+   ============================================================ */
+
+.bindings-iam {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px minmax(0, 0.85fr);
+  grid-template-rows: minmax(280px, auto);
+  gap: 18px;
+  align-items: stretch;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.bindings-iam__code {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+.bindings-iam__arrows {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  align-self: stretch;
+}
+.bindings-iam__arrows svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.bindings-iam__resources {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 14px;
+  min-width: 0;
+}
+.bindings-iam__resource {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+}
+.bindings-iam__resource-label {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  line-height: 1.2;
+}
+.bindings-iam__resource-sub {
+  font-family: var(--alc-font-mono);
+  font-size: 10px;
+  color: var(--alc-fg-3);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+.bindings-iam__policy {
+  display: none;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+}
+@media (max-width: 980px) {
+  .bindings-iam {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+  }
+  .bindings-iam__code,
+  .bindings-iam__arrows,
+  .bindings-iam__resources,
+  .bindings-iam__policy {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .bindings-iam__arrows {
+    display: none;
+  }
+}
+
+/* ============================================================
+   Stack → DeployTerminal diagram (/product/iac)
+   ============================================================ */
+
+.stack-deploy-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 60px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 16px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.stack-deploy-diagram__col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Lock both panels to the same fixed height so the captions align and
+   the right terminal's animated content can't push it taller than the
+   left code block (or vice versa). The terminal is rendered inside an
+   <astro-island> hydration wrapper, so the selectors must be descendant
+   (not direct-child) and the wrapper itself must stretch. */
+.stack-deploy-diagram__col,
+.stack-deploy-diagram__col > astro-island {
+  display: flex;
+  flex-direction: column;
+}
+.stack-deploy-diagram__col > astro-island {
+  flex: 0 0 auto;
+}
+.stack-deploy-diagram__col .alc-code-block,
+.stack-deploy-diagram__col .alc-term {
+  flex: 0 0 auto;
+  height: 360px;
+  min-height: 360px;
+  max-height: 360px;
+  box-sizing: border-box;
+}
+.stack-deploy-diagram__col .alc-code-block .alc-code-block__pre,
+.stack-deploy-diagram__col .alc-term .alc-term__body {
+  flex: 1;
+  min-height: 0;
+}
+/* Static code snippet fits the fixed-height card already; allowing
+   `overflow: auto` here causes a few-pixel scroll region that
+   hijacks page wheel events. Clip instead. */
+.stack-deploy-diagram__col .alc-code-block .alc-code-block__pre {
+  overflow: hidden;
+}
+/* The animated deploy terminal grows as resources stream in, so it
+   genuinely needs to scroll. */
+.stack-deploy-diagram__col .alc-term .alc-term__body {
+  overflow: auto;
+}
+.stack-deploy-diagram__caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+}
+.stack-deploy-diagram__caption span {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--alc-fg-3);
+}
+.stack-deploy-diagram__arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  gap: 4px;
+  color: var(--alc-accent-deep);
+  font-family: var(--alc-font-hand);
+  font-size: 16px;
+}
+
+/* ============================================================
+   Effect-pilled showcase (home page section 2)
+   One terminal-chromed card with two tabs (IAM bindings / Event
+   sources). Each panel is code on the left and a stylized
+   "generated artifact" panel on the right. On narrow screens the
+   split collapses into a vertical stack with a "↓ generates" cue
+   between code and artifact, so nothing depends on SVG arrows that
+   break on mobile.
+   ============================================================ */
+
+.eff-showcase {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+.eff-showcase__chrome {
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+.eff-showcase__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.eff-showcase__tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.eff-showcase__tabs::-webkit-scrollbar {
+  display: none;
+}
+.eff-showcase__tab {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--alc-code-comment);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+.eff-showcase__tab:hover {
+  color: var(--alc-fg-invert);
+}
+.eff-showcase__tab[data-active="true"] {
+  color: var(--alc-fg-invert);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(232, 220, 192, 0.12);
+}
+.eff-showcase__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.eff-showcase__panel {
+  display: flex;
+  flex-direction: column;
+}
+.eff-showcase__panel[hidden] {
+  display: none;
+}
+.eff-showcase__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 0;
+  /* Fixed height keeps the page below stable as the auto-cycle swaps
+     between tabs whose code/artifact have different intrinsic heights. */
+  height: 420px;
+}
+.eff-showcase__code {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid rgba(232, 220, 192, 0.08);
+}
+.eff-showcase__pre {
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--alc-code-var);
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.eff-showcase__artifact {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 20px;
+  /* Slightly sunken vs the main terminal bg so the lifted cards inside
+     read as "panels on a panel" rather than "dark on dark". */
+  background: var(--alc-walnut-950);
+  min-width: 0;
+  overflow: auto;
+  min-height: 0;
+}
+.eff-showcase__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.eff-showcase__group-title {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--alc-walnut-300);
+}
+.eff-showcase__perm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--alc-walnut-700);
+  border: 1px solid var(--alc-walnut-600);
+  border-radius: 8px;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  color: var(--alc-fg-invert);
+  min-width: 0;
+  opacity: 0;
+  animation: eff-fade-up 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.eff-showcase__perm-icon {
+  flex: 0 0 auto;
+  border-radius: 4px;
+}
+.eff-showcase__perm-action {
+  color: var(--alc-code-keyword);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.eff-showcase__perm-arrow {
+  color: var(--alc-accent-bright);
+  flex: 0 0 auto;
+}
+.eff-showcase__perm-target {
+  color: var(--alc-fg-invert);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.eff-showcase__envs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.eff-showcase__env {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--alc-walnut-700);
+  border: 1px solid var(--alc-walnut-600);
+  border-left: 2px solid var(--alc-accent-bright);
+  border-radius: 6px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-invert);
+  min-width: 0;
+  opacity: 0;
+  animation: eff-fade-up 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.eff-showcase__env-name {
+  color: var(--alc-code-keyword);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.eff-showcase__env-eq {
+  color: var(--alc-code-comment);
+}
+.eff-showcase__env-value {
+  color: var(--alc-fg-invert);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Feature row — used by Durable Objects / Containers / Layers tabs.
+   Icon on the left, label + sub stacked on the right. Same lifted card
+   treatment as .eff-showcase__perm so the artifact panels feel related. */
+.eff-showcase__feature {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--alc-walnut-700);
+  border: 1px solid var(--alc-walnut-600);
+  border-radius: 8px;
+  min-width: 0;
+  opacity: 0;
+  animation: eff-fade-up 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.eff-showcase__feature-icon {
+  flex: 0 0 auto;
+}
+.eff-showcase__feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.eff-showcase__feature-label {
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  color: var(--alc-code-keyword);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eff-showcase__feature-sub {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-walnut-300);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Workflow steps — numbered ordered list with rounded badges. */
+.eff-showcase__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.eff-showcase__step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--alc-walnut-700);
+  border: 1px solid var(--alc-walnut-600);
+  border-radius: 8px;
+  min-width: 0;
+  opacity: 0;
+  animation: eff-fade-up 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.eff-showcase__step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--alc-accent-bright);
+  color: var(--alc-bg-code);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.eff-showcase__step-label {
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--alc-code-keyword);
+  white-space: nowrap;
+}
+.eff-showcase__step-sub {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-walnut-300);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+/* Event source flow — three nodes connected by labelled edges. */
+.eff-showcase__flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.eff-showcase__node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px;
+  background: var(--alc-walnut-700);
+  border: 1px solid var(--alc-walnut-600);
+  border-radius: 10px;
+  text-align: center;
+  min-width: 0;
+  opacity: 0;
+  animation: eff-fade-up 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.eff-showcase__node--accent {
+  background: var(--alc-walnut-600);
+  border-color: var(--alc-accent-bright);
+  box-shadow: 0 0 0 2px rgba(143, 177, 94, 0.18);
+}
+.eff-showcase__node-label {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-invert);
+  line-height: 1.2;
+}
+.eff-showcase__node-sub {
+  font-family: var(--alc-font-mono);
+  font-size: 10px;
+  color: var(--alc-walnut-300);
+  line-height: 1.2;
+}
+.eff-showcase__edge {
+  position: relative;
+  width: 28px;
+  height: 1.6px;
+  background: var(--alc-accent-bright);
+  opacity: 0;
+  animation: eff-fade-in 320ms ease both;
+}
+.eff-showcase__edge::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--alc-accent-bright);
+  transform: translateY(-50%);
+}
+.eff-showcase__edge::before {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translate(-50%, -2px);
+  font-family: var(--alc-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--alc-walnut-300);
+  white-space: nowrap;
+  background: var(--alc-walnut-950);
+  padding: 0 4px;
+}
+
+.eff-showcase__hint {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+@keyframes eff-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes eff-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Used on the code <pre> so it fades in alongside the artifact rows
+   when the panel remounts (tab switch). */
+.eff-showcase__fade {
+  animation: eff-fade-in 320ms ease both;
+}
+
+/* ------------------------------------------------------------
+   Layer tab — diff renderer with overlay variant crossfade.
+   Common lines render statically. Each diff segment is a "slot"
+   that overlays both variants in the same grid cell so only the
+   active one is visible — the inactive fades to opacity 0 and is
+   replaced by the active in a long ease-in-out crossfade.
+   ------------------------------------------------------------ */
+
+.eff-showcase__diff {
+  margin: 0;
+  padding: 14px 16px 14px 12px;
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  /* Bright parchment for any character that isn't tokenized by
+     highlightTS (punctuation: <, =, (, ), {, }, ;, etc.) so symbols
+     don't disappear into the walnut bg. */
+  color: var(--alc-code-var);
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.eff-diff__common {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Slot: a CSS grid with one cell. Both variants share that cell, so the
+   slot's height is the max of the two variants and the panel never jumps
+   when the impl swaps. */
+.eff-diff__slot {
+  display: grid;
+  grid-template-areas: "stack";
+}
+.eff-diff__variant {
+  grid-area: stack;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1100ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.eff-diff__variant[data-active="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.eff-diff__line {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 6px;
+  margin: 0 -6px;
+}
+.eff-diff__marker {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  color: var(--alc-accent-bright);
+}
+.eff-diff__content {
+  display: block;
+  white-space: pre;
+  min-width: 0;
+}
+
+/* Diff lines get a subtle green tint background so the whole line
+   reads as "added" — not just the "+" prefix. The tint is soft enough
+   not to fight the syntax-highlighted tokens. */
+.eff-diff__line--ddb,
+.eff-diff__line--d1 {
+  background-color: rgba(143, 177, 94, 0.12);
+  box-shadow: inset 2px 0 0 var(--alc-accent-bright);
+}
+.eff-diff__line--ddb .eff-diff__marker::before,
+.eff-diff__line--d1 .eff-diff__marker::before {
+  content: "+";
+}
+
+/* ------------------------------------------------------------
+   Layer tab — artifact panel uses the same overlay pattern for
+   the "Composed from" group so the ddb / d1 feature-row stacks
+   crossfade in place rather than competing for visual weight.
+   ------------------------------------------------------------ */
+
+.eff-showcase__variant-stack {
+  display: grid;
+  grid-template-areas: "stack";
+}
+.eff-showcase__variant {
+  grid-area: stack;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1100ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.eff-showcase__variant[data-active="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Mobile: drop the right-hand artifact panel entirely — the generated
+   permissions / environment / flow visualizations don't read well at narrow
+   widths and the code itself is the primary story. */
+@media (max-width: 880px) {
+  .eff-showcase__split {
+    grid-template-columns: minmax(0, 1fr);
+    /* Code-only: let the panel size to the code's natural height instead
+       of holding the desktop's fixed 420px slot. */
+    height: auto;
+  }
+  .eff-showcase__code {
+    border-right: 0;
+  }
+  .eff-showcase__pre {
+    overflow-x: auto;
+  }
+  .eff-showcase__artifact {
+    display: none;
+  }
+  .eff-showcase__flow {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
+    gap: 4px;
+    justify-items: stretch;
+  }
+  .eff-showcase__edge {
+    width: 1.6px;
+    height: 24px;
+    margin: 0 auto;
+  }
+  .eff-showcase__edge::after {
+    right: 50%;
+    top: auto;
+    bottom: -1px;
+    transform: translateX(50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 6px solid var(--alc-accent-bright);
+    border-bottom: 0;
+  }
+  .eff-showcase__edge::before {
+    left: 100%;
+    bottom: 50%;
+    transform: translate(4px, 50%);
+  }
+}
+
+/* ============================================================
+   Stack / Deploy — narrow-screen fallback (home page section 1)
+   The 3-column "code + arrow + terminal" diagram needs horizontal
+   room to read well. On iPad-and-narrower we drop the source code
+   panel entirely and just show the live deploy terminal — the
+   Alchemy.Stack code is already visible elsewhere on the page.
+   ============================================================ */
+
+.stack-deploy-mobile {
+  display: none;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.stack-deploy-mobile > .alc-term {
+  width: 100%;
+}
+
+@media (max-width: 880px) {
+  .stack-deploy-diagram {
+    display: none;
+  }
+  .stack-deploy-mobile {
+    display: block;
+  }
+}
+
+/* ============================================================
+   Async-fetch escape hatch — narrow-screen tabs
+   On wide screens the two files sit side-by-side. Below 1024px
+   they collapse into a single tabbed card that auto-flips between
+   alchemy.run.ts and src/worker.ts with a short caption.
+   ============================================================ */
+
+.async-split-mobile {
+  display: none;
+}
+.async-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.async-tabs__chrome {
+  background: var(--alc-bg-code);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+.async-tabs__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.async-tabs__tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.async-tabs__tabs::-webkit-scrollbar {
+  display: none;
+}
+.async-tabs__tab {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--alc-code-comment);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+.async-tabs__tab:hover {
+  color: var(--alc-fg-invert);
+}
+.async-tabs__tab[data-active="true"] {
+  color: var(--alc-fg-invert);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(232, 220, 192, 0.12);
+}
+.async-tabs__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.async-tabs__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.async-tabs__panel[hidden] {
+  display: none;
+}
+.async-tabs__pre {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--alc-code-var);
+  overflow-x: auto;
+  flex: 1;
+}
+@media (max-width: 880px) {
+  .alc-split-2.async-split-desktop {
+    display: none;
+  }
+  .async-split-mobile {
+    display: block;
+  }
+}
+
+/* ============================================================
+   Animated Output / resource-graph (/product/iac)
+   Code on the left, progressive nodes/edges on the right with
+   a step indicator + rotating annotation.
+   ============================================================ */
+
+.output-anim-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: stretch;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.output-anim-grid > .alc-code-block {
+  min-height: 100%;
+}
+
+.output-anim-stage {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.output-anim-graph {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(60px, 1fr) minmax(0, auto);
+  grid-template-rows: auto minmax(48px, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+  gap: 0;
+}
+
+.output-anim-node {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  min-width: 110px;
+  white-space: nowrap;
+  transition:
+    opacity 380ms ease,
+    transform 380ms ease;
+}
+.output-anim-node--accent {
+  background: rgba(184, 138, 74, 0.1);
+  border: 1.4px solid var(--alc-accent-deep);
+}
+.output-anim-node--ghost {
+  background: var(--alc-bg);
+  border: 1.4px dashed var(--alc-hairline-2);
+}
+.output-anim-node__label {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  line-height: 1.15;
+}
+.output-anim-node__id {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  line-height: 1.15;
+}
+
+.output-anim-edge {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.18;
+  transition: opacity 360ms ease;
+}
+.output-anim-edge.is-on {
+  opacity: 1;
+}
+
+.output-anim-edge--h::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 14px;
+  top: 50%;
+  height: 1.6px;
+  background: var(--alc-accent-deep);
+  transform: translateY(-50%);
+}
+.output-anim-edge--h::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--alc-accent-deep);
+  transform: translateY(-50%);
+}
+.output-anim-edge--v::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 12px;
+  left: 50%;
+  width: 1.6px;
+  background: var(--alc-accent-deep);
+  transform: translateX(-50%);
+}
+.output-anim-edge--v::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--alc-accent-deep);
+  transform: translateX(-50%);
+}
+.output-anim-edge__label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+  background: var(--alc-bg-elev-1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.output-anim-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+.output-anim-steps__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-hairline-2);
+  transition:
+    background 280ms ease,
+    transform 280ms ease;
+}
+.output-anim-steps__dot.is-active {
+  background: var(--alc-accent-deep);
+  transform: scale(1.35);
+}
+
+.output-anim-annotation {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--alc-fg-2);
+  text-align: center;
+  min-height: 3.2em; /* reserve space so layout doesn't jump */
+}
+.output-anim-annotation strong {
+  color: var(--alc-fg-1);
+  font-weight: 600;
+}
+.output-anim-annotation code {
+  font-family: var(--alc-font-mono);
+  font-size: 0.92em;
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+@media (max-width: 880px) {
+  .output-anim-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   Service-as-Layer swap (/product/iac)
+   Worker code on left, Sessions → Layer → Resource on right
+   cycles through KV, DynamoDB, D1 backings.
+   ============================================================ */
+
+.service-swap-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr);
+  gap: 24px;
+  align-items: stretch;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.service-swap-stage {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 14px;
+  padding: 22px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.service-swap-stage__node {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 16px 8px;
+  background: var(--alc-bg-elev-1);
+  border: 1.4px solid var(--alc-hairline-2);
+  border-radius: 10px;
+  min-width: 150px;
+  text-align: center;
+  transition:
+    border-color 320ms ease,
+    box-shadow 320ms ease;
+}
+.service-swap-stage__node--accent {
+  border-color: var(--alc-accent-deep);
+  box-shadow: 0 0 0 2px rgba(184, 138, 74, 0.12);
+}
+.service-swap-stage__label {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  line-height: 1.2;
+}
+.service-swap-stage__sub {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  line-height: 1.2;
+}
+
+.service-swap-stage__edge {
+  position: relative;
+  height: 28px;
+  width: 1.6px;
+  background: currentColor;
+  margin: 4px 0;
+  color: var(--alc-accent-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 320ms ease,
+    color 320ms ease;
+}
+.service-swap-stage__edge--down::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid currentColor;
+  transition: border-top-color 320ms ease;
+}
+.service-swap-stage__edge-label {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 10px;
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid currentColor;
+  padding: 1px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition:
+    color 320ms ease,
+    border-color 320ms ease;
+}
+
+.service-swap-stage__steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 14px;
+}
+.service-swap-stage__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-hairline-2);
+  transition:
+    background 280ms ease,
+    transform 280ms ease;
+}
+.service-swap-stage__dot.is-active {
+  transform: scale(1.35);
+}
+
+/* Reuse the existing layer-cycle-node keyframes for the fade-in
+   when the active Layer/Resource node swaps. */
+@keyframes service-swap-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(-3px);
+    filter: blur(2px);
+  }
+  18% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+.service-swap-stage .layer-swap-node {
+  animation: service-swap-pop 700ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes layer-swap-text {
+  0% {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+.alc-code-block .layer-swap {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 -1px;
+  border-radius: 3px;
+  animation: layer-swap-text 700ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@media (max-width: 880px) {
+  .service-swap-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   Output graph diagram (/product/iac)
+   ============================================================ */
+
+.output-graph {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center; /* center stage+caption so extra column height
+                               is split top/bottom instead of dumped below */
+  gap: 18px;
+  align-self: stretch;
+}
+
+/* 3x3 grid: nodes occupy corners, edges occupy middle cells. */
+.output-graph__stage {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(48px, 1fr) minmax(0, auto);
+  grid-template-rows: auto minmax(40px, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+  gap: 0;
+  padding: 8px 4px;
+}
+
+.output-graph__node {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 18px;
+  background: rgba(184, 138, 74, 0.1);
+  border: 1.4px solid var(--alc-accent-deep);
+  border-radius: 10px;
+  min-width: 110px;
+  white-space: nowrap;
+}
+.output-graph__node--ghost {
+  background: var(--alc-bg);
+  border-color: var(--alc-hairline-2);
+  border-style: dashed;
+}
+.output-graph__node-label {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  line-height: 1.15;
+}
+.output-graph__node-id {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  line-height: 1.15;
+}
+
+/* An edge cell renders a line + arrowhead via pseudo-elements,
+   plus a label on top via the inner span. */
+.output-graph__edge {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.output-graph__edge--h::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 14px;
+  top: 50%;
+  height: 1.6px;
+  background: var(--alc-accent-deep);
+  transform: translateY(-50%);
+}
+.output-graph__edge--h::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--alc-accent-deep);
+  transform: translateY(-50%);
+}
+.output-graph__edge--v::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 12px;
+  left: 50%;
+  width: 1.6px;
+  background: var(--alc-accent-deep);
+  transform: translateX(-50%);
+}
+.output-graph__edge--v::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--alc-accent-deep);
+  transform: translateX(-50%);
+}
+.output-graph__edge-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+  background: var(--alc-bg-elev-1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.output-graph__caption {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--alc-fg-3);
+  text-align: center;
+}
+.output-graph__caption strong {
+  color: var(--alc-fg-1);
+  font-weight: 600;
+}
+.output-graph__caption code {
+  font-family: var(--alc-font-mono);
+  font-size: 0.92em;
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+@media (max-width: 720px) {
+  .output-graph__stage {
+    gap: 14px 40px;
+  }
+  .output-graph__node {
+    min-width: 100px;
+    padding: 8px 12px;
+  }
+}
+
+/* ============================================================
+   Async-style code tabs (/product/providers/cloudflare)
+   ============================================================ */
+
+.code-tabs {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.code-tabs__nav {
+  display: flex;
+  background: var(--alc-bg-nav);
+  border-bottom: 1px solid var(--alc-hairline);
+}
+.code-tabs__btn {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  background: transparent;
+  border: 0;
+  color: var(--alc-fg-2);
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+.code-tabs__btn[data-active="true"] {
+  color: var(--alc-fg-1);
+  border-bottom-color: var(--alc-accent-deep);
+  background: var(--alc-bg-elev-1);
+}
+.code-tabs__btn:hover {
+  color: var(--alc-fg-1);
+}
+.code-tabs__panel {
+  display: none;
+}
+.code-tabs__panel[data-active="true"] {
+  display: block;
+}
+.code-tabs__panel .alc-code-block {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* TS token colors used inside .alc-code-block */
+.alc-tok-k {
+  color: var(--alc-code-keyword);
+}
+.alc-tok-s {
+  color: var(--alc-code-string);
+}
+.alc-tok-f {
+  color: var(--alc-code-fn);
+}
+.alc-tok-t {
+  color: var(--alc-code-type);
+}
+.alc-tok-c {
+  color: var(--alc-code-comment);
+  font-style: italic;
+}
+.alc-tok-v {
+  color: var(--alc-code-var);
+}
+.alc-tok-n {
+  color: var(--alc-code-literal);
+}
+
+/* ============================================================
+   Card / panel utilities — used widely across product pages
+   ============================================================ */
+
+.alc-card {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  padding: 18px;
+}
+.alc-card--lg {
+  border-radius: 12px;
+  padding: 22px;
+}
+.alc-card__title {
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  margin-bottom: 6px;
+}
+.alc-card__title--lg {
+  font-size: 17px;
+}
+.alc-card__body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--alc-fg-3);
+}
+
+/* ============================================================
+   Provider overview cards (/product/providers)
+   ============================================================ */
+
+.provider-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+@media (max-width: 980px) {
+  .provider-overview {
+    grid-template-columns: 1fr;
+  }
+}
+.provider-overview__card {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 14px;
+  padding: 22px;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition:
+    border-color 200ms ease,
+    transform 200ms ease;
+}
+.provider-overview__card:hover {
+  border-color: var(--prov-color);
+  transform: translateY(-2px);
+}
+.provider-overview__card--soon {
+  background: linear-gradient(
+    180deg,
+    var(--alc-bg-elev-1) 0%,
+    color-mix(in srgb, var(--alc-bg-nav) 60%, transparent) 100%
+  );
+}
+.provider-overview__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.provider-overview__name {
+  font-family: var(--alc-font-serif);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+}
+.provider-overview__badge {
+  margin-left: auto;
+  font-family: var(--alc-font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--prov-color);
+  background: color-mix(in srgb, var(--prov-color) 14%, transparent);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.provider-overview__body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--alc-fg-2);
+  margin: 0;
+  flex: 1;
+}
+.provider-overview__body code {
+  font-family: var(--alc-font-mono);
+  font-size: 0.92em;
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.provider-overview__cta {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--prov-color);
+  margin-top: 4px;
+}
+
+/* ============================================================
+   IAM action table (/product/providers/aws)
+   ============================================================ */
+
+.iam-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+}
+.iam-table th {
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--alc-bg-nav);
+  color: var(--alc-fg-2);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--alc-hairline);
+}
+.iam-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--alc-hairline);
+  color: var(--alc-fg-2);
+}
+.iam-table tr:last-child td {
+  border-bottom: none;
+}
+.iam-table code {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-1);
+}
+.iam-table td:nth-child(2) code {
+  color: #ff9900;
+}
+
+/* ============================================================
+   CI walkthrough steps (/product/cicd)
+   ============================================================ */
+
+.ci-steps {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ci-step {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 16px;
+  align-items: flex-start;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.ci-step__num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--alc-accent-deep);
+  color: var(--alc-bg-elev-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+.ci-step__title {
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  margin-bottom: 2px;
+}
+.ci-step__body {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--alc-fg-2);
+  line-height: 1.55;
+}
+
+/* GitHub-styled comment mock (/product/cicd) */
+.gh-mock {
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+}
+.gh-mock__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--alc-hairline);
+  background: var(--alc-bg-nav);
+}
+.gh-mock__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--alc-accent-deep);
+  color: var(--alc-bg-elev-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--alc-font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+.gh-mock__author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--alc-fg-2);
+}
+.gh-mock__author strong {
+  color: var(--alc-fg-1);
+}
+.gh-mock__bot-tag {
+  font-family: var(--alc-font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--alc-fg-3);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: var(--alc-bg);
+}
+.gh-mock__meta {
+  font-size: 11.5px;
+  color: var(--alc-fg-3);
+  margin-left: 4px;
+}
+.gh-mock__body {
+  padding: 16px 18px;
+}
+.gh-mock__h3 {
+  font-family: var(--alc-font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  margin: 0 0 10px;
+}
+.gh-mock__p {
+  margin: 6px 0;
+  font-size: 13.5px;
+  color: var(--alc-fg-2);
+}
+.gh-mock__url {
+  color: var(--alc-accent-deep);
+  text-decoration: underline;
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+}
+.gh-mock__code {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-1);
+  background: var(--alc-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.gh-mock__hr {
+  border: none;
+  border-top: 1px solid var(--alc-hairline);
+  margin: 12px 0;
+}
+.gh-mock__small {
+  color: var(--alc-fg-3);
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ============================================================
+   OTel destination cards (/product/observability)
+   ============================================================ */
+
+.otel-card {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-left: 3px solid var(--c);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.otel-card__name {
+  font-family: var(--alc-font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+.otel-card__sub {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+}
+@media (max-width: 760px) {
+  .otel-card {
+    font-size: 12px;
+  }
+}
+
+/* ============================================================
+   PR lifecycle animation (home page section 5)
+   ============================================================ */
+
+.pr-lc {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pr-lc__timeline {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 999px;
+  padding: 6px;
+  max-width: 820px;
+  width: 100%;
+}
+.pr-lc__step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--alc-fg-3);
+  transition:
+    background 280ms ease,
+    color 280ms ease;
+  white-space: nowrap;
+}
+.pr-lc__step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--alc-bg);
+  color: var(--alc-fg-3);
+  border: 1px solid var(--alc-hairline);
+  transition:
+    background 280ms ease,
+    color 280ms ease,
+    border-color 280ms ease;
+}
+.pr-lc__step--done {
+  color: var(--alc-fg-2);
+}
+.pr-lc__step--done .pr-lc__step-num {
+  background: var(--alc-accent-deep);
+  border-color: var(--alc-accent-deep);
+  color: var(--alc-bg-elev-1);
+}
+.pr-lc__step--active {
+  background: var(--alc-bg);
+  color: var(--alc-fg-1);
+  font-weight: 600;
+}
+.pr-lc__step--active .pr-lc__step-num {
+  background: var(--alc-accent-bright);
+  border-color: var(--alc-accent-bright);
+  color: var(--alc-bg-code);
+  box-shadow: 0 0 0 4px rgba(184, 138, 74, 0.15);
+}
+
+.pr-lc__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+/* PR card on the left */
+.pr-lc__pr {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--alc-shadow-sm);
+}
+/* Let the right panel (terminal/comment/dashboard) drive the row height
+   so the PR card doesn't grow a big empty middle when its content is short. */
+.pr-lc__pr-checks {
+  margin-top: 8px;
+}
+.pr-lc__pr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pr-lc__pr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--alc-font-sans);
+  transition:
+    background 280ms ease,
+    color 280ms ease;
+}
+.pr-lc__pr-pill--open {
+  background: rgba(95, 174, 110, 0.16);
+  color: #3d8b58;
+}
+.pr-lc__pr-pill--merged {
+  background: rgba(149, 100, 200, 0.16);
+  color: #7b50b8;
+}
+.pr-lc__pr-num {
+  font-family: var(--alc-font-mono);
+  font-size: 12.5px;
+  color: var(--alc-fg-3);
+}
+.pr-lc__pr-title {
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+  line-height: 1.3;
+}
+.pr-lc__pr-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--alc-fg-3);
+}
+.pr-lc__pr-branch {
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+  background: var(--alc-bg);
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--alc-fg-2);
+}
+.pr-lc__pr-branch--base {
+  color: var(--alc-fg-3);
+}
+.pr-lc__pr-sep {
+  color: var(--alc-fg-4);
+}
+.pr-lc__pr-checks {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--alc-hairline);
+  padding-top: 12px;
+}
+.pr-lc__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--alc-fg-2);
+}
+.pr-lc__check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--alc-fg-4);
+  transition: background 280ms ease;
+}
+.pr-lc__check--running .pr-lc__check-dot {
+  background: var(--alc-warn);
+  animation: pr-lc-pulse 1s ease-in-out infinite;
+}
+.pr-lc__check--done .pr-lc__check-dot {
+  background: var(--alc-success);
+}
+@keyframes pr-lc-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.pr-lc__check-status {
+  margin-left: auto;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+}
+
+/* Right panel — terminal, comment, or dashboard */
+.pr-lc__panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: stretch;
+}
+.pr-lc__panel > * {
+  flex: 1;
+}
+.pr-lc__gh {
+  max-width: none;
+  margin: 0;
+}
+
+/* Dashboard mock — shown during the `observe` phase */
+.pr-lc__dash {
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--alc-shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+.pr-lc__dash-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--alc-hairline);
+  background: var(--alc-bg-nav);
+}
+.pr-lc__dash-title {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+.pr-lc__dash-meta {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+  margin-left: auto;
+}
+.pr-lc__dash-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--alc-success);
+  box-shadow: 0 0 0 0 rgba(95, 174, 110, 0.6);
+  animation: pr-lc-dash-pulse 1.4s ease-out infinite;
+}
+@keyframes pr-lc-dash-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(95, 174, 110, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(95, 174, 110, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(95, 174, 110, 0);
+  }
+}
+.pr-lc__dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--alc-hairline);
+  flex: 1;
+}
+.pr-lc__tile {
+  background: var(--alc-bg-elev-1);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 2px solid var(--c, var(--alc-accent-deep));
+  min-width: 0;
+}
+.pr-lc__tile-label {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--alc-fg-3);
+}
+.pr-lc__tile-value {
+  font-family: var(--alc-font-serif);
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+  line-height: 1.05;
+}
+.pr-lc__tile-unit {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-3);
+  margin-left: 3px;
+  font-weight: 400;
+}
+.pr-lc__spark {
+  display: block;
+  width: 100%;
+  height: 36px;
+  margin-top: auto;
+}
+.pr-lc__tile-foot {
+  margin-top: auto;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+}
+.pr-lc__dash-foot {
+  padding: 8px 14px;
+  border-top: 1px solid var(--alc-hairline);
+  background: var(--alc-bg-nav);
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+}
+.pr-lc__dash-foot code {
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+@media (max-width: 760px) {
+  .pr-lc__stage {
+    grid-template-columns: 1fr;
+  }
+  .pr-lc__timeline {
+    overflow-x: auto;
+    border-radius: 12px;
+  }
+  .pr-lc__step {
+    font-size: 11.5px;
+  }
+}
+@media (max-width: 480px) {
+  .pr-lc__step-num {
+    display: none;
+  }
+  .pr-lc__step {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+}
+
+/* ============================================================
+   Operational readiness — code-pair illustration
+   ============================================================ */
+
+.alc-ops-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.alc-ops-caption {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--alc-fg-2);
+  margin: 2px 2px 0;
+}
+.alc-ops-caption strong {
+  color: var(--alc-fg-1);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Hero (home page)
+   ============================================================ */
+
+.alc-hero {
+  position: relative;
+  isolation: isolate;
+}
+/* Aged-paper plate behind the entire hero. Two layers of SVG fractal
+   noise — a fine fiber grain plus a large-scale foxing/aging blotch
+   pattern — combine to read as old printed paper rather than a uniform
+   texture. No directional banding (which would look like slats). */
+/* Faint paper-fiber grain behind the hero. Single layer of fine SVG
+   fractal noise, multiply-blended into the parchment background and
+   feathered with a vignette so it never reads as a hard plate. */
+.alc-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.28;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='280'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' seed='6' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.22  0 0 0 0 0.13  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+  background-size: 280px 280px;
+  -webkit-mask-image: radial-gradient(
+    ellipse 100% 95% at 50% 45%,
+    #000 55%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 100% 95% at 50% 45%,
+    #000 55%,
+    transparent 100%
+  );
+}
+/* In dark mode the brown noise multiplied onto the dark page just turns
+   to mud. Flip to `screen` so the same noise pattern adds a faint warm
+   highlight grain instead of subtracting into black. */
+[data-theme="dark"] .alc-hero::before {
+  mix-blend-mode: screen;
+  opacity: 0.16;
+}
+/* Parchment "halo" between the animation canvas and the hero text.
+   Solid parchment at the center (where the headline + subtitle live)
+   so the animation never competes with type, fading to transparent
+   well before the edges so the corners of the canvas stay visible.
+   z-index 0 + source order (rendered after the canvas) keeps it
+   above the canvas (z:0) and below the content (z:1). */
+.alc-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* The halo's job is to fade the page color *over* the canvas animation
+     so the headline reads cleanly. Anchored to `--alc-bg` so it matches
+     whatever theme is active. */
+  background: radial-gradient(
+    ellipse 55% 50% at 50% 52%,
+    color-mix(in srgb, var(--alc-bg) 92%, transparent) 0%,
+    color-mix(in srgb, var(--alc-bg) 78%, transparent) 30%,
+    color-mix(in srgb, var(--alc-bg) 40%, transparent) 60%,
+    transparent 100%
+  );
+}
+
+/* Animated 3D cubic-coordinate tunnel behind the hero, rendered to
+   <canvas>. Sits above the ::before paper grain (z-index: -1) and below
+   the ::after parchment halo + content layer. */
+.alc-hero__bg-graph {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.9;
+  mix-blend-mode: multiply;
+  color: var(--alc-fg-1);
+  /* Vanishing-point coordinates pushed in from JS once it has measured
+     the Yantra mark. Defaults are the canvas geometric center, so the
+     mask still looks reasonable before the script runs. */
+  --alc-bg-cx: 50%;
+  --alc-bg-cy: 50%;
+  /* Feather around the vanishing point so the animation appears to
+     emanate from the bindu and fades into the parchment at the edges. */
+  -webkit-mask-image: radial-gradient(
+    ellipse 95% 90% at var(--alc-bg-cx) var(--alc-bg-cy),
+    #000 60%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 95% 90% at var(--alc-bg-cx) var(--alc-bg-cy),
+    #000 60%,
+    transparent 100%
+  );
+}
+/* In dark mode `multiply` collapses the strokes into the page (cream × dark
+   walnut ≈ dark walnut). Flip to `screen` so the same stroke reads as a
+   light highlight on the dark page. Color is bumped to pure white and
+   opacity raised so the screen-blended markings sit a notch above
+   light-mode visibility — they otherwise read as muted warm cream. */
+[data-theme="dark"] .alc-hero__bg-graph {
+  mix-blend-mode: screen;
+  color: #ffffff;
+  opacity: 1;
+  /* Strokes are drawn at low alpha by the JS (cap ~0.32). Boost the
+     compositing brightness so they read clearly above the dark page. */
+  filter: brightness(3.6);
+}
+/* On phones the hero canvas takes up a much larger fraction of the
+   viewport than on desktop, so the same brightness multiplier plus
+   wide mask makes the mandala bloom over the headline / subtitle and
+   reads as harsher than the dark-mode desktop view. Pull the brightness
+   back, drop opacity, and tighten the mask so strokes feather out well
+   before they reach the type. */
+@media (max-width: 640px) {
+  [data-theme="dark"] .alc-hero__bg-graph {
+    filter: brightness(2.2);
+    opacity: 0.75;
+    -webkit-mask-image: radial-gradient(
+      ellipse 80% 70% at var(--alc-bg-cx) var(--alc-bg-cy),
+      #000 35%,
+      transparent 100%
+    );
+    mask-image: radial-gradient(
+      ellipse 80% 70% at var(--alc-bg-cx) var(--alc-bg-cy),
+      #000 35%,
+      transparent 100%
+    );
+  }
+}
+.alc-hero__inner {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 880px;
+  margin: 0 auto 16px;
+}
+/* Centered alchemical glyph above the title — the "title-page mark"
+   in the spirit of an engraved frontispiece. */
+.alc-hero__mark {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 18px;
+  color: var(--alc-fg-3);
+  opacity: 0.65;
+}
+.alc-hero__mark svg {
+  display: block;
+}
+.alc-hero__title {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  font-size: clamp(40px, 8.4vw, 72px);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  margin: 18px 0 0;
+  color: var(--alc-fg-1);
+}
+.alc-hero__subtitle {
+  font-family: var(--alc-font-serif);
+  font-weight: 400;
+  font-size: clamp(18px, 3.4vw, 30px);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  margin: 8px auto 32px;
+  color: var(--alc-fg-2);
+  max-width: 780px;
+}
+.alc-hero__cta {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   Responsive overrides for home page sections
+   ============================================================ */
+
+/* Reduce side gutters on small phones. Inline padding on <Section>
+   uses shorthand, so we override via a more-specific selector. */
+@media (max-width: 640px) {
+  section.alc-section {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}
+@media (max-width: 480px) {
+  section.alc-section {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
+/* Fluid section heading */
+.alc-h2 {
+  font-size: clamp(26px, 4.8vw, 34px);
+}
+/* MDX wraps loose text fragments inside JSX headings in <p> tags
+   (e.g. the outro CTA's split "Paste this … to get started" h2 ends
+   up as `<p>…</p><span><p>…</p></span><p>.</p>`). The UA's default
+   1em block margin on those <p>s opens up a big gap between the two
+   wrapped lines. Flatten them back to inline so the heading reads as
+   one piece of text. */
+.alc-h2 p {
+  display: inline;
+  margin: 0;
+}
+/* Prefix ornament on a centered CTA heading sits ABOVE the text as a
+   printer's mark, not inline next to the first word. (The previous
+   behavior — where the ornament happened to land on its own line —
+   was an accidental side-effect of UA <p> margins inside the h2 that
+   we just collapsed.) */
+.alc-cta .alc-h2 > .alc-orn--prefix {
+  display: block;
+  width: 1.4em;
+  height: 1.4em;
+  margin: 0 auto 14px;
+}
+
+/* Hero-scale serif statement used in place of an .alc-h2 + small lede
+   when a section's value-prop reads better as one big sentence. */
+.alc-section-statement {
+  font-family: var(--alc-font-serif);
+  font-weight: 400;
+  font-size: clamp(22px, 3.6vw, 34px);
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  color: var(--alc-fg-1);
+  max-width: 820px;
+  margin: 12px auto 0;
+}
+
+/* Sub-section heading inside a section (e.g. Effect-pilled / async fetch
+   modes inside the bindings-iam section). */
+.alc-h3 {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  font-size: clamp(20px, 2.6vw, 24px);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--alc-fg-1);
+  margin: 6px 0 0;
+}
+
+/* ============================================================
+   Modes stack — used inside the "Type IAM + env vars" section
+   to present the Effect-pilled (recommended) and async-fetch
+   (escape hatch) sub-sections one above the other. The escape
+   hatch is visually softened so the recommended path leads.
+   ============================================================ */
+
+.alc-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.alc-mode {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 28px;
+  align-items: start;
+}
+.alc-mode__head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 4px;
+}
+.alc-mode__lede {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--alc-fg-2);
+}
+.alc-mode__lede code {
+  font-family: var(--alc-font-mono);
+  font-size: 0.92em;
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+/* The escape-hatch mode keeps a 2-up code split inside the right column,
+   so on desktop we let it span the full row instead of competing with
+   the head column. Keeps reading order: title → details → 2 code blocks. */
+.alc-mode--escape {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.alc-mode--escape .alc-mode__head {
+  text-align: center;
+  align-items: center;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.alc-mode--escape .alc-mode__lede {
+  text-align: center;
+}
+@media (max-width: 880px) {
+  .alc-mode {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .alc-modes {
+    gap: 44px;
+  }
+}
+
+/* ============================================================
+   Dev terminal stage (Hot reload section). Single, centered
+   terminal — narrower than full-width so it doesn't sprawl.
+   ============================================================ */
+.alc-dev-stage {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+/* ============================================================
+   Browser hot-reload demo (Hot reload section).
+
+   Desktop: two columns — a pseudo browser rendering a sample
+   app on the left, the alchemy dev terminal on the right.
+   They are driven by the same state machine so an edit in the
+   terminal causes the page to reload.
+
+   Mobile (<= 760px): the browser preview is hidden and only the
+   terminal is shown — the rendered app is too small to read on
+   phones, but the terminal narrative still lands.
+   ============================================================ */
+.bhr-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.bhr-stage > * {
+  min-width: 0;
+}
+.bhr-term {
+  display: flex;
+  min-width: 0;
+}
+.bhr-term > .alc-term {
+  flex: 1;
+}
+@media (max-width: 760px) {
+  .bhr-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bhr-stage > .bhr-browser {
+    display: none;
+  }
+}
+
+/* Pseudo browser chrome. */
+.bhr-browser {
+  display: flex;
+  flex-direction: column;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(42, 38, 32, 0.04),
+    0 8px 20px -10px rgba(42, 38, 32, 0.18),
+    0 24px 48px -24px rgba(42, 38, 32, 0.22);
+  min-height: 360px;
+}
+.bhr-browser__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 14px;
+  background: var(--alc-bg-nav);
+  border-bottom: 1px solid var(--alc-hairline);
+}
+.bhr-browser__nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  color: var(--alc-fg-3);
+  font-size: 14px;
+  line-height: 1;
+}
+.bhr-browser__navbtn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-family: var(--alc-font-mono);
+  user-select: none;
+}
+.bhr-browser__navbtn:hover {
+  background: var(--alc-bg-elev-2);
+}
+.bhr-browser__reload.is-spinning {
+  animation: bhr-spin 700ms linear infinite;
+  color: var(--alc-accent-deep);
+}
+@keyframes bhr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bhr-browser__reload.is-spinning {
+    animation: none;
+  }
+}
+.bhr-browser__url {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--alc-bg-elev-2);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 999px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-2);
+  min-width: 0;
+}
+.bhr-browser__lock {
+  color: var(--alc-success);
+  font-size: 8px;
+  line-height: 1;
+}
+.bhr-browser__urlhost {
+  color: var(--alc-fg-1);
+  font-weight: 500;
+}
+.bhr-browser__urlmuted {
+  color: var(--alc-fg-3);
+}
+.bhr-browser__hmr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--alc-accent-deep);
+  font-weight: 600;
+}
+.bhr-browser__hmrdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--alc-accent-bright);
+  box-shadow: 0 0 0 3px var(--alc-accent-12);
+  animation: bhr-pulse 1800ms ease-in-out infinite;
+}
+@keyframes bhr-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bhr-browser__hmrdot {
+    animation: none;
+  }
+}
+
+.bhr-browser__body {
+  position: relative;
+  flex: 1;
+  background: var(--alc-bg);
+  padding: 22px 24px 26px;
+  overflow: hidden;
+}
+
+/* Indeterminate top-progress bar shown while the worker rebuilds. */
+.bhr-browser__progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--alc-accent-bright),
+    transparent
+  );
+  animation: bhr-progress 900ms ease-in-out infinite;
+}
+@keyframes bhr-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bhr-browser__progress {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+/* Sample "rendered app" inside the browser. */
+.bhr-app {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: bhr-fade-in 280ms ease;
+}
+@keyframes bhr-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bhr-app {
+    animation: none;
+  }
+}
+.bhr-app__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bhr-app__eyebrow {
+  font-family: var(--alc-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--alc-fg-3);
+  margin-bottom: 4px;
+}
+.bhr-app__title {
+  margin: 0;
+  font-family: var(--alc-font-serif, var(--alc-font-sans));
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--alc-fg-1);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.bhr-app__btn {
+  appearance: none;
+  border: 1px solid var(--alc-accent-deep);
+  background: var(--alc-accent-deep);
+  color: var(--alc-fg-on-accent);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: var(--alc-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: default;
+  animation: bhr-pop 320ms ease;
+}
+@keyframes bhr-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.bhr-app__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.bhr-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bhr-tile__img {
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, var(--alc-accent-soft), var(--alc-bg-sunk)),
+    var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+}
+.bhr-tile:nth-child(2) .bhr-tile__img {
+  background: linear-gradient(135deg, #d4b888, var(--alc-bg-sunk));
+}
+.bhr-tile:nth-child(3) .bhr-tile__img {
+  background: linear-gradient(
+    135deg,
+    var(--alc-accent-warm),
+    var(--alc-accent-soft)
+  );
+}
+.bhr-tile:nth-child(4) .bhr-tile__img {
+  background: linear-gradient(135deg, #c89a6a, var(--alc-accent-soft));
+}
+.bhr-tile__label {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  text-align: center;
+}
+.bhr-tile--ghost {
+  height: 70px;
+  background: var(--alc-bg-sunk);
+  border: 1px dashed var(--alc-hairline-2);
+  border-radius: 8px;
+  opacity: 0.5;
+}
+
+.bhr-app__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  animation: bhr-fade-in 320ms ease;
+}
+.bhr-app__chip {
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-2);
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.bhr-app__chip strong {
+  color: var(--alc-accent-deep);
+  font-weight: 600;
+}
+
+.bhr-app--boot .bhr-app__skeleton {
+  height: 22px;
+  width: 40%;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--alc-bg-sunk),
+    var(--alc-bg-elev-1),
+    var(--alc-bg-sunk)
+  );
+  background-size: 200% 100%;
+  animation: bhr-shimmer 1400ms linear infinite;
+}
+.bhr-app--boot .bhr-app__skeleton--sm {
+  height: 12px;
+  width: 25%;
+  margin-top: 8px;
+}
+@keyframes bhr-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bhr-app--boot .bhr-app__skeleton {
+    animation: none;
+  }
+}
+
+/* Two-column code+illustration splits */
+.alc-split-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.alc-split-2 > * {
+  min-width: 0;
+}
+.alc-split-2--wide-left {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+}
+@media (max-width: 880px) {
+  .alc-split-2,
+  .alc-split-2--wide-left {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+}
+
+/* Three-up cards */
+.alc-cards-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 1080px;
+  margin: 32px auto 0;
+}
+.alc-cards-3 > * {
+  min-width: 0;
+}
+@media (max-width: 880px) {
+  .alc-cards-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .alc-cards-3 {
+    display: none;
+  }
+}
+
+/* Two-up small cards (e.g. OTel destinations) */
+.alc-cards-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.alc-cards-2 > * {
+  min-width: 0;
+}
+@media (max-width: 380px) {
+  .alc-cards-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .alc-cards-2 {
+    display: none;
+  }
+}
+
+/* Inline "stat strip" — a single row of monospace labels separated
+   by middots. Used in place of card grids when the artifact above
+   already carries the narrative and we just want a tight caption. */
+.alc-stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 18px;
+  max-width: 920px;
+  margin: 24px auto 0;
+  padding: 12px 18px;
+  border-top: 1px solid var(--alc-hairline);
+  border-bottom: 1px solid var(--alc-hairline);
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-3);
+  text-align: center;
+}
+.alc-stat-strip__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.alc-stat-strip__item strong {
+  color: var(--alc-fg-1);
+  font-weight: 600;
+}
+.alc-stat-strip__item code {
+  color: var(--alc-accent-deep);
+  background: rgba(184, 138, 74, 0.1);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+.alc-stat-strip__sep {
+  color: var(--alc-hairline-2);
+}
+@media (max-width: 560px) {
+  .alc-stat-strip {
+    font-size: 11.5px;
+    padding: 10px 12px;
+  }
+  .alc-stat-strip__sep {
+    display: none;
+  }
+}
+
+/* Local-dev right-hand card column: fills space at >tablet, then
+   becomes 2-up on tablet, then a single column on phones. */
+.alc-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.alc-card-stack > * {
+  min-width: 0;
+}
+@media (max-width: 880px) {
+  .alc-card-stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .alc-card-stack {
+    display: none;
+  }
+}
+
+/* ============================================================
+   Bindings -> IAM mobile additions
+   When the arrows column is hidden (<=980px), each resource card
+   shows its IAM action inline so the binding -> permission
+   relationship isn't lost.
+   ============================================================ */
+
+.bindings-iam__resource-iam {
+  display: none;
+  font-family: var(--alc-font-mono);
+  font-size: 10.5px;
+  color: var(--alc-fg-3);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bindings-iam__resource-iam[data-stream] {
+  font-style: italic;
+}
+
+@media (max-width: 980px) {
+  .bindings-iam__resource-iam {
+    display: block;
+  }
+  .bindings-iam__code .alc-code-block__pre {
+    font-size: 11.5px;
+    padding: 14px 14px;
+  }
+}
+
+/* ============================================================
+   Outro: copy-prompt-for-coding-agent pill.
+   ============================================================ */
+
+.alc-copy-agent {
+  position: relative;
+  max-width: 720px;
+  margin: 24px auto 0;
+  background: var(--alc-bg-sunk);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  text-align: left;
+}
+.alc-copy-agent__text {
+  display: block;
+  /* Reserve space at the right edge so long prompt lines never run
+     under the floating copy icon. */
+  padding: 12px 52px 12px 16px;
+  font-family: var(--alc-font-mono);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--alc-fg-1);
+  background: transparent;
+  border: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.alc-copy-agent__btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--alc-fg-3);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.alc-copy-agent__btn:hover {
+  color: var(--alc-accent-deep);
+  background: var(--alc-bg-elev-1);
+  border-color: var(--alc-hairline-2);
+}
+.alc-copy-agent__btn:focus-visible {
+  outline: 2px solid var(--alc-accent-40);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   Button styles (also defined scoped in Button.astro). Copied
+   here so React islands can render the same look.
+   ============================================================ */
+
+.alc-btn {
+  font-family: var(--alc-font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 120ms var(--alc-ease, cubic-bezier(0.2, 0, 0, 1)),
+    border-color 120ms var(--alc-ease, cubic-bezier(0.2, 0, 0, 1)),
+    color 120ms var(--alc-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.alc-btn--primary {
+  background: var(--alc-accent);
+  color: var(--alc-fg-on-accent);
+}
+.alc-btn--primary:hover {
+  background: var(--alc-accent-deep);
+}
+.alc-btn--secondary {
+  background: transparent;
+  border-color: var(--alc-hairline-3);
+  color: var(--alc-fg-1);
+}
+.alc-btn--secondary:hover {
+  border-color: var(--alc-accent);
+  color: var(--alc-accent-deep);
+}
+.alc-btn--ghost {
+  background: transparent;
+  color: var(--alc-fg-2);
+}
+.alc-btn--ghost:hover {
+  color: var(--alc-accent-deep);
+}
+.alc-btn--accent {
+  background: var(--alc-terracotta);
+  color: var(--alc-fg-on-accent);
+}
+
+/* ============================================================
+   Hero CTA — two-up "for humans / for coding agents".
+   Tight: eyebrow + single content row.
+   ============================================================ */
+
+.hero-cta {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) 1fr;
+  gap: 10px;
+  max-width: 520px;
+  margin: 6px auto 0;
+  text-align: left;
+}
+.hero-cta__card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 10px 14px;
+  min-width: 0;
+  border: 1px solid var(--alc-hairline);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--alc-font-sans);
+  text-align: left;
+  background: var(--alc-bg-sunk);
+  /* The CTA cards sit directly on the hero mandala, and their tint
+     fills are translucent so the pattern bleeds through. Blur what
+     sits behind so the card text stays readable — same approach as
+     the marketing header. */
+  backdrop-filter: saturate(140%) blur(8px);
+  -webkit-backdrop-filter: saturate(140%) blur(8px);
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+.hero-cta__card:hover {
+  transform: translateY(-1px);
+}
+.hero-cta__eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--alc-fg-3);
+}
+.hero-cta__icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--alc-fg-2);
+}
+.hero-cta__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+.hero-cta__card--human {
+  background: var(--alc-accent-soft);
+  border-color: var(--alc-accent);
+}
+.hero-cta__card--human:hover {
+  border-color: var(--alc-accent-deep);
+}
+.hero-cta__card--agent {
+  background: var(--alc-terracotta-soft);
+  border-color: var(--alc-terracotta);
+}
+.hero-cta__card--agent:hover {
+  border-color: var(--alc-terracotta-deep);
+}
+.hero-cta__prompt-code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--alc-font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--alc-fg-2);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-cta--simple {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .hero-cta--cards {
+    display: none;
+  }
+  .hero-cta--simple {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+  }
+}
+
+.hero-cta__buttons {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.hero-cta__line {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--alc-fg-3);
+}
+.hero-cta__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--alc-bg-sunk);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 6px;
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  color: var(--alc-fg-1);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.hero-cta__chip:hover {
+  color: var(--alc-accent-deep);
+  border-color: var(--alc-accent);
+}

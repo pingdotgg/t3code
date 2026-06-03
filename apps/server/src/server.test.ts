@@ -3,6 +3,9 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
+  AuthAccessTokenType,
+  AuthEnvironmentBootstrapTokenType,
+  AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -46,6 +49,7 @@ import {
   HttpClient,
   HttpRouter,
   HttpServer,
+  UrlParams,
 } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -114,8 +118,8 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
-import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
-import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -215,7 +219,10 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 );
 
 const makeAuthTestLayer = () =>
-  ServerAuthLive.pipe(Layer.provide(SqlitePersistenceMemory), Layer.provide(ServerSecretStoreLive));
+  EnvironmentAuth.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(ServerSecretStore.layer),
+  );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
   Effect.gen(function* () {
@@ -799,7 +806,7 @@ const bootstrapBrowserSession = (
   },
 ) =>
   Effect.gen(function* () {
-    const response = yield* HttpClient.post("/api/auth/bootstrap", {
+    const response = yield* HttpClient.post("/api/auth/browser-session", {
       headers: options?.headers,
       body: yield* HttpBody.json({ credential }),
     });
@@ -815,23 +822,46 @@ const bootstrapBrowserSession = (
     };
   });
 
-const bootstrapBearerSession = (
+const exchangeAccessToken = (
   credential = defaultDesktopBootstrapToken,
   options?: {
     readonly headers?: Record<string, string>;
+    readonly scope?: string;
+    readonly clientMetadata?: {
+      readonly label?: string;
+      readonly deviceType?: string;
+      readonly os?: string;
+    };
   },
 ) =>
   Effect.gen(function* () {
-    const response = yield* HttpClient.post("/api/auth/bootstrap/bearer", {
+    const response = yield* HttpClient.post("/oauth/token", {
       headers: options?.headers,
-      body: yield* HttpBody.json({ credential }),
+      body: HttpBody.urlParams(
+        UrlParams.fromInput({
+          grant_type: AuthTokenExchangeGrantType,
+          subject_token: credential,
+          subject_token_type: AuthEnvironmentBootstrapTokenType,
+          requested_token_type: AuthAccessTokenType,
+          scope:
+            options?.scope ??
+            "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+          ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
+          ...(options?.clientMetadata?.deviceType
+            ? { client_device_type: options.clientMetadata.deviceType }
+            : {}),
+          ...(options?.clientMetadata?.os ? { client_os: options.clientMetadata.os } : {}),
+        }),
+      ),
     });
     const body = (yield* response.json) as {
-      readonly authenticated: boolean;
-      readonly sessionMethod: string;
-      readonly expiresAt: string;
-      readonly sessionToken?: string;
-      readonly error?: string;
+      readonly access_token?: string;
+      readonly issued_token_type?: string;
+      readonly token_type?: string;
+      readonly expires_in?: number;
+      readonly scope?: string;
+      readonly _tag?: string;
+      readonly message?: string;
     };
     return {
       response,
@@ -863,20 +893,20 @@ const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstra
 
 const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
-    const { response, body } = yield* bootstrapBearerSession(credential);
+    const { response, body } = yield* exchangeAccessToken(credential);
     if (response.status !== 200) {
       return yield* new AuthenticationGetterError({
         message: `Expected bearer bootstrap response to succeed, got ${response.status}`,
       });
     }
 
-    if (!body.sessionToken) {
+    if (!body.access_token) {
       return yield* new AuthenticationGetterError({
-        message: "Expected bearer bootstrap response to include a session token.",
+        message: "Expected token exchange response to include an access token.",
       });
     }
 
-    return body.sessionToken;
+    return body.access_token;
   });
 
 const extractSessionTokenFromSetCookie = (cookieHeader: string): string => {
@@ -895,8 +925,16 @@ const splitHeaderTokens = (value: string | null) =>
     .filter((token) => token.length > 0)
     .toSorted();
 
-const assertBrowserApiCorsHeaders = (headers: Readonly<Record<string, string | undefined>>) => {
+const assertBrowserApiCorsResponseHeaders = (
+  headers: Readonly<Record<string, string | undefined>>,
+) => {
   assert.equal(headers["access-control-allow-origin"], "*");
+};
+
+const assertBrowserApiCorsPreflightHeaders = (
+  headers: Readonly<Record<string, string | undefined>>,
+) => {
+  assertBrowserApiCorsResponseHeaders(headers);
   assert.deepEqual(splitHeaderTokens(headers["access-control-allow-methods"] ?? null), [
     "GET",
     "OPTIONS",
@@ -1039,7 +1077,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const body = (yield* response.json) as typeof testEnvironmentDescriptor;
 
       assert.equal(response.status, 200);
-      assertBrowserApiCorsHeaders(response.headers);
+      assertBrowserApiCorsResponseHeaders(response.headers);
       assert.deepEqual(body, testEnvironmentDescriptor);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1063,10 +1101,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(body.authenticated, false);
       assert.equal(body.auth.policy, "desktop-managed-local");
       assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap"]);
-      assert.deepEqual(body.auth.sessionMethods, [
-        "browser-session-cookie",
-        "bearer-session-token",
-      ]);
+      assert.deepEqual(body.auth.sessionMethods, ["browser-session-cookie", "bearer-access-token"]);
       assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1103,56 +1138,134 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect(
-    "bootstraps a bearer session and authenticates the session endpoint via authorization header",
-    () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
+  it.effect("exchanges a bootstrap grant for a scoped bearer access token", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
 
-        const { response: bootstrapResponse, body: bootstrapBody } =
-          yield* bootstrapBearerSession();
+      const { response: bootstrapResponse, body: tokenBody } = yield* exchangeAccessToken();
 
-        assert.equal(bootstrapResponse.status, 200);
-        assert.equal(bootstrapBody.authenticated, true);
-        assert.equal(bootstrapBody.sessionMethod, "bearer-session-token");
-        assert.equal(typeof bootstrapBody.sessionToken, "string");
-        assert.isTrue((bootstrapBody.sessionToken?.length ?? 0) > 0);
+      assert.equal(bootstrapResponse.status, 200);
+      assert.equal(tokenBody.issued_token_type, AuthAccessTokenType);
+      assert.equal(tokenBody.token_type, "Bearer");
+      assert.equal(
+        tokenBody.scope,
+        "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+      );
+      assert.equal(typeof tokenBody.access_token, "string");
+      assert.isTrue((tokenBody.access_token?.length ?? 0) > 0);
 
-        const sessionResponse = yield* HttpClient.get("/api/auth/session", {
-          headers: {
-            authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
-          },
-        });
-        const sessionBody = (yield* sessionResponse.json) as {
-          readonly authenticated: boolean;
-          readonly sessionMethod?: string;
-        };
+      const sessionResponse = yield* HttpClient.get("/api/auth/session", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const sessionBody = (yield* sessionResponse.json) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod?: string;
+        readonly scopes?: ReadonlyArray<string>;
+      };
 
-        assert.equal(sessionResponse.status, 200);
-        assert.equal(sessionBody.authenticated, true);
-        assert.equal(sessionBody.sessionMethod, "bearer-session-token");
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.authenticated, true);
+      assert.equal(sessionBody.sessionMethod, "bearer-access-token");
+      assert.deepEqual(sessionBody.scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("issues short-lived websocket tokens for authenticated bearer sessions", () =>
+  it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
       const bearerToken = yield* getAuthenticatedBearerSessionToken();
-      const wsTokenResponse = yield* HttpClient.post("/api/auth/ws-token", {
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
         headers: {
           authorization: `Bearer ${bearerToken}`,
         },
       });
-      const wsTokenBody = (yield* wsTokenResponse.json) as {
-        readonly token: string;
+      const wsTicketBody = (yield* wsTicketResponse.json) as {
+        readonly ticket: string;
         readonly expiresAt: string;
       };
 
-      assert.equal(wsTokenResponse.status, 200);
-      assert.equal(typeof wsTokenBody.token, "string");
-      assert.isTrue(wsTokenBody.token.length > 0);
-      assert.equal(typeof wsTokenBody.expiresAt, "string");
+      assert.equal(wsTicketResponse.status, 200);
+      assert.equal(typeof wsTicketBody.ticket, "string");
+      assert.isTrue(wsTicketBody.ticket.length > 0);
+      assert.equal(typeof wsTicketBody.expiresAt, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not allow management-only access tokens to operate the environment", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      assert.equal(tokenBody.scope, "access:write");
+      assert.isDefined(tokenBody.access_token);
+
+      const overbroadPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+        body: yield* HttpBody.json({}),
+      });
+      const overbroadPairingBody = (yield* overbroadPairingResponse.json) as {
+        readonly requiredScope: string;
+      };
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+        body: yield* HttpBody.json({ scopes: ["access:write"] }),
+      });
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const faviconResponse = yield* HttpClient.get("/api/project-favicon?cwd=/tmp", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const faviconBody = (yield* faviconResponse.json) as {
+        readonly _tag: string;
+        readonly code: string;
+        readonly requiredScope: string;
+        readonly traceId: string;
+      };
+
+      assert.equal(overbroadPairingResponse.status, 403);
+      assert.equal(overbroadPairingBody.requiredScope, "orchestration:read");
+      assert.equal(pairingResponse.status, 200);
+      assert.equal(wsTicketResponse.status, 200);
+      assert.equal(faviconResponse.status, 403);
+      assert.equal(faviconBody._tag, "EnvironmentScopeRequiredError");
+      assert.equal(faviconBody.code, "insufficient_scope");
+      assert.equal(faviconBody.requiredScope, "orchestration:read");
+      assert.equal(typeof faviconBody.traceId, "string");
+
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const rpcError = yield* Effect.flip(
+        Effect.scoped(withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({}))),
+      );
+      assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+      if (rpcError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1161,7 +1274,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const origin = crossOriginClientOrigin;
-      const { response: bootstrapResponse, body: bootstrapBody } = yield* bootstrapBearerSession(
+      const { response: bootstrapResponse, body: tokenBody } = yield* exchangeAccessToken(
         defaultDesktopBootstrapToken,
         {
           headers: { origin },
@@ -1169,13 +1282,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(bootstrapResponse.status, 200);
-      assertBrowserApiCorsHeaders(bootstrapResponse.headers);
-      assert.equal(bootstrapBody.authenticated, true);
-      assert.equal(typeof bootstrapBody.sessionToken, "string");
+      assertBrowserApiCorsResponseHeaders(bootstrapResponse.headers);
+      assert.equal(tokenBody.token_type, "Bearer");
+      assert.equal(typeof tokenBody.access_token, "string");
 
       const sessionResponse = yield* HttpClient.get("/api/auth/session", {
         headers: {
-          authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
           origin,
         },
       });
@@ -1185,33 +1298,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       };
 
       assert.equal(sessionResponse.status, 200);
-      assertBrowserApiCorsHeaders(sessionResponse.headers);
+      assertBrowserApiCorsResponseHeaders(sessionResponse.headers);
       assert.equal(sessionBody.authenticated, true);
-      assert.equal(sessionBody.sessionMethod, "bearer-session-token");
+      assert.equal(sessionBody.sessionMethod, "bearer-access-token");
 
-      const wsTokenResponse = yield* HttpClient.post("/api/auth/ws-token", {
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
         headers: {
-          authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
           origin,
         },
       });
-      const wsTokenBody = (yield* wsTokenResponse.json) as {
-        readonly token: string;
+      const wsTicketBody = (yield* wsTicketResponse.json) as {
+        readonly ticket: string;
       };
 
-      assert.equal(wsTokenResponse.status, 200);
-      assertBrowserApiCorsHeaders(wsTokenResponse.headers);
-      assert.equal(typeof wsTokenBody.token, "string");
+      assert.equal(wsTicketResponse.status, 200);
+      assertBrowserApiCorsResponseHeaders(wsTicketResponse.headers);
+      assert.equal(typeof wsTicketBody.ticket, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect(
-    "responds to remote auth websocket-token preflight requests with authorization CORS headers",
+    "responds to remote auth websocket-ticket preflight requests with authorization CORS headers",
     () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const response = yield* HttpClient.options("/api/auth/ws-token", {
+        const response = yield* HttpClient.options("/api/auth/websocket-ticket", {
           headers: {
             origin: crossOriginClientOrigin,
             "access-control-request-method": "POST",
@@ -1220,26 +1333,93 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         });
 
         assert.equal(response.status, 204);
-        assertBrowserApiCorsHeaders(response.headers);
+        assertBrowserApiCorsPreflightHeaders(response.headers);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("includes CORS headers on remote websocket-token auth failures", () =>
+  it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const response = yield* HttpClient.post("/api/auth/ws-token", {
+      const response = yield* HttpClient.post("/api/auth/websocket-ticket", {
         headers: {
           origin: crossOriginClientOrigin,
         },
       });
       const body = (yield* response.json) as {
-        readonly error?: string;
+        readonly _tag?: string;
+        readonly code?: string;
+        readonly reason?: string;
+        readonly traceId?: string;
       };
 
       assert.equal(response.status, 401);
-      assertBrowserApiCorsHeaders(response.headers);
-      assert.equal(body.error, "Authentication required.");
+      assertBrowserApiCorsResponseHeaders(response.headers);
+      assert.equal(body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(body.code, "auth_invalid");
+      assert.equal(body.reason, "missing_credential");
+      assert.equal(typeof body.traceId, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("persists token exchange client display metadata for authorized-client listings", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({}),
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+
+      const { response } = yield* exchangeAccessToken(pairingBody.credential, {
+        headers: {
+          "user-agent": "undici",
+        },
+        scope: "orchestration:read orchestration:operate terminal:operate review:write relay:read",
+        clientMetadata: {
+          label: "T3 Code Mobile",
+          deviceType: "mobile",
+          os: "iOS",
+        },
+      });
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly current: boolean;
+        readonly client: {
+          readonly label?: string;
+          readonly deviceType: string;
+          readonly ipAddress?: string;
+          readonly os?: string;
+          readonly userAgent?: string;
+        };
+      }>;
+      const mobileClient = clients.find((client) => !client.current);
+
+      assert.equal(pairingResponse.status, 200);
+      assert.equal(response.status, 200);
+      assert.equal(clientsResponse.status, 200);
+      assert.deepInclude(mobileClient?.client, {
+        label: "T3 Code Mobile",
+        deviceType: "mobile",
+        os: "iOS",
+        ipAddress: "127.0.0.1",
+        userAgent: "undici",
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1251,6 +1431,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
+        body: yield* HttpBody.json({}),
       });
       const body = (yield* response.json) as {
         readonly credential: string;
@@ -1270,16 +1451,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("issues pairing credentials for bearer sessions with access management scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const bearerToken = yield* getAuthenticatedBearerSessionToken();
+      const response = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          authorization: `Bearer ${bearerToken}`,
+        },
+        body: yield* HttpBody.json({ label: "Hosted web" }),
+      });
+      const body = (yield* response.json) as {
+        readonly credential: string;
+        readonly label?: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.isTrue(body.credential.length > 0);
+      assert.equal(body.label, "Hosted web");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects pairing credentials with an empty scope grant", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+        body: yield* HttpBody.json({ scopes: [] }),
+      });
+      const body = (yield* response.json) as {
+        readonly code: string;
+        readonly reason: string;
+      };
+
+      assert.equal(response.status, 400);
+      assert.equal(body.code, "invalid_request");
+      assert.equal(body.reason, "invalid_scope");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects unauthenticated pairing credential requests", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const response = yield* HttpClient.post("/api/auth/pairing-token");
+      const response = yield* HttpClient.post("/api/auth/pairing-token", {
+        body: yield* HttpBody.json({}),
+      });
       assert.equal(response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("lists and revokes pairing links for owner sessions", () =>
+  it.effect("lists and revokes pairing links for access management sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         config: {
@@ -1292,6 +1518,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: ownerCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const createdBody = (yield* createdResponse.json) as {
         readonly id: string;
@@ -1324,7 +1551,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects pairing credential requests from non-owner paired sessions", () =>
+  it.effect("rejects pairing credential requests without access management scope", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         config: {
@@ -1336,6 +1563,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
         },
+        body: yield* HttpBody.json({}),
       });
       const ownerBody = (yield* ownerResponse.json) as {
         readonly credential: string;
@@ -1347,17 +1575,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairedBody = (yield* pairedResponse.json) as {
-        readonly error: string;
+        readonly _tag: string;
+        readonly code: string;
+        readonly requiredScope: string;
+        readonly traceId: string;
       };
 
       assert.equal(pairedResponse.status, 403);
-      assert.equal(pairedBody.error, "Only owner sessions can create pairing credentials.");
+      assert.equal(pairedBody._tag, "EnvironmentScopeRequiredError");
+      assert.equal(pairedBody.code, "insufficient_scope");
+      assert.equal(pairedBody.requiredScope, "access:write");
+      assert.equal(typeof pairedBody.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("lists paired clients and revokes other sessions while keeping the owner", () =>
+  it.effect("lists paired clients and revokes other sessions while keeping the administrator", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         config: {
@@ -1429,9 +1664,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookieHeader,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairedClientPairingBody = (yield* pairedClientPairingResponse.json) as {
-        readonly error: string;
+        readonly _tag: string;
+        readonly code: string;
+        readonly reason: string;
+        readonly traceId: string;
       };
 
       assert.equal(listBeforeResponse.status, 200);
@@ -1452,7 +1691,69 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.lengthOf(clientsAfter, 1);
       assert.equal(clientsAfter[0]?.current, true);
       assert.equal(pairedClientPairingResponse.status, 401);
-      assert.equal(pairedClientPairingBody.error, "Unauthorized request.");
+      assert.equal(pairedClientPairingBody._tag, "EnvironmentAuthInvalidError");
+      assert.equal(pairedClientPairingBody.code, "auth_invalid");
+      assert.equal(pairedClientPairingBody.reason, "invalid_credential");
+      assert.equal(typeof pairedClientPairingBody.traceId, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("separates access inventory reads from credential management writes", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const issueScopedSession = Effect.fnUntraced(function* (
+        scope: "access:read" | "access:write",
+      ) {
+        const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: {
+            cookie: ownerCookie,
+          },
+          body: yield* HttpBody.json({ scopes: [scope] }),
+        });
+        assert.equal(pairingResponse.status, 200);
+        const pairingBody = (yield* pairingResponse.json) as {
+          readonly credential: string;
+        };
+        return yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
+      });
+
+      const readCookie = yield* issueScopedSession("access:read");
+      const readListResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: readCookie,
+        },
+      });
+      const readWriteResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: readCookie,
+        },
+        body: yield* HttpBody.json({}),
+      });
+      const readWriteBody = (yield* readWriteResponse.json) as {
+        readonly requiredScope: string;
+      };
+
+      const writeCookie = yield* issueScopedSession("access:write");
+      const writeListResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: writeCookie,
+        },
+      });
+      const writeListBody = (yield* writeListResponse.json) as {
+        readonly requiredScope: string;
+      };
+
+      assert.equal(readListResponse.status, 200);
+      assert.equal(readWriteResponse.status, 403);
+      assert.equal(readWriteBody.requiredScope, "access:write");
+      assert.equal(writeListResponse.status, 403);
+      assert.equal(writeListBody.requiredScope, "access:read");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1469,6 +1770,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: ownerCookie,
         },
+        body: yield* HttpBody.json({}),
       });
       const pairingBody = (yield* pairingResponse.json) as {
         readonly credential: string;
@@ -1499,6 +1801,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headers: {
           cookie: pairedSessionCookie,
         },
+        body: yield* HttpBody.json({}),
       });
 
       assert.equal(revokeResponse.status, 200);
@@ -1515,10 +1818,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(first.response.status, 200);
       assert.equal(second.response.status, 401);
-      assert.equal(
-        (second.body as { readonly error?: string }).error,
-        "Invalid bootstrap credential.",
-      );
+      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
+      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
+      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1594,15 +1896,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* buildAppUnderTest();
 
         const bearerToken = yield* getAuthenticatedBearerSessionToken();
-        const wsTokenResponse = yield* HttpClient.post("/api/auth/ws-token", {
+        const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
           headers: {
             authorization: `Bearer ${bearerToken}`,
           },
         });
-        const wsTokenBody = (yield* wsTokenResponse.json) as {
-          readonly token: string;
+        const wsTicketBody = (yield* wsTicketResponse.json) as {
+          readonly ticket: string;
         };
-        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsToken=${encodeURIComponent(wsTokenBody.token)}`;
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
 
         const response = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),

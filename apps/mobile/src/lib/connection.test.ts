@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { redactPairingCredential } from "./connection";
+import { mobileAuthClientMetadata, redactPairingCredential } from "./connection";
 
 vi.mock("./runtime", () => ({
   mobileRemoteHttpRuntime: {
@@ -8,7 +8,21 @@ vi.mock("./runtime", () => ({
   },
 }));
 
+vi.mock("react-native", () => ({
+  Platform: {
+    OS: "ios",
+  },
+}));
+
 describe("mobile remote connection records", () => {
+  it("identifies mobile token exchanges for authorized-client presentation", () => {
+    expect(mobileAuthClientMetadata()).toEqual({
+      label: "T3 Code Mobile",
+      deviceType: "mobile",
+      os: "iOS",
+    });
+  });
+
   it("removes one-time bootstrap credentials before persisting pairing URLs", () => {
     expect(redactPairingCredential("https://desktop.example/#token=bootstrap-token")).toBe(
       "https://desktop.example/",

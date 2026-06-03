@@ -1,0 +1,87 @@
+---
+/**
+ * Pre-paint theme initializer + browser-chrome metadata. Mirrors
+ * Starlight's default ThemeProvider contract so its built-in
+ * `<ThemeSelect>` (and our marketing nav toggle) keep working.
+ *
+ * Reads `localStorage["starlight-theme"]` first, falls back to
+ * `prefers-color-scheme`, and writes `data-theme` on <html> before any
+ * paint to avoid a flash. Imported by both the Starlight head override
+ * and the marketing layout so navigating between docs and marketing
+ * pages doesn't drop the user's theme.
+ *
+ * Also emits the `color-scheme` and `theme-color` meta tags so iOS /
+ * Android paint the URL bar / status bar / bottom nav with the page
+ * background instead of falling back to the OS-default white in dark
+ * mode.
+ *
+ * Exposes `window.StarlightThemeProvider.updatePickers(theme)` so the
+ * `<starlight-theme-select>` web component can sync its UI when storage
+ * or system preference changes.
+ */
+---
+
+<meta name="color-scheme" content="light dark" />
+{/* Cream parchment for light, deep walnut for dark — matches `--alc-bg`
+    in tokens.css. The browser picks based on `prefers-color-scheme` so
+    iOS Safari's URL bar / Android's status bar tint correctly even
+    before the inline script writes `data-theme`. */}
+<meta
+  name="theme-color"
+  content="#f5efe3"
+  media="(prefers-color-scheme: light)"
+/>
+<meta
+  name="theme-color"
+  content="#14110d"
+  media="(prefers-color-scheme: dark)"
+/>
+
+<script is:inline>
+  window.StarlightThemeProvider = (() => {
+    const storageKey = "starlight-theme";
+    const read = () => {
+      try {
+        return localStorage.getItem(storageKey);
+      } catch {
+        return null;
+      }
+    };
+    const resolve = (pref) => {
+      if (pref === "light" || pref === "dark") return pref;
+      return window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    };
+    const apply = () => {
+      document.documentElement.dataset.theme = resolve(read() || "auto");
+    };
+    apply();
+
+    // Re-resolve when the system theme changes and the user is on "auto".
+    window
+      .matchMedia("(prefers-color-scheme: dark)")
+      .addEventListener("change", () => {
+        const stored = read();
+        if (!stored || stored === "auto") apply();
+      });
+
+    return {
+      updatePickers(theme = read() || "auto") {
+        document
+          .querySelectorAll("starlight-theme-select")
+          .forEach((picker) => {
+            const select = picker.querySelector("select");
+            if (select) select.value = theme;
+            const tmpl = document.querySelector("#theme-icons");
+            const newIcon =
+              tmpl && tmpl.content.querySelector("." + theme);
+            if (newIcon) {
+              const oldIcon = picker.querySelector("svg.label-icon");
+              if (oldIcon) oldIcon.outerHTML = newIcon.outerHTML;
+            }
+          });
+      },
+    };
+  })();
+</script>

@@ -194,7 +194,7 @@ function createBaseServerConfig(): ServerConfig {
     auth: {
       policy: "loopback-browser",
       bootstrapMethods: ["one-time-token"],
-      sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+      sessionMethods: ["browser-session-cookie", "bearer-access-token"],
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",

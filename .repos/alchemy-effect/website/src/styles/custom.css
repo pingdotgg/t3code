@@ -1,0 +1,856 @@
+/* Theme bridge: maps our --alc-* design tokens onto Starlight's --sl-color-*
+   tokens. Each --alc-* token already adapts per `[data-theme]` (see tokens.css),
+   so most of this mapping is mode-agnostic. The walnut neutral scale is the
+   exception — its numeric steps don't flip semantically, so we override the
+   gray scale and `--sl-color-black` per-mode below. */
+
+:root {
+  --sl-font: var(--alc-font-sans);
+  --sl-font-mono: var(--alc-font-mono);
+  --sl-font-headings: var(--alc-font-serif);
+  /* Match the marketing header (64px tall, 32px horizontal padding, no
+     vertical padding) so docs and landing pages line up pixel-for-pixel. */
+  --sl-nav-height: 4rem;
+  --sl-nav-pad-x: 2rem;
+  --sl-nav-pad-y: 0;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root,
+[data-theme="dark"],
+[data-theme="light"] {
+  /* Page surfaces */
+  --sl-color-bg: var(--alc-bg);
+  --sl-color-bg-nav: var(--alc-bg-nav);
+  --sl-color-bg-sidebar: var(--alc-bg-nav);
+  --sl-color-bg-inline-code: var(--alc-bg-sunk);
+  --sl-color-bg-accent: var(--alc-accent);
+
+  /* Walnut neutral scale — light-mode convention: gray-1 = darkest text,
+     gray-7 = lightest surface. Starlight's hero `.tagline`, body copy,
+     and muted prose all read off this scale.
+
+     IMPORTANT: Starlight uses `--sl-color-white` as the darkest text token
+     and `--sl-color-black` as the lightest surface token in light mode
+     (the names refer to their dark-mode roles; the values flip in light).
+     The mobile sidebar pane and mobile TOC dropdown both paint their
+     background with `--sl-color-black`, so it MUST resolve to a light
+     surface — otherwise we get dark walnut text on a dark walnut panel. */
+  --sl-color-white: var(--alc-fg-1);
+  --sl-color-black: var(--alc-bg-nav);
+  --sl-color-gray-1: var(--alc-walnut-900);
+  --sl-color-gray-2: var(--alc-walnut-700);
+  --sl-color-gray-3: var(--alc-walnut-600);
+  --sl-color-gray-4: var(--alc-walnut-500);
+  --sl-color-gray-5: var(--alc-walnut-300);
+  --sl-color-gray-6: var(--alc-walnut-100);
+  --sl-color-gray-7: var(--alc-bg-nav);
+
+  /* Text */
+  --sl-color-text: var(--alc-fg-2);
+  --sl-color-text-accent: var(--alc-accent-deep);
+  --sl-color-text-invert: var(--alc-fg-invert);
+
+  /* Accent (moss) */
+  --sl-color-accent: var(--alc-accent);
+  --sl-color-accent-high: var(--alc-accent-deep);
+  --sl-color-accent-low: var(--alc-accent-12);
+  --sl-color-accent-light: var(--alc-accent-40);
+
+  /* Hairlines */
+  --sl-color-hairline-light: var(--alc-hairline);
+  --sl-color-hairline: var(--alc-hairline-2);
+  --sl-color-hairline-shade: var(--alc-hairline-3);
+
+  /* Selection */
+  --sl-color-selection-bg: var(--alc-accent-soft);
+  --sl-color-selection-text: var(--alc-fg-1);
+}
+
+/* Dark mode: flip the walnut gray scale so gray-1 = lightest text and
+   gray-7 = darkest surface (Starlight's convention, with the values inverted).
+   `--sl-color-black` is reused by Starlight as the mobile sidebar and TOC
+   panel background, so it must resolve to a surface that is *visible* against
+   the page bg — we use bg-elev-1 (one step lifted from the page). */
+[data-theme="dark"] {
+  --sl-color-white: var(--alc-fg-1);
+  --sl-color-black: var(--alc-bg-elev-1);
+  --sl-color-gray-1: var(--alc-walnut-50);
+  --sl-color-gray-2: var(--alc-walnut-200);
+  --sl-color-gray-3: var(--alc-walnut-300);
+  --sl-color-gray-4: var(--alc-walnut-400);
+  --sl-color-gray-5: var(--alc-walnut-700);
+  --sl-color-gray-6: var(--alc-walnut-800);
+  --sl-color-gray-7: var(--alc-bg-nav);
+  /* Starlight paints the selected sidebar entry with `--sl-color-text-accent`
+     as background and `--sl-color-text-invert` as text. In dark mode the
+     accent lifts to a bright lime (`--alc-accent-deep` ≈ #a3c473) — cream
+     (`--alc-fg-invert`) on lime is ~1.7:1, well below AA. Flip the invert
+     token to the dark page background so the selected pill reads as dark
+     text on lime (~10:1, AAA). */
+  --sl-color-text-invert: var(--alc-bg);
+}
+
+/* ── Headings: serif for h1/h2, sans for h3/h4 (matches alc-h* scale) ── */
+.sl-markdown-content :is(h1, h2),
+h1.hero-title,
+.hero h1 {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--alc-fg-1);
+}
+.sl-markdown-content :is(h3, h4, h5, h6) {
+  font-family: var(--alc-font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--alc-fg-1);
+}
+
+/* ── Hero "Effects" italic-serif accent ── deep moss, the design-system
+   "alc-text-accent" treatment used in the Claude landing variants. */
+.text-gradient {
+  font-family: var(--alc-font-serif);
+  font-style: italic;
+  font-weight: 500;
+  color: var(--alc-accent-deep);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+/* ── Starlight hero refinements (splash template) ── */
+.hero h1 {
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+  font-size: clamp(44px, 7vw, 76px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--alc-fg-1);
+}
+.hero .tagline {
+  font-family: var(--alc-font-sans);
+  font-size: clamp(17px, 1.8vw, 20px);
+  line-height: 1.55;
+  color: var(--alc-fg-2);
+  max-width: 36rem;
+}
+.hero .actions a[data-variant="primary"] {
+  background: var(--alc-accent);
+  color: var(--alc-fg-on-accent);
+  border-color: var(--alc-accent);
+}
+.hero .actions a[data-variant="primary"]:hover {
+  background: var(--alc-accent-deep);
+  border-color: var(--alc-accent-deep);
+  color: var(--alc-fg-on-accent);
+}
+.hero .actions a[data-variant="secondary"] {
+  background: transparent;
+  color: var(--alc-fg-1);
+  border: 1px solid var(--alc-hairline-3);
+}
+.hero .actions a[data-variant="secondary"]:hover {
+  background: var(--alc-bg-elev-1);
+  border-color: var(--alc-accent);
+  color: var(--alc-fg-1);
+}
+
+/* ── Section eyebrow (mono uppercase, deep moss) ── */
+.section-eyebrow {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--alc-accent-deep);
+  display: block;
+  margin: 0 0 0.75rem;
+}
+
+/* Serif H2 for section headers on the landing page. */
+.section-title {
+  font-family: var(--alc-font-serif);
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+  margin: 0 0 1rem;
+}
+.section-lede {
+  font-family: var(--alc-font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--alc-fg-2);
+  max-width: 36rem;
+  margin: 0 auto 2.25rem;
+}
+
+/* Centered intro block above a section grid (features, providers, etc). */
+.section-intro {
+  text-align: center;
+  max-width: 48rem;
+  margin: 0 auto 3rem;
+}
+.section-intro .section-lede {
+  margin-bottom: 0;
+}
+
+/* ── Landing page ── */
+
+.landing {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.landing :is(pre, .expressive-code, figure) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.landing pre code {
+  white-space: pre;
+}
+/* Allow grid/flex items to shrink below their content width so long code blocks
+   scroll internally instead of forcing the page wider than the viewport. */
+.hero-code-grid > *,
+.features > *,
+.provider-grid > * {
+  min-width: 0;
+}
+.landing {
+  overflow-x: clip;
+}
+/* Hide the auto-generated heading anchor link icon on the landing page —
+   these are marketing headings, not navigable anchors. */
+.landing .sl-anchor-link {
+  display: none;
+}
+@media (max-width: 480px) {
+  .landing {
+    padding: 0 1rem;
+  }
+}
+@media (max-width: 640px) {
+  .landing pre code {
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .hero-code {
+    margin: 2.5rem 0 3rem;
+  }
+  .hero-code-grid {
+    gap: 1.25rem;
+  }
+  .hero-code-text h3 {
+    font-size: 1.35rem;
+    margin-bottom: 0.75rem;
+  }
+  .hero-code-text p {
+    font-size: 0.95rem;
+  }
+  .features {
+    gap: 1.75rem;
+    margin-bottom: 3rem;
+  }
+  .feature h3 {
+    font-size: 1.05rem;
+  }
+  .providers-section {
+    margin-bottom: 3rem;
+  }
+  .providers-section h3,
+  .cta-section h3 {
+    font-size: 1.25rem;
+  }
+  .cta-section {
+    padding: 2rem 0 2.5rem;
+  }
+}
+@media (max-width: 420px) {
+  .cta-buttons {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cta-buttons > * {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+/* ── Hero overrides: center on mobile/tablet, keep 3 actions on one row ── */
+
+@media (max-width: 60rem) {
+  .hero .stack {
+    text-align: center;
+  }
+  .hero .copy {
+    align-items: center;
+  }
+  .hero .copy > * {
+    margin-inline: auto;
+  }
+  .hero .actions {
+    justify-content: center;
+    gap: 0.75rem;
+  }
+  .hero .actions > a {
+    padding-inline: 1rem;
+  }
+}
+
+@media (max-width: 30rem) {
+  .hero .actions {
+    gap: 0.5rem;
+  }
+  .hero .actions > a {
+    padding-inline: 0.75rem;
+    font-size: 0.9rem;
+  }
+}
+
+.hero-code {
+  margin: 2rem 0 5rem;
+}
+.hero-code-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+}
+.hero-code-text h3 {
+  font-family: var(--alc-font-serif);
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  margin: 0 0 1rem;
+  color: var(--alc-fg-1);
+}
+.hero-code-text p {
+  color: var(--alc-fg-2);
+  line-height: 1.7;
+  margin: 0 0 0.75rem;
+}
+@media (max-width: 768px) {
+  .hero-code-grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+}
+
+/* Features grid: .feature uses display: contents so each feature's three
+   children (heading / body / code) become direct grid items of .features.
+   We then explicitly pin each child to a grid row and column. This guarantees
+   headings, paragraphs, and code blocks all align across the two columns in
+   a visual row, regardless of content height. */
+.features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 3rem;
+  row-gap: 0.75rem;
+  margin: 0 0 5rem;
+}
+.feature {
+  display: contents;
+}
+.features > .feature > * {
+  margin: 0 !important;
+  min-width: 0;
+}
+.features > .feature > :nth-child(1) {
+  /* heading row */
+  font-family: var(--alc-font-sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+.features > .feature > :nth-child(2) {
+  /* body row */
+  color: var(--alc-fg-2);
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+.features > .feature > :nth-child(3) {
+  /* code row – anchor to the top of the row so terminals and code blocks
+     sit directly under the paragraph, regardless of snippet height. */
+  align-self: start;
+  width: 100%;
+}
+
+/* Explicit row/column placement for each of the 6 features.
+   Visual row 1 (features 1,2) occupies grid rows 1-3,
+   visual row 2 (features 3,4) occupies rows 5-7 (row 4 is the gap),
+   visual row 3 (features 5,6) occupies rows 9-11 (row 8 is the gap). */
+.features > .feature:nth-of-type(odd) > * {
+  grid-column: 1;
+}
+.features > .feature:nth-of-type(even) > * {
+  grid-column: 2;
+}
+
+.features > .feature:nth-of-type(1) > :nth-child(1),
+.features > .feature:nth-of-type(2) > :nth-child(1) {
+  grid-row: 1;
+}
+.features > .feature:nth-of-type(1) > :nth-child(2),
+.features > .feature:nth-of-type(2) > :nth-child(2) {
+  grid-row: 2;
+}
+.features > .feature:nth-of-type(1) > :nth-child(3),
+.features > .feature:nth-of-type(2) > :nth-child(3) {
+  grid-row: 3;
+}
+
+.features > .feature:nth-of-type(3) > :nth-child(1),
+.features > .feature:nth-of-type(4) > :nth-child(1) {
+  grid-row: 5;
+}
+.features > .feature:nth-of-type(3) > :nth-child(2),
+.features > .feature:nth-of-type(4) > :nth-child(2) {
+  grid-row: 6;
+}
+.features > .feature:nth-of-type(3) > :nth-child(3),
+.features > .feature:nth-of-type(4) > :nth-child(3) {
+  grid-row: 7;
+}
+
+.features > .feature:nth-of-type(5) > :nth-child(1),
+.features > .feature:nth-of-type(6) > :nth-child(1) {
+  grid-row: 9;
+}
+.features > .feature:nth-of-type(5) > :nth-child(2),
+.features > .feature:nth-of-type(6) > :nth-child(2) {
+  grid-row: 10;
+}
+.features > .feature:nth-of-type(5) > :nth-child(3),
+.features > .feature:nth-of-type(6) > :nth-child(3) {
+  grid-row: 11;
+}
+
+/* Larger gap between visual rows via empty tracks 4 and 8. */
+.features {
+  grid-template-rows:
+    auto auto auto /* row 1: h, p, code */
+    3rem /* gap */
+    auto auto auto /* row 2 */
+    3rem /* gap */
+    auto auto auto; /* row 3 */
+}
+
+@media (max-width: 768px) {
+  /* Collapse to single column: each .feature stacks naturally. */
+  .features {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    row-gap: 2.5rem;
+  }
+  .feature {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .features > .feature > * {
+    grid-row: auto !important;
+    grid-column: auto !important;
+  }
+}
+
+.providers-section {
+  margin: 0 0 5rem;
+  text-align: center;
+}
+.providers-section h3 {
+  font-family: var(--alc-font-serif);
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--alc-fg-1);
+  margin: 0 0 1rem;
+}
+.providers-section > p {
+  color: var(--alc-fg-2);
+  max-width: 36rem;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  align-items: stretch;
+}
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: var(--alc-radius);
+  padding: 1.5rem;
+  text-align: left;
+  height: 100%;
+  box-shadow: var(--alc-shadow-sm);
+  transition:
+    border-color var(--alc-dur) var(--alc-ease),
+    box-shadow var(--alc-dur) var(--alc-ease);
+}
+.provider-card:hover {
+  border-color: var(--alc-accent);
+  box-shadow: var(--alc-shadow);
+}
+.provider-card > * {
+  margin: 0;
+}
+.provider-card strong {
+  color: var(--alc-fg-1);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.provider-card p {
+  color: var(--alc-fg-2);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+@media (max-width: 768px) {
+  .provider-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 4-column variant for the AB-test "Explore alternate framings" cards. */
+.explore-section .provider-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+.explore-section a.provider-card {
+  text-decoration: none;
+  color: inherit;
+}
+@media (max-width: 1024px) {
+  .explore-section .provider-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 540px) {
+  .explore-section .provider-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cta-section {
+  text-align: center;
+  padding: 3rem 0 4rem;
+  border-top: 1px solid var(--alc-hairline-2);
+}
+.cta-section h3 {
+  font-family: var(--alc-font-serif);
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--alc-fg-1);
+  margin: 0 0 1rem;
+}
+.cta-section > p {
+  color: var(--alc-fg-2);
+  max-width: 36rem;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+.cta-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+/* Neutralize Starlight's default LinkButton margins inside .sl-markdown-content
+   so our flex container controls spacing. */
+.cta-buttons .sl-link-button,
+.cta-buttons > p {
+  margin: 0 !important;
+}
+.cta-buttons > p {
+  display: contents;
+}
+/* MDX wraps loose JSX children in <p> (and sometimes emits an empty
+   <p> sibling when JSX sits between paragraphs). Use :has() to flatten
+   any paragraph that contains an `.alc-btn`, and hide empty wrapper
+   paragraphs anywhere inside the outro CTA — the User Agent's default
+   1em block margin on those empty <p>s is what was making the
+   "Read the tutorial" row look chunky. */
+p:has(> .alc-btn) {
+  margin: 0;
+  display: contents;
+}
+.alc-cta > p:empty {
+  display: none;
+}
+
+/* ── Getting Started next-steps cards ── */
+
+.next-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.next-card {
+  display: block;
+  padding: 1.25rem 1.5rem;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: var(--alc-radius);
+  text-decoration: none;
+  transition:
+    border-color var(--alc-dur) var(--alc-ease),
+    box-shadow var(--alc-dur) var(--alc-ease);
+  box-shadow: var(--alc-shadow-sm);
+}
+.next-card:hover {
+  border-color: var(--alc-accent);
+  box-shadow: var(--alc-shadow);
+}
+.next-card strong {
+  display: block;
+  color: var(--alc-fg-1);
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.next-card span {
+  color: var(--alc-fg-2);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  .next-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   Starlight Asides (Note / Tip / Caution / Danger)
+
+   Starlight's defaults use saturated info-blue / yellow / red
+   panels that clash with the warm parchment + moss palette.
+   Override to match the design-system callout spec from
+   claude/design-system/preview/components-callouts.html:
+     - tip:     moss green
+     - note:    slate teal (--alc-info)
+     - caution: honey amber (--alc-warn)
+     - danger:  brick red  (--alc-danger)
+   ============================================================ */
+
+.sl-markdown-content .starlight-aside {
+  border-radius: 8px;
+  border-width: 1px;
+  border-style: solid;
+  padding: 12px 14px;
+  margin: 1rem 0;
+  background: var(--aside-tint, var(--alc-bg-elev-1));
+  border-color: var(--aside-border, var(--alc-hairline-2));
+  color: var(--alc-fg-2);
+  font-family: var(--alc-font-sans);
+}
+
+.sl-markdown-content .starlight-aside__title {
+  color: var(--aside-accent, var(--alc-fg-1));
+  font-family: var(--alc-font-sans);
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-markdown-content .starlight-aside__icon {
+  color: var(--aside-accent, var(--alc-fg-1));
+  font-size: 1rem;
+}
+
+.sl-markdown-content .starlight-aside__content {
+  color: var(--alc-fg-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.sl-markdown-content .starlight-aside__content > :first-child {
+  margin-top: 4px;
+}
+.sl-markdown-content .starlight-aside__content > :last-child {
+  margin-bottom: 0;
+}
+.sl-markdown-content .starlight-aside__content a {
+  color: var(--aside-accent, var(--alc-accent-deep));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.sl-markdown-content .starlight-aside__content a:hover {
+  color: var(--alc-accent-deep);
+}
+/* Inline-code only — must NOT match the per-token <code> elements that
+   Expressive Code emits inside <pre>, otherwise the dark walnut code-block
+   background and bright sunrise syntax tokens get repainted to cream + walnut
+   and the whole block bleaches out. */
+.sl-markdown-content .starlight-aside__content :not(pre) > code {
+  background: var(--alc-bg-sunk);
+  border: 1px solid var(--alc-hairline);
+  color: var(--alc-fg-1);
+}
+.sl-markdown-content .starlight-aside__content strong {
+  color: var(--alc-fg-1);
+}
+
+/* ── Variants ── */
+.sl-markdown-content .starlight-aside--note {
+  --aside-accent: var(--alc-info);
+  --aside-tint: color-mix(in srgb, var(--alc-info) 14%, transparent);
+  --aside-border: color-mix(in srgb, var(--alc-info) 45%, transparent);
+}
+.sl-markdown-content .starlight-aside--tip {
+  --aside-accent: var(--alc-accent-deep);
+  --aside-tint: color-mix(in srgb, var(--alc-accent) 14%, transparent);
+  --aside-border: color-mix(in srgb, var(--alc-accent) 45%, transparent);
+}
+.sl-markdown-content .starlight-aside--caution {
+  --aside-accent: color-mix(in srgb, var(--alc-warn) 75%, var(--alc-fg-1));
+  --aside-tint: color-mix(in srgb, var(--alc-warn) 16%, transparent);
+  --aside-border: color-mix(in srgb, var(--alc-warn) 50%, transparent);
+}
+.sl-markdown-content .starlight-aside--danger {
+  --aside-accent: var(--alc-danger);
+  --aside-tint: color-mix(in srgb, var(--alc-danger) 14%, transparent);
+  --aside-border: color-mix(in srgb, var(--alc-danger) 45%, transparent);
+}
+
+/* ============================================================
+   Expressive Code frames (the file-name tab on docs code blocks)
+
+   The default Starlight rendering of the editor-style frame paints
+   the tab title with a very low-contrast walnut on a near-walnut
+   strip — practically unreadable on the cream page. Force the
+   active tab to use the bright sunrise palette so the file name
+   reads cleanly against the dark code surface.
+   ============================================================ */
+
+.expressive-code .frame {
+  --ec-frm-edBg: var(--alc-bg-code);
+  --ec-frm-edTabBarBg: var(--alc-bg-code);
+  --ec-frm-edTabBarBrdBtmCol: var(--alc-walnut-700);
+  --ec-frm-edActTabBg: var(--alc-bg-code);
+  --ec-frm-edActTabFg: var(--alc-walnut-100);
+  --ec-frm-edActTabBrdCol: var(--alc-walnut-700);
+  --ec-frm-edActTabIndTopCol: var(--alc-accent-warm);
+  --ec-frm-edActTabIndBtmCol: transparent;
+  --ec-frm-edTabsMargBlkStart: 0;
+  --ec-frm-edTabsMargInlStart: 0;
+  --ec-frm-trmTtbBg: var(--alc-bg-code);
+  --ec-frm-trmTtbBrdBtmCol: var(--alc-walnut-700);
+  --ec-frm-trmTtbFg: var(--alc-walnut-100);
+}
+
+.expressive-code .frame.has-title:not(.is-terminal) .title {
+  color: var(--alc-walnut-100);
+  font-family: var(--alc-font-mono);
+  font-weight: 500;
+}
+
+.expressive-code .frame.is-terminal .title {
+  color: var(--alc-walnut-100);
+}
+
+/* ============================================================
+   Starlight Tabs (Code/Tabs component used on Getting Started
+   for bun / npm / pnpm / yarn).
+
+   - Tab labels use a soft mushroom for inactive and deep moss
+     for the active tab; the active underline is the moss accent.
+   - Icons are sized larger (1.25em) and painted with each
+     product's official brand color via positional selectors
+     (the package-manager tab order is bun → npm → pnpm → yarn,
+     and is consistent across the docs).
+   ============================================================ */
+
+starlight-tabs [role="tablist"] {
+  border-bottom-color: var(--alc-hairline-2);
+}
+
+starlight-tabs [role="tab"] {
+  color: var(--alc-fg-3);
+  font-family: var(--alc-font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  border-bottom-color: transparent;
+  gap: 0.45rem;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+starlight-tabs [role="tab"]:hover {
+  color: var(--alc-accent-deep);
+}
+
+starlight-tabs [role="tab"][aria-selected="true"] {
+  color: var(--alc-accent-deep);
+  border-bottom-color: var(--alc-accent);
+}
+
+/* Icon sizing — undo Starlight's tight 1em so the package-manager
+   marks read at glance, and lock dimensions so the SVG can't shrink
+   below this when the tab text is small. */
+starlight-tabs [role="tab"] > svg {
+  width: 1.25em;
+  height: 1.25em;
+  flex: 0 0 auto;
+  font-size: inherit;
+}
+
+/* ── Per-package brand colors ──
+   The Tabs.astro markup wraps each tab anchor in <li class="tab">,
+   so we color the SVG icon inside each LI by position. Order on
+   our docs is bun(1), npm(2), pnpm(3), yarn(4). Colors come from
+   each project's brand guidelines, tuned slightly for contrast
+   on the warm cream surface. */
+
+/* Bun: Starlight's built-in `bun` icon is a single-path silhouette —
+   painting it any single color loses the eyes, cheeks and mouth that
+   make the mascot recognizable. We hide that path and overlay the
+   official multi-color mascot from bun.com/logo.svg (saved locally as
+   /bun-logo.svg) via a background image. */
+starlight-tabs [role="tablist"] > li:nth-child(1) [role="tab"] > svg {
+  color: transparent;
+  background-image: url("/bun-logo.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+starlight-tabs [role="tablist"] > li:nth-child(2) [role="tab"] > svg {
+  color: #cb3837; /* npm — npm red */
+}
+starlight-tabs [role="tablist"] > li:nth-child(3) [role="tab"] > svg {
+  color: #f59f00; /* pnpm — orange */
+}
+starlight-tabs [role="tablist"] > li:nth-child(4) [role="tab"] > svg {
+  color: #2c8ebb; /* yarn — yarn blue */
+}
+
+/* Match Starlight's docs <header> chrome to the marketing <header>: same
+   translucent cream + backdrop-blur + hairline border. Defined in custom.css
+   (rather than scoped to a single component) so the docs layout picks it up
+   without a Page/Header override.
+
+   IMPORTANT: must be scoped to the <header> element, not bare `.header`.
+   Expressive Code emits a <div class="header"> for its terminal titlebar
+   inside every shell/sh code block, and an unscoped `.header` rule with
+   !important repaints that titlebar in cream parchment instead of the
+   intended dark walnut, leaving an ugly cream strip above shell snippets. */
+header.header {
+  background: color-mix(in srgb, var(--alc-bg-nav) 92%, transparent) !important;
+  backdrop-filter: saturate(140%) blur(8px);
+  border-bottom: 1px solid var(--alc-hairline) !important;
+}

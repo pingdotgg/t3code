@@ -1,0 +1,7 @@
+@layer base, starlight, theme, components, utilities;
+
+@import "./tokens.css";
+@import "./terminal.css";
+@import "@astrojs/starlight-tailwind";
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);

@@ -1,0 +1,22 @@
+{
+  "name": "aws-rest-api",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/aws-rest-api"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@distilled.cloud/aws": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  }
+}

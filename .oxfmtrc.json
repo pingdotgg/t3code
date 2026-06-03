@@ -2,6 +2,7 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "ignorePatterns": [
     ".reference",
+    ".repos/**",
     ".plans",
     "dist",
     "dist-electron",
