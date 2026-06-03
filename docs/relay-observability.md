@@ -12,7 +12,7 @@ Alchemy stages append their sanitized stage name to isolate resources, for examp
 Deploy from `infra/relay` with the normal Alchemy workflow:
 
 ```sh
-bun run deploy
+vp run deploy
 ```
 
 Alchemy resolves Axiom deployment credentials through its provider. At runtime, the Worker

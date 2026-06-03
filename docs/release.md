@@ -36,10 +36,9 @@ The relay is a shared control plane versioned separately from client releases. S
 client builds must point at the same relay so users see the same linked environments when switching
 release channels.
 
-`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. It also
-supports manual dispatch for retries. The release workflow reads the relay URL and Clerk
-client configuration from the existing `production` GitHub Actions environment before building
-desktop, CLI, or hosted web artifacts.
+`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. The
+release workflow reads the relay URL and Clerk client configuration from the existing `production`
+GitHub Actions environment before building desktop, CLI, or hosted web artifacts.
 
 Required repository variables shared by relay deployments:
 
@@ -80,7 +79,7 @@ database. Local personal stages provision isolated branches from it and are neve
 Developers deploy personal stages locally rather than through pull-request automation:
 
 ```sh
-bun --cwd infra/relay run deploy -- --stage "$USER" --env-file .env.local
+vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
 
 ## Hosted web app release deployment

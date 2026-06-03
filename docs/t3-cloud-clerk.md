@@ -37,7 +37,7 @@ When any client-facing public value is absent, cloud UI is omitted.
 For a hosted relay deployment, copy `infra/relay/.env.example` to `infra/relay/.env`. The relay
 deployment reads `RELAY_DOMAIN`, `RELAY_ZONE_NAME`, `CLERK_PUBLISHABLE_KEY`, and
 `CLERK_JWT_AUDIENCE` through Effect `Config`. There are no checked-in deployment defaults.
-`bun --cwd infra/relay run deploy` invokes Alchemy from the relay directory, so Alchemy loads
+`vp run --filter t3code-relay deploy` invokes Alchemy from the relay directory, so Alchemy loads
 `infra/relay/.env`. After a successful deployment, the wrapper updates the repository-root `.env`
 with the HTTPS relay URL derived from `RELAY_DOMAIN`. The relay still requires
 `CLERK_SECRET_KEY` as an Alchemy secret. Never put `CLERK_SECRET_KEY` in a client application

@@ -52,24 +52,23 @@ calls live in
 Install dependencies from the repository root, then run relay-focused checks from this directory:
 
 ```sh
-bun install
+vp install
 cd infra/relay
-bun run test
-bun run typecheck
+vp test run
+vp run typecheck
 ```
 
 To run a smaller test set while iterating:
 
 ```sh
-bun run test src/environments/EnvironmentLinker.test.ts
+vp test run src/environments/EnvironmentLinker.test.ts
 ```
 
 Before considering a change complete, run the repository-wide checks from the root:
 
 ```sh
-bun fmt
-bun lint
-bun typecheck
+vp check
+vp run typecheck
 ```
 
 Backend changes should include tests. Prefer testing the real business logic with external
@@ -80,7 +79,7 @@ dependencies represented at their boundary rather than mocking internal behavior
 The relay deploys through Alchemy:
 
 ```sh
-bun --cwd infra/relay run deploy
+vp run --filter t3code-relay deploy
 ```
 
 The stack provisions the Cloudflare Worker and queues, managed endpoint resources, database
@@ -94,8 +93,8 @@ PlanetScale branch and runtime role for local development, so deploy `prod` befo
 developer stages:
 
 ```sh
-bun --cwd infra/relay run deploy -- --stage prod
-bun --cwd infra/relay run deploy -- --env-file .env.local
+vp run --filter t3code-relay deploy -- --stage prod
+vp run --filter t3code-relay deploy -- --env-file .env.local
 ```
 
 Alchemy defaults personal deployments to the `dev_$USER` stage. Relay custom domains apply the same
@@ -110,8 +109,8 @@ the URL manually.
 ### Deployment CI
 
 The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
-the shared Alchemy `prod` stage on every push to `main`, with a manual dispatch available for
-retries. Stable and nightly release builds both resolve their static public config from the same
+the shared Alchemy `prod` stage on every push to `main`. Stable and nightly release builds both
+resolve their static public config from the same
 `production` GitHub environment. Pull requests do not deploy relay stages. Developers can
 deploy personal non-production stages locally with any stage name other than `prod`.
 
