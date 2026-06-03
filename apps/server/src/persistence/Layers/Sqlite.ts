@@ -6,6 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import { ProjectionThreadGoalRepositoryLive } from "../Services/ProjectionThreadGoals.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -20,7 +21,7 @@ const defaultSqliteClientLoaders = {
   node: () => import("../NodeSqliteClient.ts"),
 } satisfies Record<string, () => Promise<Loader>>;
 
-const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
+export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   config: RuntimeSqliteLayerConfig,
 ) {
   const runtime = process.versions.bun !== undefined ? "bun" : "node";
@@ -29,11 +30,29 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   return clientModule.layer(config);
 }, Layer.unwrap);
 
+const repairMainMigrationLedger = Effect.fn("repairMainMigrationLedger")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  const migrationLedgerColumns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(effect_sql_migrations)
+  `;
+  if (migrationLedgerColumns.length === 0) {
+    return;
+  }
+
+  yield* sql`
+    DELETE FROM effect_sql_migrations
+    WHERE migration_id = 31
+      AND name = 'ProjectionThreadGoals'
+  `;
+});
+
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
+    yield* repairMainMigrationLedger();
     yield* runMigrations();
   }),
 );
@@ -46,20 +65,23 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
   return Layer.provideMerge(
-    setup,
-    makeRuntimeSqliteLayer({
-      filename: dbPath,
-      spanAttributes: {
-        "db.name": path.basename(dbPath),
-        "service.name": "t3-server",
-      },
-    }),
+    ProjectionThreadGoalRepositoryLive,
+    Layer.provideMerge(
+      setup,
+      makeRuntimeSqliteLayer({
+        filename: dbPath,
+        spanAttributes: {
+          "db.name": path.basename(dbPath),
+          "service.name": "t3-server",
+        },
+      }),
+    ),
   );
 }, Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
-  makeRuntimeSqliteLayer({ filename: ":memory:" }),
+  ProjectionThreadGoalRepositoryLive,
+  Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: ":memory:" })),
 );
 
 export const layerConfig = Layer.unwrap(

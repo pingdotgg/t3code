@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("032_AuthAuthorizationScopes", (it) => {
+layer("031_AuthAuthorizationScopes", (it) => {
   it.effect("invalidates role-based auth records and installs scoped auth tables", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -54,7 +54,7 @@ layer("032_AuthAuthorizationScopes", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 32 });
+      yield* runMigrations({ toMigrationInclusive: 31 });
 
       const pairingColumns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(auth_pairing_links)
