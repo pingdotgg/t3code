@@ -38,7 +38,7 @@ export function NoActiveThreadState() {
               <EmptyTitle className="text-foreground text-2xl">
                 Neuropharm research workspace
               </EmptyTitle>
-              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+              <EmptyDescription className="mt-3 text-sm text-muted-foreground/78">
                 Analyze pharmacological compounds, receptor interactions, and cognitive effects
                 using curated databases from PubChem, ChEMBL, IUPHAR, and PubMed. Generate
                 evidence-based reports with standardized figures and confidence ratings.
