@@ -44,16 +44,16 @@ export function NoActiveThreadState() {
                 evidence-based reports with standardized figures and confidence ratings.
               </EmptyDescription>
             </EmptyHeader>
-            <div className="mt-6">
+            <div className="mt-8">
               <NeuropharmWorkspacePanel />
             </div>
-            <div className="mt-6">
+            <div className="mt-8">
               <ResearchConsole />
             </div>
-            <div className="mt-6">
+            <div className="mt-8">
               <DatabaseConsole />
             </div>
-            <div className="mt-6">
+            <div className="mt-8">
               <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
                 Research mode: All pharmacological claims are labeled with evidence strength.
                 Unsupported extrapolations and low-confidence predictions are clearly marked. This
