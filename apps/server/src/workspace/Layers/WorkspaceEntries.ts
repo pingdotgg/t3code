@@ -144,6 +144,42 @@ function directoryAncestorsOf(relativePath: string): string[] {
   return directories;
 }
 
+function shellSingleQuote(input: string): string {
+  return `'${input.replaceAll("'", "'\"'\"'")}'`;
+}
+
+export function buildWslWorkspaceFindScript(): string {
+  const ignoredExpression = [...IGNORED_DIRECTORY_NAMES]
+    .map((name) => `-name ${shellSingleQuote(name)}`)
+    .join(" -o ");
+  return [
+    "set -efu",
+    `find . \\( ${ignoredExpression} \\) -prune -o \\( -type d -o -type f \\) -printf '%y\\t%P\\0'`,
+  ].join("\n");
+}
+
+export function parseWslWorkspaceFindOutput(stdout: string): ProjectEntry[] {
+  const entries: ProjectEntry[] = [];
+  for (const record of stdout.split("\0")) {
+    if (!record) continue;
+    const separatorIndex = record.indexOf("\t");
+    if (separatorIndex <= 0) continue;
+
+    const type = record.slice(0, separatorIndex);
+    const relativePath = record.slice(separatorIndex + 1);
+    if (!relativePath || relativePath === ".") continue;
+    if (isPathInIgnoredDirectory(relativePath)) continue;
+    if (type !== "d" && type !== "f") continue;
+
+    entries.push({
+      path: relativePath,
+      kind: type === "d" ? "directory" : "file",
+      parentPath: parentPathOf(relativePath),
+    });
+  }
+  return entries;
+}
+
 const resolveBrowseTarget = (
   input: FilesystemBrowseInput,
   pathService: Path.Path,
@@ -467,19 +503,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       if (isWslTarget(input.executionTarget)) {
-        const findScript = [
-          "node -e",
-          JSON.stringify(
-            [
-              "const fs=require('fs');const path=require('path');",
-              "const root=process.cwd();const ignored=new Set(['.git','.convex','node_modules','.next','.turbo','dist','build','out','.cache']);",
-              "const out=[];let truncated=false;",
-              "function walk(dir){if(out.length>=25000){truncated=true;return;} for(const d of fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){if(!d.name||d.name==='.'||d.name==='..')continue; const full=path.posix.join(dir,d.name); const rel=path.posix.relative(root,full); const first=rel.split('/')[0]; if(ignored.has(first))continue; if(d.isDirectory()){out.push({path:rel,kind:'directory',parentPath:path.posix.dirname(rel)==='.'?undefined:path.posix.dirname(rel)}); walk(full);} else if(d.isFile()){out.push({path:rel,kind:'file',parentPath:path.posix.dirname(rel)==='.'?undefined:path.posix.dirname(rel)});}}}",
-              "walk(root); console.log(JSON.stringify({entries:out,truncated}));",
-            ].join(""),
-          ),
-        ].join(" ");
-        const result = yield* runWslShell(input.executionTarget, input.cwd, findScript, {
+        const result = yield* runWslShell(input.executionTarget, input.cwd, buildWslWorkspaceFindScript(), {
           timeoutMs: 10_000,
           operation: "workspaceEntries.search",
         }).pipe(
@@ -500,27 +524,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             detail: result.stderr || "WSL workspace search failed.",
           });
         }
-        const parsed = yield* Effect.try({
-          try: () =>
-            JSON.parse(result.stdout) as {
-              entries: ProjectEntry[];
-              truncated: boolean;
-            },
-          catch: (cause) =>
-            new WorkspaceEntriesError({
-              cwd: input.cwd,
-              operation: "workspaceEntries.search.parse",
-              detail: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
-        });
+        const entries = parseWslWorkspaceFindOutput(result.stdout);
         const normalizedQuery = normalizeSearchQuery(input.query, {
           trimLeadingPattern: /^[@./]+/,
         });
         const limit = Math.max(0, Math.floor(input.limit));
         const rankedEntries: RankedWorkspaceEntry[] = [];
         let matchedEntryCount = 0;
-        for (const entry of parsed.entries.map(toSearchableWorkspaceEntry)) {
+        for (const entry of entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES).map(toSearchableWorkspaceEntry)) {
           const score = scoreEntry(entry, normalizedQuery);
           if (score === null) continue;
           matchedEntryCount += 1;
@@ -532,7 +543,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         }
         return {
           entries: rankedEntries.map((candidate) => candidate.item),
-          truncated: parsed.truncated || matchedEntryCount > limit,
+          truncated: entries.length > WORKSPACE_INDEX_MAX_ENTRIES || matchedEntryCount > limit,
         };
       }
 

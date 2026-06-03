@@ -8,7 +8,11 @@ import { ServerConfig } from "../../config.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
-import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
+import {
+  buildWslWorkspaceFindScript,
+  parseWslWorkspaceFindOutput,
+  WorkspaceEntriesLive,
+} from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
@@ -79,6 +83,33 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
   });
 
   describe("search", () => {
+    it("builds WSL search without requiring distro-local node", () => {
+      const script = buildWslWorkspaceFindScript();
+
+      expect(script).toContain("find .");
+      expect(script).toContain("-printf");
+      expect(script).not.toMatch(/\bnode\s+-e\b/);
+    });
+
+    it("parses WSL find output into searchable project entries", () => {
+      const result = parseWslWorkspaceFindOutput(
+        [
+          "d\tsrc",
+          "f\tsrc/index.ts",
+          "d\tnode_modules",
+          "f\tnode_modules/pkg/index.js",
+          "f\tREADME.md",
+          "",
+        ].join("\0"),
+      );
+
+      expect(result).toEqual([
+        { path: "src", kind: "directory", parentPath: undefined },
+        { path: "src/index.ts", kind: "file", parentPath: "src" },
+        { path: "README.md", kind: "file", parentPath: undefined },
+      ]);
+    });
+
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
