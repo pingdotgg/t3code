@@ -1,4 +1,9 @@
-import { AuthRelayWriteScope, EnvironmentHttpApi } from "@t3tools/contracts";
+import {
+  AuthRelayWriteScope,
+  EnvironmentHttpApi,
+  type RelayClientInstallProgressEvent,
+  type RelayClientInstallProgressStage,
+} from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Console from "effect/Console";
@@ -112,22 +117,47 @@ const confirmRelayClientInstall = (version: string) =>
     }),
   );
 
+function relayClientInstallProgressMessage(stage: RelayClientInstallProgressStage): string {
+  switch (stage) {
+    case "checking":
+      return "Checking existing installation";
+    case "waiting_for_lock":
+      return "Waiting for installation lock";
+    case "downloading":
+      return "Downloading";
+    case "verifying":
+      return "Verifying download";
+    case "installing":
+      return "Installing";
+    case "validating":
+      return "Validating executable";
+    case "activating":
+      return "Activating installation";
+  }
+}
+
+const reportRelayClientInstallProgress = (event: RelayClientInstallProgressEvent) =>
+  event.type === "progress"
+    ? Console.log(`Relay client: ${relayClientInstallProgressMessage(event.stage)}...`)
+    : Effect.void;
+
 export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_client_for_link")(
-  function* <E, R>(
+  function* <ConfirmError, ConfirmContext>(
     relayClient: RelayClient.RelayClientShape,
-    confirmInstall: (version: string) => Effect.Effect<boolean, E, R>,
+    confirmInstall: (version: string) => Effect.Effect<boolean, ConfirmError, ConfirmContext>,
+    reportProgress: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
   ) {
     const executable = yield* relayClient.resolve;
     if (executable.status === "available") {
       return Option.some(executable);
     }
     if (executable.status === "unsupported") {
-      return Option.some(yield* relayClient.install);
+      return Option.some(yield* relayClient.installWithProgress(reportProgress));
     }
     if (!(yield* confirmInstall(executable.version))) {
       return Option.none();
     }
-    return Option.some(yield* relayClient.install);
+    return Option.some(yield* relayClient.installWithProgress(reportProgress));
   },
 );
 
@@ -302,7 +332,11 @@ const cloudLinkCommand = Command.make("link", {
       flags,
       Effect.gen(function* () {
         const relayClient = yield* RelayClient.RelayClient;
-        const installed = yield* acquireRelayClientForLink(relayClient, confirmRelayClientInstall);
+        const installed = yield* acquireRelayClientForLink(
+          relayClient,
+          confirmRelayClientInstall,
+          reportRelayClientInstallProgress,
+        );
         if (Option.isNone(installed)) {
           yield* Console.log("T3 Cloud link cancelled. The relay client was not installed.");
           return;
