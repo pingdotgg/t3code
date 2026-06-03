@@ -11,6 +11,11 @@ import {
 } from "@t3tools/shared/relayAuth";
 import React, { useEffect, useState } from "react";
 
+import {
+  makeDesktopClerkExternalAccountAdapter,
+  type DesktopClerkUser,
+} from "./desktopClerkExternalAccounts";
+
 type DesktopClerkUiCtor = NonNullable<Window["__internal_ClerkUICtor"]>;
 
 interface ClerkFrontendApiRequest {
@@ -59,6 +64,7 @@ let desktopClerk: Clerk | null = null;
 let desktopClerkFetchInstalled = false;
 let desktopClerkUiLoad: Promise<DesktopClerkUiCtor> | null = null;
 let desktopClerkFrontendApiHostname: string | null = null;
+let desktopClerkExternalAccountCleanup: (() => void) | null = null;
 
 const isNativeRequestClerk = (value: unknown): value is NativeRequestClerk => {
   if (typeof value !== "object" || value === null) return false;
@@ -131,6 +137,25 @@ function installDesktopClerkFetchProxy(publishableKey: string): void {
   desktopClerkFetchInstalled = true;
 }
 
+function installDesktopClerkExternalAccounts(clerk: Clerk): void {
+  desktopClerkExternalAccountCleanup?.();
+  desktopClerkExternalAccountCleanup = null;
+
+  const bridge = window.desktopBridge;
+  if (!bridge) return;
+
+  const adapter = makeDesktopClerkExternalAccountAdapter({ bridge });
+  const unsubscribe = clerk.addListener(({ user }) => {
+    if (user) {
+      adapter.installUser(user as DesktopClerkUser);
+    }
+  });
+  desktopClerkExternalAccountCleanup = () => {
+    unsubscribe();
+    adapter.dispose();
+  };
+}
+
 function loadDesktopClerkUi(publishableKey: string): Promise<DesktopClerkUiCtor> {
   if (window.__internal_ClerkUICtor) {
     return Promise.resolve(window.__internal_ClerkUICtor);
@@ -198,6 +223,8 @@ function getDesktopClerkInstance(publishableKey: string): Clerk {
   const hasKeyChanged = desktopClerk !== null && desktopClerk.publishableKey !== publishableKey;
   if (hasKeyChanged) {
     void clearStoredClientJwt();
+    desktopClerkExternalAccountCleanup?.();
+    desktopClerkExternalAccountCleanup = null;
     desktopClerk = null;
   }
 
@@ -206,6 +233,7 @@ function getDesktopClerkInstance(publishableKey: string): Clerk {
   }
 
   const nextClerk = new Clerk(publishableKey);
+  installDesktopClerkExternalAccounts(nextClerk);
   if (!isNativeRequestClerk(nextClerk)) {
     desktopClerk = nextClerk;
     return nextClerk;

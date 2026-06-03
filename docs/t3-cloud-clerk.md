@@ -128,7 +128,11 @@ t3code://auth/callback
 ```
 
 The first entry is for local desktop development. The second is for packaged desktop builds.
-The app also adds a request-scoped `t3_state` query parameter and validates it on callback.
+The app also adds a request-scoped `t3_state` query parameter and validates it on callback. Initial
+sign-in and linked-account OAuth flows both return through this bridge. The desktop provider keeps
+Clerk's stock profile component, replaces its renderer-page callback with the custom-scheme callback,
+and opens the provider URL in the system browser. Do not add the local renderer URL as an OAuth
+redirect: an external browser cannot use it to reopen the packaged app.
 
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
 flow uses a custom redirect URI, add that exact URI to the same allowlist.
