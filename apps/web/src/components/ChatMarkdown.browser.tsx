@@ -39,6 +39,26 @@ vi.mock("../environments/runtime", () => ({
   resolveEnvironmentHttpUrl: resolveEnvironmentHttpUrlMock,
 }));
 
+// Replace the real (WASM-backed) Shiki highlighter with a deterministic, synchronous fake
+// so code-block tests are fast and reliable. A single resolved promise is returned for every
+// call so `use()` resolves once and the highlighter reference stays stable across renders.
+// Everything else in the module — including the real shared highlight LRU cache — is kept,
+// so the cache populate/evict behavior under test is exercised for real.
+vi.mock("../codeHighlighting", async (importActual) => {
+  const actual = await importActual<typeof import("../codeHighlighting")>();
+  const fakeHighlighter = {
+    codeToHtml: (code: string) =>
+      `<pre class="shiki test-shiki" style="overflow-x:auto;white-space:pre;margin:0"><code>${code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")}</code></pre>`,
+  };
+  const highlighterPromise = Promise.resolve(fakeHighlighter);
+  return {
+    ...actual,
+    getCodeHighlighterPromise: () => highlighterPromise,
+  };
+});
+
 import ChatMarkdown from "./ChatMarkdown";
 
 describe("ChatMarkdown", () => {
@@ -204,6 +224,54 @@ describe("ChatMarkdown", () => {
     try {
       await expect.element(page.getByAltText("Source file")).not.toBeInTheDocument();
       expect(resolveEnvironmentHttpUrlMock).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("restores a code block's horizontal scroll when the block is remounted", async () => {
+    // Wide single line so the <pre> overflows its constrained container and is scrollable.
+    const longLine = `const data = "${"x".repeat(400)}";`;
+    const text = `\`\`\`ts\n${longLine}\n\`\`\``;
+    // Changing `cwd` recreates ChatMarkdown's `components` map, giving the inline `pre`
+    // renderer a new identity — react-markdown then remounts the whole code-block subtree,
+    // rebuilding the <pre> from scratch (the same thing that drops scroll in production).
+    const renderUi = (cwd: string) => (
+      <div style={{ width: 220, overflow: "hidden" }}>
+        <ChatMarkdown text={text} cwd={cwd} />
+      </div>
+    );
+    const screen = await render(renderUi("/repo/project"));
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          screen.container.querySelector('[data-code-highlight-state="highlighted"]'),
+        ).not.toBeNull();
+      });
+
+      const preBefore = screen.container.querySelector<HTMLPreElement>(".chat-markdown-shiki pre");
+      expect(preBefore).not.toBeNull();
+
+      // Simulate the user scrolling the wide code block sideways. Programmatic scrollLeft
+      // doesn't emit a scroll event, so dispatch one to drive the persistence listener.
+      preBefore!.scrollLeft = 200;
+      const scrolledLeft = preBefore!.scrollLeft;
+      expect(scrolledLeft).toBeGreaterThan(0);
+      preBefore!.dispatchEvent(new Event("scroll"));
+
+      await screen.rerender(renderUi("/repo/other-project"));
+
+      // The block was genuinely remounted (new <pre> node) ...
+      const preAfter = screen.container.querySelector<HTMLPreElement>(".chat-markdown-shiki pre");
+      expect(preAfter).not.toBeNull();
+      expect(preAfter).not.toBe(preBefore);
+      // ... but its horizontal scroll position is restored.
+      await vi.waitFor(() => {
+        expect(
+          screen.container.querySelector<HTMLPreElement>(".chat-markdown-shiki pre")?.scrollLeft,
+        ).toBe(scrolledLeft);
+      });
     } finally {
       await screen.unmount();
     }

@@ -55,13 +55,34 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const CURSOR_ACP_MODEL_CAPABILITY_TIMEOUT = "4 seconds";
-const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 4;
+const CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY = 1;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
   _meta: {
     parameterizedModelPicker: true,
   },
 } satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
+
+const logCursorAcpProbeCause = (
+  message: string,
+  cause: Cause.Cause<unknown>,
+  fields: Record<string, unknown> = {},
+): Effect.Effect<void> => {
+  const prettyCause = Cause.pretty(cause);
+  if (Cause.hasInterruptsOnly(cause)) {
+    return Effect.logDebug(message, {
+      ...fields,
+      cursor_probe_interrupted: true,
+      cause: prettyCause,
+    });
+  }
+  return Effect.logWarning(message, {
+    ...fields,
+    cursor_probe_interrupted: false,
+    cursor_probe_timeout: prettyCause.toLowerCase().includes("timeout"),
+    cause: prettyCause,
+  });
+};
 
 export function buildInitialCursorProviderSnapshot(
   cursorSettings: CursorSettings,
@@ -661,10 +682,9 @@ export const discoverCursorModelCapabilitiesViaAcp = (
               Effect.retry({ times: 3 }),
               Effect.withSpan("cursor-acp-model-capability-probe"),
               Effect.catchCause((cause) =>
-                Effect.logWarning("Cursor ACP capability probe failed", {
+                logCursorAcpProbeCause("Cursor ACP capability probe failed", cause, {
                   modelSlug,
-                  cause: Cause.pretty(cause),
-                }),
+                }).pipe(Effect.as<readonly [string, ModelCapabilities] | undefined>(undefined)),
               ),
             );
           },
@@ -1105,6 +1125,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
   if (!cursorSettings.enabled) {
+    yield* Effect.logDebug("Cursor provider status skipped because provider is disabled", {
+      cursor_disabled_by_instance_enabled: true,
+    });
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: false,
@@ -1195,11 +1218,15 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       ),
     );
     if (Exit.isFailure(discoveryExit)) {
-      yield* Effect.logWarning("Cursor ACP model discovery failed", {
-        cause: Cause.pretty(discoveryExit.cause),
-      });
-      discoveryWarning = "Cursor ACP model discovery failed. Check server logs for details.";
+      yield* logCursorAcpProbeCause("Cursor ACP model discovery failed", discoveryExit.cause);
+      if (!Cause.hasInterruptsOnly(discoveryExit.cause)) {
+        discoveryWarning = "Cursor ACP model discovery failed. Check server logs for details.";
+      }
     } else if (Option.isNone(discoveryExit.value)) {
+      yield* Effect.logWarning("Cursor ACP model discovery timed out", {
+        cursor_probe_timeout: true,
+        timeoutMs: CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+      });
       discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
     } else if (discoveryExit.value.value.length === 0) {
       discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
@@ -1292,9 +1319,8 @@ export const enrichCursorSnapshot = (input: {
           );
         }),
         Effect.catchCause((cause) =>
-          Effect.logWarning("Cursor ACP background capability enrichment failed", {
+          logCursorAcpProbeCause("Cursor ACP background capability enrichment failed", cause, {
             models: baseSnapshot.models.map((model) => model.slug),
-            cause: Cause.pretty(cause),
           }).pipe(Effect.asVoid),
         ),
       );

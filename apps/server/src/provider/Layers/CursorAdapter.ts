@@ -474,7 +474,9 @@ export function makeCursorAdapter(
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
-          yield* Fiber.interrupt(ctx.notificationFiber);
+          yield* Effect.sync(() => {
+            ctx.notificationFiber?.interruptUnsafe();
+          });
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);

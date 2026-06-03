@@ -101,4 +101,34 @@ describe("buildProviderInstanceUpdatePatch", () => {
     expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
     expect(patch.providers).toBeUndefined();
   });
+
+  it("removes nested legacy enabled from explicit built-in provider configs", () => {
+    const instanceId = ProviderInstanceId.make("cursor");
+    const nextInstance = {
+      driver: ProviderDriverKind.make("cursor"),
+      enabled: false,
+      config: {
+        enabled: true,
+        binaryPath: "agent",
+        apiEndpoint: "",
+      },
+    } satisfies ProviderInstanceConfig;
+
+    const patch = buildProviderInstanceUpdatePatch({
+      settings: DEFAULT_SERVER_SETTINGS,
+      instanceId,
+      instance: nextInstance,
+      driver: ProviderDriverKind.make("cursor"),
+      isDefault: true,
+    });
+
+    expect(patch.providerInstances?.[instanceId]).toEqual({
+      driver: ProviderDriverKind.make("cursor"),
+      enabled: false,
+      config: {
+        binaryPath: "agent",
+        apiEndpoint: "",
+      },
+    });
+  });
 });

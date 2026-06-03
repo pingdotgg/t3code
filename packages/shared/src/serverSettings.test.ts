@@ -8,6 +8,7 @@ import { createModelSelection } from "./model.ts";
 import {
   applyServerSettingsPatch,
   extractPersistedServerObservabilitySettings,
+  normalizeProviderInstanceConfigForPersistence,
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
 } from "./serverSettings.ts";
@@ -192,6 +193,47 @@ describe("serverSettings helpers", () => {
       displayName: "Codex Work",
       enabled: true,
       config: { homePath: "~/.codex" },
+    });
+  });
+
+  it("canonicalizes explicit built-in provider instances by removing nested legacy enabled", () => {
+    expect(
+      normalizeProviderInstanceConfigForPersistence({
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: true,
+        config: {
+          enabled: false,
+          binaryPath: "agent",
+          apiEndpoint: "",
+        },
+      }),
+    ).toEqual({
+      driver: ProviderDriverKind.make("cursor"),
+      enabled: true,
+      config: {
+        binaryPath: "agent",
+        apiEndpoint: "",
+      },
+    });
+  });
+
+  it("preserves unknown driver config enabled fields", () => {
+    expect(
+      normalizeProviderInstanceConfigForPersistence({
+        driver: ProviderDriverKind.make("forkDriver"),
+        enabled: true,
+        config: {
+          enabled: false,
+          custom: "value",
+        },
+      }),
+    ).toEqual({
+      driver: ProviderDriverKind.make("forkDriver"),
+      enabled: true,
+      config: {
+        enabled: false,
+        custom: "value",
+      },
     });
   });
 });

@@ -160,6 +160,62 @@ const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: st
   };
 });
 
+const makeMockAgentWithPersistentChildWrapper = Effect.fn(
+  "makeMockAgentWithPersistentChildWrapper",
+)(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mockAgentPath = yield* resolveMockAgentPath();
+  const dir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-provider-process-tree-",
+  });
+  const survivedPath = path.join(dir, "survived");
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const bunCommand = JSON.stringify("bun");
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const mockAgentPathJson = JSON.stringify(mockAgentPath);
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const survivedPathJson = JSON.stringify(survivedPath);
+  const script = `#!/bin/sh
+(
+  trap '' TERM
+  sleep 1
+  printf 'survived\\n' > ${survivedPathJson}
+) &
+exec ${bunCommand} ${mockAgentPathJson} "$@"
+`;
+  yield* fileSystem.writeFileString(wrapperPath, script);
+  yield* fileSystem.chmod(wrapperPath, 0o755);
+  return { survivedPath, wrapperPath };
+});
+
+const makeInvocationLogWrapper = Effect.fn("makeInvocationLogWrapper")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mockAgentPath = yield* resolveMockAgentPath();
+  const dir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-provider-invocation-log-",
+  });
+  const invocationLogPath = path.join(dir, "invoked");
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const bunCommand = JSON.stringify("bun");
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const mockAgentPathJson = JSON.stringify(mockAgentPath);
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  const invocationLogPathJson = JSON.stringify(invocationLogPath);
+  const script = `#!/bin/sh
+printf 'invoked\\n' > ${invocationLogPathJson}
+exec ${bunCommand} ${mockAgentPathJson} "$@"
+`;
+  yield* fileSystem.writeFileString(wrapperPath, script);
+  yield* fileSystem.chmod(wrapperPath, 0o755);
+  return { invocationLogPath, wrapperPath };
+});
+
 const parameterizedGpt54ConfigOptions = [
   {
     type: "select",
@@ -508,6 +564,27 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
 });
 
 describe("checkCursorProviderStatus", () => {
+  it("does not spawn Cursor commands when the provider is disabled", async () => {
+    const { invocationLogPath, wrapperPath } = await runNode(makeInvocationLogWrapper());
+
+    const provider = await Effect.runPromise(
+      checkCursorProviderStatus({
+        enabled: false,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    expect(provider.enabled).toBe(false);
+    const invoked = await runNode(
+      FileSystem.FileSystem.pipe(
+        Effect.flatMap((fileSystem) => fileSystem.exists(invocationLogPath)),
+      ),
+    );
+    expect(invoked).toBe(false);
+  });
+
   it("passes the injected environment to ACP model discovery", async () => {
     const { requestLogPath, wrapperPath } = await runNode(makeProviderStatusEnvFixture());
 
@@ -573,6 +650,25 @@ describe("discoverCursorModelsViaAcp", () => {
 
     const exitLog = await runNode(waitForFileContent(exitLogPath));
     expect(exitLog).toContain("SIGTERM");
+  });
+
+  it("kills ACP probe subprocesses when the probe scope closes", async () => {
+    const { survivedPath, wrapperPath } = await runNode(makeMockAgentWithPersistentChildWrapper());
+
+    await Effect.runPromise(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    await Effect.runPromise(Effect.sleep("1200 millis"));
+    const survived = await runNode(
+      FileSystem.FileSystem.pipe(Effect.flatMap((fileSystem) => fileSystem.exists(survivedPath))),
+    );
+    expect(survived).toBe(false);
   });
 });
 

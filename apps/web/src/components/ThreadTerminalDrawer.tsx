@@ -62,6 +62,10 @@ const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 const KEYBOARD_INSET_THRESHOLD = 80;
 const TOUCH_SCROLL_ACTIVATION_PX = 6;
+const TOUCH_LONG_PRESS_MS = 450;
+// A small amount of finger drift is tolerated before a hold is treated as a
+// scroll instead of a long-press.
+const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 
 export interface TerminalKeyboardViewport {
   bottomInset: number;
@@ -166,6 +170,132 @@ export function resolveTerminalTouchScroll(input: {
     lines,
     remainingPixels: input.accumulatedPixels - lines * rowHeight,
   };
+}
+
+interface TerminalCell {
+  column: number;
+  row: number;
+}
+
+// xterm's default word separators: a double-press selects the run of
+// characters bounded by these, so a long-press can select the same group.
+export const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
+
+function terminalCellToIndex(cell: TerminalCell, cols: number): number {
+  return cell.row * cols + cell.column;
+}
+
+function terminalCellFromIndex(index: number, cols: number): TerminalCell {
+  const row = Math.floor(index / cols);
+  return { column: index - row * cols, row };
+}
+
+export function resolveTerminalCellFromPoint(input: {
+  bounds: { left: number; top: number; width: number; height: number };
+  clientX: number;
+  clientY: number;
+  cols: number;
+  rows: number;
+  viewportY: number;
+}): TerminalCell | null {
+  if (
+    !Number.isFinite(input.bounds.width) ||
+    !Number.isFinite(input.bounds.height) ||
+    !(input.bounds.width > 0) ||
+    !(input.bounds.height > 0) ||
+    !Number.isInteger(input.cols) ||
+    input.cols < 1 ||
+    !Number.isInteger(input.rows) ||
+    input.rows < 1
+  ) {
+    return null;
+  }
+
+  const colWidth = input.bounds.width / input.cols;
+  const rowHeight = input.bounds.height / input.rows;
+  if (!(colWidth > 0) || !(rowHeight > 0)) {
+    return null;
+  }
+
+  const column = Math.min(
+    Math.max(Math.floor((input.clientX - input.bounds.left) / colWidth), 0),
+    input.cols - 1,
+  );
+  const viewportRow = Math.min(
+    Math.max(Math.floor((input.clientY - input.bounds.top) / rowHeight), 0),
+    input.rows - 1,
+  );
+  const viewportY = Number.isInteger(input.viewportY) ? Math.max(input.viewportY, 0) : 0;
+  return { column, row: viewportY + viewportRow };
+}
+
+export function resolveTerminalTouchSelectionRange(input: {
+  cols: number;
+  currentCell: TerminalCell;
+  wordEndExclusive: TerminalCell;
+  wordStart: TerminalCell;
+}): { column: number; row: number; length: number } | null {
+  if (!Number.isInteger(input.cols) || input.cols < 1) {
+    return null;
+  }
+
+  const wordStartIndex = terminalCellToIndex(input.wordStart, input.cols);
+  const wordEndExclusiveIndex = terminalCellToIndex(input.wordEndExclusive, input.cols);
+  const currentIndex = terminalCellToIndex(input.currentCell, input.cols);
+  if (wordEndExclusiveIndex <= wordStartIndex) {
+    return null;
+  }
+
+  if (currentIndex >= wordStartIndex && currentIndex < wordEndExclusiveIndex) {
+    return {
+      column: input.wordStart.column,
+      row: input.wordStart.row,
+      length: wordEndExclusiveIndex - wordStartIndex,
+    };
+  }
+
+  if (currentIndex < wordStartIndex) {
+    return {
+      column: input.currentCell.column,
+      row: input.currentCell.row,
+      length: wordEndExclusiveIndex - currentIndex,
+    };
+  }
+
+  return {
+    column: input.wordStart.column,
+    row: input.wordStart.row,
+    length: currentIndex - wordStartIndex + 1,
+  };
+}
+
+// Resolve the word group around `column` in a row's text using the same
+// separator rules xterm applies for double-click selection. Returns null when
+// the column sits on a separator or blank cell.
+export function resolveTerminalWordRange(
+  lineText: string,
+  column: number,
+  separators: string = TERMINAL_WORD_SEPARATORS,
+): { start: number; length: number } | null {
+  if (!Number.isInteger(column) || column < 0 || column >= lineText.length) {
+    return null;
+  }
+  const isSeparator = (index: number): boolean => {
+    const char = lineText[index];
+    return char === undefined || char === " " || separators.includes(char);
+  };
+  if (isSeparator(column)) {
+    return null;
+  }
+  let start = column;
+  while (start > 0 && !isSeparator(start - 1)) {
+    start -= 1;
+  }
+  let end = column;
+  while (end < lineText.length - 1 && !isSeparator(end + 1)) {
+    end += 1;
+  }
+  return { start, length: end - start + 1 };
 }
 
 function writeSystemMessage(terminal: Terminal, message: string): void {
@@ -410,6 +540,12 @@ export function TerminalViewport({
     startY: number;
     touchId: number;
   } | null>(null);
+  const touchSelectionStateRef = useRef<{
+    lastPoint: { x: number; y: number };
+    touchId: number;
+    wordEndExclusive: TerminalCell;
+    wordStart: TerminalCell;
+  } | null>(null);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -443,6 +579,7 @@ export function TerminalViewport({
       scrollback: 5_000,
       fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(mount),
+      wordSeparator: TERMINAL_WORD_SEPARATORS,
     });
     terminal.loadAddon(fitAddon);
     terminal.open(mount);
@@ -499,33 +636,6 @@ export function TerminalViewport({
       };
     };
 
-    const showSelectionAction = async () => {
-      if (selectionActionOpenRef.current) {
-        return;
-      }
-      const nextAction = readSelectionAction();
-      if (!nextAction) {
-        clearSelectionAction();
-        return;
-      }
-      const requestId = ++selectionActionRequestIdRef.current;
-      selectionActionOpenRef.current = true;
-      try {
-        const clicked = await localApi.contextMenu.show(
-          [{ id: "add-to-chat", label: "Add to chat" }],
-          nextAction.position,
-        );
-        if (requestId !== selectionActionRequestIdRef.current || clicked !== "add-to-chat") {
-          return;
-        }
-        handleAddTerminalContext(nextAction.selection);
-        terminalRef.current?.clearSelection();
-        terminalRef.current?.focus();
-      } finally {
-        selectionActionOpenRef.current = false;
-      }
-    };
-
     const sendTerminalInput = async (data: string, fallbackError: string) => {
       const activeTerminal = terminalRef.current;
       if (!activeTerminal) return;
@@ -534,6 +644,165 @@ export function TerminalViewport({
       } catch (error) {
         writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallbackError);
       }
+    };
+
+    const copyTextToClipboard = async (text: string) => {
+      const activeTerminal = terminalRef.current;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        if (activeTerminal) {
+          writeSystemMessage(activeTerminal, "Copy is unavailable on this device");
+        }
+      }
+    };
+
+    const pasteFromClipboard = async () => {
+      const activeTerminal = terminalRef.current;
+      let text: string;
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        if (activeTerminal) {
+          writeSystemMessage(activeTerminal, "Paste is unavailable on this device");
+        }
+        return;
+      }
+      if (text.length === 0) return;
+      // Paste is forwarded verbatim and must bypass the soft-keyboard Ctrl latch.
+      await sendTerminalInput(text, "Failed to paste");
+    };
+
+    const buildSelectionMenuItems = (hasSelection: boolean) =>
+      hasSelection
+        ? [
+            { id: "copy", label: "Copy" },
+            { id: "paste", label: "Paste" },
+            { id: "add-to-chat", label: "Add to chat" },
+          ]
+        : [{ id: "paste", label: "Paste" }];
+
+    const runSelectionMenuAction = async (
+      clicked: string,
+      selectionAction: ReturnType<typeof readSelectionAction>,
+    ) => {
+      if (clicked === "copy" && selectionAction) {
+        await copyTextToClipboard(selectionAction.selection.text);
+        terminalRef.current?.clearSelection();
+      } else if (clicked === "paste") {
+        await pasteFromClipboard();
+      } else if (clicked === "add-to-chat" && selectionAction) {
+        handleAddTerminalContext(selectionAction.selection);
+        terminalRef.current?.clearSelection();
+        terminalRef.current?.focus();
+      }
+    };
+
+    // Shared menu for both the double-press selection and the touch long-press.
+    // When `allowEmptySelection` is set (touch), a blank target still offers
+    // Paste; otherwise (mouse) the menu only appears for an active selection.
+    const presentSelectionMenu = async (
+      position: { x: number; y: number },
+      allowEmptySelection: boolean,
+    ) => {
+      if (selectionActionOpenRef.current) {
+        return;
+      }
+      const selectionAction = readSelectionAction();
+      if (!selectionAction && !allowEmptySelection) {
+        clearSelectionAction();
+        return;
+      }
+      const requestId = ++selectionActionRequestIdRef.current;
+      selectionActionOpenRef.current = true;
+      try {
+        const clicked = await localApi.contextMenu.show(
+          buildSelectionMenuItems(selectionAction !== null),
+          position,
+        );
+        if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
+          return;
+        }
+        await runSelectionMenuAction(clicked, selectionAction);
+      } finally {
+        selectionActionOpenRef.current = false;
+      }
+    };
+
+    // Double-press: xterm has already selected the word group, so anchor the
+    // menu to that selection.
+    const showSelectionAction = async () => {
+      const nextAction = readSelectionAction();
+      if (!nextAction) {
+        clearSelectionAction();
+        return;
+      }
+      await presentSelectionMenu(nextAction.position, false);
+    };
+
+    const selectTouchRange = (state: NonNullable<typeof touchSelectionStateRef.current>) => {
+      const activeTerminal = terminalRef.current;
+      const mountElement = containerRef.current;
+      if (!activeTerminal || !mountElement) return false;
+      const bounds = mountElement.getBoundingClientRect();
+      const currentCell = resolveTerminalCellFromPoint({
+        bounds,
+        clientX: state.lastPoint.x,
+        clientY: state.lastPoint.y,
+        cols: activeTerminal.cols,
+        rows: activeTerminal.rows,
+        viewportY: activeTerminal.buffer.active.viewportY,
+      });
+      if (!currentCell) return false;
+      const range = resolveTerminalTouchSelectionRange({
+        cols: activeTerminal.cols,
+        currentCell,
+        wordEndExclusive: state.wordEndExclusive,
+        wordStart: state.wordStart,
+      });
+      if (!range) return false;
+      activeTerminal.select(range.column, range.row, range.length);
+      return true;
+    };
+
+    // Long-press on text starts a touch selection. A blank target returns
+    // false so the caller can preserve the paste-only menu behavior.
+    const startTouchSelection = (touch: Touch): boolean => {
+      const activeTerminal = terminalRef.current;
+      const mountElement = containerRef.current;
+      if (!activeTerminal || !mountElement) return false;
+      const bounds = mountElement.getBoundingClientRect();
+      const cell = resolveTerminalCellFromPoint({
+        bounds,
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        cols: activeTerminal.cols,
+        rows: activeTerminal.rows,
+        viewportY: activeTerminal.buffer.active.viewportY,
+      });
+      if (!cell) return false;
+      const lineText = activeTerminal.buffer.active.getLine(cell.row)?.translateToString(false);
+      const wordRange = lineText ? resolveTerminalWordRange(lineText, cell.column) : null;
+      if (!wordRange) {
+        activeTerminal.clearSelection();
+        return false;
+      }
+      const wordStart = { column: wordRange.start, row: cell.row };
+      const wordEndExclusive = terminalCellFromIndex(
+        terminalCellToIndex(wordStart, activeTerminal.cols) + wordRange.length,
+        activeTerminal.cols,
+      );
+      touchSelectionStateRef.current = {
+        lastPoint: { x: touch.clientX, y: touch.clientY },
+        touchId: touch.identifier,
+        wordEndExclusive,
+        wordStart,
+      };
+      return selectTouchRange(touchSelectionStateRef.current);
+    };
+
+    const showTouchContextMenu = async (point: { x: number; y: number }) => {
+      await presentSelectionMenu(point, true);
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
@@ -685,7 +954,18 @@ export function TerminalViewport({
       clearSelectionAction();
       selectionGestureActiveRef.current = event.button === 0;
     };
+    let longPressTimer: number | null = null;
+    let longPressFired = false;
+    const cancelLongPress = () => {
+      if (longPressTimer !== null) {
+        window.clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
     const handleTouchStart = (event: TouchEvent) => {
+      cancelLongPress();
+      longPressFired = false;
+      touchSelectionStateRef.current = null;
       if (event.touches.length !== 1) {
         touchScrollStateRef.current = null;
         return;
@@ -703,8 +983,37 @@ export function TerminalViewport({
         startY: touch.clientY,
         touchId: touch.identifier,
       };
+      const point = { x: touch.clientX, y: touch.clientY };
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null;
+        longPressFired = true;
+        // The hold became a press, not a scroll: abandon any scroll gesture.
+        // Text targets enter drag-selection mode; blank targets keep the
+        // paste-only menu in place.
+        touchScrollStateRef.current = null;
+        if (!startTouchSelection(touch)) {
+          void showTouchContextMenu(point);
+        }
+      }, TOUCH_LONG_PRESS_MS);
     };
     const handleTouchMove = (event: TouchEvent) => {
+      const touchSelectionState = touchSelectionStateRef.current;
+      if (touchSelectionState) {
+        const touch = Array.from(event.changedTouches).find(
+          (changedTouch) => changedTouch.identifier === touchSelectionState.touchId,
+        );
+        if (!touch) {
+          return;
+        }
+        event.preventDefault();
+        touchSelectionState.lastPoint = { x: touch.clientX, y: touch.clientY };
+        selectTouchRange(touchSelectionState);
+        return;
+      }
+
+      if (longPressFired) {
+        return;
+      }
       const scrollState = touchScrollStateRef.current;
       const activeTerminal = terminalRef.current;
       const mountElement = containerRef.current;
@@ -721,6 +1030,12 @@ export function TerminalViewport({
 
       const totalX = touch.clientX - scrollState.startX;
       const totalY = touch.clientY - scrollState.startY;
+      if (
+        longPressTimer !== null &&
+        Math.hypot(totalX, totalY) > TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX
+      ) {
+        cancelLongPress();
+      }
       if (!scrollState.active) {
         if (Math.abs(totalY) < TOUCH_SCROLL_ACTIVATION_PX) {
           return;
@@ -748,6 +1063,29 @@ export function TerminalViewport({
       }
     };
     const handleTouchEnd = (event: TouchEvent) => {
+      cancelLongPress();
+      const touchSelectionState = touchSelectionStateRef.current;
+      if (touchSelectionState) {
+        const hasSelectionTouch = Array.from(event.touches).some(
+          (touch) => touch.identifier === touchSelectionState.touchId,
+        );
+        if (!hasSelectionTouch) {
+          const releasedTouch = Array.from(event.changedTouches).find(
+            (touch) => touch.identifier === touchSelectionState.touchId,
+          );
+          const point =
+            releasedTouch === undefined
+              ? touchSelectionState.lastPoint
+              : { x: releasedTouch.clientX, y: releasedTouch.clientY };
+          touchSelectionStateRef.current = null;
+          selectionPointerRef.current = point;
+          window.requestAnimationFrame(() => {
+            void showSelectionAction();
+          });
+        }
+        return;
+      }
+
       const scrollState = touchScrollStateRef.current;
       if (!scrollState) {
         return;
@@ -759,12 +1097,31 @@ export function TerminalViewport({
         touchScrollStateRef.current = null;
       }
     };
+    const handleTouchCancel = (event: TouchEvent) => {
+      cancelLongPress();
+      const touchSelectionState = touchSelectionStateRef.current;
+      if (
+        touchSelectionState &&
+        Array.from(event.changedTouches).some(
+          (touch) => touch.identifier === touchSelectionState.touchId,
+        )
+      ) {
+        touchSelectionStateRef.current = null;
+      }
+      const scrollState = touchScrollStateRef.current;
+      if (
+        scrollState &&
+        Array.from(event.changedTouches).some((touch) => touch.identifier === scrollState.touchId)
+      ) {
+        touchScrollStateRef.current = null;
+      }
+    };
     window.addEventListener("mouseup", handleMouseUp);
     mount.addEventListener("pointerdown", handlePointerDown);
     mount.addEventListener("touchstart", handleTouchStart, { passive: true });
     mount.addEventListener("touchmove", handleTouchMove, { passive: false });
     mount.addEventListener("touchend", handleTouchEnd);
-    mount.addEventListener("touchcancel", handleTouchEnd);
+    mount.addEventListener("touchcancel", handleTouchCancel);
 
     const themeObserver = new MutationObserver(() => {
       const activeTerminal = terminalRef.current;
@@ -945,6 +1302,7 @@ export function TerminalViewport({
       terminalHydratedRef.current = false;
       lastAppliedTerminalEventIdRef.current = 0;
       unsubscribeTerminalEvents();
+      cancelLongPress();
       window.clearTimeout(fitTimer);
       inputDisposable.dispose();
       selectionDisposable.dispose();
@@ -957,7 +1315,7 @@ export function TerminalViewport({
       mount.removeEventListener("touchstart", handleTouchStart);
       mount.removeEventListener("touchmove", handleTouchMove);
       mount.removeEventListener("touchend", handleTouchEnd);
-      mount.removeEventListener("touchcancel", handleTouchEnd);
+      mount.removeEventListener("touchcancel", handleTouchCancel);
       themeObserver.disconnect();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -1007,6 +1365,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
+      data-mobile-edge-swipe-block="true"
       className="relative h-full w-full touch-none overflow-hidden rounded-[4px] bg-background"
     />
   );

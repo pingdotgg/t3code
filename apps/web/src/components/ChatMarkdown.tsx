@@ -22,7 +22,7 @@ import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { fnv1a32, resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { useTheme } from "../hooks/useTheme";
 import {
   normalizeMarkdownLinkDestination,
@@ -132,9 +132,58 @@ function extractCodeBlock(
   };
 }
 
+// Horizontal scroll position of each code block's <pre>, keyed by code content so it
+// survives the block being unmounted/remounted. That happens for several reasons outside
+// this component's control: the markdown `components` map is recreated whenever ChatMarkdown
+// re-renders with new props (giving the inline `pre` renderer a new identity, which remounts
+// the whole block subtree), the syntax-highlight DOM is swapped from fallback to highlighted,
+// and the surrounding message row can be recycled by the virtualized timeline. Without this,
+// any of those drops a user's horizontal scroll back to the origin.
+const codeBlockHorizontalScrollByKey = new Map<string, number>();
+
+function codeBlockScrollKey(code: string): string {
+  return `${fnv1a32(code).toString(36)}:${code.length}`;
+}
+
 function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const scrollKey = useMemo(() => codeBlockScrollKey(code), [code]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const restoreScroll = () => {
+      const pre = container.querySelector<HTMLElement>("pre");
+      if (!pre) {
+        return;
+      }
+      const saved = codeBlockHorizontalScrollByKey.get(scrollKey);
+      if (saved != null && pre.scrollLeft !== saved) {
+        pre.scrollLeft = saved;
+      }
+    };
+    // Restore now (cached highlight renders synchronously) and again whenever the inner
+    // DOM is replaced (suspense fallback → highlighted output).
+    restoreScroll();
+    const observer = new MutationObserver(restoreScroll);
+    observer.observe(container, { childList: true, subtree: true });
+    // scroll doesn't bubble, but capture-phase listeners on ancestors still receive it.
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.tagName === "PRE") {
+        codeBlockHorizontalScrollByKey.set(scrollKey, target.scrollLeft);
+      }
+    };
+    container.addEventListener("scroll", handleScroll, true);
+    return () => {
+      observer.disconnect();
+      container.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [scrollKey]);
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
@@ -166,6 +215,7 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
 
   return (
     <div
+      ref={containerRef}
       className="chat-markdown-codeblock leading-snug"
       {...{ [MOBILE_EDGE_SWIPE_BLOCK_ATTRIBUTE]: "true" }}
     >

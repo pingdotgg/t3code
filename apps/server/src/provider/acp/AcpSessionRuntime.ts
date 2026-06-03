@@ -14,6 +14,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
+import { ACP_PROCESS_TERMINATE_GRACE, terminateAcpProcessTree } from "./AcpProcessCleanup.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -165,6 +166,13 @@ const makeAcpSessionRuntime = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const processScope = yield* Scope.make("sequential");
+    let processScopeTransferred = false;
+    yield* Effect.addFinalizer(() =>
+      processScopeTransferred
+        ? Effect.void
+        : Scope.close(processScope, Exit.void).pipe(Effect.ignore),
+    );
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
@@ -202,11 +210,14 @@ const makeAcpSessionRuntime = (
         ChildProcess.make(options.spawn.command, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(options.spawn.env ? { env: { ...process.env, ...options.spawn.env } } : {}),
+          detached: process.platform !== "win32",
           shell: process.platform === "win32",
+          killSignal: "SIGTERM",
+          forceKillAfter: ACP_PROCESS_TERMINATE_GRACE,
         }),
       )
       .pipe(
-        Effect.provideService(Scope.Scope, runtimeScope),
+        Effect.provideService(Scope.Scope, processScope),
         Effect.mapError(
           (cause) =>
             new EffectAcpErrors.AcpSpawnError({
@@ -215,6 +226,14 @@ const makeAcpSessionRuntime = (
             }),
         ),
       );
+    yield* Scope.addFinalizer(
+      runtimeScope,
+      terminateAcpProcessTree({ child, label: options.clientInfo.name }).pipe(
+        Effect.andThen(Scope.close(processScope, Exit.void)),
+        Effect.ignore,
+      ),
+    );
+    processScopeTransferred = true;
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {
@@ -226,7 +245,7 @@ const makeAcpSessionRuntime = (
           : {}),
         ...(options.protocolLogging?.logger ? { logger: options.protocolLogging.logger } : {}),
       }),
-    ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
+    ).pipe(Effect.provideService(Scope.Scope, processScope));
 
     const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 

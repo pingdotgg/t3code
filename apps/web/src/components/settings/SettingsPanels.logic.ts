@@ -6,6 +6,7 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { normalizeProviderInstanceConfigForPersistence } from "@t3tools/shared/serverSettings";
 
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;
@@ -82,7 +83,7 @@ export function buildProviderInstanceUpdatePatch(input: {
       : {}),
     providerInstances: {
       ...input.settings.providerInstances,
-      [input.instanceId]: input.instance,
+      [input.instanceId]: normalizeProviderInstanceConfigForPersistence(input.instance),
     },
     ...(input.textGenerationModelSelection !== undefined
       ? { textGenerationModelSelection: input.textGenerationModelSelection }

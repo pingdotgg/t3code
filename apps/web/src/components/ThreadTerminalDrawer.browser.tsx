@@ -8,6 +8,8 @@ import { render } from "vitest-browser-react";
 const {
   terminalConstructorSpy,
   terminalDisposeSpy,
+  terminalInstances,
+  terminalLineTextByRow,
   fitAddonFitSpy,
   fitAddonLoadSpy,
   environmentApiById,
@@ -16,6 +18,12 @@ const {
 } = vi.hoisted(() => ({
   terminalConstructorSpy: vi.fn(),
   terminalDisposeSpy: vi.fn(),
+  terminalInstances: [] as Array<{
+    clearSelection: ReturnType<typeof vi.fn>;
+    scrollLines: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof vi.fn>;
+  }>,
+  terminalLineTextByRow: new Map<number, string>(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
   environmentApiById: new Map<string, { terminal: { open: ReturnType<typeof vi.fn> } }>(),
@@ -43,17 +51,27 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
-    options: { theme?: unknown } = {};
+    options: { theme?: unknown; wordSeparator?: string } = {};
+    private selection: { column: number; length: number; row: number } | null = null;
+    private selectionText = "";
     buffer = {
       active: {
         viewportY: 0,
         baseY: 0,
-        getLine: vi.fn(() => null),
+        getLine: vi.fn((row: number) => {
+          const text = terminalLineTextByRow.get(row);
+          return text === undefined
+            ? null
+            : {
+                translateToString: vi.fn(() => text),
+              };
+        }),
       },
     };
 
     constructor(options: unknown) {
       terminalConstructorSpy(options);
+      terminalInstances.push(this);
     }
 
     loadAddon(addon: unknown) {
@@ -66,24 +84,48 @@ vi.mock("@xterm/xterm", () => ({
 
     clear() {}
 
-    clearSelection() {}
+    clearSelection = vi.fn(() => {
+      this.selection = null;
+      this.selectionText = "";
+    });
+
+    selectLines() {}
+
+    select = vi.fn((column: number, row: number, length: number) => {
+      this.selection = { column, length, row };
+      const lineText = terminalLineTextByRow.get(row) ?? "";
+      this.selectionText =
+        lineText.slice(column, Math.min(lineText.length, column + length)) || "selected text";
+    });
 
     focus() {}
 
     refresh() {}
 
+    scrollLines = vi.fn();
+
     scrollToBottom() {}
 
     hasSelection() {
-      return false;
+      return this.selection !== null;
     }
 
     getSelection() {
-      return "";
+      return this.selectionText;
     }
 
     getSelectionPosition() {
-      return null;
+      if (!this.selection) return null;
+      return {
+        end: {
+          x: this.selection.column + this.selection.length,
+          y: this.selection.row,
+        },
+        start: {
+          x: this.selection.column,
+          y: this.selection.row,
+        },
+      };
     }
 
     attachCustomKeyEventHandler() {
@@ -119,7 +161,7 @@ vi.mock("~/localApi", () => ({
   readLocalApi: readLocalApiMock,
 }));
 
-import { TerminalViewport } from "./ThreadTerminalDrawer";
+import { TERMINAL_WORD_SEPARATORS, TerminalViewport } from "./ThreadTerminalDrawer";
 
 const THREAD_ID = ThreadId.make("thread-terminal-browser");
 
@@ -208,9 +250,59 @@ async function mountTerminalViewport(props: {
   };
 }
 
+function terminalSurfaceRect(): DOMRect {
+  return {
+    bottom: 400,
+    height: 400,
+    left: 0,
+    right: 800,
+    top: 0,
+    width: 800,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  };
+}
+
+function getTerminalSurface(): HTMLElement {
+  const surface = document.querySelector<HTMLElement>("[data-mobile-edge-swipe-block='true']");
+  expect(surface).not.toBeNull();
+  Object.defineProperty(surface, "getBoundingClientRect", {
+    configurable: true,
+    value: terminalSurfaceRect,
+  });
+  Object.defineProperty(surface, "clientHeight", {
+    configurable: true,
+    value: 400,
+  });
+  return surface!;
+}
+
+function createTouch(target: EventTarget, identifier: number, clientX: number, clientY: number) {
+  return new Touch({ clientX, clientY, identifier, target });
+}
+
+function dispatchTouchEvent(
+  target: EventTarget,
+  type: "touchcancel" | "touchend" | "touchmove" | "touchstart",
+  touches: Touch[],
+  changedTouches: Touch[],
+) {
+  target.dispatchEvent(
+    new TouchEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      changedTouches,
+      touches,
+    }),
+  );
+}
+
 describe("TerminalViewport", () => {
   afterEach(() => {
     environmentApiById.clear();
+    terminalInstances.length = 0;
+    terminalLineTextByRow.clear();
     readEnvironmentApiMock.mockClear();
     readLocalApiMock.mockClear();
     terminalConstructorSpy.mockClear();
@@ -290,6 +382,143 @@ describe("TerminalViewport", () => {
     }
   });
 
+  it("long-pressing a blank line opens a paste-only menu and pastes into the pty", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const showSpy = vi.fn(
+      async (_items: ReadonlyArray<{ id: string; label: string }>, _position?: unknown) =>
+        "paste" as const,
+    );
+    readLocalApiMock.mockReturnValue({
+      contextMenu: { show: showSpy },
+      shell: { openExternal: vi.fn(async () => undefined) },
+    });
+
+    const readText = vi.fn(async () => "echo hi");
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText, writeText: vi.fn(async () => undefined) },
+    });
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
+      });
+
+      const surface = getTerminalSurface();
+      const touch = new Touch({
+        identifier: 1,
+        target: surface,
+        clientX: 40,
+        clientY: 40,
+      });
+      surface.dispatchEvent(
+        new TouchEvent("touchstart", {
+          bubbles: true,
+          touches: [touch],
+          changedTouches: [touch],
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(showSpy).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 2_000 },
+      );
+
+      // A blank line offers Paste only — no Copy / Add to chat.
+      expect(showSpy.mock.calls[0]?.[0]).toEqual([{ id: "paste", label: "Paste" }]);
+
+      await vi.waitFor(() => {
+        expect(readText).toHaveBeenCalledTimes(1);
+        expect(environment.terminal.write).toHaveBeenCalledWith(
+          expect.objectContaining({ data: "echo hi" }),
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+      if (originalClipboard) {
+        Object.defineProperty(navigator, "clipboard", originalClipboard);
+      }
+      readLocalApiMock.mockReset();
+      readLocalApiMock.mockImplementation(() => ({
+        contextMenu: { show: vi.fn(async () => null) },
+        shell: { openExternal: vi.fn(async () => undefined) },
+      }));
+    }
+  });
+
+  it("blocks mobile edge swipes while long-press dragging terminal selection", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    terminalLineTextByRow.set(0, "  git status done");
+
+    const showSpy = vi.fn(
+      async (_items: ReadonlyArray<{ id: string; label: string }>, _position?: unknown) => null,
+    );
+    readLocalApiMock.mockReturnValue({
+      contextMenu: { show: showSpy },
+      shell: { openExternal: vi.fn(async () => undefined) },
+    });
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalInstances).toHaveLength(1);
+      });
+
+      const surface = getTerminalSurface();
+      expect(surface).toHaveAttribute("data-mobile-edge-swipe-block", "true");
+
+      const startTouch = createTouch(surface, 7, 85, 8);
+      dispatchTouchEvent(surface, "touchstart", [startTouch], [startTouch]);
+
+      await vi.waitFor(
+        () => {
+          expect(terminalInstances[0]?.select).toHaveBeenCalledWith(6, 0, 6);
+        },
+        { timeout: 2_000 },
+      );
+      expect(showSpy).not.toHaveBeenCalled();
+
+      const dragTouch = createTouch(surface, 7, 45, 24);
+      dispatchTouchEvent(surface, "touchmove", [dragTouch], [dragTouch]);
+
+      await vi.waitFor(() => {
+        expect(terminalInstances[0]?.select).toHaveBeenLastCalledWith(6, 0, 79);
+      });
+      expect(showSpy).not.toHaveBeenCalled();
+
+      dispatchTouchEvent(surface, "touchend", [], [dragTouch]);
+
+      await vi.waitFor(() => {
+        expect(showSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(showSpy.mock.calls[0]?.[0]).toEqual([
+        { id: "copy", label: "Copy" },
+        { id: "paste", label: "Paste" },
+        { id: "add-to-chat", label: "Add to chat" },
+      ]);
+    } finally {
+      await mounted.cleanup();
+      readLocalApiMock.mockReset();
+      readLocalApiMock.mockImplementation(() => ({
+        contextMenu: { show: vi.fn(async () => null) },
+        shell: { openExternal: vi.fn(async () => undefined) },
+      }));
+    }
+  });
+
   it("uses the drawer surface colors for the terminal theme", async () => {
     const environment = createEnvironmentApi();
     environmentApiById.set("environment-a", environment);
@@ -311,6 +540,7 @@ describe("TerminalViewport", () => {
             background: "rgb(24, 28, 36)",
             foreground: "rgb(228, 232, 240)",
           }),
+          wordSeparator: TERMINAL_WORD_SEPARATORS,
         }),
       );
     } finally {

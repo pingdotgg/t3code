@@ -46,7 +46,10 @@ import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { ServerConfig } from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import {
+  applyServerSettingsPatch,
+  normalizeProviderInstanceConfigMapForPersistence,
+} from "@t3tools/shared/serverSettings";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
 
@@ -62,6 +65,12 @@ const normalizeServerSettings = (
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
+    Effect.map((normalized) => ({
+      ...normalized,
+      providerInstances: normalizeProviderInstanceConfigMapForPersistence(
+        normalized.providerInstances,
+      ),
+    })),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({

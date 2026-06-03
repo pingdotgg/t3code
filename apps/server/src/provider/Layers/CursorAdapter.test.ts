@@ -60,6 +60,43 @@ exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
   return wrapperPath;
 }
 
+async function makeMockAgentWithPersistentChildWrapper(extraEnv?: Record<string, string>) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-acp-process-tree-"));
+  const survivedPath = path.join(dir, "survived");
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const envExports = Object.entries(extraEnv ?? {})
+    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
+    .join("\n");
+  const script = `#!/bin/sh
+${envExports}
+(
+  trap '' TERM
+  sleep 1
+  printf 'survived\\n' > ${JSON.stringify(survivedPath)}
+) &
+exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
+`;
+  await writeFile(wrapperPath, script, "utf8");
+  await chmod(wrapperPath, 0o755);
+  return { survivedPath, wrapperPath };
+}
+
+async function fileExists(filePath: string) {
+  try {
+    await readFile(filePath, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sleepMs(ms: number) {
+  await new Promise<void>((resolve) => {
+    // @effect-diagnostics-next-line globalTimers:off
+    setTimeout(resolve, ms);
+  });
+}
+
 async function makeProbeWrapper(
   requestLogPath: string,
   argvLogPath: string,
@@ -108,7 +145,7 @@ async function waitForFileContent(filePath: string, attempts = 40) {
         return raw;
       }
     } catch {}
-    await Effect.runPromise(Effect.yieldNow);
+    await sleepMs(25);
   }
   throw new Error(`Timed out waiting for file content at ${filePath}`);
 }
@@ -262,6 +299,33 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
       assert.include(exitLog, "SIGTERM");
+    }),
+  );
+
+  it.effect("kills ACP subprocesses when a Cursor session stops", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-stop-session-process-tree");
+
+      const { survivedPath, wrapperPath } = yield* Effect.promise(() =>
+        makeMockAgentWithPersistentChildWrapper(),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.stopSession(threadId);
+      yield* Effect.promise(() => sleepMs(1200));
+
+      const survived = yield* Effect.promise(() => fileExists(survivedPath));
+      assert.equal(survived, false);
     }),
   );
 

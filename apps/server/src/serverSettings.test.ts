@@ -239,6 +239,49 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("canonicalizes conflicting built-in provider instance enabled state", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("cursor");
+
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("cursor"),
+            enabled: true,
+            config: {
+              enabled: false,
+              binaryPath: "agent",
+              apiEndpoint: "",
+            },
+          },
+        },
+      });
+
+      assert.deepEqual(next.providerInstances[instanceId], {
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: true,
+        config: {
+          binaryPath: "agent",
+          apiEndpoint: "",
+        },
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).providerInstances.cursor, {
+        driver: "cursor",
+        enabled: true,
+        config: {
+          binaryPath: "agent",
+          apiEndpoint: "",
+        },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;

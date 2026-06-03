@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveRenderedDrawerHeight,
+  resolveTerminalCellFromPoint,
   resolveTerminalSelectionActionPosition,
   resolveTerminalKeyboardViewport,
+  resolveTerminalTouchSelectionRange,
   resolveTerminalTouchScroll,
+  resolveTerminalWordRange,
   selectPendingTerminalEventEntries,
   selectTerminalEventEntriesAfterSnapshot,
   shouldHandleTerminalSelectionMouseUp,
@@ -216,5 +219,126 @@ describe("resolveTerminalTouchScroll", () => {
       lines: 0,
       remainingPixels: 6,
     });
+  });
+});
+
+describe("resolveTerminalCellFromPoint", () => {
+  it("converts a viewport point into a buffer cell", () => {
+    expect(
+      resolveTerminalCellFromPoint({
+        bounds: { left: 100, top: 50, width: 800, height: 240 },
+        clientX: 185,
+        clientY: 82,
+        cols: 80,
+        rows: 24,
+        viewportY: 12,
+      }),
+    ).toEqual({ column: 8, row: 15 });
+  });
+
+  it("clamps points into the terminal viewport and applies viewportY", () => {
+    expect(
+      resolveTerminalCellFromPoint({
+        bounds: { left: 100, top: 50, width: 800, height: 240 },
+        clientX: 20,
+        clientY: 10,
+        cols: 80,
+        rows: 24,
+        viewportY: 7,
+      }),
+    ).toEqual({ column: 0, row: 7 });
+
+    expect(
+      resolveTerminalCellFromPoint({
+        bounds: { left: 100, top: 50, width: 800, height: 240 },
+        clientX: 980,
+        clientY: 340,
+        cols: 80,
+        rows: 24,
+        viewportY: 7,
+      }),
+    ).toEqual({ column: 79, row: 30 });
+  });
+
+  it("returns null for invalid terminal geometry", () => {
+    expect(
+      resolveTerminalCellFromPoint({
+        bounds: { left: 0, top: 0, width: 0, height: 240 },
+        clientX: 0,
+        clientY: 0,
+        cols: 80,
+        rows: 24,
+        viewportY: 0,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveTerminalTouchSelectionRange", () => {
+  it("keeps the original word selected when dragging inside it", () => {
+    expect(
+      resolveTerminalTouchSelectionRange({
+        cols: 80,
+        currentCell: { column: 8, row: 3 },
+        wordEndExclusive: { column: 12, row: 3 },
+        wordStart: { column: 6, row: 3 },
+      }),
+    ).toEqual({ column: 6, row: 3, length: 6 });
+  });
+
+  it("extends forward through the current cell", () => {
+    expect(
+      resolveTerminalTouchSelectionRange({
+        cols: 80,
+        currentCell: { column: 4, row: 4 },
+        wordEndExclusive: { column: 12, row: 3 },
+        wordStart: { column: 6, row: 3 },
+      }),
+    ).toEqual({ column: 6, row: 3, length: 79 });
+  });
+
+  it("extends backward from the current cell through the original word", () => {
+    expect(
+      resolveTerminalTouchSelectionRange({
+        cols: 80,
+        currentCell: { column: 2, row: 3 },
+        wordEndExclusive: { column: 12, row: 3 },
+        wordStart: { column: 6, row: 3 },
+      }),
+    ).toEqual({ column: 2, row: 3, length: 10 });
+  });
+});
+
+describe("resolveTerminalWordRange", () => {
+  it("selects the whole non-separator group around the column", () => {
+    const line = "  git commit --amend  ";
+    // Column inside "commit".
+    expect(resolveTerminalWordRange(line, 8)).toEqual({ start: 6, length: 6 });
+  });
+
+  it("keeps a path or URL together as one group", () => {
+    const line = "open https://example.com/a-b_c";
+    expect(resolveTerminalWordRange(line, 10)).toEqual({ start: 5, length: 25 });
+  });
+
+  it("returns null when the column sits on whitespace", () => {
+    expect(resolveTerminalWordRange("ls  -la", 2)).toBeNull();
+  });
+
+  it("returns null for blank or padded-out cells", () => {
+    expect(resolveTerminalWordRange("hi        ", 5)).toBeNull();
+  });
+
+  it("breaks on xterm's separator characters like a double-press", () => {
+    const line = "arr[index]";
+    // Column on "index" stops at the surrounding brackets.
+    expect(resolveTerminalWordRange(line, 5)).toEqual({ start: 4, length: 5 });
+    // Column on "arr" stops before "[".
+    expect(resolveTerminalWordRange(line, 1)).toEqual({ start: 0, length: 3 });
+  });
+
+  it("returns null for out-of-range columns", () => {
+    expect(resolveTerminalWordRange("abc", -1)).toBeNull();
+    expect(resolveTerminalWordRange("abc", 3)).toBeNull();
   });
 });

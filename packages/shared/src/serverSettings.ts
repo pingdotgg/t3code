@@ -1,4 +1,9 @@
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  ServerSettings,
+  type ProviderInstanceConfig,
+  type ProviderInstanceConfigMap,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
@@ -7,6 +12,13 @@ import { createModelSelection } from "./model.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+
+const BUILT_IN_PROVIDER_DRIVERS_WITH_LEGACY_ENABLED = new Set<string>([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "opencode",
+]);
 
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
@@ -66,6 +78,51 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+export function normalizeProviderInstanceConfigForPersistence(
+  instance: ProviderInstanceConfig,
+): ProviderInstanceConfig {
+  if (
+    instance.enabled === undefined ||
+    !BUILT_IN_PROVIDER_DRIVERS_WITH_LEGACY_ENABLED.has(String(instance.driver)) ||
+    !isRecord(instance.config) ||
+    !hasOwn(instance.config, "enabled")
+  ) {
+    return instance;
+  }
+
+  const { enabled: _legacyEnabled, ...configWithoutLegacyEnabled } = instance.config;
+  return {
+    ...instance,
+    config: configWithoutLegacyEnabled,
+  } satisfies ProviderInstanceConfig;
+}
+
+export function normalizeProviderInstanceConfigMapForPersistence(
+  providerInstances: ProviderInstanceConfigMap,
+): ProviderInstanceConfigMap {
+  const entries = Object.entries(providerInstances);
+  let changed = false;
+  const normalizedEntries = entries.map(([instanceId, instance]) => {
+    const normalized = normalizeProviderInstanceConfigForPersistence(instance);
+    if (normalized !== instance) {
+      changed = true;
+    }
+    return [instanceId, normalized] as const;
+  });
+
+  return changed
+    ? (Object.fromEntries(normalizedEntries) as ProviderInstanceConfigMap)
+    : providerInstances;
+}
+
 /**
  * Applies a server settings patch while treating textGenerationModelSelection as
  * replace-on-provider/model updates. This prevents stale nested options from
@@ -81,7 +138,11 @@ export function applyServerSettingsPatch(
   const nextWithReplacements = {
     ...next,
     ...(patch.providerInstances !== undefined
-      ? { providerInstances: patch.providerInstances }
+      ? {
+          providerInstances: normalizeProviderInstanceConfigMapForPersistence(
+            patch.providerInstances,
+          ),
+        }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
