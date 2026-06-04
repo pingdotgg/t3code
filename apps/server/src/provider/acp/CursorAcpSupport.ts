@@ -1,5 +1,7 @@
 import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/contracts";
-import { Effect, Layer, Scope } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
@@ -23,6 +25,7 @@ export interface CursorAcpRuntimeInput extends Omit<
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface CursorAcpModelSelectionErrorContext {
@@ -34,6 +37,7 @@ export interface CursorAcpModelSelectionErrorContext {
 export function buildCursorAcpSpawnInput(
   cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined,
   cwd: string,
+  environment?: NodeJS.ProcessEnv,
 ): AcpSpawnInput {
   return {
     command: cursorSettings?.binaryPath || "agent",
@@ -42,6 +46,7 @@ export function buildCursorAcpSpawnInput(
       "acp",
     ],
     cwd,
+    ...(environment ? { env: environment } : {}),
   };
 }
 
@@ -52,7 +57,7 @@ export const makeCursorAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd),
+        spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd, input.environment),
         authMethodId: "cursor_login",
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(

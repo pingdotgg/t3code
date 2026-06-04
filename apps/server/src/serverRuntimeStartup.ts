@@ -1,29 +1,30 @@
 import {
   CommandId,
-  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  Data,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Path,
-  Queue,
-  Ref,
-  Scope,
-  Context,
-  Console,
-} from "effect";
+import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Context from "effect/Context";
+import * as Console from "effect/Console";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
-import { Open } from "./open.ts";
+import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor.ts";
@@ -31,7 +32,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -154,8 +155,8 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
 );
 
 export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
-  provider: "codex",
-  model: DEFAULT_MODEL_BY_PROVIDER.codex,
+  instanceId: ProviderInstanceId.make("codex"),
+  model: DEFAULT_MODEL,
 });
 
 export const resolveWelcomeBase = Effect.gen(function* () {
@@ -170,6 +171,8 @@ export const resolveWelcomeBase = Effect.gen(function* () {
 });
 
 export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const randomUUID = crypto.randomUUIDv4;
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -187,13 +190,13 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       let nextProjectDefaultModelSelection: ModelSelection;
 
       if (Option.isNone(existingProject)) {
-        const createdAt = new Date().toISOString();
-        nextProjectId = ProjectId.make(crypto.randomUUID());
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        nextProjectId = ProjectId.make(yield* randomUUID);
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
         yield* orchestrationEngine.dispatch({
           type: "project.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* randomUUID),
           projectId: nextProjectId,
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
@@ -209,11 +212,11 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       const existingThreadId =
         yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
       if (Option.isNone(existingThreadId)) {
-        const createdAt = new Date().toISOString();
-        const createdThreadId = ThreadId.make(crypto.randomUUID());
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const createdThreadId = ThreadId.make(yield* randomUUID);
         yield* orchestrationEngine.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* randomUUID),
           threadId: createdThreadId,
           projectId: nextProjectId,
           title: "New thread",
@@ -241,7 +244,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
-  const serverAuth = yield* ServerAuth;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
     serverConfig.host && !isWildcardHost(serverConfig.host)
@@ -261,9 +264,9 @@ const maybeOpenBrowser = (target: string) =>
     if (serverConfig.noBrowser) {
       return;
     }
-    const { openBrowser } = yield* Open;
+    const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
-    yield* openBrowser(target).pipe(
+    yield* externalLauncher.launchBrowser(target).pipe(
       Effect.catch(() =>
         Effect.logInfo("browser auto-open unavailable", {
           hint: `Open ${target} in your browser.`,
@@ -422,7 +425,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
           version: 1,
           type: "ready",
           payload: {
-            at: new Date().toISOString(),
+            at: DateTime.formatIso(yield* DateTime.now),
             environment: yield* serverEnvironment.getDescriptor,
           },
         }),

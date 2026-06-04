@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   selectionTouchesMentionBoundary,
@@ -26,6 +26,22 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "one\n" },
       { type: "mention", path: "src/index.ts" },
       { type: "text", text: " \ntwo" },
+    ]);
+  });
+
+  it("splits quoted mention tokens containing whitespace", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: "My File.md" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("unescapes quoted mention token content", () => {
+    expect(splitPromptIntoComposerSegments('Inspect @"docs/My \\"File\\".md" please')).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: 'docs/My "File".md' },
+      { type: "text", text: " please" },
     ]);
   });
 
@@ -122,6 +138,16 @@ describe("selectionTouchesMentionBoundary", () => {
         prompt,
         `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
         prompt.length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes whitespace after a quoted mention", () => {
+    expect(
+      selectionTouchesMentionBoundary(
+        'hi @"My File.md" there',
+        'hi @"My File.md"'.length,
+        'hi @"My File.md" there'.length,
       ),
     ).toBe(true);
   });

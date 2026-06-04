@@ -16,6 +16,8 @@ import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
+const isAcpError = Schema.is(AcpError.AcpError);
+const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -27,12 +29,12 @@ export type AcpIncomingNotification =
   | {
       readonly _tag: "SessionUpdate";
       readonly method: typeof CLIENT_METHODS.session_update;
-      readonly params: typeof AcpSchema.SessionNotification.Type;
+      readonly params: AcpSchema.SessionNotification;
     }
   | {
       readonly _tag: "ElicitationComplete";
       readonly method: typeof CLIENT_METHODS.session_elicitation_complete;
-      readonly params: typeof AcpSchema.ElicitationCompleteNotification.Type;
+      readonly params: AcpSchema.ElicitationCompleteNotification;
     }
   | {
       readonly _tag: "ExtNotification";
@@ -408,7 +410,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     ),
     Effect.matchEffect({
       onFailure: (error) => {
-        const normalized: AcpError.AcpError = Schema.is(AcpError.AcpError)(error)
+        const normalized: AcpError.AcpError = isAcpError(error)
           ? error
           : new AcpError.AcpTransportError({
               detail: error instanceof Error ? error.message : String(error),
@@ -521,9 +523,7 @@ function isProtocolError(
 }
 
 function normalizeToRequestError(error: AcpError.AcpError): AcpError.AcpRequestError {
-  return Schema.is(AcpError.AcpRequestError)(error)
-    ? error
-    : AcpError.AcpRequestError.internalError(error.message);
+  return isAcpRequestError(error) ? error : AcpError.AcpRequestError.internalError(error.message);
 }
 
 function toRpcClientError(error: AcpError.AcpError): RpcClientError.RpcClientError {

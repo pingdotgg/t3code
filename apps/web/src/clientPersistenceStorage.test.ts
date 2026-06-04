@@ -1,5 +1,5 @@
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");
 
@@ -10,6 +10,12 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
   wsBaseUrl: "wss://remote.example.com/",
   createdAt: "2026-04-09T00:00:00.000Z",
   lastConnectedAt: null,
+  desktopSsh: {
+    alias: "devbox",
+    hostname: "devbox.example.com",
+    username: "julius",
+    port: 22,
+  },
 };
 
 function createLocalStorageStub(): Storage {

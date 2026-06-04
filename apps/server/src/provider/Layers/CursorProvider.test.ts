@@ -1,20 +1,18 @@
-import * as path from "node:path";
-import * as os from "node:os";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings, ServerProviderModel } from "@t3tools/contracts";
+import type { CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
   buildCursorProviderSnapshot,
   buildCursorCapabilitiesFromConfigOptions,
-  buildCursorDiscoveredModelsFromConfigOptions,
-  discoverCursorModelCapabilitiesViaAcp,
+  checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
@@ -25,8 +23,14 @@ import {
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+const runNode = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
+const resolveMockAgentPath = Effect.fn("resolveMockAgentPath")(function* () {
+  const path = yield* Path.Path;
+  return yield* path.fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url));
+});
 
 function selectDescriptor(
   id: string,
@@ -53,33 +57,100 @@ function booleanDescriptor(id: string, label: string, currentValue?: boolean) {
   };
 }
 
-async function makeMockAgentWrapper(extraEnv?: Record<string, string>) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-provider-mock-"));
+const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
+  extraEnv?: Record<string, string>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mockAgentPath = yield* resolveMockAgentPath();
+  const dir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-provider-mock-",
+  });
   const wrapperPath = path.join(dir, "fake-agent.sh");
+  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
   const script = `#!/bin/sh
 ${envExports}
-exec ${JSON.stringify("bun")} ${JSON.stringify(mockAgentPath)} "$@"
+exec ${mockAgentCommand} "$@"
 `;
-  await writeFile(wrapperPath, script, "utf8");
-  await chmod(wrapperPath, 0o755);
+  yield* fileSystem.writeFileString(wrapperPath, script);
+  yield* fileSystem.chmod(wrapperPath, 0o755);
   return wrapperPath;
-}
+});
 
-async function waitForFileContent(filePath: string, attempts = 40): Promise<string> {
+const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mockAgentPath = yield* resolveMockAgentPath();
+  const dir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-provider-about-mock-",
+  });
+  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
+  const script = `#!/bin/sh
+if [ "$1" = "about" ]; then
+  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
+  printf 'User Email          cursor@example.com\\n'
+  exit 0
+fi
+exec ${mockAgentCommand} "$@"
+`;
+  yield* fileSystem.writeFileString(wrapperPath, script);
+  yield* fileSystem.chmod(wrapperPath, 0o755);
+  return wrapperPath;
+});
+
+const waitForFileContent = Effect.fn("waitForFileContent")(function* (
+  filePath: string,
+  attempts = 40,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const content = await readFile(filePath, "utf8");
+    const content = yield* fileSystem
+      .readFileString(filePath)
+      .pipe(Effect.catch(() => Effect.void));
+    if (content !== undefined) {
       if (content.trim().length > 0) {
         return content;
       }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    yield* Effect.sleep("50 millis");
   }
-  throw new Error(`Timed out waiting for file content at ${filePath}`);
-}
+  return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
+});
+
+const makeProviderStatusEnvFixture = Effect.fn("makeProviderStatusEnvFixture")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix: "cursor-provider-status-env-",
+  });
+  return {
+    requestLogPath: path.join(tempDir, "requests.ndjson"),
+    wrapperPath: yield* makeMockAgentWithAboutWrapper(),
+  };
+});
+
+const makeExitLogFixture = Effect.fn("makeExitLogFixture")(function* (prefix: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = yield* fileSystem.makeTempDirectory({
+    directory: NodeOS.tmpdir(),
+    prefix,
+  });
+  const exitLogPath = path.join(tempDir, "exit.log");
+  return {
+    exitLogPath,
+    wrapperPath: yield* makeMockAgentWrapper({
+      T3_ACP_EXIT_LOG_PATH: exitLogPath,
+    }),
+  };
+});
 
 const parameterizedGpt54ConfigOptions = [
   {
@@ -216,56 +287,12 @@ const parameterizedClaudeModelOptionConfigOptions = [
   },
 ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 
-const sessionNewCursorConfigOptions = [
-  {
-    type: "select",
-    currentValue: "agent",
-    options: [
-      { name: "Agent", value: "agent", description: "Full agent capabilities with tool access" },
-    ],
-    category: "mode",
-    id: "mode",
-    name: "Mode",
-    description: "Controls how the agent executes tasks",
-  },
-  {
-    type: "select",
-    currentValue: "composer-2",
-    options: [
-      { name: "Auto", value: "default" },
-      { name: "Composer 2", value: "composer-2" },
-      { name: "GPT-5.4", value: "gpt-5.4" },
-      { name: "Sonnet 4.6", value: "claude-sonnet-4-6" },
-      { name: "Opus 4.6", value: "claude-opus-4-6" },
-      { name: "Codex 5.3 Spark", value: "gpt-5.3-codex-spark" },
-    ],
-    category: "model",
-    id: "model",
-    name: "Model",
-    description: "Controls which model is used for responses",
-  },
-  {
-    type: "select",
-    currentValue: "true",
-    options: [
-      { name: "Off", value: "false" },
-      { name: "Fast", value: "true" },
-    ],
-    category: "model_config",
-    id: "fast",
-    name: "Fast",
-    description: "Faster speeds.",
-  },
-] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-
 const baseCursorSettings: CursorSettings = {
   enabled: true,
   binaryPath: "agent",
   apiEndpoint: "",
   customModels: [],
 };
-
-const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
@@ -383,54 +410,38 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
   });
 });
 
-describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
-  it("publishes ACP model choices immediately from session/new config options", () => {
-    expect(buildCursorDiscoveredModelsFromConfigOptions(sessionNewCursorConfigOptions)).toEqual([
-      {
-        slug: "default",
-        name: "Auto",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-      {
-        slug: "composer-2",
-        name: "Composer 2",
-        isCustom: false,
-        capabilities: createModelCapabilities({
-          optionDescriptors: [booleanDescriptor("fastMode", "Fast", true)],
-        }),
-      },
-      {
-        slug: "gpt-5.4",
-        name: "GPT-5.4",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-      {
-        slug: "claude-sonnet-4-6",
-        name: "Sonnet 4.6",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-      {
-        slug: "claude-opus-4-6",
-        name: "Opus 4.6",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-      {
-        slug: "gpt-5.3-codex-spark",
-        name: "Codex 5.3 Spark",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
+describe("checkCursorProviderStatus", () => {
+  it("passes the injected environment to ACP model discovery", async () => {
+    const { requestLogPath, wrapperPath } = await runNode(makeProviderStatusEnvFixture());
+
+    const provider = await Effect.runPromise(
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        {
+          ...process.env,
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        },
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    expect(provider.models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
     ]);
+    await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
   });
 });
 
 describe("discoverCursorModelsViaAcp", () => {
   it("keeps the ACP probe runtime alive long enough to discover models", async () => {
-    const wrapperPath = await makeMockAgentWrapper();
+    const wrapperPath = await runNode(makeMockAgentWrapper());
 
     const models = await Effect.runPromise(
       discoverCursorModelsViaAcp({
@@ -450,11 +461,9 @@ describe("discoverCursorModelsViaAcp", () => {
   });
 
   it("closes the ACP probe runtime after discovery completes", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "cursor-provider-exit-log-"));
-    const exitLogPath = path.join(tempDir, "exit.log");
-    const wrapperPath = await makeMockAgentWrapper({
-      T3_ACP_EXIT_LOG_PATH: exitLogPath,
-    });
+    const { exitLogPath, wrapperPath } = await runNode(
+      makeExitLogFixture("cursor-provider-exit-log-"),
+    );
 
     await Effect.runPromise(
       discoverCursorModelsViaAcp({
@@ -465,51 +474,8 @@ describe("discoverCursorModelsViaAcp", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    const exitLog = await waitForFileContent(exitLogPath);
+    const exitLog = await runNode(waitForFileContent(exitLogPath));
     expect(exitLog).toContain("SIGTERM");
-  });
-});
-
-describe("discoverCursorModelCapabilitiesViaAcp", () => {
-  it("closes all ACP probe runtimes after capability enrichment completes", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "cursor-capabilities-exit-log-"));
-    const exitLogPath = path.join(tempDir, "exit.log");
-    const wrapperPath = await makeMockAgentWrapper({
-      T3_ACP_EXIT_LOG_PATH: exitLogPath,
-    });
-    const existingModels: ReadonlyArray<ServerProviderModel> = [
-      { slug: "default", name: "Auto", isCustom: false, capabilities: emptyCapabilities },
-      { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: emptyCapabilities },
-      { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: emptyCapabilities },
-      {
-        slug: "claude-opus-4-6",
-        name: "Opus 4.6",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-    ];
-
-    const models = await Effect.runPromise(
-      discoverCursorModelCapabilitiesViaAcp(
-        {
-          enabled: true,
-          binaryPath: wrapperPath,
-          apiEndpoint: "",
-          customModels: [],
-        },
-        existingModels,
-      ).pipe(Effect.provide(NodeServices.layer)),
-    );
-
-    expect(models.map((model) => model.slug)).toEqual([
-      "default",
-      "composer-2",
-      "gpt-5.4",
-      "claude-opus-4-6",
-    ]);
-
-    const exitLog = await waitForFileContent(exitLogPath);
-    expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(4);
   });
 });
 
@@ -530,6 +496,7 @@ describe("parseCursorAboutOutput", () => {
       status: "ready",
       auth: {
         status: "authenticated",
+        email: "jmarminge@gmail.com",
         type: "Team",
         label: "Cursor Team Subscription",
       },

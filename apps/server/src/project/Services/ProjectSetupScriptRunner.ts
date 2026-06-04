@@ -1,5 +1,6 @@
-import { Context } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import * as Data from "effect/Data";
+import type * as Effect from "effect/Effect";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
   readonly status: "no-script";
@@ -25,13 +26,19 @@ export interface ProjectSetupScriptRunnerInput {
   readonly preferredTerminalId?: string;
 }
 
+export class ProjectSetupScriptRunnerError extends Data.TaggedError(
+  "ProjectSetupScriptRunnerError",
+)<{
+  readonly message: string;
+}> {}
+
 export interface ProjectSetupScriptRunnerShape {
   readonly runForThread: (
     input: ProjectSetupScriptRunnerInput,
-  ) => Effect.Effect<ProjectSetupScriptRunnerResult, Error>;
+  ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
 }
 
 export class ProjectSetupScriptRunner extends Context.Service<
   ProjectSetupScriptRunner,
   ProjectSetupScriptRunnerShape
->()("t3/project/ProjectSetupScriptRunner") {}
+>()("t3/project/Services/ProjectSetupScriptRunner") {}

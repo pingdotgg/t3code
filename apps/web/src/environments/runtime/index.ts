@@ -16,6 +16,7 @@ export {
 
 export {
   addSavedEnvironment,
+  connectDesktopSshEnvironment,
   disconnectSavedEnvironment,
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
@@ -26,4 +27,5 @@ export {
   resetEnvironmentServiceForTests,
   startEnvironmentConnectionService,
   subscribeEnvironmentConnections,
+  subscribeProviderInvalidations,
 } from "./service";

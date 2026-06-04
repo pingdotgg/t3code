@@ -36,7 +36,7 @@ export function deriveLatestContextWindowSnapshot(
 
     const payload = asRecord(activity.payload);
     const usedTokens = asFiniteNumber(payload?.usedTokens);
-    if (usedTokens === null || usedTokens <= 0) {
+    if (usedTokens === null || usedTokens < 0) {
       continue;
     }
 

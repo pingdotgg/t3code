@@ -1,15 +1,28 @@
 import {
-  type AuthSessionRole,
+  AuthEnvironmentScope,
+  AuthStandardClientScopes,
+  type DesktopSshEnvironmentBootstrap,
+  type DesktopSshEnvironmentTarget,
   type EnvironmentId,
   type OrchestrationEvent,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
-  type TerminalEvent,
+  EnvironmentAuthInvalidError,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  createWsRpcClient as createBaseWsRpcClient,
+  type WsRpcClient,
+  bootstrapRemoteBearerSession,
+  fetchRemoteEnvironmentDescriptor,
+  fetchRemoteSessionState,
+  resolveRemoteWebSocketConnectionUrl,
+} from "@t3tools/client-runtime";
+
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
+import * as Schema from "effect/Schema";
 import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
@@ -24,18 +37,11 @@ import {
   useComposerDraftStore,
 } from "~/composerDraftStore";
 import { ensureLocalApi } from "~/localApi";
-import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
+import { collectActiveTerminalUiThreadKeys } from "~/lib/terminalUiStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
-import { projectQueryKeys } from "~/lib/projectReactQuery";
-import { providerQueryKeys } from "~/lib/providerReactQuery";
 import { getPrimaryKnownEnvironment } from "../primary";
-import {
-  bootstrapRemoteBearerSession,
-  fetchRemoteEnvironmentDescriptor,
-  fetchRemoteSessionState,
-  resolveRemoteWebSocketConnectionUrl,
-} from "../remote/api";
-import { resolveRemotePairingTarget } from "../remote/target";
+import { remoteHttpRuntime } from "../../lib/runtime";
+
 import {
   getSavedEnvironmentRecord,
   hasSavedEnvironmentRegistryHydrated,
@@ -44,12 +50,18 @@ import {
   readSavedEnvironmentBearerToken,
   removeSavedEnvironmentBearerToken,
   type SavedEnvironmentRecord,
+  toPersistedSavedEnvironmentRecord,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
   waitForSavedEnvironmentRegistryHydration,
   writeSavedEnvironmentBearerToken,
 } from "./catalog";
-import { createEnvironmentConnection, type EnvironmentConnection } from "./connection";
+import {
+  createEnvironmentConnection,
+  createEnvironmentConnectionAttemptRegistry,
+  EnvironmentConnectionAttemptCancelledError,
+  type EnvironmentConnection,
+} from "./connection";
 import {
   useStore,
   selectProjectsAcrossEnvironments,
@@ -57,15 +69,21 @@ import {
   selectThreadByRef,
   selectThreadsAcrossEnvironments,
 } from "~/store";
-import { useTerminalStateStore } from "~/terminalStateStore";
+import { useTerminalUiStateStore } from "~/terminalUiStateStore";
 import { useUiStateStore } from "~/uiStateStore";
-import { WsTransport } from "../../rpc/wsTransport";
-import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
+import { getServerConfig } from "../../rpc/serverState";
+import { WsTransport } from "~/rpc/wsTransport";
+import { appendVersionMismatchHint, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
 } from "../../logicalProject";
+
+const decodeIssuedBearerScopes = Schema.decodeUnknownSync(Schema.Array(AuthEnvironmentScope));
 import { getClientSettings } from "~/hooks/useSettings";
+import { subscribeTerminalMetadata, terminalSessionManager } from "../../terminalSessionState";
+import { resetWsReconnectBackoff } from "~/rpc/wsConnectionState";
+import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -85,7 +103,26 @@ type ThreadDetailSubscriptionEntry = {
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
+
+function isSavedEnvironmentConnectionCancelledError(
+  error: unknown,
+): error is EnvironmentConnectionAttemptCancelledError {
+  return error instanceof EnvironmentConnectionAttemptCancelledError;
+}
+
+interface PendingSavedEnvironmentConnection {
+  readonly isCurrent: () => boolean;
+  readonly promise: Promise<EnvironmentConnection>;
+}
+
+const savedEnvironmentConnectionAttempts = createEnvironmentConnectionAttemptRegistry();
+const pendingSavedEnvironmentConnections = new Map<
+  EnvironmentId,
+  PendingSavedEnvironmentConnection
+>();
 const environmentConnectionListeners = new Set<() => void>();
+const providerInvalidationListeners = new Set<() => void>();
 const threadDetailSubscriptions = new Map<string, ThreadDetailSubscriptionEntry>();
 const lastAppliedProjectionVersionByEnvironment = new Map<
   EnvironmentId,
@@ -94,10 +131,20 @@ const lastAppliedProjectionVersionByEnvironment = new Map<
     readonly updatedAt: string | null;
   }
 >();
+const terminalMetadataSubscriptions = new Map<EnvironmentId, () => void>();
 
 let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
+let lastBrowserHiddenAt: number | null = null;
+let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 
+// TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+// This file still owns web's legacy thread-detail subscription cache. Mobile
+// uses createThreadDetailManager from @t3tools/client-runtime for the same
+// retain/reconnect/evict lifecycle. When touching this logic, prefer migrating
+// web to the shared manager or extracting the missing adapter layer instead of
+// adding more behavior here.
+//
 // Thread detail subscription cache policy:
 // - Active consumers keep a subscription retained via refCount.
 // - Released subscriptions stay warm for a longer idle TTL to avoid churn
@@ -107,8 +154,71 @@ let needsProviderInvalidation = false;
 // - Capacity eviction only targets idle cached subscriptions.
 const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
+const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
+const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
+const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
 
+function createDeferredPromise<T>() {
+  let resolve: ((value: T) => void) | null = null;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return {
+    promise,
+    resolve: (value: T) => {
+      resolve?.(value);
+      resolve = null;
+    },
+  };
+}
+
+async function waitForConfigSnapshot(
+  promise: Promise<ServerConfig>,
+  timeoutMs: number,
+): Promise<ServerConfig | null> {
+  return await new Promise<ServerConfig | null>((resolve) => {
+    const timeoutId = globalThis.setTimeout(() => resolve(null), timeoutMs);
+    promise.then(
+      (config) => {
+        clearTimeout(timeoutId);
+        resolve(config);
+      },
+      () => {
+        clearTimeout(timeoutId);
+        resolve(null);
+      },
+    );
+  });
+}
+
+function createSavedEnvironmentSyncScheduler() {
+  let activeSync: Promise<void> | null = null;
+  let queued = false;
+
+  const run = async (): Promise<void> => {
+    do {
+      queued = false;
+      await syncSavedEnvironmentConnections(listSavedEnvironmentRecords());
+    } while (queued);
+  };
+
+  return () => {
+    if (activeSync) {
+      queued = true;
+      return activeSync;
+    }
+
+    activeSync = run()
+      .catch(() => undefined)
+      .finally(() => {
+        activeSync = null;
+      });
+
+    return activeSync;
+  };
+}
 function compareAppliedProjectionVersion(
   left: { readonly sequence: number; readonly updatedAt: string | null },
   right: { readonly sequence: number; readonly updatedAt: string | null },
@@ -200,7 +310,6 @@ function markAppliedProjectionEvent(environmentId: EnvironmentId, sequence: numb
     updatedAt: currentVersion?.updatedAt ?? null,
   });
 }
-
 function getThreadDetailSubscriptionKey(environmentId: EnvironmentId, threadId: ThreadId): string {
   return scopedThreadKey(scopeThreadRef(environmentId, threadId));
 }
@@ -323,6 +432,25 @@ function disposeThreadDetailSubscriptionsForEnvironment(environmentId: Environme
   for (const [key, entry] of threadDetailSubscriptions) {
     if (entry.environmentId === environmentId) {
       disposeThreadDetailSubscriptionByKey(key);
+    }
+  }
+}
+
+function detachThreadDetailSubscriptionsForEnvironment(environmentId: EnvironmentId): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId !== environmentId) {
+      continue;
+    }
+    entry.unsubscribe();
+    entry.unsubscribe = NOOP;
+    watchThreadDetailSubscriptionConnection(entry);
+  }
+}
+
+function attachThreadDetailSubscriptionsForEnvironment(environmentId: EnvironmentId): void {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.environmentId === environmentId) {
+      attachThreadDetailSubscription(entry);
     }
   }
 }
@@ -480,6 +608,12 @@ function emitEnvironmentConnectionRegistryChange() {
   }
 }
 
+function emitProviderInvalidation() {
+  for (const listener of providerInvalidationListeners) {
+    listener();
+  }
+}
+
 function getRuntimeErrorFields(error: unknown) {
   return {
     lastError: error instanceof Error ? error.message : String(error),
@@ -489,6 +623,231 @@ function getRuntimeErrorFields(error: unknown) {
 
 function isoNow(): string {
   return new Date().toISOString();
+}
+
+function readSshHttpErrorStatus(error: unknown): number | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const match = SSH_HTTP_STATUS_RE.exec(error.message);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1] ?? "", 10);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function isSshHttpAuthError(error: unknown, status: number): boolean {
+  return readSshHttpErrorStatus(error) === status;
+}
+
+function isDesktopSshTargetEqual(
+  left: DesktopSshEnvironmentTarget | undefined,
+  right: DesktopSshEnvironmentTarget | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.alias === right.alias &&
+    left.hostname === right.hostname &&
+    left.username === right.username &&
+    left.port === right.port
+  );
+}
+
+function findSavedEnvironmentRecordByDesktopSshTarget(
+  target: DesktopSshEnvironmentTarget | undefined,
+): SavedEnvironmentRecord | null {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    listSavedEnvironmentRecords().find((record) =>
+      isDesktopSshTargetEqual(record.desktopSsh, target),
+    ) ?? null
+  );
+}
+
+function buildSavedEnvironmentRegistryById(
+  records: ReadonlyArray<SavedEnvironmentRecord>,
+): Record<EnvironmentId, SavedEnvironmentRecord> {
+  return Object.fromEntries(records.map((record) => [record.environmentId, record])) as Record<
+    EnvironmentId,
+    SavedEnvironmentRecord
+  >;
+}
+
+type SavedEnvironmentRegistrySnapshot = ReadonlyMap<EnvironmentId, SavedEnvironmentRecord | null>;
+
+function snapshotSavedEnvironmentRegistry(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): SavedEnvironmentRegistrySnapshot {
+  return new Map(
+    environmentIds.map((environmentId) => [
+      environmentId,
+      getSavedEnvironmentRecord(environmentId) ?? null,
+    ]),
+  );
+}
+
+async function persistSavedEnvironmentRegistryRollback(
+  snapshot: SavedEnvironmentRegistrySnapshot,
+): Promise<void> {
+  const byId = buildSavedEnvironmentRegistryById(listSavedEnvironmentRecords());
+  for (const [environmentId, record] of snapshot) {
+    if (record) {
+      byId[environmentId] = record;
+      continue;
+    }
+    delete byId[environmentId];
+  }
+  const records = Object.values(byId);
+  await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
+    records.map((entry) => toPersistedSavedEnvironmentRecord(entry)),
+  );
+  useSavedEnvironmentRegistryStore.setState({
+    byId,
+  });
+}
+
+async function resolveDesktopSshEnvironmentBootstrap(
+  target: DesktopSshEnvironmentTarget,
+  options?: { readonly issuePairingToken?: boolean },
+): Promise<DesktopSshEnvironmentBootstrap> {
+  const desktopBridge = window.desktopBridge;
+  if (!desktopBridge) {
+    throw new Error("SSH launch is only available in the desktop app.");
+  }
+
+  return await desktopBridge.ensureSshEnvironment(target, options);
+}
+
+function getDesktopSshBridge() {
+  const desktopBridge = window.desktopBridge;
+  if (!desktopBridge) {
+    throw new Error("SSH launch is only available in the desktop app.");
+  }
+  return desktopBridge;
+}
+
+async function fetchDesktopSshEnvironmentDescriptor(httpBaseUrl: string) {
+  return await getDesktopSshBridge().fetchSshEnvironmentDescriptor(httpBaseUrl);
+}
+
+async function bootstrapDesktopSshBearerSession(httpBaseUrl: string, credential: string) {
+  return await getDesktopSshBridge().bootstrapSshBearerSession(httpBaseUrl, credential);
+}
+
+function readIssuedBearerScopes(scope: string): ReadonlyArray<AuthEnvironmentScope> {
+  return decodeIssuedBearerScopes(scope.split(" "));
+}
+
+async function fetchDesktopSshSessionState(httpBaseUrl: string, bearerToken: string) {
+  return await getDesktopSshBridge().fetchSshSessionState(httpBaseUrl, bearerToken);
+}
+
+async function resolveDesktopSshWebSocketConnectionUrl(
+  wsBaseUrl: string,
+  httpBaseUrl: string,
+  bearerToken: string,
+) {
+  const issued = await getDesktopSshBridge().issueSshWebSocketTicket(httpBaseUrl, bearerToken);
+  const url = new URL(wsBaseUrl, window.location.origin);
+  url.searchParams.set("wsTicket", issued.ticket);
+  return url.toString();
+}
+
+async function prepareSavedEnvironmentRecordForConnection(
+  record: SavedEnvironmentRecord,
+  options?: { readonly issuePairingToken?: boolean },
+): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly pairingToken: string | null;
+  readonly remotePort: number | null;
+  readonly remoteServerKind: "external" | "managed" | null;
+}> {
+  if (!record.desktopSsh) {
+    return {
+      record,
+      pairingToken: null,
+      remotePort: null,
+      remoteServerKind: null,
+    };
+  }
+
+  const bootstrap = await resolveDesktopSshEnvironmentBootstrap(record.desktopSsh, options);
+  const nextRecord: SavedEnvironmentRecord = {
+    ...record,
+    httpBaseUrl: bootstrap.httpBaseUrl,
+    wsBaseUrl: bootstrap.wsBaseUrl,
+    desktopSsh: bootstrap.target,
+  };
+
+  if (
+    nextRecord.httpBaseUrl !== record.httpBaseUrl ||
+    nextRecord.wsBaseUrl !== record.wsBaseUrl ||
+    !isDesktopSshTargetEqual(nextRecord.desktopSsh, record.desktopSsh)
+  ) {
+    await persistSavedEnvironmentRecord(nextRecord);
+    useSavedEnvironmentRegistryStore.getState().upsert(nextRecord);
+  }
+
+  return {
+    record: nextRecord,
+    pairingToken: bootstrap.pairingToken,
+    remotePort: bootstrap.remotePort ?? null,
+    remoteServerKind: bootstrap.remoteServerKind ?? null,
+  };
+}
+
+async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly bearerToken: string;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope> | null;
+}> {
+  const registrySnapshot = snapshotSavedEnvironmentRegistry([record.environmentId]);
+  const prepared = await prepareSavedEnvironmentRecordForConnection(record, {
+    issuePairingToken: true,
+  });
+  if (!prepared.pairingToken) {
+    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
+    throw new Error("Desktop SSH launch did not return a pairing token.");
+  }
+
+  const bearerSession = await bootstrapDesktopSshBearerSession(
+    prepared.record.httpBaseUrl,
+    prepared.pairingToken,
+  ).catch(async (error) => {
+    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
+    const detail = [
+      `local ${prepared.record.httpBaseUrl}`,
+      `remote port ${prepared.remotePort ?? "unknown"}`,
+      prepared.remoteServerKind ? `remote server ${prepared.remoteServerKind}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message} (${detail})`);
+  });
+  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+    prepared.record.environmentId,
+    bearerSession.access_token,
+  );
+  if (!didPersistBearerToken) {
+    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
+    throw new Error("Unable to persist saved environment credentials.");
+  }
+
+  return {
+    record: prepared.record,
+    bearerToken: bearerSession.access_token,
+    scopes: readIssuedBearerScopes(bearerSession.scope),
+  };
 }
 
 function setRuntimeConnecting(environmentId: EnvironmentId) {
@@ -599,7 +958,7 @@ function reconcileSnapshotDerivedState() {
   syncThreadUiFromStore();
 
   const threads = selectThreadsAcrossEnvironments(useStore.getState());
-  const activeThreadKeys = collectActiveTerminalThreadIds({
+  const activeThreadKeys = collectActiveTerminalUiThreadKeys({
     snapshotThreads: threads.map((thread) => ({
       key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       deletedAt: null,
@@ -607,18 +966,7 @@ function reconcileSnapshotDerivedState() {
     })),
     draftThreadKeys: useComposerDraftStore.getState().listDraftThreadKeys(),
   });
-  useTerminalStateStore.getState().removeOrphanedTerminalStates(activeThreadKeys);
-}
-
-export function shouldApplyTerminalEvent(input: {
-  serverThreadArchivedAt: string | null | undefined;
-  hasDraftThread: boolean;
-}): boolean {
-  if (input.serverThreadArchivedAt !== undefined) {
-    return input.serverThreadArchivedAt === null;
-  }
-
-  return input.hasDraftThread;
+  useTerminalUiStateStore.getState().removeOrphanedTerminalUiStates(activeThreadKeys);
 }
 
 function applyRecoveredEventBatch(
@@ -684,8 +1032,10 @@ function applyRecoveredEventBatch(
       draftStore.clearProjectDraftThreadId(scopeProjectRef(environmentId, event.payload.projectId));
     }
   }
-  for (const threadId of batchEffects.removeTerminalStateThreadIds) {
-    useTerminalStateStore.getState().removeTerminalState(scopeThreadRef(environmentId, threadId));
+  for (const threadId of batchEffects.removeTerminalUiStateThreadIds) {
+    useTerminalUiStateStore
+      .getState()
+      .removeTerminalUiState(scopeThreadRef(environmentId, threadId));
   }
 
   reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
@@ -731,7 +1081,7 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
         markPromotedDraftThreadByRef(threadRef);
       }
       if (previousThread?.archivedAt === null && event.thread.archivedAt !== null && threadRef) {
-        useTerminalStateStore.getState().removeTerminalState(threadRef);
+        useTerminalUiStateStore.getState().removeTerminalUiState(threadRef);
       }
       reconcileThreadDetailSubscriptionEvictionForThread(environmentId, event.thread.id);
       evictIdleThreadDetailSubscriptionsToCapacity();
@@ -741,7 +1091,7 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
         disposeThreadDetailSubscriptionByKey(scopedThreadKey(threadRef));
         useComposerDraftStore.getState().clearDraftThread(threadRef);
         useUiStateStore.getState().clearThreadUi(scopedThreadKey(threadRef));
-        useTerminalStateStore.getState().removeTerminalState(threadRef);
+        useTerminalUiStateStore.getState().removeTerminalUiState(threadRef);
       }
       syncThreadUiFromStore();
       return;
@@ -752,6 +1102,11 @@ function createEnvironmentConnectionHandlers() {
   return {
     applyShellEvent,
     syncShellSnapshot: (snapshot: OrchestrationShellSnapshot, environmentId: EnvironmentId) => {
+      // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+      // Shell snapshots already have createShellSnapshotManager in
+      // @t3tools/client-runtime. Web currently projects snapshots straight into
+      // its denormalized Zustand store; future shell changes should migrate or
+      // bridge to the shared manager instead of growing this handler.
       if (
         !shouldApplyProjectionSnapshot({
           current: readLastAppliedProjectionVersion(environmentId),
@@ -770,22 +1125,13 @@ function createEnvironmentConnectionHandlers() {
       reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
       reconcileSnapshotDerivedState();
     },
-    applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => {
-      const threadRef = scopeThreadRef(environmentId, ThreadId.make(event.threadId));
-      const serverThread = selectThreadByRef(useStore.getState(), threadRef);
-      const hasDraftThread =
-        useComposerDraftStore.getState().getDraftThreadByRef(threadRef) !== null;
-      if (
-        !shouldApplyTerminalEvent({
-          serverThreadArchivedAt: serverThread?.archivedAt,
-          hasDraftThread,
-        })
-      ) {
-        return;
-      }
-      useTerminalStateStore.getState().applyTerminalEvent(threadRef, event);
-    },
   };
+}
+
+function createWsRpcClient(transport: WsTransport): WsRpcClient {
+  return createBaseWsRpcClient(transport, {
+    beforeReconnect: () => resetWsReconnectBackoff(),
+  });
 }
 
 function createPrimaryEnvironmentClient(
@@ -797,40 +1143,76 @@ function createPrimaryEnvironmentClient(
       `Unable to resolve websocket URL for ${knownEnvironment?.label ?? "primary environment"}.`,
     );
   }
+  const connectionLabel = knownEnvironment?.label ?? null;
 
-  return createWsRpcClient(new WsTransport(wsBaseUrl));
+  return createWsRpcClient(
+    new WsTransport(wsBaseUrl, {
+      getConnectionLabel: () => connectionLabel,
+      getVersionMismatchHint: () =>
+        resolveServerConfigVersionMismatch(getServerConfig())?.hint ?? null,
+    }),
+  );
 }
 
 function createSavedEnvironmentClient(
-  record: SavedEnvironmentRecord,
+  environmentId: EnvironmentId,
   bearerToken: string,
 ): WsRpcClient {
-  useSavedEnvironmentRuntimeStore.getState().ensure(record.environmentId);
+  useSavedEnvironmentRuntimeStore.getState().ensure(environmentId);
 
   return createWsRpcClient(
     new WsTransport(
-      () =>
-        resolveRemoteWebSocketConnectionUrl({
-          wsBaseUrl: record.wsBaseUrl,
-          httpBaseUrl: record.httpBaseUrl,
-          bearerToken,
-        }),
+      async () => {
+        const record = getSavedEnvironmentRecord(environmentId);
+        if (!record) {
+          throw new Error(`Saved environment ${environmentId} not found.`);
+        }
+        return record.desktopSsh
+          ? await resolveDesktopSshWebSocketConnectionUrl(
+              record.wsBaseUrl,
+              record.httpBaseUrl,
+              bearerToken,
+            )
+          : await remoteHttpRuntime.runPromise(
+              resolveRemoteWebSocketConnectionUrl({
+                wsBaseUrl: record.wsBaseUrl,
+                httpBaseUrl: record.httpBaseUrl,
+                bearerToken,
+              }),
+            );
+      },
       {
+        getConnectionLabel: () => getSavedEnvironmentRecord(environmentId)?.label ?? null,
+        getVersionMismatchHint: () =>
+          resolveServerConfigVersionMismatch(
+            useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
+          )?.hint ?? null,
         onAttempt: () => {
-          setRuntimeConnecting(record.environmentId);
+          setRuntimeConnecting(environmentId);
         },
         onOpen: () => {
-          setRuntimeConnected(record.environmentId);
+          setRuntimeConnected(environmentId);
         },
         onError: (message: string) => {
-          useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+          const mismatch = resolveServerConfigVersionMismatch(
+            useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
+          );
+          useSavedEnvironmentRuntimeStore.getState().patch(environmentId, {
             connectionState: "error",
-            lastError: message,
+            lastError: appendVersionMismatchHint(message, mismatch),
             lastErrorAt: isoNow(),
           });
         },
         onClose: (details: { readonly code: number; readonly reason: string }) => {
-          setRuntimeDisconnected(record.environmentId, details.reason);
+          setRuntimeDisconnected(
+            environmentId,
+            appendVersionMismatchHint(
+              details.reason,
+              resolveServerConfigVersionMismatch(
+                useSavedEnvironmentRuntimeStore.getState().byId[environmentId]?.serverConfig,
+              ),
+            ),
+          );
         },
       },
     ),
@@ -838,26 +1220,38 @@ function createSavedEnvironmentClient(
 }
 
 async function refreshSavedEnvironmentMetadata(
-  record: SavedEnvironmentRecord,
+  environmentId: EnvironmentId,
   bearerToken: string,
   client: WsRpcClient,
-  roleHint?: AuthSessionRole | null,
+  scopeHint?: ReadonlyArray<AuthEnvironmentScope> | null,
   configHint?: ServerConfig | null,
 ): Promise<void> {
+  const record = getSavedEnvironmentRecord(environmentId);
+  if (!record) {
+    throw new Error(`Saved environment ${environmentId} not found.`);
+  }
+
   const [serverConfig, sessionState] = await Promise.all([
     configHint ? Promise.resolve(configHint) : client.server.getConfig(),
-    fetchRemoteSessionState({
-      httpBaseUrl: record.httpBaseUrl,
-      bearerToken,
-    }),
+    record.desktopSsh
+      ? fetchDesktopSshSessionState(record.httpBaseUrl, bearerToken)
+      : remoteHttpRuntime.runPromise(
+          fetchRemoteSessionState({
+            httpBaseUrl: record.httpBaseUrl,
+            bearerToken,
+          }),
+        ),
   ]);
 
   useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
     authState: sessionState.authenticated ? "authenticated" : "requires-auth",
     descriptor: serverConfig.environment,
     serverConfig,
-    role: sessionState.authenticated ? (sessionState.role ?? roleHint ?? null) : null,
+    scopes: sessionState.authenticated ? (sessionState.scopes ?? scopeHint ?? null) : null,
   });
+  useSavedEnvironmentRegistryStore
+    .getState()
+    .rename(record.environmentId, serverConfig.environment.label);
 }
 
 function registerConnection(connection: EnvironmentConnection): EnvironmentConnection {
@@ -866,6 +1260,15 @@ function registerConnection(connection: EnvironmentConnection): EnvironmentConne
     throw new Error(`Environment ${connection.environmentId} already has an active connection.`);
   }
   environmentConnections.set(connection.environmentId, connection);
+  terminalMetadataSubscriptions.get(connection.environmentId)?.();
+  terminalMetadataSubscriptions.set(
+    connection.environmentId,
+    subscribeTerminalMetadata({
+      environmentId: connection.environmentId,
+      client: connection.client,
+    }),
+  );
+  attachThreadDetailSubscriptionsForEnvironment(connection.environmentId);
   emitEnvironmentConnectionRegistryChange();
   return connection;
 }
@@ -876,10 +1279,13 @@ async function removeConnection(environmentId: EnvironmentId): Promise<boolean> 
     return false;
   }
 
-  disposeThreadDetailSubscriptionsForEnvironment(environmentId);
   lastAppliedProjectionVersionByEnvironment.delete(environmentId);
   environmentConnections.delete(environmentId);
+  terminalMetadataSubscriptions.get(environmentId)?.();
+  terminalMetadataSubscriptions.delete(environmentId);
+  terminalSessionManager.invalidateEnvironment(environmentId);
   emitEnvironmentConnectionRegistryChange();
+  detachThreadDetailSubscriptionsForEnvironment(environmentId);
   await connection.dispose();
   return true;
 }
@@ -905,12 +1311,16 @@ function createPrimaryEnvironmentConnection(): EnvironmentConnection {
   );
 }
 
+function maybeCreatePrimaryEnvironmentConnection(): EnvironmentConnection | null {
+  return getPrimaryKnownEnvironment()?.environmentId ? createPrimaryEnvironmentConnection() : null;
+}
+
 async function ensureSavedEnvironmentConnection(
   record: SavedEnvironmentRecord,
   options?: {
     readonly client?: WsRpcClient;
     readonly bearerToken?: string;
-    readonly role?: AuthSessionRole | null;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | null;
     readonly serverConfig?: ServerConfig | null;
   },
 ): Promise<EnvironmentConnection> {
@@ -919,79 +1329,166 @@ async function ensureSavedEnvironmentConnection(
     return existing;
   }
 
-  const bearerToken =
-    options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
-  if (!bearerToken) {
-    useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-      authState: "requires-auth",
-      role: null,
-      connectionState: "disconnected",
-      lastError: "Saved environment is missing its saved credential. Pair it again.",
-      lastErrorAt: isoNow(),
-    });
-    throw new Error("Saved environment is missing its saved credential.");
+  const pending = pendingSavedEnvironmentConnections.get(record.environmentId);
+  if (pending) {
+    return pending.promise;
   }
 
-  const client = options?.client ?? createSavedEnvironmentClient(record, bearerToken);
-  const knownEnvironment = createKnownEnvironment({
-    id: record.environmentId,
-    label: record.label,
-    source: "manual",
-    target: {
-      httpBaseUrl: record.httpBaseUrl,
-      wsBaseUrl: record.wsBaseUrl,
-    },
-  });
-  const connection = createEnvironmentConnection({
-    kind: "saved",
-    knownEnvironment: {
-      ...knownEnvironment,
-      environmentId: record.environmentId,
-    },
-    client,
-    refreshMetadata: async () => {
-      await refreshSavedEnvironmentMetadata(record, bearerToken, client);
-    },
-    onConfigSnapshot: (config) => {
-      useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-        descriptor: config.environment,
-        serverConfig: config,
-      });
-    },
-    onWelcome: (payload) => {
-      useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
-        descriptor: payload.environment,
-      });
-    },
-    ...createEnvironmentConnectionHandlers(),
-  });
+  const attempt = savedEnvironmentConnectionAttempts.begin(record.environmentId);
+  const pendingEntry: PendingSavedEnvironmentConnection = {
+    isCurrent: attempt.isCurrent,
+    promise: Promise.resolve().then(async () => {
+      let activeRecord = record;
+      let scopeHint = options?.scopes ?? null;
+      let bearerToken =
+        options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
+      if (!bearerToken) {
+        if (record.desktopSsh) {
+          const issued = await issueDesktopSshBearerSession(record);
+          activeRecord = issued.record;
+          bearerToken = issued.bearerToken;
+          scopeHint = [...AuthStandardClientScopes];
+        } else {
+          useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
+            authState: "requires-auth",
+            scopes: null,
+            connectionState: "disconnected",
+            lastError: "Saved environment is missing its saved credential. Pair it again.",
+            lastErrorAt: isoNow(),
+          });
+          throw new Error("Saved environment is missing its saved credential.");
+        }
+      } else {
+        const prepared = await prepareSavedEnvironmentRecordForConnection(record);
+        activeRecord = prepared.record;
+      }
 
-  registerConnection(connection);
+      const activeBearerToken = bearerToken;
+      const client =
+        options?.client ??
+        createSavedEnvironmentClient(activeRecord.environmentId, activeBearerToken);
+      const initialConfigSnapshot = createDeferredPromise<ServerConfig>();
+      const knownEnvironment = createKnownEnvironment({
+        id: activeRecord.environmentId,
+        label: activeRecord.label,
+        source: "manual",
+        target: {
+          httpBaseUrl: activeRecord.httpBaseUrl,
+          wsBaseUrl: activeRecord.wsBaseUrl,
+        },
+      });
+      const connection = createEnvironmentConnection({
+        kind: "saved",
+        knownEnvironment: {
+          ...knownEnvironment,
+          environmentId: activeRecord.environmentId,
+        },
+        client,
+        refreshMetadata: async () => {
+          await refreshSavedEnvironmentMetadata(
+            activeRecord.environmentId,
+            activeBearerToken,
+            client,
+          );
+        },
+        onConfigSnapshot: (config) => {
+          initialConfigSnapshot.resolve(config);
+          useSavedEnvironmentRuntimeStore.getState().patch(activeRecord.environmentId, {
+            descriptor: config.environment,
+            serverConfig: config,
+          });
+        },
+        onWelcome: (payload) => {
+          useSavedEnvironmentRuntimeStore.getState().patch(activeRecord.environmentId, {
+            descriptor: payload.environment,
+          });
+        },
+        ...createEnvironmentConnectionHandlers(),
+      });
 
-  try {
-    await refreshSavedEnvironmentMetadata(
-      record,
-      bearerToken,
-      client,
-      options?.role ?? null,
-      options?.serverConfig ?? null,
-    );
-    return connection;
-  } catch (error) {
-    setRuntimeError(record.environmentId, error);
-    await removeConnection(record.environmentId).catch(() => false);
-    throw error;
-  }
+      try {
+        try {
+          const initialServerConfig =
+            options?.serverConfig ??
+            (await waitForConfigSnapshot(
+              initialConfigSnapshot.promise,
+              INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS,
+            ));
+          await refreshSavedEnvironmentMetadata(
+            activeRecord.environmentId,
+            activeBearerToken,
+            client,
+            scopeHint,
+            initialServerConfig,
+          );
+        } catch (error) {
+          const isAuthError = activeRecord.desktopSsh
+            ? isSshHttpAuthError(error, 401)
+            : isEnvironmentAuthInvalidError(error);
+          if (!isAuthError) {
+            throw error;
+          }
+          if (!activeRecord.desktopSsh) {
+            await removeSavedEnvironmentBearerToken(activeRecord.environmentId);
+            throw new Error("Saved environment credential expired. Pair it again.", {
+              cause: error,
+            });
+          }
+
+          const issued = await issueDesktopSshBearerSession(activeRecord);
+          activeRecord = issued.record;
+          bearerToken = issued.bearerToken;
+          scopeHint = [...AuthStandardClientScopes];
+          await connection.dispose().catch(() => undefined);
+          pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
+          return await ensureSavedEnvironmentConnection(activeRecord, {
+            bearerToken,
+            scopes: scopeHint,
+            serverConfig: options?.serverConfig ?? null,
+          });
+        }
+        if (
+          !pendingEntry.isCurrent() ||
+          pendingSavedEnvironmentConnections.get(activeRecord.environmentId) !== pendingEntry
+        ) {
+          await connection.dispose().catch(() => undefined);
+          throw new EnvironmentConnectionAttemptCancelledError(activeRecord.environmentId);
+        }
+        registerConnection(connection);
+        return connection;
+      } catch (error) {
+        if (error instanceof EnvironmentConnectionAttemptCancelledError) {
+          throw error;
+        }
+        setRuntimeError(activeRecord.environmentId, error);
+        const removed = await removeConnection(activeRecord.environmentId).catch(() => false);
+        if (!removed) {
+          await connection.dispose().catch(() => undefined);
+        }
+        throw error;
+      }
+    }),
+  };
+
+  pendingSavedEnvironmentConnections.set(record.environmentId, pendingEntry);
+  return await pendingEntry.promise.finally(() => {
+    if (pendingSavedEnvironmentConnections.get(record.environmentId) === pendingEntry) {
+      pendingSavedEnvironmentConnections.delete(record.environmentId);
+      savedEnvironmentConnectionAttempts.cancel(record.environmentId);
+    }
+  });
 }
 
 async function syncSavedEnvironmentConnections(
   records: ReadonlyArray<SavedEnvironmentRecord>,
 ): Promise<void> {
   const expectedEnvironmentIds = new Set(records.map((record) => record.environmentId));
-  const staleEnvironmentIds = [...environmentConnections.values()]
-    .filter((connection) => connection.kind === "saved")
-    .map((connection) => connection.environmentId)
-    .filter((environmentId) => !expectedEnvironmentIds.has(environmentId));
+  const staleEnvironmentIds: EnvironmentId[] = [];
+  for (const connection of environmentConnections.values()) {
+    if (connection.kind !== "saved") continue;
+    if (expectedEnvironmentIds.has(connection.environmentId)) continue;
+    staleEnvironmentIds.push(connection.environmentId);
+  }
 
   await Promise.all(
     staleEnvironmentIds.map((environmentId) => disconnectSavedEnvironment(environmentId)),
@@ -1006,10 +1503,69 @@ function stopActiveService() {
   activeService = null;
 }
 
+function reconnectEnvironmentConnectionsAfterBrowserResume(reason: string): void {
+  const now = Date.now();
+  if (now - lastBrowserResumeReconnectAt < BROWSER_RESUME_RECONNECT_COOLDOWN_MS) {
+    return;
+  }
+
+  for (const connection of environmentConnections.values()) {
+    if (connection.client.isHeartbeatFresh()) {
+      continue;
+    }
+    lastBrowserResumeReconnectAt = now;
+    void connection.reconnect().catch((error) => {
+      console.warn("Environment reconnect after browser resume failed", {
+        environmentId: connection.environmentId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+}
+
+function subscribeBrowserResumeReconnects(): () => void {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return NOOP;
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      lastBrowserHiddenAt = Date.now();
+      return;
+    }
+    if (document.visibilityState === "visible" && lastBrowserHiddenAt !== null) {
+      lastBrowserHiddenAt = null;
+      reconnectEnvironmentConnectionsAfterBrowserResume("visibilitychange");
+    }
+  };
+
+  const handlePageShow = (event: PageTransitionEvent) => {
+    if (event.persisted || lastBrowserHiddenAt !== null) {
+      lastBrowserHiddenAt = null;
+      reconnectEnvironmentConnectionsAfterBrowserResume("pageshow");
+    }
+  };
+
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pageshow", handlePageShow);
+  return () => {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("pageshow", handlePageShow);
+  };
+}
+
 export function subscribeEnvironmentConnections(listener: () => void): () => void {
   environmentConnectionListeners.add(listener);
   return () => {
     environmentConnectionListeners.delete(listener);
+  };
+}
+
+export function subscribeProviderInvalidations(listener: () => void): () => void {
+  providerInvalidationListeners.add(listener);
+  return () => {
+    providerInvalidationListeners.delete(listener);
   };
 }
 
@@ -1036,13 +1592,23 @@ export function getPrimaryEnvironmentConnection(): EnvironmentConnection {
 }
 
 export async function disconnectSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
-  const connection = environmentConnections.get(environmentId);
-  if (connection?.kind !== "saved") {
-    return;
+  const record = getSavedEnvironmentRecord(environmentId);
+  const pendingConnection = pendingSavedEnvironmentConnections.get(environmentId);
+  if (pendingConnection) {
+    savedEnvironmentConnectionAttempts.cancel(environmentId);
+    pendingSavedEnvironmentConnections.delete(environmentId);
   }
+  const connection = environmentConnections.get(environmentId);
 
-  useSavedEnvironmentRuntimeStore.getState().clear(environmentId);
-  await removeConnection(environmentId).catch(() => false);
+  if (connection?.kind === "saved") {
+    await removeConnection(environmentId).catch(() => false);
+  }
+  setRuntimeDisconnected(environmentId);
+
+  if (record?.desktopSsh && typeof window !== "undefined") {
+    await window.desktopBridge?.disconnectSshEnvironment(record.desktopSsh);
+    await removeSavedEnvironmentBearerToken(environmentId);
+  }
 }
 
 export async function reconnectSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
@@ -1053,23 +1619,57 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
 
   const connection = environmentConnections.get(environmentId);
   if (!connection) {
-    await ensureSavedEnvironmentConnection(record);
-    return;
+    setRuntimeConnecting(environmentId);
+    try {
+      await ensureSavedEnvironmentConnection(record);
+      return;
+    } catch (error) {
+      if (isSavedEnvironmentConnectionCancelledError(error)) {
+        return;
+      }
+      setRuntimeError(environmentId, error);
+      throw error;
+    }
   }
 
   setRuntimeConnecting(environmentId);
   try {
+    if (record.desktopSsh) {
+      await prepareSavedEnvironmentRecordForConnection(record);
+    }
     await connection.reconnect();
   } catch (error) {
+    if (record.desktopSsh) {
+      try {
+        const issued = await issueDesktopSshBearerSession(
+          getSavedEnvironmentRecord(environmentId) ?? record,
+        );
+        await removeConnection(environmentId).catch(() => false);
+        await ensureSavedEnvironmentConnection(issued.record, {
+          bearerToken: issued.bearerToken,
+          scopes: [...AuthStandardClientScopes],
+        });
+        return;
+      } catch (recoveryError) {
+        if (isSavedEnvironmentConnectionCancelledError(recoveryError)) {
+          return;
+        }
+        setRuntimeError(environmentId, recoveryError);
+        throw recoveryError;
+      }
+    }
     setRuntimeError(environmentId, error);
     throw error;
   }
 }
 
 export async function removeSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
-  useSavedEnvironmentRegistryStore.getState().remove(environmentId);
-  await removeSavedEnvironmentBearerToken(environmentId);
   await disconnectSavedEnvironment(environmentId);
+  disposeThreadDetailSubscriptionsForEnvironment(environmentId);
+  useSavedEnvironmentRegistryStore.getState().remove(environmentId);
+  useSavedEnvironmentRuntimeStore.getState().clear(environmentId);
+  useStore.getState().removeEnvironmentState(environmentId);
+  await removeSavedEnvironmentBearerToken(environmentId);
 }
 
 export async function addSavedEnvironment(input: {
@@ -1077,59 +1677,97 @@ export async function addSavedEnvironment(input: {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  readonly desktopSsh?: DesktopSshEnvironmentTarget;
 }): Promise<SavedEnvironmentRecord> {
   const resolvedTarget = resolveRemotePairingTarget({
     ...(input.pairingUrl !== undefined ? { pairingUrl: input.pairingUrl } : {}),
     ...(input.host !== undefined ? { host: input.host } : {}),
     ...(input.pairingCode !== undefined ? { pairingCode: input.pairingCode } : {}),
   });
-  const descriptor = await fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: resolvedTarget.httpBaseUrl,
-  });
+  const descriptor = input.desktopSsh
+    ? await fetchDesktopSshEnvironmentDescriptor(resolvedTarget.httpBaseUrl)
+    : await remoteHttpRuntime.runPromise(
+        fetchRemoteEnvironmentDescriptor({
+          httpBaseUrl: resolvedTarget.httpBaseUrl,
+        }),
+      );
   const environmentId = descriptor.environmentId;
+  const registrySnapshot = snapshotSavedEnvironmentRegistry([environmentId]);
+  const existingRecord =
+    getSavedEnvironmentRecord(environmentId) ??
+    findSavedEnvironmentRecordByDesktopSshTarget(input.desktopSsh);
+  const staleDesktopSshRecord =
+    existingRecord && existingRecord.environmentId !== environmentId ? existingRecord : null;
 
-  if (environmentConnections.has(environmentId)) {
-    throw new Error("This environment is already connected.");
-  }
-
-  const bearerSession = await bootstrapRemoteBearerSession({
-    httpBaseUrl: resolvedTarget.httpBaseUrl,
-    credential: resolvedTarget.credential,
-  });
+  const bearerSession = input.desktopSsh
+    ? await bootstrapDesktopSshBearerSession(resolvedTarget.httpBaseUrl, resolvedTarget.credential)
+    : await remoteHttpRuntime.runPromise(
+        bootstrapRemoteBearerSession({
+          httpBaseUrl: resolvedTarget.httpBaseUrl,
+          credential: resolvedTarget.credential,
+        }),
+      );
 
   const record: SavedEnvironmentRecord = {
     environmentId,
-    label: input.label.trim() || descriptor.label,
+    label: input.label.trim() || existingRecord?.label || descriptor.label,
     wsBaseUrl: resolvedTarget.wsBaseUrl,
     httpBaseUrl: resolvedTarget.httpBaseUrl,
-    createdAt: isoNow(),
+    createdAt: existingRecord?.createdAt ?? isoNow(),
     lastConnectedAt: isoNow(),
+    ...((input.desktopSsh ?? existingRecord?.desktopSsh)
+      ? { desktopSsh: input.desktopSsh ?? existingRecord?.desktopSsh }
+      : {}),
   };
 
   await persistSavedEnvironmentRecord(record);
   const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
     environmentId,
-    bearerSession.sessionToken,
+    bearerSession.access_token,
   );
   if (!didPersistBearerToken) {
-    await ensureLocalApi().persistence.setSavedEnvironmentRegistry(
-      listSavedEnvironmentRecords().map((entry) => ({
-        environmentId: entry.environmentId,
-        label: entry.label,
-        httpBaseUrl: entry.httpBaseUrl,
-        wsBaseUrl: entry.wsBaseUrl,
-        createdAt: entry.createdAt,
-        lastConnectedAt: entry.lastConnectedAt,
-      })),
-    );
+    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
     throw new Error("Unable to persist saved environment credentials.");
   }
-  await ensureSavedEnvironmentConnection(record, {
-    bearerToken: bearerSession.sessionToken,
-    role: bearerSession.role,
-  });
   useSavedEnvironmentRegistryStore.getState().upsert(record);
+  if (staleDesktopSshRecord) {
+    await removeSavedEnvironment(staleDesktopSshRecord.environmentId);
+  }
+  await removeConnection(environmentId).catch(() => false);
+  await ensureSavedEnvironmentConnection(record, {
+    bearerToken: bearerSession.access_token,
+    scopes: readIssuedBearerScopes(bearerSession.scope),
+  });
   return record;
+}
+
+export async function connectDesktopSshEnvironment(
+  target: DesktopSshEnvironmentTarget,
+  options?: { label?: string },
+): Promise<SavedEnvironmentRecord> {
+  const bootstrap = await resolveDesktopSshEnvironmentBootstrap(target, {
+    issuePairingToken: true,
+  });
+  if (!bootstrap.pairingToken) {
+    throw new Error("Desktop SSH launch did not return a pairing token.");
+  }
+
+  return await addSavedEnvironment({
+    label: options?.label?.trim() || bootstrap.target.alias,
+    host: bootstrap.httpBaseUrl,
+    pairingCode: bootstrap.pairingToken,
+    desktopSsh: bootstrap.target,
+  }).catch((error) => {
+    const detail = [
+      `local ${bootstrap.httpBaseUrl}`,
+      `remote port ${bootstrap.remotePort ?? "unknown"}`,
+      bootstrap.remoteServerKind ? `remote server ${bootstrap.remoteServerKind}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message} (${detail})`);
+  });
 }
 
 export async function ensureEnvironmentConnectionBootstrapped(
@@ -1160,8 +1798,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
         return;
       }
       needsProviderInvalidation = false;
-      void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
-      void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      emitProviderInvalidation();
     },
     {
       wait: 100,
@@ -1169,19 +1806,22 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
       trailing: true,
     },
   );
+  const requestSavedEnvironmentSync = createSavedEnvironmentSyncScheduler();
 
-  createPrimaryEnvironmentConnection();
+  maybeCreatePrimaryEnvironmentConnection();
 
   const unsubscribeSavedEnvironments = useSavedEnvironmentRegistryStore.subscribe(() => {
     if (!hasSavedEnvironmentRegistryHydrated()) {
       return;
     }
-    void syncSavedEnvironmentConnections(listSavedEnvironmentRecords());
+    void requestSavedEnvironmentSync();
   });
 
   void waitForSavedEnvironmentRegistryHydration()
-    .then(() => syncSavedEnvironmentConnections(listSavedEnvironmentRecords()))
+    .then(() => requestSavedEnvironmentSync())
     .catch(() => undefined);
+
+  const unsubscribeBrowserResumeReconnects = subscribeBrowserResumeReconnects();
 
   activeService = {
     queryClient,
@@ -1189,6 +1829,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
     refCount: 1,
     stop: () => {
       unsubscribeSavedEnvironments();
+      unsubscribeBrowserResumeReconnects();
       queryInvalidationThrottler.cancel();
     },
   };
@@ -1206,10 +1847,19 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
 
 export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
+  lastBrowserHiddenAt = null;
+  lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
   lastAppliedProjectionVersionByEnvironment.clear();
+  pendingSavedEnvironmentConnections.clear();
+  savedEnvironmentConnectionAttempts.clear();
   for (const key of Array.from(threadDetailSubscriptions.keys())) {
     disposeThreadDetailSubscriptionByKey(key);
   }
+  for (const unsubscribe of terminalMetadataSubscriptions.values()) {
+    unsubscribe();
+  }
+  terminalMetadataSubscriptions.clear();
+  terminalSessionManager.reset();
   await Promise.all(
     [...environmentConnections.keys()].map((environmentId) => removeConnection(environmentId)),
   );

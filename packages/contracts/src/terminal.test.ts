@@ -1,8 +1,9 @@
-import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import * as Schema from "effect/Schema";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_TERMINAL_ID,
+  TerminalAttachInput,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -31,8 +32,21 @@ describe("TerminalOpenInput", () => {
     expect(
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         cwd: "/tmp/project",
         cols: 120,
+        rows: 40,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts ultrawide terminal dimensions from xterm fit", () => {
+    expect(
+      decodes(TerminalOpenInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        cwd: "/tmp/project",
+        cols: 423,
         rows: 40,
       }),
     ).toBe(true);
@@ -42,26 +56,29 @@ describe("TerminalOpenInput", () => {
     expect(
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         cwd: "/tmp/project",
         cols: 10,
-        rows: 2,
+        rows: 0,
       }),
     ).toBe(false);
   });
 
-  it("defaults terminalId when missing", () => {
-    const parsed = decodeSync(TerminalOpenInput, {
-      threadId: "thread-1",
-      cwd: "/tmp/project",
-      cols: 100,
-      rows: 24,
-    });
-    expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
+  it("requires terminalId — the client must always pick an id", () => {
+    expect(
+      decodes(TerminalOpenInput, {
+        threadId: "thread-1",
+        cwd: "/tmp/project",
+        cols: 100,
+        rows: 24,
+      }),
+    ).toBe(false);
   });
 
   it("accepts optional env overrides", () => {
     const parsed = decodeSync(TerminalOpenInput, {
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
       cwd: "/tmp/project",
       worktreePath: "/tmp/project/.t3/worktrees/feature-a",
       cols: 100,
@@ -93,11 +110,25 @@ describe("TerminalOpenInput", () => {
   });
 });
 
+describe("TerminalAttachInput", () => {
+  it("accepts explicit inactive-session restart intent", () => {
+    const parsed = decodeSync(TerminalAttachInput, {
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      cwd: "/tmp/project",
+      restartIfNotRunning: true,
+    });
+
+    expect(parsed.restartIfNotRunning).toBe(true);
+  });
+});
+
 describe("TerminalWriteInput", () => {
   it("accepts non-empty data", () => {
     expect(
       decodes(TerminalWriteInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         data: "echo hello\n",
       }),
     ).toBe(true);
@@ -107,7 +138,17 @@ describe("TerminalWriteInput", () => {
     expect(
       decodes(TerminalWriteInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         data: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects missing terminalId", () => {
+    expect(
+      decodes(TerminalWriteInput, {
+        threadId: "thread-1",
+        data: "echo hello\n",
       }),
     ).toBe(false);
   });
@@ -125,17 +166,33 @@ describe("TerminalResizeInput", () => {
     expect(
       decodes(TerminalResizeInput, {
         threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
         cols: 80,
         rows: 24,
       }),
     ).toBe(true);
   });
+
+  it("rejects missing terminalId", () => {
+    expect(
+      decodes(TerminalResizeInput, {
+        threadId: "thread-1",
+        cols: 80,
+        rows: 24,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("TerminalClearInput", () => {
-  it("defaults terminal id", () => {
+  it("requires terminalId", () => {
+    expect(decodes(TerminalClearInput, { threadId: "thread-1" })).toBe(false);
+  });
+
+  it("accepts an explicit terminalId", () => {
     const parsed = decodeSync(TerminalClearInput, {
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
     });
     expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
   });
@@ -153,6 +210,8 @@ describe("TerminalCloseInput", () => {
 });
 
 describe("TerminalSessionSnapshot", () => {
+  const isoTimestamp = "2026-01-01T00:00:00.000Z";
+
   it("accepts running snapshots", () => {
     expect(
       decodes(TerminalSessionSnapshot, {
@@ -165,20 +224,22 @@ describe("TerminalSessionSnapshot", () => {
         history: "hello\n",
         exitCode: null,
         exitSignal: null,
-        updatedAt: new Date().toISOString(),
+        label: "Primary",
+        updatedAt: isoTimestamp,
       }),
     ).toBe(true);
   });
 });
 
 describe("TerminalEvent", () => {
+  const isoTimestamp = "2026-01-01T00:00:00.000Z";
+
   it("accepts output events", () => {
     expect(
       decodes(TerminalEvent, {
         type: "output",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
         data: "line\n",
       }),
     ).toBe(true);
@@ -190,9 +251,18 @@ describe("TerminalEvent", () => {
         type: "exited",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
         exitCode: 0,
         exitSignal: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts closed events", () => {
+    expect(
+      decodes(TerminalEvent, {
+        type: "closed",
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
       }),
     ).toBe(true);
   });
@@ -203,8 +273,8 @@ describe("TerminalEvent", () => {
         type: "activity",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
         hasRunningSubprocess: true,
+        label: "vim",
       }),
     ).toBe(true);
   });
@@ -215,7 +285,6 @@ describe("TerminalEvent", () => {
         type: "started",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
         snapshot: {
           threadId: "thread-1",
           terminalId: DEFAULT_TERMINAL_ID,
@@ -226,7 +295,8 @@ describe("TerminalEvent", () => {
           history: "",
           exitCode: null,
           exitSignal: null,
-          updatedAt: new Date().toISOString(),
+          label: "Primary",
+          updatedAt: isoTimestamp,
         },
       }),
     ).toBe(true);

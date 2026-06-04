@@ -1,8 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Option } from "effect";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import {
+  createStagePnpmConfig,
+  resolveDesktopRuntimeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -35,6 +39,63 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
+  });
+
+  it("omits bundled workspace packages from staged desktop dependencies", () => {
+    assert.deepStrictEqual(
+      resolveDesktopRuntimeDependencies(
+        {
+          "@effect/platform-node": "catalog:",
+          "@t3tools/contracts": "workspace:*",
+          "@t3tools/shared": "workspace:*",
+          "@t3tools/ssh": "workspace:*",
+          "@t3tools/tailscale": "workspace:*",
+          effect: "catalog:",
+          electron: "41.5.0",
+        },
+        {
+          "@effect/platform-node": "4.0.0-beta.59",
+          effect: "4.0.0-beta.59",
+        },
+      ),
+      {
+        "@effect/platform-node": "4.0.0-beta.59",
+        effect: "4.0.0-beta.59",
+      },
+    );
+  });
+
+  it("carries only staged dependency patch metadata into staged desktop installs", () => {
+    assert.deepStrictEqual(
+      createStagePnpmConfig(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+          "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
+          "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+        },
+        {
+          "@pierre/diffs": "1.1.20",
+          effect: "4.0.0-beta.73",
+        },
+      ),
+      {
+        patchedDependencies: {
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+          "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+        },
+      },
+    );
+
+    assert.equal(
+      createStagePnpmConfig(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+        },
+        { effect: "4.0.0-beta.73" },
+      ),
+      undefined,
+    );
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {

@@ -15,15 +15,16 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["@effect/platform-node"],
+        // Diagnostic severities are deep-merged with tsconfig.base.json; list only web-specific overrides here.
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
-          "anyUnknownInErrorContext": "warning",
-          "instanceOfSchema": "warning",
-          "deterministicKeys": "warning"
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
         }
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "test"]
+  "include": ["src", "vite.config.ts", "vercel.ts", "test"]
 }

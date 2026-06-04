@@ -1,6 +1,6 @@
 import { getKnownEnvironmentHttpBaseUrl } from "@t3tools/client-runtime";
 import type {
-  AuthSessionRole,
+  AuthEnvironmentScope,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   PersistedSavedEnvironmentRecord,
@@ -18,6 +18,7 @@ export interface SavedEnvironmentRecord {
   readonly httpBaseUrl: string;
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
+  readonly desktopSsh?: PersistedSavedEnvironmentRecord["desktopSsh"];
 }
 
 interface SavedEnvironmentRegistryState {
@@ -28,13 +29,14 @@ interface SavedEnvironmentRegistryStore extends SavedEnvironmentRegistryState {
   readonly upsert: (record: SavedEnvironmentRecord) => void;
   readonly remove: (environmentId: EnvironmentId) => void;
   readonly markConnected: (environmentId: EnvironmentId, connectedAt: string) => void;
+  readonly rename: (environmentId: EnvironmentId, label: string) => void;
   readonly reset: () => void;
 }
 
 let savedEnvironmentRegistryHydrated = false;
 let savedEnvironmentRegistryHydrationPromise: Promise<void> | null = null;
 
-function toPersistedSavedEnvironmentRecord(
+export function toPersistedSavedEnvironmentRecord(
   record: SavedEnvironmentRecord,
 ): PersistedSavedEnvironmentRecord {
   return {
@@ -44,6 +46,7 @@ function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
   };
 }
 
@@ -143,6 +146,23 @@ export const useSavedEnvironmentRegistryStore = create<SavedEnvironmentRegistryS
         [environmentId]: {
           ...existing,
           lastConnectedAt: connectedAt,
+        },
+      };
+      persistSavedEnvironmentRegistryState(byId);
+      return { byId };
+    }),
+  rename: (environmentId, label) =>
+    set((state) => {
+      const existing = state.byId[environmentId];
+      const nextLabel = label.trim();
+      if (!existing || nextLabel.length === 0 || existing.label === nextLabel) {
+        return state;
+      }
+      const byId = {
+        ...state.byId,
+        [environmentId]: {
+          ...existing,
+          label: nextLabel,
         },
       };
       persistSavedEnvironmentRegistryState(byId);
@@ -252,7 +272,7 @@ export interface SavedEnvironmentRuntimeState {
   readonly authState: SavedEnvironmentAuthState;
   readonly lastError: string | null;
   readonly lastErrorAt: string | null;
-  readonly role: AuthSessionRole | null;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope> | null;
   readonly descriptor: ExecutionEnvironmentDescriptor | null;
   readonly serverConfig: ServerConfig | null;
   readonly connectedAt: string | null;
@@ -275,7 +295,7 @@ const DEFAULT_SAVED_ENVIRONMENT_RUNTIME_STATE: SavedEnvironmentRuntimeState = Ob
   authState: "unknown",
   lastError: null,
   lastErrorAt: null,
-  role: null,
+  scopes: null,
   descriptor: null,
   serverConfig: null,
   connectedAt: null,

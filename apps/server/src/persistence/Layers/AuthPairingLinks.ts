@@ -1,6 +1,8 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import {
   toPersistenceDecodeError,
@@ -36,7 +38,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           id,
           credential,
           method,
-          role,
+          scopes,
           subject,
           label,
           created_at,
@@ -48,7 +50,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           ${input.id},
           ${input.credential},
           ${input.method},
-          ${input.role},
+          ${JSON.stringify(input.scopes)},
           ${input.subject},
           ${input.label},
           ${input.createdAt},
@@ -74,7 +76,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           id AS "id",
           credential AS "credential",
           method AS "method",
-          role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",
@@ -93,7 +95,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           id AS "id",
           credential AS "credential",
           method AS "method",
-          role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",
@@ -131,7 +133,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           id AS "id",
           credential AS "credential",
           method AS "method",
-          role AS "role",
+          scopes AS "scopes",
           subject AS "subject",
           label AS "label",
           created_at AS "createdAt",

@@ -1,13 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createEnvironmentConnection } from "./connection";
-import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 
-function createTestClient() {
+function createTestClient(config?: { readonly emitInitialSnapshot?: boolean }) {
   const lifecycleListeners = new Set<(event: any) => void>();
   const configListeners = new Set<(event: any) => void>();
-  const terminalListeners = new Set<(event: any) => void>();
   const shellListeners = new Set<(event: any) => void>();
   let shellResubscribe: (() => void) | undefined;
 
@@ -22,14 +21,14 @@ function createTestClient() {
           environmentId: EnvironmentId.make("env-1"),
         },
       })),
-      subscribeConfig: (listener: (event: any) => void) => {
+      subscribeConfig: vi.fn((listener: (event: any) => void) => {
         configListeners.add(listener);
         return () => configListeners.delete(listener);
-      },
-      subscribeLifecycle: (listener: (event: any) => void) => {
+      }),
+      subscribeLifecycle: vi.fn((listener: (event: any) => void) => {
         lifecycleListeners.add(listener);
         return () => lifecycleListeners.delete(listener);
-      },
+      }),
       subscribeAuthAccess: () => () => undefined,
       refreshProviders: vi.fn(async () => undefined),
       upsertKeybinding: vi.fn(async () => undefined),
@@ -44,17 +43,19 @@ function createTestClient() {
         (listener: (event: any) => void, options?: { onResubscribe?: () => void }) => {
           shellListeners.add(listener);
           shellResubscribe = options?.onResubscribe;
-          queueMicrotask(() => {
-            listener({
-              kind: "snapshot",
-              snapshot: {
-                snapshotSequence: 1,
-                projects: [],
-                threads: [],
-                updatedAt: "2026-04-12T00:00:00.000Z",
-              },
+          if (config?.emitInitialSnapshot !== false) {
+            queueMicrotask(() => {
+              listener({
+                kind: "snapshot",
+                snapshot: {
+                  snapshotSequence: 1,
+                  projects: [],
+                  threads: [],
+                  updatedAt: "2026-04-12T00:00:00.000Z",
+                },
+              });
             });
-          });
+          }
           return () => {
             shellListeners.delete(listener);
             if (shellResubscribe === options?.onResubscribe) {
@@ -67,15 +68,14 @@ function createTestClient() {
     },
     terminal: {
       open: vi.fn(async () => undefined),
+      attach: vi.fn(() => () => undefined),
       write: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
       clear: vi.fn(async () => undefined),
       restart: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
-      onEvent: (listener: (event: any) => void) => {
-        terminalListeners.add(listener);
-        return () => terminalListeners.delete(listener);
-      },
+      onEvent: vi.fn(() => () => undefined),
+      onMetadata: vi.fn(() => () => undefined),
     },
     projects: {
       searchEntries: vi.fn(async () => []),
@@ -85,18 +85,12 @@ function createTestClient() {
       openInEditor: vi.fn(async () => undefined),
     },
     git: {
-      pull: vi.fn(async () => undefined),
-      refreshStatus: vi.fn(async () => undefined),
-      onStatus: vi.fn(() => () => undefined),
       runStackedAction: vi.fn(async () => ({}) as any),
-      listBranches: vi.fn(async () => []),
-      createWorktree: vi.fn(async () => undefined),
-      removeWorktree: vi.fn(async () => undefined),
-      createBranch: vi.fn(async () => undefined),
-      checkout: vi.fn(async () => undefined),
-      init: vi.fn(async () => undefined),
       resolvePullRequest: vi.fn(async () => undefined),
       preparePullRequestThread: vi.fn(async () => undefined),
+    },
+    review: {
+      getDiffPreview: vi.fn(async () => undefined),
     },
   } as unknown as WsRpcClient;
 
@@ -163,7 +157,6 @@ describe("createEnvironmentConnection", () => {
       client,
       applyShellEvent: vi.fn(),
       syncShellSnapshot,
-      applyTerminalEvent: vi.fn(),
     });
 
     await connection.ensureBootstrapped();
@@ -195,7 +188,6 @@ describe("createEnvironmentConnection", () => {
       client,
       applyShellEvent: vi.fn(),
       syncShellSnapshot: vi.fn(),
-      applyTerminalEvent: vi.fn(),
     });
 
     expect(() => emitWelcome(EnvironmentId.make("env-2"))).toThrow(
@@ -225,7 +217,6 @@ describe("createEnvironmentConnection", () => {
       client,
       applyShellEvent: vi.fn(),
       syncShellSnapshot,
-      applyTerminalEvent: vi.fn(),
     });
 
     await connection.ensureBootstrapped();
@@ -245,5 +236,60 @@ describe("createEnvironmentConnection", () => {
     );
 
     await connection.dispose();
+  });
+
+  it("skips primary lifecycle/config subscriptions when no handlers are registered", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const { client } = createTestClient();
+
+    const connection = createEnvironmentConnection({
+      kind: "primary",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Local env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyShellEvent: vi.fn(),
+      syncShellSnapshot: vi.fn(),
+      applyTerminalEvent: vi.fn(),
+    });
+
+    expect(client.server.subscribeLifecycle).not.toHaveBeenCalled();
+    expect(client.server.subscribeConfig).not.toHaveBeenCalled();
+    expect(client.orchestration.subscribeShell).toHaveBeenCalledOnce();
+
+    await connection.dispose();
+  });
+
+  it("rejects bootstrap waits when a pending connection is disposed", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const { client } = createTestClient({ emitInitialSnapshot: false });
+    const connection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Remote env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyShellEvent: vi.fn(),
+      syncShellSnapshot: vi.fn(),
+    });
+    const pendingBootstrap = connection.ensureBootstrapped();
+
+    await connection.dispose();
+
+    await expect(pendingBootstrap).rejects.toThrow("was disposed before it finished bootstrapping");
   });
 });

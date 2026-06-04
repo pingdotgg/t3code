@@ -1,0 +1,267 @@
+---
+title: What is Alchemy?
+description: Alchemy is an Infrastructure-as-Effects framework that combines cloud infrastructure and application logic into a single type-safe program powered by Effect.
+sidebar:
+  order: 0
+---
+
+Alchemy is an **Infrastructure-as-Effects** framework. It extends
+Infrastructure-as-Code by combining your cloud resources and the
+application logic that uses them into a single, type-safe program
+powered by [Effect](https://effect.website).
+
+## Infrastructure-as-Code vs Infrastructure-as-Effects
+
+Traditional IaC tools like Terraform, Pulumi, and CDK separate
+infrastructure definitions from application code. You write your
+infrastructure in one place and your business logic in another, then
+wire them together with environment variables, ARNs, and config
+files.
+
+Alchemy takes a different approach: infrastructure and logic are
+**Effects** in the same program.
+
+```typescript
+// alchemy.run.ts — infrastructure and logic in one program
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Worker from "./src/worker.ts";
+
+const Bucket = Cloudflare.R2Bucket("Bucket");
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const bucket = yield* Bucket;
+    const worker = yield* Worker;
+    return { url: worker.url };
+  }),
+);
+```
+
+```typescript
+// src/worker.ts — the Worker binds the Bucket directly
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Bucket } from "./bucket.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("hello.txt");
+        return obj
+          ? HttpServerResponse.text(yield* obj.text())
+          : HttpServerResponse.text("Not found", { status: 404 });
+      }),
+    };
+  }),
+);
+```
+
+The Bucket resource, the Worker resource, and the runtime fetch
+handler all live in the same codebase, composed with the same
+`yield*` syntax. There's no separate "infra" project — it's one
+program.
+
+## Type safety
+
+Alchemy uses TypeScript and Effect's type system to catch mistakes at
+compile time. If you forget to provide the right providers for your
+resources, the compiler tells you:
+
+```typescript twoslash
+// @errors: 2322
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Layer.empty,
+  },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2Bucket("Bucket");
+  }),
+);
+```
+
+This error goes away when you provide `Cloudflare.providers()`. The
+type system ensures every resource has its provider wired up before
+you can deploy.
+
+## Resources
+
+A **Resource** is any cloud entity managed by Alchemy — buckets,
+databases, queues, workers, IAM roles, DNS records, and more. Each
+resource is declared as an Effect and `yield*`-ed inside a Stack:
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket("Bucket");
+const db = yield* Cloudflare.D1Database("DB");
+const queue = yield* AWS.SQS.Queue("Jobs");
+```
+
+Resources are just descriptions until they're yielded. You can
+declare them in separate files and import them from anywhere:
+
+```typescript
+// src/bucket.ts
+export const Bucket = Cloudflare.R2Bucket("Bucket");
+```
+
+```typescript
+// src/worker.ts
+import { Bucket } from "./bucket.ts";
+const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+```
+
+## Bindings
+
+A **Binding** connects a resource to a Worker or Lambda. A single
+`bind()` call hands your handler a typed client and — at deploy time
+— wires up the permissions, environment variables, and platform
+bindings that client needs:
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+
+// later, inside fetch:
+yield* bucket.put("hello.txt", "world");
+```
+
+`bucket` is the resource presented as a typed SDK. There's no
+`env.BUCKET`, no `BUCKET_NAME` lookup, and no hand-written IAM policy
+— the binding **is** the client.
+
+On AWS, `bind()` emits least-privilege IAM scoped to the exact
+resource ARN. On Cloudflare, it attaches the native Worker binding
+(R2, KV, D1, Durable Object). The runtime API is identical, so code
+written against one consumes the other.
+
+Bindings also enable **circular references** between resources —
+Worker A can hold a typed client to Worker B and vice versa — which
+plain props, a directed acyclic graph, can't express.
+
+See [Bindings](/concepts/binding) for event sources, sinks, and the
+deploy-time mechanics.
+
+## Stacks and stages
+
+A **Stack** is a collection of resources deployed together. Every
+deploy targets a **stage** — an isolated environment like `dev`,
+`prod`, or `pr-42`:
+
+```sh
+alchemy deploy              # deploys to dev_$USER by default
+alchemy deploy --stage prod # deploys to prod
+```
+
+Each stage has its own resources with distinct physical names, so
+environments never interfere with each other.
+
+## Providers
+
+A **Provider** teaches Alchemy how to manage a resource type. Behind
+every resource is a provider implementing four lifecycle operations:
+
+- **`read`** — look up the resource's live state in the cloud. It
+  tells the engine whether the resource exists and whether we own
+  it.
+- **`diff`** — compare the desired props against the previous ones
+  and decide whether the change is a no-op, an in-place update, or a
+  full replacement.
+- **`reconcile`** — make the cloud match the desired state. One flow
+  handles first-time creation, updates, and adoption: observe the
+  live state, create the resource if it's missing, sync any drifted
+  fields, and return the output attributes.
+- **`delete`** — remove the resource. Idempotent, so "already gone"
+  counts as success.
+
+The engine drives these in a **plan → apply** loop: `read` and
+`diff` build the plan, then `reconcile` and `delete` apply it in
+dependency order.
+
+Providers are Effect Layers, wired into a Stack with
+`Cloudflare.providers()` or `AWS.providers()`:
+
+```typescript
+Alchemy.Stack(
+  "App",
+  { providers: Cloudflare.providers() } /* ... */,
+);
+```
+
+The type system checks the wiring — using a Cloudflare resource
+without `Cloudflare.providers()`, or providing the wrong cloud's
+providers, is a compile-time error. To support a new cloud or
+third-party API, see [Writing a Custom Resource
+Provider](/guides/custom-provider).
+
+## Two styles: Effect and Async
+
+Alchemy supports two styles for writing Workers:
+
+**Effect style** — your runtime code is an Effect, with typed errors,
+composable retries, and bindings resolved through the Effect system:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    return {
+      fetch: Effect.gen(function* () {
+        // Effect-native runtime code
+      }),
+    };
+  }),
+);
+```
+
+**Async style** — your runtime code is a standard `async fetch`
+handler. Bindings are passed as props and you get a typed `env`
+object via `InferEnv`:
+
+```typescript
+// alchemy.run.ts
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket },
+});
+```
+
+```typescript
+// src/worker.ts
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(request: Request, env: WorkerEnv) {
+    const object = await env.Bucket.get("key");
+    return new Response(object?.body ?? null);
+  },
+};
+```
+
+Both styles use the same infrastructure declarations, the same CLI,
+and the same deployment pipeline. Choose whichever fits your team.
+
+## What's next
+
+- [Get Started](/getting-started) — install and deploy in two minutes
+- [Tutorial](/tutorial/part-1) — hands-on walkthrough from zero to
+  CI/CD
+- [Migrating from v1](/guides/migrating-from-v1) — upgrade from
+  Alchemy v1

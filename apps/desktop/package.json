@@ -1,31 +1,33 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.0.21",
+  "version": "0.0.24",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
-    "dev:bundle": "tsdown --watch",
-    "dev:electron": "node scripts/dev-electron.mjs",
-    "build": "tsdown",
+    "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/ssh": "workspace:*",
+    "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "electron": "40.6.0",
+    "electron": "41.5.0",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "effect-acp": "workspace:*",
-    "tsdown": "catalog:",
-    "typescript": "catalog:",
+    "cross-env": "^10.1.0",
+    "electron-builder": "26.8.1",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "productName": "T3 Code (Alpha)"

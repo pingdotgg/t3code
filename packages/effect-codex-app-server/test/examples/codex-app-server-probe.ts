@@ -45,17 +45,17 @@ const program = Effect.gen(function* () {
         optOutNotificationMethods: null,
       },
     });
-    yield* Console.log("initialize", JSON.stringify(initialized, null, 2));
+    yield* Console.log("initialize", initialized);
 
     yield* client.notify("initialized", undefined);
 
     const account = yield* client.request("account/read", {});
-    yield* Console.log("account/read", JSON.stringify(account, null, 2));
+    yield* Console.log("account/read", account);
 
     const skills = yield* client.request("skills/list", {
       cwds: [process.cwd()],
     });
-    yield* Console.log("skills/list", JSON.stringify(skills, null, 2));
+    yield* Console.log("skills/list", skills);
   }).pipe(Effect.provide(codexLayer));
 });
 

@@ -1,5 +1,9 @@
-import { Effect, FileSystem, Path, Random, Schema } from "effect";
-import * as Crypto from "node:crypto";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { homedir } from "node:os";
 import { ServerConfig } from "../config.ts";
 
@@ -19,14 +23,17 @@ class IdentifyUserError extends Schema.TaggedErrorClass<IdentifyUserError>()("Id
 }) {}
 
 const hash = (value: string) =>
-  Effect.try({
-    try: () => Crypto.createHash("sha256").update(value).digest("hex"),
-    catch: (error) =>
-      new IdentifyUserError({
-        message: "Failed to hash identifier",
-        cause: error,
-      }),
-  });
+  Crypto.Crypto.pipe(
+    Effect.flatMap((crypto) => crypto.digest("SHA-256", new TextEncoder().encode(value))),
+    Effect.map(Encoding.encodeHex),
+    Effect.mapError(
+      (cause) =>
+        new IdentifyUserError({
+          message: "Failed to hash identifier",
+          cause,
+        }),
+    ),
+  );
 
 const getCodexAccountId = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -60,11 +67,10 @@ const upsertAnonymousId = Effect.gen(function* () {
 
   const anonymousId = yield* fileSystem.readFileString(anonymousIdPath).pipe(
     Effect.catch(() =>
-      Effect.gen(function* () {
-        const randomId = yield* Random.nextUUIDv4;
-        yield* fileSystem.writeFileString(anonymousIdPath, randomId);
-        return randomId;
-      }),
+      Crypto.Crypto.pipe(
+        Effect.flatMap((crypto) => crypto.randomUUIDv4),
+        Effect.tap((randomId) => fileSystem.writeFileString(anonymousIdPath, randomId)),
+      ),
     ),
   );
 

@@ -3,15 +3,18 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EnvironmentId,
-  type GitStatusResult,
+  type VcsStatusResult,
   ProjectId,
   type OrchestrationShellStreamItem,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
-  type TerminalEvent,
+  type TerminalAttachStreamEvent,
+  type TerminalMetadataStreamEvent,
   ThreadId,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 
@@ -30,21 +33,25 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
   };
 }
 
-const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
+const terminalAttachListeners = new Set<(event: TerminalAttachStreamEvent) => void>();
+const terminalMetadataListeners = new Set<(event: TerminalMetadataStreamEvent) => void>();
 const shellStreamListeners = new Set<(event: OrchestrationShellStreamItem) => void>();
-const gitStatusListeners = new Set<(event: GitStatusResult) => void>();
+const gitStatusListeners = new Set<(event: VcsStatusResult) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
   terminal: {
     open: vi.fn(),
+    attach: vi.fn((_input: unknown, listener: (event: TerminalAttachStreamEvent) => void) =>
+      registerListener(terminalAttachListeners, listener),
+    ),
     write: vi.fn(),
     resize: vi.fn(),
     clear: vi.fn(),
     restart: vi.fn(),
     close: vi.fn(),
-    onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
-      registerListener(terminalEventListeners, listener),
+    onMetadata: vi.fn((listener: (event: TerminalMetadataStreamEvent) => void) =>
+      registerListener(terminalMetadataListeners, listener),
     ),
   },
   projects: {
@@ -54,28 +61,39 @@ const rpcClientMock = {
   filesystem: {
     browse: vi.fn(),
   },
+  sourceControl: {
+    lookupRepository: vi.fn(),
+    cloneRepository: vi.fn(),
+    publishRepository: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
-  git: {
+  vcs: {
     pull: vi.fn(),
     refreshStatus: vi.fn(),
-    onStatus: vi.fn((input: { cwd: string }, listener: (event: GitStatusResult) => void) =>
+    onStatus: vi.fn((input: { cwd: string }, listener: (event: VcsStatusResult) => void) =>
       registerListener(gitStatusListeners, listener),
     ),
-    runStackedAction: vi.fn(),
-    listBranches: vi.fn(),
+    listRefs: vi.fn(),
     createWorktree: vi.fn(),
     removeWorktree: vi.fn(),
-    createBranch: vi.fn(),
-    checkout: vi.fn(),
+    createRef: vi.fn(),
+    switchRef: vi.fn(),
     init: vi.fn(),
+  },
+  git: {
+    runStackedAction: vi.fn(),
     resolvePullRequest: vi.fn(),
     preparePullRequestThread: vi.fn(),
+  },
+  review: {
+    getDiffPreview: vi.fn(),
   },
   server: {
     getConfig: vi.fn(),
     refreshProviders: vi.fn(),
+    updateProvider: vi.fn(),
     upsertKeybinding: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
@@ -116,6 +134,7 @@ vi.mock("./environments/runtime", () => ({
   resetEnvironmentServiceForTests: vi.fn(),
   resetSavedEnvironmentRegistryStoreForTests: vi.fn(),
   resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
+  subscribeEnvironmentConnections: vi.fn(() => () => undefined),
 }));
 
 vi.mock("./contextMenuFallback", () => ({
@@ -169,16 +188,47 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     getSavedEnvironmentSecret: async () => null,
     setSavedEnvironmentSecret: async () => true,
     removeSavedEnvironmentSecret: async () => undefined,
+    discoverSshHosts: async () => [],
+    ensureSshEnvironment: async () => {
+      throw new Error("ensureSshEnvironment not implemented in test");
+    },
+    disconnectSshEnvironment: async () => undefined,
+    fetchSshEnvironmentDescriptor: async () => {
+      throw new Error("fetchSshEnvironmentDescriptor not implemented in test");
+    },
+    bootstrapSshBearerSession: async () => {
+      throw new Error("bootstrapSshBearerSession not implemented in test");
+    },
+    fetchSshSessionState: async () => {
+      throw new Error("fetchSshSessionState not implemented in test");
+    },
+    issueSshWebSocketTicket: async () => {
+      throw new Error("issueSshWebSocketTicket not implemented in test");
+    },
+    onSshPasswordPrompt: () => () => undefined,
+    resolveSshPasswordPrompt: async () => undefined,
     getServerExposureState: async () => ({
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
     }),
     setServerExposureMode: async () => ({
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
     }),
+    setTailscaleServeEnabled: async (input) => ({
+      mode: "local-only",
+      endpointUrl: null,
+      advertisedHost: null,
+      tailscaleServeEnabled: input.enabled,
+      tailscaleServePort: input.port ?? 443,
+    }),
+    getAdvertisedEndpoints: async () => [],
     pickFolder: async () => null,
     confirm: async () => true,
     setTheme: async () => undefined,
@@ -207,7 +257,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
 
 const defaultProviders: ReadonlyArray<ServerProvider> = [
   {
-    provider: "codex",
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -238,7 +289,7 @@ const baseServerConfig: ServerConfig = {
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
-    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-access-token"],
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",
@@ -256,11 +307,11 @@ const baseServerConfig: ServerConfig = {
   settings: DEFAULT_SERVER_SETTINGS,
 };
 
-const baseGitStatus: GitStatusResult = {
+const baseGitStatus: VcsStatusResult = {
   isRepo: true,
-  hasOriginRemote: true,
-  isDefaultBranch: false,
-  branch: "feature/streamed",
+  hasPrimaryRemote: true,
+  isDefaultRef: false,
+  refName: "feature/streamed",
   hasWorkingTreeChanges: false,
   workingTree: { files: [], insertions: 0, deletions: 0 },
   hasUpstream: true,
@@ -273,7 +324,8 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   showContextMenuFallbackMock.mockReset();
-  terminalEventListeners.clear();
+  terminalAttachListeners.clear();
+  terminalMetadataListeners.clear();
   shellStreamListeners.clear();
   gitStatusListeners.clear();
   const testWindow = getWindowForTest();
@@ -301,24 +353,43 @@ describe("wsApi", () => {
     expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
   });
 
-  it("forwards terminal and shell stream events", async () => {
+  it("forwards terminal attach, metadata, and shell stream events", async () => {
     const { createEnvironmentApi } = await import("./environmentApi");
 
     const api = createEnvironmentApi(rpcClientMock as never);
-    const onTerminalEvent = vi.fn();
+    const onTerminalAttachEvent = vi.fn();
+    const onTerminalMetadataEvent = vi.fn();
     const onShellEvent = vi.fn();
 
-    api.terminal.onEvent(onTerminalEvent);
+    api.terminal.attach({ threadId: "thread-1", terminalId: "terminal-1" }, onTerminalAttachEvent);
+    api.terminal.onMetadata(onTerminalMetadataEvent);
     api.orchestration.subscribeShell(onShellEvent);
 
-    const terminalEvent = {
+    const terminalAttachEvent = {
       threadId: "thread-1",
       terminalId: "terminal-1",
-      createdAt: "2026-02-24T00:00:00.000Z",
       type: "output",
       data: "hello",
-    } as const;
-    emitEvent(terminalEventListeners, terminalEvent);
+    } satisfies TerminalAttachStreamEvent;
+    emitEvent(terminalAttachListeners, terminalAttachEvent);
+
+    const terminalMetadataEvent = {
+      type: "upsert",
+      terminal: {
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        cwd: "/tmp/workspace",
+        worktreePath: null,
+        status: "running",
+        pid: 123,
+        exitCode: null,
+        exitSignal: null,
+        hasRunningSubprocess: true,
+        label: "terminal-1",
+        updatedAt: "2026-02-24T00:00:00.000Z",
+      },
+    } satisfies TerminalMetadataStreamEvent;
+    emitEvent(terminalMetadataListeners, terminalMetadataEvent);
 
     const shellEvent = {
       kind: "project-upserted" as const,
@@ -328,7 +399,7 @@ describe("wsApi", () => {
         title: "Project",
         workspaceRoot: "/tmp/workspace",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         scripts: [],
@@ -338,7 +409,8 @@ describe("wsApi", () => {
     } satisfies OrchestrationShellStreamItem;
     emitEvent(shellStreamListeners, shellEvent);
 
-    expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
+    expect(onTerminalAttachEvent).toHaveBeenCalledWith(terminalAttachEvent);
+    expect(onTerminalMetadataEvent).toHaveBeenCalledWith(terminalMetadataEvent);
     expect(onShellEvent).toHaveBeenCalledWith(shellEvent);
   });
 
@@ -348,24 +420,24 @@ describe("wsApi", () => {
     const api = createEnvironmentApi(rpcClientMock as never);
     const onStatus = vi.fn();
 
-    api.git.onStatus({ cwd: "/repo" }, onStatus);
+    api.vcs.onStatus({ cwd: "/repo" }, onStatus);
 
     const gitStatus = baseGitStatus;
     emitEvent(gitStatusListeners, gitStatus);
 
-    expect(rpcClientMock.git.onStatus).toHaveBeenCalledWith({ cwd: "/repo" }, onStatus, undefined);
+    expect(rpcClientMock.vcs.onStatus).toHaveBeenCalledWith({ cwd: "/repo" }, onStatus, undefined);
     expect(onStatus).toHaveBeenCalledWith(gitStatus);
   });
 
   it("forwards git status refreshes directly to the RPC client", async () => {
-    rpcClientMock.git.refreshStatus.mockResolvedValue(baseGitStatus);
+    rpcClientMock.vcs.refreshStatus.mockResolvedValue(baseGitStatus);
     const { createEnvironmentApi } = await import("./environmentApi");
 
     const api = createEnvironmentApi(rpcClientMock as never);
 
-    await api.git.refreshStatus({ cwd: "/repo" });
+    await api.vcs.refreshStatus({ cwd: "/repo" });
 
-    expect(rpcClientMock.git.refreshStatus).toHaveBeenCalledWith({ cwd: "/repo" });
+    expect(rpcClientMock.vcs.refreshStatus).toHaveBeenCalledWith({ cwd: "/repo" });
   });
 
   it("forwards shell stream subscription options to the RPC client", async () => {
@@ -394,7 +466,7 @@ describe("wsApi", () => {
       title: "Project",
       workspaceRoot: "/tmp/project",
       defaultModelSelection: {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
       createdAt: "2026-02-24T00:00:00.000Z",
@@ -473,6 +545,34 @@ describe("wsApi", () => {
     expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
   });
 
+  it("forwards provider updates directly to the RPC client", async () => {
+    const nextProviders: ReadonlyArray<ServerProvider> = [
+      {
+        ...defaultProviders[0]!,
+        updateState: {
+          status: "succeeded",
+          startedAt: "2026-01-03T00:00:00.000Z",
+          finishedAt: "2026-01-03T00:00:01.000Z",
+          message: "Provider updated.",
+          output: null,
+        },
+      },
+    ];
+    rpcClientMock.server.updateProvider.mockResolvedValue({ providers: nextProviders });
+    const { createLocalApi } = await import("./localApi");
+
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(
+      api.server.updateProvider({ provider: ProviderDriverKind.make("codex") }),
+    ).resolves.toEqual({
+      providers: nextProviders,
+    });
+    expect(rpcClientMock.server.updateProvider).toHaveBeenCalledWith({
+      provider: ProviderDriverKind.make("codex"),
+    });
+  });
+
   it("forwards server settings updates directly to the RPC client", async () => {
     const nextSettings = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -532,14 +632,18 @@ describe("wsApi", () => {
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      dismissedProviderUpdateNotificationKeys: [],
+      diffIgnoreWhitespace: true,
       diffWordWrap: true,
       favorites: [],
+      providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      sidebarThreadPreviewCount: 6,
       timestampFormat: "24-hour" as const,
     };
     const getClientSettings = vi.fn().mockResolvedValue({
@@ -591,14 +695,18 @@ describe("wsApi", () => {
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      dismissedProviderUpdateNotificationKeys: [],
+      diffIgnoreWhitespace: true,
       diffWordWrap: true,
       favorites: [],
+      providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      sidebarThreadPreviewCount: 6,
       timestampFormat: "24-hour" as const,
     };
 

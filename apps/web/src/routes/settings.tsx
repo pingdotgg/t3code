@@ -1,6 +1,13 @@
 import { RotateCcwIcon } from "lucide-react";
-import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import {
+  Outlet,
+  createFileRoute,
+  redirect,
+  useCanGoBack,
+  useLocation,
+  useNavigate,
+} from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { Button } from "../components/ui/button";
@@ -25,16 +32,25 @@ function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
 
 function SettingsContentLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const canGoBack = useCanGoBack();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showRestoreDefaults = location.pathname === "/settings/general";
   const handleRestored = () => setRestoreSignal((value) => value + 1);
+  const navigateBackWithinApp = useCallback(() => {
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, navigate]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        window.history.back();
+        navigateBackWithinApp();
       }
     };
 
@@ -42,7 +58,7 @@ function SettingsContentLayout() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [navigateBackWithinApp]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -88,7 +104,10 @@ function SettingsRouteLayout() {
 
 export const Route = createFileRoute("/settings")({
   beforeLoad: async ({ context, location }) => {
-    if (context.authGateState.status !== "authenticated") {
+    if (
+      context.authGateState.status !== "authenticated" &&
+      context.authGateState.status !== "hosted-static"
+    ) {
       throw redirect({ to: "/pair", replace: true });
     }
 

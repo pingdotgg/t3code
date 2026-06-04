@@ -11,7 +11,8 @@ import type {
   ProjectId,
   TurnId,
   MessageId,
-  ProviderKind,
+  ProviderDriverKind,
+  ProviderInstanceId,
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
@@ -22,7 +23,7 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
-export const DEFAULT_THREAD_TERMINAL_ID = "default";
+export const DEFAULT_THREAD_TERMINAL_ID = "term-1";
 export const MAX_TERMINALS_PER_GROUP = 4;
 export type ProjectScript = ContractProjectScript;
 
@@ -158,7 +159,8 @@ export interface SidebarThreadSummary {
 }
 
 export interface ThreadSession {
-  provider: ProviderKind;
+  provider: ProviderDriverKind;
+  providerInstanceId?: ProviderInstanceId | undefined;
   status: SessionPhase | "error" | "closed";
   activeTurnId?: TurnId | undefined;
   createdAt: string;

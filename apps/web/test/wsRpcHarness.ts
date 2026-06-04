@@ -1,5 +1,9 @@
-import { Effect, Exit, PubSub, Scope, Stream } from "effect";
 import { ORCHESTRATION_WS_METHODS, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as PubSub from "effect/PubSub";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 type RpcServerInstance = RpcServer.RpcServer<any>;
@@ -26,10 +30,13 @@ const STREAM_METHODS = new Set<string>([
   ORCHESTRATION_WS_METHODS.subscribeShell,
   ORCHESTRATION_WS_METHODS.subscribeThread,
   WS_METHODS.gitRunStackedAction,
-  WS_METHODS.subscribeGitStatus,
+  WS_METHODS.terminalAttach,
+  WS_METHODS.subscribeVcsStatus,
   WS_METHODS.subscribeTerminalEvents,
+  WS_METHODS.subscribeTerminalMetadata,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeAuthAccess,
 ]);
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());

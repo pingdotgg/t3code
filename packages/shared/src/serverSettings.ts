@@ -1,10 +1,12 @@
 import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
-import { Schema } from "effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection } from "./model.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
@@ -33,18 +35,17 @@ export function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  try {
-    const decoded = Schema.decodeUnknownSync(ServerSettingsJson)(raw);
-    return extractPersistedServerObservabilitySettings(decoded);
-  } catch {
-    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  const decoded = decodeServerSettingsJson(raw);
+  if (Option.isSome(decoded)) {
+    return extractPersistedServerObservabilitySettings(decoded.value);
   }
+  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
 function shouldReplaceTextGenerationModelSelection(
   patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
 ): boolean {
-  return Boolean(patch && (patch.provider !== undefined || patch.model !== undefined));
+  return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
 }
 
 function mergeModelSelectionOptionsById(input: {
@@ -75,12 +76,20 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const next = deepMerge(current, patch);
+  const { automaticGitFetchInterval, ...patchForMerge } = patch;
+  const next = deepMerge(current, patchForMerge);
+  const nextWithReplacements = {
+    ...next,
+    ...(patch.providerInstances !== undefined
+      ? { providerInstances: patch.providerInstances }
+      : {}),
+    ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+  };
   if (!selectionPatch) {
-    return next;
+    return nextWithReplacements;
   }
 
-  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
+  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
   const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
   const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
     ? selectionPatch.options
@@ -90,7 +99,7 @@ export function applyServerSettingsPatch(
       });
 
   return {
-    ...next,
-    textGenerationModelSelection: createModelSelection(provider, model, options),
+    ...nextWithReplacements,
+    textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
 }

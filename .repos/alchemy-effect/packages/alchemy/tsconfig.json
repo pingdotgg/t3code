@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["package.json", "src/**/*.ts", "src/**/*.tsx", "src/**/*.json"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    // Solid is the default JSX runtime in this package; React files opt in per-file.
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/solid",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"]
+  }
+}
