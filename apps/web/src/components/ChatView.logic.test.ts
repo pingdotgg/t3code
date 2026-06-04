@@ -18,12 +18,15 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  resolveProviderRefreshTarget,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const codexDriver = ProviderDriverKind.make("codex");
+const claudeDriver = ProviderDriverKind.make("claudeAgent");
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -71,6 +74,47 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("resolveProviderRefreshTarget", () => {
+  it("uses the active provider instance when it matches the target driver", () => {
+    expect(
+      resolveProviderRefreshTarget({
+        activeProviderStatus: {
+          driver: codexDriver,
+          instanceId: ProviderInstanceId.make("codex_work"),
+        },
+        selectedProvider: codexDriver,
+        targetDriver: codexDriver,
+      }),
+    ).toEqual({
+      driver: codexDriver,
+      instanceId: ProviderInstanceId.make("codex_work"),
+    });
+  });
+
+  it("falls back to the selected provider default instance when active status is stale", () => {
+    expect(
+      resolveProviderRefreshTarget({
+        activeProviderStatus: null,
+        selectedProvider: codexDriver,
+        targetDriver: codexDriver,
+      }),
+    ).toEqual({
+      driver: codexDriver,
+      instanceId: ProviderInstanceId.make("codex"),
+    });
+  });
+
+  it("does not target non-matching providers", () => {
+    expect(
+      resolveProviderRefreshTarget({
+        activeProviderStatus: null,
+        selectedProvider: claudeDriver,
+        targetDriver: codexDriver,
+      }),
+    ).toBeNull();
   });
 });
 

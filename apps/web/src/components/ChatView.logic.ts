@@ -1,10 +1,13 @@
 import {
+  defaultInstanceIdForDriver,
   type EnvironmentId,
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ScopedThreadRef,
+  type ServerProvider,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -70,6 +73,21 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
     input.serverThread.environmentId === input.routeThreadRef.environmentId &&
     input.serverThread.id === input.targetThreadId,
   );
+}
+
+export function resolveProviderRefreshTarget(input: {
+  activeProviderStatus: Pick<ServerProvider, "driver" | "instanceId"> | null | undefined;
+  selectedProvider: ProviderDriverKind;
+  targetDriver: ProviderDriverKind;
+}): { readonly instanceId: ProviderInstanceId; readonly driver: ProviderDriverKind } | null {
+  const driver = input.activeProviderStatus?.driver ?? input.selectedProvider;
+  if (driver !== input.targetDriver) {
+    return null;
+  }
+  return {
+    driver,
+    instanceId: input.activeProviderStatus?.instanceId ?? defaultInstanceIdForDriver(driver),
+  };
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

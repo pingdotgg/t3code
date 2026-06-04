@@ -171,6 +171,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveProviderRefreshTarget,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -1863,12 +1864,14 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   useEffect(() => {
     if (!activeWorkspaceRoot) return;
-    const refreshProviderInstanceId =
-      activeProviderInstanceId ?? defaultInstanceIdForDriver(selectedProvider);
-    const refreshProviderDriver = activeProviderStatus?.driver ?? selectedProvider;
-    if (refreshProviderDriver !== CODEX_PROVIDER_DRIVER) return;
+    const refreshTarget = resolveProviderRefreshTarget({
+      activeProviderStatus,
+      selectedProvider,
+      targetDriver: CODEX_PROVIDER_DRIVER,
+    });
+    if (!refreshTarget) return;
 
-    const refreshKey = `${environmentId}\u0000${refreshProviderInstanceId}\u0000${activeWorkspaceRoot}`;
+    const refreshKey = `${environmentId}\u0000${refreshTarget.instanceId}\u0000${activeWorkspaceRoot}`;
     if (codexWorkspaceProviderRefreshKeyRef.current === refreshKey) return;
 
     const api = readLocalApi();
@@ -1876,15 +1879,18 @@ export default function ChatView(props: ChatViewProps) {
     codexWorkspaceProviderRefreshKeyRef.current = refreshKey;
     void api.server
       .refreshProviders({
-        instanceId: refreshProviderInstanceId,
+        instanceId: refreshTarget.instanceId,
         cwd: activeWorkspaceRoot,
       })
       .catch((error: unknown) => {
+        if (codexWorkspaceProviderRefreshKeyRef.current === refreshKey) {
+          codexWorkspaceProviderRefreshKeyRef.current = null;
+        }
         console.warn("Failed to refresh Codex provider for active workspace", error);
       });
   }, [
-    activeProviderInstanceId,
     activeProviderStatus?.driver,
+    activeProviderStatus?.instanceId,
     activeWorkspaceRoot,
     environmentId,
     selectedProvider,
