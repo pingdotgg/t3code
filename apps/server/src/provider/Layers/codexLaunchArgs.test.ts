@@ -26,4 +26,10 @@ describe("codexExecLaunchArgs", () => {
       ["--strict-config", "--enable", "foo", "--config", 'model="gpt-5"'],
     );
   });
+
+  it("does not pair value-taking flags with adjacent flags", () => {
+    assert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
+      "--strict-config",
+    ]);
+  });
 });

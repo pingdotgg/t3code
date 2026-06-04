@@ -262,9 +262,11 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
     } else if (arg === "--config" || arg === "-c" || arg === "--enable" || arg === "--disable") {
       execArgs.push(arg);
       const value = args[index + 1];
-      if (value !== undefined) {
+      if (value !== undefined && !value.startsWith("-")) {
         execArgs.push(value);
         index++;
+      } else {
+        execArgs.pop();
       }
     } else if (arg.startsWith("--enable=") || arg.startsWith("--disable=")) {
       execArgs.push(arg);
