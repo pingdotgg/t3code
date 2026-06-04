@@ -1,24 +1,10 @@
-import { useRouter } from "expo-router";
-import { SymbolView } from "expo-symbols";
+import { Stack, useRouter } from "expo-router";
 import { TextInputWrapper } from "expo-paste-input";
-import {
-  type ComponentProps,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   InteractionManager,
-  Pressable,
-  ScrollView,
   View,
   useColorScheme,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   type TextInput as RNTextInput,
 } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
@@ -27,9 +13,15 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EnvironmentId, type ModelSelection } from "@t3tools/contracts";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppTextInput as TextInput } from "../../components/AppText";
+import {
+  ComposerToolbarButton,
+  ComposerToolbarRow,
+  ComposerToolbarScroller,
+  ComposerToolbarTrigger,
+} from "../../components/ComposerToolbarTrigger";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -37,12 +29,8 @@ import { buildThreadRoutePath } from "../../lib/routes";
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
-import { NewTaskSheetHeader } from "./NewTaskSheetHeader";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useProjectActions } from "./use-project-actions";
-
-const TOOLBAR_FADE_WIDTH = 18;
-const TOOLBAR_SCROLL_EPSILON = 4;
 
 function withModelSelectionOption(
   selection: ModelSelection,
@@ -72,45 +60,6 @@ function formatWorkspaceLabel(input: {
   return branchName ? `Current · ${branchName}` : "Current checkout";
 }
 
-function NewTaskToolbarTrigger(props: {
-  readonly icon?: ComponentProps<typeof SymbolView>["name"];
-  readonly iconNode?: ReactNode;
-  readonly label?: string;
-  readonly accessibilityLabel?: string;
-  readonly onPress?: () => void;
-  readonly showChevron?: boolean;
-}) {
-  const iconColor = useThemeColor("--color-icon");
-
-  return (
-    <Pressable
-      accessibilityLabel={props.accessibilityLabel ?? props.label}
-      accessibilityRole="button"
-      onPress={props.onPress}
-      className="h-11 flex-row items-center justify-center gap-2 rounded-full bg-subtle px-3.5 active:opacity-70"
-      style={{ maxWidth: 172 }}
-    >
-      {props.iconNode ? (
-        <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
-      ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconColor} type="monochrome" />
-      ) : null}
-      {props.label ? (
-        <Text
-          className="shrink text-[13px] font-t3-bold text-foreground"
-          ellipsizeMode="tail"
-          numberOfLines={1}
-        >
-          {props.label}
-        </Text>
-      ) : null}
-      {props.showChevron === false ? null : (
-        <SymbolView name="chevron.down" size={11} tintColor={iconColor} type="monochrome" />
-      )}
-    </Pressable>
-  );
-}
-
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -127,11 +76,6 @@ export function NewTaskDraftScreen(props: {
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { logicalProjects, selectedProject, setProject } = flow;
   const promptInputRef = useRef<RNTextInput>(null);
-  const [toolbarMetrics, setToolbarMetrics] = useState({
-    contentWidth: 0,
-    offsetX: 0,
-    viewportWidth: 0,
-  });
 
   const borderColor = useThemeColor("--color-border");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
@@ -382,31 +326,6 @@ export function NewTaskDraftScreen(props: {
       }),
     [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
   );
-  const toolbarScrollEdges = useMemo(() => {
-    const maxOffset = Math.max(0, toolbarMetrics.contentWidth - toolbarMetrics.viewportWidth);
-    return {
-      showLeftFade: toolbarMetrics.offsetX > TOOLBAR_SCROLL_EPSILON,
-      showRightFade: toolbarMetrics.offsetX < maxOffset - TOOLBAR_SCROLL_EPSILON,
-    };
-  }, [toolbarMetrics]);
-  const handleToolbarLayout = useCallback((event: LayoutChangeEvent) => {
-    const viewportWidth = event.nativeEvent.layout.width;
-    setToolbarMetrics((current) =>
-      current.viewportWidth === viewportWidth ? current : { ...current, viewportWidth },
-    );
-  }, []);
-  const handleToolbarContentSizeChange = useCallback((contentWidth: number) => {
-    setToolbarMetrics((current) =>
-      current.contentWidth === contentWidth ? current : { ...current, contentWidth },
-    );
-  }, []);
-  const handleToolbarScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    setToolbarMetrics((current) =>
-      Math.abs(current.offsetX - offsetX) < 1 ? current : { ...current, offsetX },
-    );
-  }, []);
-
   function handleModelMenuAction(event: string) {
     if (!event.startsWith("model:")) {
       return;
@@ -536,6 +455,8 @@ export function NewTaskDraftScreen(props: {
       });
 
       if (createdThread) {
+        flow.setPrompt("");
+        flow.clearAttachments();
         router.replace(buildThreadRoutePath(createdThread));
       }
     } finally {
@@ -546,21 +467,14 @@ export function NewTaskDraftScreen(props: {
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <NewTaskSheetHeader title="Loading task" />
+        <Stack.Screen options={{ title: "Loading task" }} />
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-sheet">
-      <NewTaskSheetHeader
-        title={selectedProject.title}
-        control={
-          flow.logicalProjects.length > 1
-            ? { icon: "chevron.left", onPress: () => router.back() }
-            : undefined
-        }
-      />
+      <Stack.Screen options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
         <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
@@ -600,101 +514,65 @@ export function NewTaskDraftScreen(props: {
               />
             </View>
           ) : null}
-          <View className="flex-row items-center gap-1.5 px-1.5 pt-2">
-            <View className="min-w-0 flex-1" style={{ position: "relative" }}>
-              <ScrollView
-                horizontal
-                keyboardShouldPersistTaps="always"
-                onContentSizeChange={handleToolbarContentSizeChange}
-                onLayout={handleToolbarLayout}
-                onScroll={handleToolbarScroll}
-                scrollEventThrottle={16}
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{
-                  alignItems: "center",
-                  gap: 8,
-                  paddingLeft: 0,
-                  paddingRight: 1,
-                }}
+          <ComposerToolbarRow paddingBottom={controlsBottomPadding} paddingHorizontal={6}>
+            <ComposerToolbarScroller
+              fadeOpaque={sheetFadeOpaque}
+              fadeTransparent={sheetFadeTransparent}
+            >
+              <ComposerToolbarButton
+                icon="plus"
+                onPress={() => void handlePickImages()}
+                showChevron={false}
+              />
+              <ControlPillMenu
+                actions={modelMenuActions}
+                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
               >
-                <ControlPill icon="plus" onPress={() => void handlePickImages()} />
-                <ControlPillMenu
-                  actions={modelMenuActions}
-                  onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-                >
-                  <NewTaskToolbarTrigger
-                    accessibilityLabel="Model"
-                    iconNode={
-                      <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-                    }
-                    label={flow.selectedModelOption?.label ?? "Model"}
-                  />
-                </ControlPillMenu>
-                <ControlPillMenu
-                  actions={optionsMenuActions}
-                  onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-                >
-                  <NewTaskToolbarTrigger
-                    accessibilityLabel="Configuration"
-                    icon="slider.horizontal.3"
-                    label={configurationLabel}
-                  />
-                </ControlPillMenu>
-                <ControlPillMenu
-                  actions={environmentMenuActions}
-                  onPressAction={({ nativeEvent }) =>
-                    handleEnvironmentMenuAction(nativeEvent.event)
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Model"
+                  iconNode={
+                    <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
                   }
-                >
-                  <NewTaskToolbarTrigger
-                    accessibilityLabel="Environment"
-                    icon="desktopcomputer"
-                    label={selectedEnvironmentLabel}
-                  />
-                </ControlPillMenu>
-                <ControlPillMenu
-                  actions={workspaceMenuActions}
-                  onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-                >
-                  <NewTaskToolbarTrigger
-                    accessibilityLabel="Workspace"
-                    icon="point.topleft.down.curvedto.point.bottomright.up"
-                    label={workspaceLabel}
-                  />
-                </ControlPillMenu>
-              </ScrollView>
-              {toolbarScrollEdges.showLeftFade ? (
-                <View
-                  pointerEvents="none"
-                  style={{
-                    bottom: 0,
-                    experimental_backgroundImage: `linear-gradient(to right, ${sheetFadeOpaque} 0%, ${sheetFadeTransparent} 100%)`,
-                    left: 0,
-                    position: "absolute",
-                    top: 0,
-                    width: TOOLBAR_FADE_WIDTH,
-                  }}
+                  label={flow.selectedModelOption?.label ?? "Model"}
                 />
-              ) : null}
-              {toolbarScrollEdges.showRightFade ? (
-                <View
-                  pointerEvents="none"
-                  style={{
-                    bottom: 0,
-                    experimental_backgroundImage: `linear-gradient(to right, ${sheetFadeTransparent} 0%, ${sheetFadeOpaque} 100%)`,
-                    position: "absolute",
-                    right: 0,
-                    top: 0,
-                    width: TOOLBAR_FADE_WIDTH,
-                  }}
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={optionsMenuActions}
+                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Configuration"
+                  icon="slider.horizontal.3"
+                  label={configurationLabel}
                 />
-              ) : null}
-            </View>
-            <ControlPill
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={environmentMenuActions}
+                onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Environment"
+                  icon="desktopcomputer"
+                  label={selectedEnvironmentLabel}
+                />
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={workspaceMenuActions}
+                onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Workspace"
+                  icon="point.topleft.down.curvedto.point.bottomright.up"
+                  label={workspaceLabel}
+                />
+              </ControlPillMenu>
+            </ComposerToolbarScroller>
+            <ComposerToolbarButton
               accessibilityLabel={flow.submitting ? "Starting task" : "Start task"}
               icon="arrow.up"
               onPress={() => void handleStart()}
               variant="primary"
+              showChevron={false}
               disabled={
                 !flow.selectedProject ||
                 !flow.selectedModel ||
@@ -703,7 +581,7 @@ export function NewTaskDraftScreen(props: {
                 (flow.workspaceMode === "worktree" && !flow.selectedBranchName)
               }
             />
-          </View>
+          </ComposerToolbarRow>
         </View>
       </KeyboardAvoidingView>
     </View>

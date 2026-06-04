@@ -1,7 +1,6 @@
 import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Text as RNText, View, useColorScheme } from "react-native";
-import { useThemeColor } from "../lib/useThemeColor";
 
 import { buildThreadRoutePath } from "../lib/routes";
 import { useRemoteCatalog } from "../state/use-remote-catalog";
@@ -17,7 +16,7 @@ export default function HomeRouteScreen() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const isDark = useColorScheme() === "dark";
-  const iconColor = String(useThemeColor("--color-icon"));
+  const iconColor = isDark ? "#f5f5f5" : "#262626";
 
   return (
     <>

@@ -7,7 +7,7 @@ import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useVcsStatus, vcsStatusManager } from "../../state/use-vcs-status";
+import { useVcsStatus } from "../../state/use-vcs-status";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 
 import { EmptyState } from "../../components/EmptyState";
@@ -53,6 +53,10 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
+function OpeningThreadLoadingScreen() {
+  return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+}
+
 export function ThreadRouteScreen() {
   const { isLoadingSavedConnection, environmentStateById, pendingConnectionError } =
     useRemoteEnvironmentState();
@@ -70,7 +74,6 @@ export function ThreadRouteScreen() {
   const commands = useSelectedThreadCommands({
     refreshSelectedThreadGitStatus: gitActions.refreshSelectedThreadGitStatus,
   });
-  const refreshSelectedThread = commands.onRefresh;
   const router = useRouter();
   const params = useLocalSearchParams<{
     environmentId?: string | string[];
@@ -121,20 +124,6 @@ export function ThreadRouteScreen() {
     [selectedThread?.environmentId, selectedThreadCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
-
-  const handleRefreshGitStatus = useCallback(async () => {
-    if (!selectedThread) return;
-    await vcsStatusManager.refresh({
-      environmentId: selectedThread.environmentId,
-      cwd: selectedThreadCwd,
-    });
-  }, [selectedThread, selectedThreadCwd]);
-
-  /** Wraps thread refresh + git status refresh for pull-to-refresh */
-  const handleRefreshAll = useCallback(async () => {
-    await refreshSelectedThread();
-    await handleRefreshGitStatus();
-  }, [handleRefreshGitStatus, refreshSelectedThread]);
 
   const handleOpenDrawer = useCallback(() => {
     setDrawerVisible(true);
@@ -245,7 +234,7 @@ export function ThreadRouteScreen() {
   );
 
   if (!environmentId || !threadId) {
-    return <LoadingScreen message="Opening thread…" />;
+    return <OpeningThreadLoadingScreen />;
   }
 
   if (!selectedThread) {
@@ -255,7 +244,7 @@ export function ThreadRouteScreen() {
       routeConnectionState === "reconnecting";
 
     if (stillHydrating) {
-      return <LoadingScreen message="Opening thread…" />;
+      return <OpeningThreadLoadingScreen />;
     }
 
     return (
@@ -278,7 +267,7 @@ export function ThreadRouteScreen() {
   }
 
   if (!selectedThreadDetail) {
-    return <LoadingScreen message="Opening thread…" />;
+    return <OpeningThreadLoadingScreen />;
   }
 
   const selectedThreadKey = scopedThreadKey(selectedThread.environmentId, selectedThread.id);
@@ -388,7 +377,6 @@ export function ThreadRouteScreen() {
           onPickDraftImages={composer.onPickDraftImages}
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
-          onRefresh={handleRefreshAll}
           serverConfig={serverConfig}
           onStopThread={commands.onStopThread}
           onSendMessage={composer.onSendMessage}

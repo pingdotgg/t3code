@@ -10,7 +10,7 @@ import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { useCSSVariable, useResolveClassNames } from "uniwind";
+import { useResolveClassNames } from "uniwind";
 
 import { LoadingScreen } from "../components/LoadingScreen";
 
@@ -26,7 +26,7 @@ import { useAgentNotificationNavigation } from "../features/agent-awareness/noti
 function AppNavigator() {
   const { isLoadingSavedConnection } = useRemoteEnvironmentState();
   const colorScheme = useColorScheme();
-  const statusBarBg = useCSSVariable("--color-status-bar");
+  const statusBarBg = colorScheme === "dark" ? "#0a0a0a" : "#f2f2f7";
   const sheetStyle = useResolveClassNames("bg-sheet");
   useAgentNotificationNavigation();
 

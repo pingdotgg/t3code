@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/expo";
-import { Link, Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
@@ -35,11 +35,11 @@ export default function SettingsEnvironmentsRouteScreen() {
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const hasEnvironments = connectedEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const accentColor = useThemeColor("--color-icon-muted");
-  const iconColor = useThemeColor("--color-icon");
 
   const handleToggle = useCallback((environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
@@ -50,25 +50,15 @@ export default function SettingsEnvironmentsRouteScreen() {
       <Stack.Screen
         options={{
           title: "Environments",
-          headerRight: () => (
-            <Link href="/settings/environment-new" asChild>
-              <Pressable
-                accessibilityLabel="Add environment"
-                accessibilityRole="button"
-                className="h-10 w-10 items-center justify-center active:opacity-70"
-              >
-                <SymbolView
-                  name="plus"
-                  size={18}
-                  tintColor={iconColor}
-                  type="monochrome"
-                  weight="semibold"
-                />
-              </Pressable>
-            </Link>
-          ),
         }}
       />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          icon="plus"
+          onPress={() => router.push("/settings/environment-new")}
+          separateBackground
+        />
+      </Stack.Toolbar>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

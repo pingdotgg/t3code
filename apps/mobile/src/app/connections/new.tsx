@@ -1,8 +1,7 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, View } from "react-native";
+import { Alert, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -31,7 +30,6 @@ export default function ConnectionsNewRouteScreen() {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [scannerLocked, setScannerLocked] = useState(false);
 
-  const textColor = useThemeColor("--color-icon");
   const placeholderColor = useThemeColor("--color-placeholder");
 
   const connectDisabled = isSubmitting || hostInput.trim().length === 0;
@@ -128,30 +126,21 @@ export default function ConnectionsNewRouteScreen() {
       <Stack.Screen
         options={{
           title: showScanner ? "Scan QR Code" : "Add Environment",
-          headerRight: () => (
-            <Pressable
-              accessibilityLabel={showScanner ? "Close QR scanner" : "Scan pairing QR code"}
-              accessibilityRole="button"
-              className="h-10 w-10 items-center justify-center active:opacity-70"
-              onPress={() => {
-                if (showScanner) {
-                  closeScanner();
-                } else {
-                  void openScanner();
-                }
-              }}
-            >
-              <SymbolView
-                name={showScanner ? "xmark" : "qrcode.viewfinder"}
-                size={showScanner ? 14 : 18}
-                tintColor={textColor}
-                type="monochrome"
-                weight="semibold"
-              />
-            </Pressable>
-          ),
         }}
       />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          icon={showScanner ? "xmark" : "qrcode.viewfinder"}
+          onPress={() => {
+            if (showScanner) {
+              closeScanner();
+            } else {
+              void openScanner();
+            }
+          }}
+          separateBackground
+        />
+      </Stack.Toolbar>
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
