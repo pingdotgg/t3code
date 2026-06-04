@@ -87,6 +87,10 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
+export function isSelectableProviderInstance(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled && entry.isAvailable && entry.status === "ready" && entry.models.length > 0;
+}
+
 /**
  * Resolve an entry's displayName with a tiered priority:
  *
@@ -219,16 +223,14 @@ export function resolveSelectableProviderInstance(
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
   if (instanceId === undefined) {
-    return deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.enabled && entry.isAvailable,
-    )?.instanceId;
+    return deriveProviderInstanceEntries(providers).find(isSelectableProviderInstance)?.instanceId;
   }
   const entries = deriveProviderInstanceEntries(providers);
   const requested = entries.find((entry) => entry.instanceId === instanceId);
-  if (requested && requested.enabled && requested.isAvailable) {
+  if (requested && isSelectableProviderInstance(requested)) {
     return instanceId;
   }
-  return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+  return entries.find(isSelectableProviderInstance)?.instanceId;
 }
 
 /**

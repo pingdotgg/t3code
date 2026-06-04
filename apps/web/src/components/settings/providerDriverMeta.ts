@@ -2,6 +2,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  HermesSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -58,6 +59,13 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("hermes"),
+    label: "Hermes",
+    icon: OpenCodeIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: HermesSettings,
   },
 ];
 

@@ -96,6 +96,7 @@ import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
+  isSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
@@ -645,7 +646,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const candidate of candidates) {
       if (!candidate) continue;
       const match = providerInstanceEntries.find(
-        (entry) => entry.instanceId === candidate && entry.enabled,
+        (entry) => entry.instanceId === candidate && isSelectableProviderInstance(entry),
       );
       if (match) {
         // When locked to a specific driver kind, ignore persisted instance
@@ -665,12 +666,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const byKind = providerInstanceEntries.find(
       (entry) =>
-        entry.enabled &&
+        isSelectableProviderInstance(entry) &&
         entry.driverKind === selectedProvider &&
         (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
     );
     if (byKind) return byKind.instanceId;
-    const anyEnabled = providerInstanceEntries.find((entry) => entry.enabled);
+    const anyEnabled = providerInstanceEntries.find(isSelectableProviderInstance);
     return (
       anyEnabled?.instanceId ??
       providerInstanceEntries[0]?.instanceId ??
