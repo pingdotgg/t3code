@@ -114,10 +114,11 @@ describe("makeManagedServerProvider", () => {
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
-            checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
-              Effect.flatMap(() => Deferred.await(releaseCheck)),
-              Effect.as(refreshedSnapshot),
-            ),
+            checkProvider: () =>
+              Ref.update(checkCalls, (count) => count + 1).pipe(
+                Effect.flatMap(() => Deferred.await(releaseCheck)),
+                Effect.as(refreshedSnapshot),
+              ),
             refreshInterval: "1 hour",
           });
 
@@ -156,13 +157,14 @@ describe("makeManagedServerProvider", () => {
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
-            Effect.flatMap((count) =>
-              count === 1
-                ? Deferred.await(releaseInitialCheck).pipe(Effect.as(refreshedSnapshot))
-                : Deferred.await(releaseSettingsCheck).pipe(Effect.as(refreshedSnapshotSecond)),
+          checkProvider: () =>
+            Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Deferred.await(releaseInitialCheck).pipe(Effect.as(refreshedSnapshot))
+                  : Deferred.await(releaseSettingsCheck).pipe(Effect.as(refreshedSnapshotSecond)),
+              ),
             ),
-          ),
           refreshInterval: "1 hour",
         });
 
@@ -198,7 +200,7 @@ describe("makeManagedServerProvider", () => {
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
+          checkProvider: () => Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
           enrichSnapshot: ({ publishSnapshot }) =>
             Deferred.await(releaseEnrichment).pipe(
               Effect.flatMap(() => publishSnapshot(enrichedSnapshot)),
@@ -239,13 +241,14 @@ describe("makeManagedServerProvider", () => {
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
-            Effect.flatMap((count) =>
-              count === 1
-                ? Deferred.await(allowFirstRefresh).pipe(Effect.as(refreshedSnapshot))
-                : Effect.succeed(refreshedSnapshotSecond),
+          checkProvider: () =>
+            Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Deferred.await(allowFirstRefresh).pipe(Effect.as(refreshedSnapshot))
+                  : Effect.succeed(refreshedSnapshotSecond),
+              ),
             ),
-          ),
           enrichSnapshot: ({ publishSnapshot }) =>
             Effect.gen(function* () {
               publishCallbacks.push(publishSnapshot);
@@ -267,7 +270,7 @@ describe("makeManagedServerProvider", () => {
         yield* Deferred.succeed(allowFirstRefresh, undefined);
         yield* Deferred.await(firstCallbackReady);
 
-        yield* provider.refresh;
+        yield* provider.refresh();
         yield* Deferred.await(secondCallbackReady);
 
         yield* publishCallbacks[0]!(enrichedSnapshot);
@@ -282,6 +285,34 @@ describe("makeManagedServerProvider", () => {
           enrichedSnapshotSecond,
         ]);
         assert.deepStrictEqual(latest, enrichedSnapshotSecond);
+      }),
+    ),
+  );
+
+  it.effect("remembers explicit refresh input for later background checks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshInputs = yield* Ref.make<Array<string | undefined>>([]);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: (input) =>
+            Ref.update(refreshInputs, (inputs) => [...inputs, input?.cwd]).pipe(
+              Effect.as(refreshedSnapshot),
+            ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* provider.refresh({ cwd: "/workspace/project" });
+        yield* provider.refresh();
+
+        assert.deepStrictEqual((yield* Ref.get(refreshInputs)).slice(-2), [
+          "/workspace/project",
+          "/workspace/project",
+        ]);
       }),
     ),
   );

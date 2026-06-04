@@ -137,7 +137,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         haveSettingsChanged: () => false,
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings).pipe(Effect.map(stampIdentity)),
-        checkProvider,
+        checkProvider: () => checkProvider,
         // Model catalog and capabilities come exclusively from Cursor's
         // list_available_models extension method during provider checks.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>

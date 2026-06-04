@@ -120,7 +120,7 @@ const makeFakeInstance = (
         packageName: null,
       }),
       getSnapshot: Effect.succeed({} as unknown as ServerProvider),
-      refresh: Effect.succeed({} as unknown as ServerProvider),
+      refresh: () => Effect.succeed({} as unknown as ServerProvider),
       streamChanges: Stream.empty,
     },
     adapter,

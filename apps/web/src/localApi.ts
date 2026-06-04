@@ -121,9 +121,9 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
     server: {
       getConfig: () =>
         rpcClient ? rpcClient.server.getConfig() : Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () =>
+      refreshProviders: (input) =>
         rpcClient
-          ? rpcClient.server.refreshProviders()
+          ? rpcClient.server.refreshProviders(input)
           : Promise.reject(unavailableLocalBackendError()),
       updateProvider: (input) =>
         rpcClient

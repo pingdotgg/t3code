@@ -207,6 +207,11 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * refreshes.
      */
     instanceId: Schema.optional(ProviderInstanceId),
+    /**
+     * Workspace directory to use for provider probes that expose project-local
+     * metadata, such as Codex skills.
+     */
+    cwd: Schema.optional(Schema.String),
   }),
   success: ServerProviderUpdatedPayload,
   error: EnvironmentAuthorizationError,

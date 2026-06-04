@@ -202,6 +202,7 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const CODEX_PROVIDER_DRIVER = ProviderDriverKind.make("codex");
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -844,6 +845,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const codexWorkspaceProviderRefreshKeyRef = useRef<string | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -1859,6 +1861,34 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  useEffect(() => {
+    if (!activeWorkspaceRoot) return;
+    const refreshProviderInstanceId =
+      activeProviderInstanceId ?? defaultInstanceIdForDriver(selectedProvider);
+    const refreshProviderDriver = activeProviderStatus?.driver ?? selectedProvider;
+    if (refreshProviderDriver !== CODEX_PROVIDER_DRIVER) return;
+
+    const refreshKey = `${environmentId}\u0000${refreshProviderInstanceId}\u0000${activeWorkspaceRoot}`;
+    if (codexWorkspaceProviderRefreshKeyRef.current === refreshKey) return;
+
+    const api = readLocalApi();
+    if (!api) return;
+    codexWorkspaceProviderRefreshKeyRef.current = refreshKey;
+    void api.server
+      .refreshProviders({
+        instanceId: refreshProviderInstanceId,
+        cwd: activeWorkspaceRoot,
+      })
+      .catch((error: unknown) => {
+        console.warn("Failed to refresh Codex provider for active workspace", error);
+      });
+  }, [
+    activeProviderInstanceId,
+    activeProviderStatus?.driver,
+    activeWorkspaceRoot,
+    environmentId,
+    selectedProvider,
+  ]);
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.

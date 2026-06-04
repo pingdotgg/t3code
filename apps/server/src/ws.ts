@@ -987,10 +987,14 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
-            (input.instanceId !== undefined
-              ? providerRegistry.refreshInstance(input.instanceId)
-              : providerRegistry.refresh()
-            ).pipe(Effect.map((providers) => ({ providers }))),
+            Effect.gen(function* () {
+              const refreshInput = input.cwd !== undefined ? { cwd: input.cwd } : undefined;
+              const providers =
+                input.instanceId !== undefined
+                  ? yield* providerRegistry.refreshInstance(input.instanceId, refreshInput)
+                  : yield* providerRegistry.refresh(undefined, refreshInput);
+              return { providers };
+            }),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>

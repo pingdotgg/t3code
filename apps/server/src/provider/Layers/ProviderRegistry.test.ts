@@ -48,6 +48,7 @@ import { readProviderStatusCache, resolveProviderStatusCachePath } from "../prov
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import type { ProviderSnapshotRefreshInput } from "../Services/ServerProvider.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -365,6 +366,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             status.message,
             "Codex CLI is not authenticated. Run `codex login` and try again.",
           );
+        }),
+      );
+
+      it.effect("passes the supplied cwd to the app-server probe", () =>
+        Effect.gen(function* () {
+          let capturedCwd: string | null = null;
+          yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            (input) => {
+              capturedCwd = input.cwd;
+              return Effect.succeed(makeCodexProbeSnapshot());
+            },
+            process.env,
+            "/workspace/project",
+          );
+
+          assert.strictEqual(capturedCwd, "/workspace/project");
         }),
       );
 
@@ -709,7 +727,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 packageName: null,
               }),
               getSnapshot: Effect.succeed(initialProvider),
-              refresh: Effect.succeed(refreshedProvider),
+              refresh: () => Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
             },
             adapter: {} as ProviderInstance["adapter"],
@@ -803,7 +821,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 packageName: null,
               }),
               getSnapshot: Effect.succeed(cachedProvider),
-              refresh: Effect.die(new Error("simulated refresh failure")),
+              refresh: () => Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
@@ -841,6 +859,81 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
               cachedProvider,
             ]);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("forwards manual refresh input to the targeted provider instance", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const refreshInputs = yield* Ref.make<Array<string | undefined>>([]);
+          const provider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-29T10:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const instance = {
+            instanceId: codexInstanceId,
+            driverKind: codexDriver,
+            continuationIdentity: {
+              driverKind: codexDriver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: codexDriver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(provider),
+              refresh: (input?: ProviderSnapshotRefreshInput) =>
+                Ref.update(refreshInputs, (inputs) => [...inputs, input?.cwd]).pipe(
+                  Effect.as(provider),
+                ),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          });
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-refresh-input-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+            yield* registry.refreshInstance(codexInstanceId, { cwd: "/workspace/project" });
+
+            assert.strictEqual((yield* Ref.get(refreshInputs)).at(-1), "/workspace/project");
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -892,7 +985,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 packageName: null,
               }),
               getSnapshot: Effect.succeed(provider),
-              refresh: Effect.succeed(provider),
+              refresh: () => Effect.succeed(provider),
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],

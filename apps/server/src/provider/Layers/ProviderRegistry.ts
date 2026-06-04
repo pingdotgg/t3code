@@ -43,6 +43,7 @@ import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "../../config.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+import type { ProviderSnapshotRefreshInput } from "../Services/ServerProvider.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -429,27 +430,33 @@ export const ProviderRegistryLive = Layer.effect(
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
+      input?: ProviderSnapshotRefreshInput,
     ) {
-      return yield* providerSource.refresh.pipe(
-        Effect.flatMap((nextProvider) =>
-          correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
+      return yield* providerSource
+        .refresh(input)
+        .pipe(
+          Effect.flatMap((nextProvider) =>
+            correlateSnapshotWithSource(providerSource, nextProvider).pipe(
+              Effect.flatMap(syncProvider),
+            ),
           ),
-        ),
-      );
+        );
     });
 
-    const refreshAll = Effect.fn("refreshAll")(function* () {
+    const refreshAll = Effect.fn("refreshAll")(function* (input?: ProviderSnapshotRefreshInput) {
       const sources = yield* getLiveSources;
-      return yield* Effect.forEach(sources, (source) => refreshOneSource(source), {
+      return yield* Effect.forEach(sources, (source) => refreshOneSource(source, input), {
         concurrency: "unbounded",
         discard: true,
       }).pipe(Effect.andThen(Ref.get(providersRef)));
     });
 
-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+    const refresh = Effect.fn("refresh")(function* (
+      provider?: ProviderDriverKind,
+      input?: ProviderSnapshotRefreshInput,
+    ) {
       if (provider === undefined) {
-        return yield* refreshAll();
+        return yield* refreshAll(input);
       }
       // Kind-scoped refreshes target the default instance for that driver.
       const defaultInstanceId = defaultInstanceIdForDriver(provider);
@@ -460,18 +467,19 @@ export const ProviderRegistryLive = Layer.effect(
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(providerSource, input);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
+      input?: ProviderSnapshotRefreshInput,
     ) {
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
         return yield* Ref.get(providersRef);
       }
-      return yield* refreshOneSource(providerSource);
+      return yield* refreshOneSource(providerSource, input);
     });
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
@@ -681,10 +689,10 @@ export const ProviderRegistryLive = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refresh: (provider?: ProviderDriverKind, input?: ProviderSnapshotRefreshInput) =>
+        refresh(provider, input).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshInstance: (instanceId: ProviderInstanceId, input?: ProviderSnapshotRefreshInput) =>
+        refreshInstance(instanceId, input).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

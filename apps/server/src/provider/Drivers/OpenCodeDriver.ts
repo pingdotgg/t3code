@@ -149,7 +149,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         haveSettingsChanged: () => false,
         initialSnapshot: (settings) =>
           makePendingOpenCodeProvider(settings).pipe(Effect.map(stampIdentity)),
-        checkProvider,
+        checkProvider: () => checkProvider,
         enrichSnapshot: ({ snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),

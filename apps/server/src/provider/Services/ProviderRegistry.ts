@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import type { ProviderSnapshotRefreshInput } from "./ServerProvider.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -36,7 +37,10 @@ export interface ProviderRegistryShape {
    *
    * @deprecated prefer `refreshInstance` for new call sites.
    */
-  readonly refresh: (provider?: ProviderDriverKind) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+  readonly refresh: (
+    provider?: ProviderDriverKind,
+    input?: ProviderSnapshotRefreshInput,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
    * Refresh the specific configured instance. Returns the updated snapshot
@@ -46,6 +50,7 @@ export interface ProviderRegistryShape {
    */
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
+    input?: ProviderSnapshotRefreshInput,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
