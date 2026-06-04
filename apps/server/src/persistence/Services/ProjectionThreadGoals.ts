@@ -11,7 +11,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { ServerConfig } from "../../config.ts";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../Errors.ts";
-import { makeRuntimeSqliteLayer } from "../Layers/Sqlite.ts";
+import { makeRuntimeSqliteLayer } from "../RuntimeSqliteLayer.ts";
 import { ensureGoalTable } from "../GoalTable.ts";
 import { runForkMigrations } from "../ForkMigrations.ts";
 

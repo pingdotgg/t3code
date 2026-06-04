@@ -13,7 +13,7 @@ layer("031_AuthAuthorizationScopes", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 31 });
+      yield* runMigrations({ toMigrationInclusive: 30 });
 
       yield* sql`
         INSERT INTO auth_pairing_links (

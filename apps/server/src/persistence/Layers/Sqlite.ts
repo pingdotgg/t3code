@@ -7,28 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProjectionThreadGoalRepositoryLive } from "../Services/ProjectionThreadGoals.ts";
-
-type RuntimeSqliteLayerConfig = {
-  readonly filename: string;
-  readonly spanAttributes?: Record<string, unknown>;
-};
-
-type Loader = {
-  layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient>;
-};
-const defaultSqliteClientLoaders = {
-  bun: () => import("@effect/sql-sqlite-bun/SqliteClient"),
-  node: () => import("../NodeSqliteClient.ts"),
-} satisfies Record<string, () => Promise<Loader>>;
-
-export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
-  config: RuntimeSqliteLayerConfig,
-) {
-  const runtime = process.versions.bun !== undefined ? "bun" : "node";
-  const loader = defaultSqliteClientLoaders[runtime];
-  const clientModule = yield* Effect.promise<Loader>(loader);
-  return clientModule.layer(config);
-}, Layer.unwrap);
+import { makeRuntimeSqliteLayer } from "../RuntimeSqliteLayer.ts";
 
 const repairMainMigrationLedger = Effect.fn("repairMainMigrationLedger")(function* () {
   const sql = yield* SqlClient.SqlClient;
