@@ -21,8 +21,10 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 // ==============================
@@ -144,17 +146,17 @@ function resolveEditorArgs(
   return [...baseArgs, ...resolveCommandEditorArgs(editor, target)];
 }
 
-function resolveAvailableCommand(
+const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableCommand")(function* (
   commands: ReadonlyArray<string>,
   options: PlatformCommandAvailabilityOptions,
-): Option.Option<string> {
+): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
   for (const command of commands) {
-    if (isCommandAvailableForPlatform(command, options)) {
+    if (yield* isCommandAvailableForPlatform(command, options)) {
       return Option.some(command);
     }
   }
   return Option.none();
-}
+});
 
 function encodeUtf16LeBase64(input: string): string {
   const bytes = new Uint8Array(input.length * 2);
@@ -219,7 +221,7 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
   }
 }
 
-export function resolveBrowserLaunch(
+function buildBrowserLaunch(
   target: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv = {},
@@ -247,35 +249,47 @@ export function resolveBrowserLaunch(
   };
 }
 
-export function resolveAvailableEditors(
+const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): ReadonlyArray<EditorId> {
+): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
     if (editor.commands === null) {
       const command = fileManagerCommandForPlatform(platform);
-      if (isCommandAvailableForPlatform(command, { platform, env })) {
+      if (yield* isCommandAvailableForPlatform(command, { platform, env })) {
         available.push(editor.id);
       }
       continue;
     }
 
-    const command = resolveAvailableCommand(editor.commands, { platform, env });
+    const command = yield* resolveAvailableCommand(editor.commands, { platform, env });
     if (Option.isSome(command)) {
       available.push(editor.id);
     }
   }
 
   return available;
-}
-
-export const getAvailableEditors = Effect.fn("externalLauncher.getAvailableEditors")(function* () {
-  const platform = yield* HostProcessPlatform;
-  const env = yield* readCommandLookupEnv;
-  return resolveAvailableEditors(platform, env);
 });
+
+export const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
+  target: string,
+) {
+  const platform = yield* HostProcessPlatform;
+  const env = yield* readBrowserLaunchEnv;
+  return buildBrowserLaunch(target, platform, env);
+});
+
+export const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(
+  function* () {
+    const platform = yield* HostProcessPlatform;
+    const env = yield* readCommandLookupEnv;
+    return yield* buildAvailableEditors(platform, env);
+  },
+);
+
+export const getAvailableEditors = resolveAvailableEditors;
 
 /**
  * ExternalLauncherShape - Service API for browser and editor launch actions.
@@ -305,47 +319,37 @@ export class ExternalLauncher extends Context.Service<ExternalLauncher, External
 // Implementations
 // ==============================
 
-export const resolveEditorLaunchForPlatform = Effect.fn("resolveEditorLaunchForPlatform")(
-  function* (
-    input: LaunchEditorInput,
-    platform: NodeJS.Platform,
-    env: NodeJS.ProcessEnv = {},
-  ): Effect.fn.Return<EditorLaunch, ExternalLauncherError> {
-    yield* Effect.annotateCurrentSpan({
-      "externalLauncher.editor": input.editor,
-      "externalLauncher.cwd": input.cwd,
-      "externalLauncher.platform": platform,
-    });
-    const editorDef = EDITORS.find((editor) => editor.id === input.editor);
-    if (!editorDef) {
-      return yield* new ExternalLauncherError({ message: `Unknown editor: ${input.editor}` });
-    }
-
-    if (editorDef.commands) {
-      const command = Option.getOrElse(
-        resolveAvailableCommand(editorDef.commands, { platform, env }),
-        () => editorDef.commands[0],
-      );
-      return {
-        command,
-        args: resolveEditorArgs(editorDef, input.cwd),
-      };
-    }
-
-    if (editorDef.id !== "file-manager") {
-      return yield* new ExternalLauncherError({ message: `Unsupported editor: ${input.editor}` });
-    }
-
-    return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
-  },
-);
-
 export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
-): Effect.fn.Return<EditorLaunch, ExternalLauncherError> {
+): Effect.fn.Return<EditorLaunch, ExternalLauncherError, FileSystem.FileSystem | Path.Path> {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
-  return yield* resolveEditorLaunchForPlatform(input, platform, env);
+  yield* Effect.annotateCurrentSpan({
+    "externalLauncher.editor": input.editor,
+    "externalLauncher.cwd": input.cwd,
+    "externalLauncher.platform": platform,
+  });
+  const editorDef = EDITORS.find((editor) => editor.id === input.editor);
+  if (!editorDef) {
+    return yield* new ExternalLauncherError({ message: `Unknown editor: ${input.editor}` });
+  }
+
+  if (editorDef.commands) {
+    const command = Option.getOrElse(
+      yield* resolveAvailableCommand(editorDef.commands, { platform, env }),
+      () => editorDef.commands[0],
+    );
+    return {
+      command,
+      args: resolveEditorArgs(editorDef, input.cwd),
+    };
+  }
+
+  if (editorDef.id !== "file-manager") {
+    return yield* new ExternalLauncherError({ message: `Unsupported editor: ${input.editor}` });
+  }
+
+  return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
 });
 
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
@@ -366,20 +370,20 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
 export const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   target: string,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
-  const platform = yield* HostProcessPlatform;
-  const env = yield* readBrowserLaunchEnv;
-  return yield* launchAndUnref(
-    resolveBrowserLaunch(target, platform, env),
-    "Browser auto-open failed",
-  );
+  const launch = yield* resolveBrowserLaunch(target);
+  return yield* launchAndUnref(launch, "Browser auto-open failed");
 });
 
 export const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
-): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<
+  void,
+  ExternalLauncherError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
-  if (!isCommandAvailableForPlatform(launch.command, { platform, env })) {
+  if (!(yield* isCommandAvailableForPlatform(launch.command, { platform, env }))) {
     return yield* new ExternalLauncherError({
       message: `Editor command not found: ${launch.command}`,
     });
@@ -404,6 +408,16 @@ export const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProce
 
 const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const provideCommandResolutionServices = <A, E, R>(
+    effect: Effect.Effect<A, E, R | FileSystem.FileSystem | Path.Path>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   return {
     launchBrowser: (target) =>
@@ -411,9 +425,11 @@ const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
     launchEditor: (input) =>
-      Effect.flatMap(resolveEditorLaunch(input), (launch) =>
-        launchEditorProcess(launch).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      provideCommandResolutionServices(
+        Effect.flatMap(resolveEditorLaunch(input), (launch) =>
+          launchEditorProcess(launch).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
         ),
       ),
   } satisfies ExternalLauncherShape;

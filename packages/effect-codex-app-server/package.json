@@ -31,6 +31,7 @@
     "probe": "node test/examples/codex-app-server-probe.ts"
   },
   "dependencies": {
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

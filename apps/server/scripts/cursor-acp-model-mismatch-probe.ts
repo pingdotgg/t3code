@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import * as NodeOS from "node:os";
 import process from "node:process";
 import readline from "node:readline";
 import * as NodeTimers from "node:timers";
@@ -130,7 +131,8 @@ class JsonRpcChild {
   constructor(bin: string, args: string[], cwd: string) {
     this.child = spawn(bin, args, {
       cwd,
-      shell: process.platform === "win32",
+      // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node probe script has no Effect runtime.
+      shell: NodeOS.platform() === "win32",
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });

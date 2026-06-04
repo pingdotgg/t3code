@@ -8,6 +8,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   collectUint8StreamText,
   type CollectedUint8StreamText,
@@ -109,11 +110,14 @@ function hasWindowsCommandNotFoundMessage(output: string): boolean {
   return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(output));
 }
 
-export function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
-  if (process.platform !== "win32") return false;
-  if (code === 9009) return true;
-  return hasWindowsCommandNotFoundMessage(stderr);
-}
+export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsCommandNotFound")(
+  function* (code: number | null, stderr: string) {
+    const platform = yield* HostProcessPlatform;
+    if (platform !== "win32") return false;
+    if (code === 9009) return true;
+    return hasWindowsCommandNotFoundMessage(stderr);
+  },
+);
 
 const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   readonly command: string;

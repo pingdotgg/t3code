@@ -23,6 +23,15 @@ describe("t3code/no-global-process-runtime", () => {
     `,
   );
 
+  rule.valid(
+    "allows unrelated node os imports",
+    `
+      import { tmpdir } from "node:os";
+
+      export const tempDirectory = tmpdir();
+    `,
+  );
+
   rule.invalid(
     "reports direct platform reads",
     `
@@ -47,6 +56,39 @@ describe("t3code/no-global-process-runtime", () => {
     "reports globalThis process platform reads",
     `
       export const terminalName = globalThis.process.platform === "win32" ? "xterm-color" : "xterm-256color";
+    `,
+  );
+
+  rule.invalid(
+    "reports node os namespace platform reads",
+    `
+      import * as NodeOS from "node:os";
+
+      export const isWindows = NodeOS.platform() === "win32";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessPlatform/);
+    },
+  );
+
+  rule.invalid(
+    "reports renamed node os architecture imports",
+    `
+      import { arch as hostArch } from "node:os";
+
+      export const isArm = hostArch() === "arm64";
+    `,
+    (output) => {
+      assert.match(output, /Use HostProcessArchitecture/);
+    },
+  );
+
+  rule.invalid(
+    "reports default node os platform reads",
+    `
+      import os from "node:os";
+
+      export const isWindows = os.platform() === "win32";
     `,
   );
 });

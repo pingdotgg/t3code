@@ -717,6 +717,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -726,6 +729,9 @@ importers:
 
   packages/effect-codex-app-server:
     dependencies:
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754)

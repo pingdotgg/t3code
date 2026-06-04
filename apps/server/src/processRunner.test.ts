@@ -8,6 +8,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   isWindowsCommandNotFound,
@@ -280,19 +281,13 @@ describe("runProcess", () => {
 });
 
 describe("isWindowsCommandNotFound", () => {
-  it("matches the localized German cmd.exe error text", () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-
-    try {
-      expect(
-        isWindowsCommandNotFound(
-          1,
-          "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
-        ),
-      ).toBe(true);
-    } finally {
-      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
-    }
-  });
+  it.effect("matches the localized German cmd.exe error text", () =>
+    Effect.gen(function* () {
+      const isCommandNotFound = yield* isWindowsCommandNotFound(
+        1,
+        "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      expect(isCommandNotFound).toBe(true);
+    }),
+  );
 });

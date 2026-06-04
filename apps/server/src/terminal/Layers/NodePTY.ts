@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { PtyAdapter } from "../Services/PTY.ts";
 import {
   PtySpawnError,
@@ -18,13 +19,15 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
   const requireForNodePty = createRequire(import.meta.url);
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
 
   const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
   const packageDir = path.dirname(packageJsonPath);
   const candidates = [
     path.join(packageDir, "build", "Release", "spawn-helper"),
     path.join(packageDir, "build", "Debug", "spawn-helper"),
-    path.join(packageDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
+    path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
   ];
 
   for (const candidate of candidates) {
@@ -37,7 +40,8 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
 
 export const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (explicitPath?: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (process.platform === "win32") return;
+  const platform = yield* HostProcessPlatform;
+  if (platform === "win32") return;
   if (!explicitPath && didEnsureSpawnHelperExecutable) return;
 
   const helperPath = explicitPath ?? (yield* resolveNodePtySpawnHelperPath);
@@ -102,6 +106,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const platform = yield* HostProcessPlatform;
 
     const nodePty = yield* Effect.promise(() => import("node-pty"));
 
@@ -123,7 +128,7 @@ export const layer = Layer.effect(
               cols: input.cols,
               rows: input.rows,
               env: input.env,
-              name: globalThis.process.platform === "win32" ? "xterm-color" : "xterm-256color",
+              name: platform === "win32" ? "xterm-color" : "xterm-256color",
             }),
           catch: (cause) =>
             new PtySpawnError({

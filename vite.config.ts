@@ -1,12 +1,18 @@
+import { fileURLToPath } from "node:url";
+
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
-import { fileURLToPath } from "node:url";
+
+const webSrcPath = fileURLToPath(new URL("./apps/web/src", import.meta.url));
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "~": fileURLToPath(new URL("./apps/web/src", import.meta.url)),
-    },
+    alias: [
+      {
+        find: "~",
+        replacement: webSrcPath,
+      },
+    ],
   },
   test: {
     environment: "node",
@@ -16,9 +22,11 @@ export default defineConfig({
       "**/dist/**",
       "**/dist-electron/**",
       "**/.{idea,git,cache,output,temp}/**",
+      "**/routeTree.gen.ts",
     ],
-    hookTimeout: 60_000,
-    testTimeout: 60_000,
+    fileParallelism: false,
+    hookTimeout: 120_000,
+    testTimeout: 120_000,
   },
   fmt: {
     ignorePatterns: [

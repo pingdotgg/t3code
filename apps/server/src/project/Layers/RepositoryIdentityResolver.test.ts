@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../../processRunner.ts";
 import { RepositoryIdentityResolver } from "../Services/RepositoryIdentityResolver.ts";
@@ -20,9 +21,11 @@ const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const processRunner = yield* ProcessRunner.ProcessRunner;
+    const platform = yield* HostProcessPlatform;
     return yield* processRunner.run({
       command: "git",
       args: ["-C", cwd, ...args],
+      shell: platform === "win32",
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 

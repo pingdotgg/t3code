@@ -282,8 +282,6 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
-  const itEffectSkipOnWindows = process.platform === "win32" ? it.effect.skip : it.effect;
-
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -423,8 +421,10 @@ it.layer(
       fs.writeFileString(filePath, contents),
     );
 
-  itEffectSkipOnWindows("preserves non-notFound cwd stat failures", () =>
+  it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+
       const path = yield* Path.Path;
 
       const { manager, baseDir } = yield* createManager();
@@ -1090,10 +1090,9 @@ it.layer(
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
       const missingShell =
-        process.platform === "win32"
-          ? "C:\\definitely\\missing-shell.exe"
-          : "/definitely/missing-shell -l";
+        platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => missingShell,
       });
@@ -1104,10 +1103,10 @@ it.layer(
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
       expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
-        process.platform === "win32" ? missingShell : "/definitely/missing-shell",
+        platform === "win32" ? missingShell : "/definitely/missing-shell",
       );
 
-      if (process.platform === "win32") {
+      if (platform === "win32") {
         expect(
           ptyAdapter.spawnInputs.some(
             (input) =>
@@ -1235,7 +1234,7 @@ it.layer(
 
   it.effect("starts zsh with prompt spacer disabled to avoid `%` end markers", () =>
     Effect.gen(function* () {
-      if (process.platform === "win32") return;
+      if ((yield* HostProcessPlatform) === "win32") return;
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => "/bin/zsh",
       });

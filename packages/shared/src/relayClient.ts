@@ -18,6 +18,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
 export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
@@ -205,8 +206,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installSemaphore = yield* Semaphore.make(1);
-  const platform = options.platform ?? process.platform;
-  const arch = options.arch ?? process.arch;
+  const platform = options.platform ?? (yield* HostProcessPlatform);
+  const arch = options.arch ?? (yield* HostProcessArchitecture);
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
   const loadCloudflaredConfig = Effect.suspend(() =>
     CloudflaredConfig.pipe(

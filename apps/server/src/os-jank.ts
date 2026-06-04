@@ -1,11 +1,13 @@
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   readPathFromLoginShell,
   readEnvironmentFromWindowsShell,
   resolveWindowsEnvironment,
-  type CommandAvailabilityOptions,
+  type PlatformCommandAvailabilityOptions,
   type WindowsShellEnvironmentReader,
   listLoginShellCandidates,
   mergePathEntries,
@@ -14,8 +16,8 @@ import {
 
 type WindowsCommandAvailabilityChecker = (
   command: string,
-  options?: CommandAvailabilityOptions,
-) => boolean;
+  options: PlatformCommandAvailabilityOptions,
+) => Effect.Effect<boolean, never>;
 
 function logPathHydrationWarning(message: string, error?: unknown): void {
   process.stderr.write(
@@ -23,7 +25,7 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-export function fixPath(
+export const fixPath = Effect.fn("fixPath")(function* (
   options: {
     env?: NodeJS.ProcessEnv;
     readPath?: typeof readPathFromLoginShell;
@@ -33,15 +35,15 @@ export function fixPath(
     userShell?: string;
     logWarning?: (message: string, error?: unknown) => void;
   } = {},
-): void {
-  const platform = process.platform;
+): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const platform = yield* HostProcessPlatform;
   const env = options.env ?? process.env;
   const logWarning = options.logWarning ?? logPathHydrationWarning;
   const readPath = options.readPath ?? readPathFromLoginShell;
 
   try {
     if (platform === "win32") {
-      const repairedEnvironment = resolveWindowsEnvironment(env, {
+      const repairedEnvironment = yield* resolveWindowsEnvironment(env, {
         readEnvironment: options.readWindowsEnvironment ?? readEnvironmentFromWindowsShell,
         ...(options.isWindowsCommandAvailable
           ? { commandAvailable: options.isWindowsCommandAvailable }
@@ -79,9 +81,11 @@ export function fixPath(
       env.PATH = mergedPath;
     }
   } catch (error) {
-    logWarning("Failed to hydrate PATH from the user environment.", error);
+    yield* Effect.sync(() => {
+      logWarning("Failed to hydrate PATH from the user environment.", error);
+    });
   }
-}
+});
 
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;

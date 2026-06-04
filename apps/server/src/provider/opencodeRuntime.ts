@@ -292,7 +292,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
       const exitCode = Number(code);
-      if (isWindowsCommandNotFound(exitCode, stderr)) {
+      if (yield* isWindowsCommandNotFound(exitCode, stderr)) {
         return yield* new OpenCodeRuntimeError({
           operation: "runOpenCodeCommand",
           detail: `spawn ${input.binaryPath} ENOENT`,

@@ -1,3 +1,6 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -322,147 +325,161 @@ describe("resolveKnownWindowsCliDirs", () => {
   });
 });
 
-describe("isCommandAvailable", () => {
-  it("returns false when PATH is empty", () => {
-    expect(
-      isCommandAvailableForPlatform("definitely-not-installed", {
-        platform: "win32",
-        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }),
-    ).toBe(false);
-  });
+effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
+  it.effect("returns false when PATH is empty", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* isCommandAvailableForPlatform("definitely-not-installed", {
+          platform: "win32",
+          env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }),
+      ).toBe(false);
+    }),
+  );
 });
 
-describe("resolveCommandPath", () => {
-  it("returns the first executable resolved from PATH", () => {
-    expect(
-      resolveCommandPathForPlatform("definitely-not-installed", {
+effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
+  it.effect("fails when PATH is empty", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveCommandPathForPlatform("definitely-not-installed", {
         platform: "win32",
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }),
-    ).toBeNull();
-  });
+      }).pipe(Effect.result);
+
+      expect(result._tag).toBe("Failure");
+    }),
+  );
 });
 
-describe("resolveWindowsEnvironment", () => {
-  it("returns the baseline no-profile PATH patch when node is already available", () => {
-    const readEnvironment = vi.fn(
-      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
-        options?.loadProfile
-          ? { PATH: "C:\\Profile\\Bin" }
-          : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
-    );
-    const commandAvailable = vi.fn(() => true);
+effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
+  it.effect("returns the baseline no-profile PATH patch when node is already available", () =>
+    Effect.gen(function* () {
+      const readEnvironment = vi.fn(
+        (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+          options?.loadProfile
+            ? { PATH: "C:\\Profile\\Bin" }
+            : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
+      );
+      const commandAvailable = vi.fn(() => Effect.succeed(true));
 
-    expect(
-      resolveWindowsEnvironment(
-        {
-          PATH: "C:\\Windows\\System32",
-          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
-          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
-          USERPROFILE: "C:\\Users\\testuser",
-        },
-        {
-          readEnvironment,
-          commandAvailable,
-        },
-      ),
-    ).toEqual({
-      PATH: [
-        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
-        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
-        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
-        "C:\\Users\\testuser\\.bun\\bin",
-        "C:\\Users\\testuser\\scoop\\shims",
-        "C:\\Shell\\Bin",
-        "C:\\Windows\\System32",
-      ].join(";"),
-    });
-    expect(readEnvironment).toHaveBeenCalledTimes(1);
-    expect(readEnvironment).toHaveBeenCalledWith(["PATH"], { loadProfile: false });
-    expect(commandAvailable).toHaveBeenCalledWith(
-      "node",
-      expect.objectContaining({ env: expect.any(Object) }),
-    );
-  });
+      expect(
+        yield* resolveWindowsEnvironment(
+          {
+            PATH: "C:\\Windows\\System32",
+            APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+            LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+            USERPROFILE: "C:\\Users\\testuser",
+          },
+          {
+            readEnvironment,
+            commandAvailable,
+          },
+        ),
+      ).toEqual({
+        PATH: [
+          "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+          "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+          "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+          "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\.bun\\bin",
+          "C:\\Users\\testuser\\scoop\\shims",
+          "C:\\Shell\\Bin",
+          "C:\\Windows\\System32",
+        ].join(";"),
+      });
+      expect(readEnvironment).toHaveBeenCalledTimes(1);
+      expect(readEnvironment).toHaveBeenCalledWith(["PATH"], { loadProfile: false });
+      expect(commandAvailable).toHaveBeenCalledWith(
+        "node",
+        expect.objectContaining({ platform: "win32", env: expect.any(Object) }),
+      );
+    }),
+  );
 
-  it("loads the PowerShell profile when baseline env cannot resolve node", () => {
-    const readEnvironment = vi.fn(
-      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
-        options?.loadProfile
-          ? {
-              PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
-              FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-              FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-            }
-          : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
-    );
-    const commandAvailable = vi.fn(() => false);
+  it.effect("loads the PowerShell profile when baseline env cannot resolve node", () =>
+    Effect.gen(function* () {
+      const readEnvironment = vi.fn(
+        (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+          options?.loadProfile
+            ? {
+                PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
+                FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+                FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+              }
+            : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
+      );
+      const commandAvailable = vi.fn(() => Effect.succeed(false));
 
-    expect(
-      resolveWindowsEnvironment(
+      expect(
+        yield* resolveWindowsEnvironment(
+          {
+            PATH: "C:\\Windows\\System32",
+            APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+            LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+            USERPROFILE: "C:\\Users\\testuser",
+          },
+          {
+            readEnvironment,
+            commandAvailable,
+          },
+        ),
+      ).toEqual({
+        PATH: [
+          "C:\\Profile\\Node",
+          "C:\\Windows\\System32",
+          "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+          "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+          "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+          "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\.bun\\bin",
+          "C:\\Users\\testuser\\scoop\\shims",
+          "C:\\Shell\\Bin",
+        ].join(";"),
+        FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+        FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+      });
+      expect(readEnvironment).toHaveBeenNthCalledWith(1, ["PATH"], { loadProfile: false });
+      expect(readEnvironment).toHaveBeenNthCalledWith(
+        2,
+        ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"],
         {
-          PATH: "C:\\Windows\\System32",
-          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
-          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
-          USERPROFILE: "C:\\Users\\testuser",
+          loadProfile: true,
         },
-        {
-          readEnvironment,
-          commandAvailable,
-        },
-      ),
-    ).toEqual({
-      PATH: [
-        "C:\\Profile\\Node",
-        "C:\\Windows\\System32",
-        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
-        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
-        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
-        "C:\\Users\\testuser\\.bun\\bin",
-        "C:\\Users\\testuser\\scoop\\shims",
-        "C:\\Shell\\Bin",
-      ].join(";"),
-      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-      FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
-    });
-    expect(readEnvironment).toHaveBeenNthCalledWith(1, ["PATH"], { loadProfile: false });
-    expect(readEnvironment).toHaveBeenNthCalledWith(2, ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"], {
-      loadProfile: true,
-    });
-    expect(commandAvailable).toHaveBeenCalledTimes(1);
-  });
+      );
+      expect(commandAvailable).toHaveBeenCalledTimes(1);
+    }),
+  );
 
-  it("keeps the baseline env when profiled probe still does not resolve node", () => {
-    const readEnvironment = vi.fn(
-      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
-        options?.loadProfile ? { FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm" } : {},
-    );
-    const commandAvailable = vi.fn(() => false);
+  it.effect("keeps the baseline env when profiled probe still does not resolve node", () =>
+    Effect.gen(function* () {
+      const readEnvironment = vi.fn(
+        (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+          options?.loadProfile ? { FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm" } : {},
+      );
+      const commandAvailable = vi.fn(() => Effect.succeed(false));
 
-    expect(
-      resolveWindowsEnvironment(
-        {
-          PATH: "C:\\Windows\\System32",
-          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
-          USERPROFILE: "C:\\Users\\testuser",
-        },
-        {
-          readEnvironment,
-          commandAvailable,
-        },
-      ),
-    ).toEqual({
-      PATH: [
-        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-        "C:\\Users\\testuser\\.bun\\bin",
-        "C:\\Users\\testuser\\scoop\\shims",
-        "C:\\Windows\\System32",
-      ].join(";"),
-      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-    });
-    expect(commandAvailable).toHaveBeenCalledTimes(1);
-  });
+      expect(
+        yield* resolveWindowsEnvironment(
+          {
+            PATH: "C:\\Windows\\System32",
+            APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+            USERPROFILE: "C:\\Users\\testuser",
+          },
+          {
+            readEnvironment,
+            commandAvailable,
+          },
+        ),
+      ).toEqual({
+        PATH: [
+          "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+          "C:\\Users\\testuser\\.bun\\bin",
+          "C:\\Users\\testuser\\scoop\\shims",
+          "C:\\Windows\\System32",
+        ].join(";"),
+        FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+      });
+      expect(commandAvailable).toHaveBeenCalledTimes(1);
+    }),
+  );
 });

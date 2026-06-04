@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
+import * as NodeOS from "node:os";
 import { join } from "node:path";
 
 import {
@@ -33,6 +34,8 @@ const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
+const hostPlatform = NodeOS.platform();
 
 await waitForResources({
   baseDir: desktopDir,
@@ -57,7 +60,7 @@ const expectedExits = new WeakSet();
 const watchers = [];
 
 function killChildTreeByPid(pid, signal) {
-  if (process.platform === "win32" || typeof pid !== "number") {
+  if (hostPlatform === "win32" || typeof pid !== "number") {
     return;
   }
 
@@ -65,7 +68,7 @@ function killChildTreeByPid(pid, signal) {
 }
 
 function cleanupStaleDevApps() {
-  if (process.platform === "win32") {
+  if (hostPlatform === "win32") {
     return;
   }
 
@@ -194,7 +197,7 @@ function startWatchers() {
 }
 
 function killChildTree(signal) {
-  if (process.platform === "win32") {
+  if (hostPlatform === "win32") {
     return;
   }
 

@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   insertRankedSearchResult,
@@ -155,7 +156,8 @@ const resolveBrowseTarget = (
   pathService: Path.Path,
 ): Effect.Effect<string, WorkspaceEntriesBrowseError> =>
   Effect.gen(function* () {
-    if (process.platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
+    const platform = yield* HostProcessPlatform;
+    if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
       return yield* new WorkspaceEntriesBrowseError({
         cwd: input.cwd,
         partialPath: input.partialPath,

@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import { resolveCommandPath, resolveCommandPathForPlatform } from "@t3tools/shared/shell";
+import { resolveCommandPathForPlatform } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -272,9 +272,7 @@ export function resolvePackageManagedProviderMaintenance(
   }
 
   const resolvedCommandPath =
-    options?.resolvedCommandPath ??
-    resolveCommandPath(binaryPath, options?.env ? { env: options.env } : {}) ??
-    (hasPathSeparator(binaryPath) ? binaryPath : null);
+    options?.resolvedCommandPath ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
 
   if (resolvedCommandPath) {
     const commandPaths = [
@@ -358,10 +356,11 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   const platform = yield* HostProcessPlatform;
   const env = options?.env ?? (yield* readCommandLookupEnv);
   const resolvedCommandPath =
-    resolveCommandPathForPlatform(binaryPath, {
+    (yield* resolveCommandPathForPlatform(binaryPath, {
       platform,
       env,
-    }) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
+    }).pipe(Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)))) ??
+    (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
     return resolver.resolve(options);
   }

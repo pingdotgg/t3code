@@ -8,6 +8,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as CodexClient from "./client.ts";
 
@@ -21,9 +22,11 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
+      const platform = yield* HostProcessPlatform;
       const peerCwd = path.join(import.meta.dirname, "..");
       const command = ChildProcess.make(process.execPath, mockPeerArgs(yield* mockPeerPath), {
         cwd: peerCwd,
+        shell: platform === "win32",
       });
       return yield* spawner.spawn(command);
     });

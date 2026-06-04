@@ -4,14 +4,16 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as AcpClient from "../../src/client.ts";
 
 const program = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcessPlatform;
   const command = ChildProcess.make("cursor-agent", ["acp"], {
     cwd: process.cwd(),
-    shell: process.platform === "win32",
+    shell: platform === "win32",
   });
   const handle = yield* spawner.spawn(command);
   const acpLayer = AcpClient.layerChildProcess(handle, {

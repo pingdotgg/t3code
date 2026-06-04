@@ -1,7 +1,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
+import { homedir } from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
@@ -53,11 +54,13 @@ const desktopEnvironmentLayer = Layer.unwrap(
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
       Effect.flatMap((app) => app.metadata),
     );
+    const platform = yield* HostProcessPlatform;
+    const processArch = yield* HostProcessArchitecture;
     return DesktopEnvironment.layer({
       dirname: __dirname,
-      homeDirectory: NodeOS.homedir(),
-      platform: process.platform,
-      processArch: process.arch,
+      homeDirectory: homedir(),
+      platform,
+      processArch,
       ...metadata,
     });
   }),

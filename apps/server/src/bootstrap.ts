@@ -11,6 +11,7 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 class BootstrapError extends Data.TaggedError("BootstrapError")<{
   readonly message: string;
@@ -110,36 +111,39 @@ const isFdReady = (fd: number) =>
   );
 
 const makeBootstrapInputStream = (fd: number) =>
-  Effect.try<Readable, BootstrapError>({
-    try: () => {
-      const fdPath = resolveFdPath(fd, process.platform);
-      if (fdPath === undefined) {
-        return makeDirectBootstrapStream(fd);
-      }
-
-      let streamFd: number | undefined;
-      try {
-        streamFd = NFS.openSync(fdPath, "r");
-        return NFS.createReadStream("", {
-          fd: streamFd,
-          encoding: "utf8",
-          autoClose: true,
-        });
-      } catch (error) {
-        if (isBootstrapFdPathDuplicationError(error)) {
-          if (streamFd !== undefined) {
-            NFS.closeSync(streamFd);
-          }
+  Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
+    return yield* Effect.try<Readable, BootstrapError>({
+      try: () => {
+        const fdPath = resolveFdPath(fd, platform);
+        if (fdPath === undefined) {
           return makeDirectBootstrapStream(fd);
         }
-        throw error;
-      }
-    },
-    catch: (error) =>
-      new BootstrapError({
-        message: "Failed to duplicate bootstrap fd.",
-        cause: error,
-      }),
+
+        let streamFd: number | undefined;
+        try {
+          streamFd = NFS.openSync(fdPath, "r");
+          return NFS.createReadStream("", {
+            fd: streamFd,
+            encoding: "utf8",
+            autoClose: true,
+          });
+        } catch (error) {
+          if (isBootstrapFdPathDuplicationError(error)) {
+            if (streamFd !== undefined) {
+              NFS.closeSync(streamFd);
+            }
+            return makeDirectBootstrapStream(fd);
+          }
+          throw error;
+        }
+      },
+      catch: (error) =>
+        new BootstrapError({
+          message: "Failed to duplicate bootstrap fd.",
+          cause: error,
+        }),
+    });
   });
 
 const makeDirectBootstrapStream = (fd: number): Readable => {

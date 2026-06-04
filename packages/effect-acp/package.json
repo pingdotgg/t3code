@@ -44,6 +44,7 @@
     "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }
