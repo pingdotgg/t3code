@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
+  buildCommandPaletteSearchIndex,
+  buildProjectActionItems,
   buildThreadActionItems,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
@@ -9,6 +11,19 @@ import {
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: PROJECT_ID,
+    environmentId: LOCAL_ENVIRONMENT_ID,
+    name: "Project",
+    cwd: "/Users/example/project",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    ...overrides,
+  };
+}
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -36,6 +51,48 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("buildCommandPaletteSearchIndex", () => {
+  it("normalizes terms once for filtering and ranking", () => {
+    expect(buildCommandPaletteSearchIndex(["  Fix   Navbar  ", "", "Feature/Branch"])).toEqual({
+      normalizedTerms: ["fix navbar", "feature/branch"],
+      haystack: "fix navbar feature/branch",
+    });
+  });
+});
+
+describe("buildProjectActionItems", () => {
+  it("precomputes search indexes for project results", () => {
+    const items = buildProjectActionItems({
+      projects: [
+        makeProject({
+          name: "Web App",
+          cwd: "/Users/example/large project",
+        }),
+      ],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async (_project) => undefined,
+    });
+
+    expect(items[0]?.searchIndex).toEqual({
+      normalizedTerms: ["web app", "/users/example/large project"],
+      haystack: "web app /users/example/large project",
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "large project",
+      isInSubmenu: false,
+      projectSearchItems: items,
+      threadSearchItems: [],
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "project:environment-local:project-1",
+    ]);
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {

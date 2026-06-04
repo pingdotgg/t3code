@@ -13,6 +13,7 @@ export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
+  readonly searchIndex?: CommandPaletteSearchIndex;
   readonly title: ReactNode;
   readonly description?: string;
   readonly timestamp?: string;
@@ -22,6 +23,11 @@ export interface CommandPaletteItem {
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
+}
+
+export interface CommandPaletteSearchIndex {
+  readonly normalizedTerms: ReadonlyArray<string>;
+  readonly haystack: string;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -87,23 +93,39 @@ export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function buildCommandPaletteSearchIndex(
+  searchTerms: ReadonlyArray<string>,
+): CommandPaletteSearchIndex {
+  return {
+    normalizedTerms: searchTerms
+      .filter((term) => term.length > 0)
+      .map((term) => normalizeSearchText(term)),
+    haystack: normalizeSearchText(searchTerms.join(" ")),
+  };
+}
+
 export function buildProjectActionItems(input: {
   projects: ReadonlyArray<Project>;
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.name, project.cwd],
-    title: project.name,
-    description: project.cwd,
-    icon: input.icon(project),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const searchTerms = [project.name, project.cwd];
+
+    return {
+      kind: "action",
+      value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
+      searchTerms,
+      searchIndex: buildCommandPaletteSearchIndex(searchTerms),
+      title: project.name,
+      description: project.cwd,
+      icon: input.icon(project),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<
@@ -150,12 +172,14 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
+    const searchTerms = [thread.title, projectTitle ?? ``, thread.branch ?? ``];
 
     return Object.assign(
       {
         kind: "action" as const,
         value: `thread:${thread.id}`,
-        searchTerms: [thread.title, projectTitle ?? ``, thread.branch ?? ``],
+        searchTerms,
+        searchIndex: buildCommandPaletteSearchIndex(searchTerms),
         title: thread.title,
         description: descriptionParts.join(` · `),
         timestamp: formatRelativeTimeLabel(
@@ -174,8 +198,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
-function rankSearchFieldMatch(field: string, normalizedQuery: string): number {
-  const normalizedField = normalizeSearchText(field);
+function rankNormalizedSearchFieldMatch(normalizedField: string, normalizedQuery: string): number {
   if (normalizedField.length === 0 || !normalizedField.includes(normalizedQuery)) {
     return Number.NEGATIVE_INFINITY;
   }
@@ -188,19 +211,24 @@ function rankSearchFieldMatch(field: string, normalizedQuery: string): number {
   return 1;
 }
 
-function rankCommandPaletteItemMatch(
+function getCommandPaletteSearchIndex(
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+): CommandPaletteSearchIndex {
+  return item.searchIndex ?? buildCommandPaletteSearchIndex(item.searchTerms);
+}
+
+function rankCommandPaletteSearchIndexMatch(
+  index: CommandPaletteSearchIndex,
   normalizedQuery: string,
 ): number {
-  const terms = item.searchTerms.filter((term) => term.length > 0);
-  if (terms.length === 0) {
+  if (index.normalizedTerms.length === 0) {
     return 0;
   }
 
-  for (const [index, field] of terms.entries()) {
-    const fieldRank = rankSearchFieldMatch(field, normalizedQuery);
+  for (const [termIndex, normalizedField] of index.normalizedTerms.entries()) {
+    const fieldRank = rankNormalizedSearchFieldMatch(normalizedField, normalizedQuery);
     if (fieldRank !== Number.NEGATIVE_INFINITY) {
-      return 1_000 - index * 100 + fieldRank;
+      return 1_000 - termIndex * 100 + fieldRank;
     }
   }
 
@@ -253,15 +281,15 @@ export function filterCommandPaletteGroups(input: {
   return searchableGroups.flatMap((group) => {
     const items = group.items
       .map((item, index) => {
-        const haystack = normalizeSearchText(item.searchTerms.join(" "));
-        if (!haystack.includes(normalizedQuery)) {
+        const searchIndex = getCommandPaletteSearchIndex(item);
+        if (!searchIndex.haystack.includes(normalizedQuery)) {
           return null;
         }
 
         return {
           item,
           index,
-          rank: rankCommandPaletteItemMatch(item, normalizedQuery),
+          rank: rankCommandPaletteSearchIndexMatch(searchIndex, normalizedQuery),
         };
       })
       .filter(
