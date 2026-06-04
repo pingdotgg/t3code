@@ -705,6 +705,7 @@ jobs:
           run-install: |
             args:
               - --filter=@t3tools/scripts...
+              - --filter=@t3tools/oxlint-plugin-t3code...
 
       - id: update_versions
         name: Update version strings
