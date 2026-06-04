@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  createStagePnpmConfig,
   resolveDesktopRuntimeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
@@ -62,6 +63,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         effect: "4.0.0-beta.59",
       },
     );
+  });
+
+  it("carries workspace patch metadata into staged desktop installs", () => {
+    assert.deepStrictEqual(
+      createStagePnpmConfig({
+        "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+      }),
+      {
+        patchedDependencies: {
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+        },
+      },
+    );
+
+    assert.equal(createStagePnpmConfig({}), undefined);
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {

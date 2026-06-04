@@ -32,6 +32,7 @@ const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
@@ -270,6 +271,15 @@ interface StagePackageJson {
     readonly electron: string;
   };
   readonly overrides: Record<string, unknown>;
+  readonly pnpm?: {
+    readonly patchedDependencies?: Record<string, string>;
+  };
+}
+
+export function createStagePnpmConfig(
+  patchedDependencies: Record<string, string>,
+): StagePackageJson["pnpm"] | undefined {
+  return Object.keys(patchedDependencies).length > 0 ? { patchedDependencies } : undefined;
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
@@ -757,6 +767,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const workspaceConfig = yield* readWorkspaceConfig();
   const workspaceCatalog = workspaceConfig.catalog ?? {};
   const workspaceOverrides = workspaceConfig.overrides ?? {};
+  const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -867,6 +878,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
+  const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies);
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
@@ -893,10 +905,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       electron: electronVersion,
     },
     overrides: resolvedOverrides,
+    ...(stagePnpmConfig ? { pnpm: stagePnpmConfig } : {}),
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
+
+  if (Object.keys(workspacePatchedDependencies).length > 0) {
+    yield* fs.copy(path.join(repoRoot, "patches"), path.join(stageAppDir, "patches"));
+  }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
   yield* runCommand(
