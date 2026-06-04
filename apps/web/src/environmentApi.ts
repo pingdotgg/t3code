@@ -7,6 +7,9 @@ const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>()
 
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
+    server: {
+      refreshProviders: rpcClient.server.refreshProviders,
+    },
     terminal: {
       open: (input) => rpcClient.terminal.open(input as never),
       attach: (input, callback, options) =>

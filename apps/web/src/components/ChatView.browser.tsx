@@ -244,6 +244,11 @@ function createMockEnvironmentApi(input: {
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
 }): EnvironmentApi {
   return {
+    server: {
+      refreshProviders: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["server"]["refreshProviders"],
+    },
     terminal: {} as EnvironmentApi["terminal"],
     projects: {} as EnvironmentApi["projects"],
     filesystem: {

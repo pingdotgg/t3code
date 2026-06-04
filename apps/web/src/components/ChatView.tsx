@@ -1875,7 +1875,7 @@ export default function ChatView(props: ChatViewProps) {
     const refreshKey = `${environmentId}\u0000${refreshTarget.instanceId}\u0000${activeWorkspaceRoot}`;
     if (codexWorkspaceProviderRefreshKeyRef.current === refreshKey) return;
 
-    const api = readLocalApi();
+    const api = readEnvironmentApi(environmentId);
     if (!api) return;
     codexWorkspaceProviderRefreshKeyRef.current = refreshKey;
     void (async () => {
