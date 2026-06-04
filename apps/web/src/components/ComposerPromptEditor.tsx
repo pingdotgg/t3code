@@ -1042,18 +1042,18 @@ function ComposerHomeEndKeyPlugin() {
           return false;
         }
 
-        event.preventDefault();
-        event.stopPropagation();
-
         const rootElement = editor.getRootElement();
         const selection = window.getSelection();
         const anchorNode = selection?.anchorNode;
         if (!rootElement || !selection || !anchorNode || !rootElement.contains(anchorNode)) {
-          return true;
+          return false;
         }
         if (selection.rangeCount === 0 || typeof selection.modify !== "function") {
-          return true;
+          return false;
         }
+
+        event.preventDefault();
+        event.stopPropagation();
 
         selection.modify(
           event.shiftKey ? "extend" : "move",
