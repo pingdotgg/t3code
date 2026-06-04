@@ -121,6 +121,36 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     ),
   );
 
+const COMMAND_OUTPUT_TAIL_LENGTH = 20_000;
+
+function appendOutputTail(acc: string, chunk: string): string {
+  const next = acc + chunk;
+  return next.length > COMMAND_OUTPUT_TAIL_LENGTH ? next.slice(-COMMAND_OUTPUT_TAIL_LENGTH) : next;
+}
+
+function formatOutputSection(label: string, output: string): string | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+  return `${label} tail:\n${trimmed}`;
+}
+
+const collectCommandStream = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  output: NodeJS.WriteStream,
+  verbose: boolean,
+): Effect.Effect<string, E> =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.runFoldEffect(
+      () => "",
+      (acc, chunk) =>
+        Effect.as(
+          verbose ? Effect.sync(() => output.write(chunk)) : Effect.void,
+          appendOutputTail(acc, chunk),
+        ),
+    ),
+  );
+
 const spawnAndCollectOutput = Effect.fn("spawnAndCollectOutput")(function* (
   command: ChildProcess.Command,
 ) {
@@ -353,20 +383,33 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   } satisfies ResolvedBuildOptions;
 });
 
-const commandOutputOptions = (verbose: boolean) =>
-  ({
-    stdout: verbose ? "inherit" : "ignore",
-    stderr: "inherit",
-  }) as const;
-
-const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
+const runCommand = Effect.fn("runCommand")(function* (
+  command: ChildProcess.Command,
+  options: {
+    readonly label?: string;
+    readonly verbose: boolean;
+  },
+) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* commandSpawner.spawn(command);
-  const exitCode = yield* child.exitCode;
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectCommandStream(child.stdout, process.stdout, options.verbose),
+      collectCommandStream(child.stderr, process.stderr, options.verbose),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
 
   if (exitCode !== 0) {
+    const outputSections = [
+      options.label ? `Command: ${options.label}` : undefined,
+      formatOutputSection("stdout", stdout),
+      formatOutputSection("stderr", stderr),
+    ].filter((section): section is string => section !== undefined);
+    const outputSuffix = outputSections.length > 0 ? `\n\n${outputSections.join("\n\n")}` : "";
     return yield* new BuildScriptError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
+      message: `Command exited with non-zero exit code (${exitCode})${outputSuffix}`,
     });
   }
 });
@@ -386,24 +429,25 @@ function generateMacIconSet(
     const iconSizes = [16, 32, 128, 256, 512] as const;
     for (const size of iconSizes) {
       yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+        ChildProcess.make(
+          {},
+        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+        { label: `sips icon ${size}x${size}`, verbose },
       );
 
       const retinaSize = size * 2;
       yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+        ChildProcess.make(
+          {},
+        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+        { label: `sips icon ${size}x${size}@2x`, verbose },
       );
     }
 
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`iconutil -c icns ${iconsetDir} -o ${targetIcns}`,
-    );
+    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
+      label: "iconutil icns",
+      verbose,
+    });
   });
 }
 
@@ -424,11 +468,10 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
 
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`,
-    );
+    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
+      label: "sips mac icon",
+      verbose,
+    });
 
     yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
   });
@@ -468,9 +511,8 @@ function stageLinuxIconSize(
 ) {
   const resize = (command: string) =>
     runCommand(
-      ChildProcess.make(command, [sourcePng, "-resize", `${iconSize}x${iconSize}`, targetPng], {
-        ...commandOutputOptions(verbose),
-      }),
+      ChildProcess.make(command, [sourcePng, "-resize", `${iconSize}x${iconSize}`, targetPng]),
+      { label: `${command} linux icon ${iconSize}x${iconSize}`, verbose },
     );
 
   return resize("magick").pipe(
@@ -778,10 +820,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* runCommand(
       ChildProcess.make({
         cwd: repoRoot,
-        ...commandOutputOptions(options.verbose),
         // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
         shell: process.platform === "win32",
       })`vp run build:desktop`,
+      { label: "vp run build:desktop", verbose: options.verbose },
     );
   }
 
@@ -858,10 +900,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
       shell: process.platform === "win32",
     })`vp install --prod --no-optional`,
+    { label: "vp install --prod --no-optional", verbose: options.verbose },
   );
 
   const buildEnv: NodeJS.ProcessEnv = {
@@ -890,6 +932,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.npm_config_msvs_version = buildEnv.npm_config_msvs_version ?? "2022";
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
+  if (options.verbose) {
+    buildEnv.DEBUG =
+      buildEnv.DEBUG === undefined || buildEnv.DEBUG === ""
+        ? "electron-builder,electron-builder:*"
+        : `${buildEnv.DEBUG},electron-builder,electron-builder:*`;
+  }
 
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
@@ -898,10 +946,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     ChildProcess.make({
       cwd: stageAppDir,
       env: buildEnv,
-      ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
     })`vp dlx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    {
+      label: `vp dlx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+      verbose: options.verbose,
+    },
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
