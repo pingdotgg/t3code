@@ -30,9 +30,6 @@ catalogs:
     vite-plus:
       specifier: latest
       version: 0.1.24
-    yaml:
-      specifier: ^2.9.0
-      version: 2.9.0
 
 overrides:
   '@effect/atom-react': 4.0.0-beta.73
@@ -45,6 +42,7 @@ overrides:
   effect: 4.0.0-beta.73
   vite: npm:@voidzero-dev/vite-plus-core@latest
   vitest: npm:@voidzero-dev/vite-plus-test@latest
+  yaml: ^2.9.0
 
 packageExtensionsChecksum: sha256-MDpMSm2Rk8Y7FDIbaAgFkT45PZBPV7JBzjTAft+noEM=
 
@@ -93,9 +91,6 @@ importers:
       vitest:
         specifier: npm:@voidzero-dev/vite-plus-test@latest
         version: '@voidzero-dev/vite-plus-test@0.1.24(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@0.1.24(@types/node@24.12.4)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
-      yaml:
-        specifier: 'catalog:'
-        version: 2.9.0
 
   apps/desktop:
     dependencies:
@@ -670,6 +665,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.73
         version: 4.0.0-beta.73(patch_hash=a28d840fa97ffebabe628e5562837c537d83c40cfdad8049de73c38086f2fb01)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.73
@@ -3808,7 +3806,7 @@ packages:
       typescript: ^5.0.0 || ^6.0.0
       unplugin-unused: ^0.5.0
       unrun: '*'
-      yaml: ^2.4.2
+      yaml: ^2.9.0
     peerDependenciesMeta:
       '@arethetypeswrong/core':
         optional: true
@@ -8041,11 +8039,6 @@ packages:
     resolution: {integrity: sha512-qhjK/bzSRZ6HtTvgeFvjNPJGWdZ0+x5NREV/9XZWFjIGezew2b4r5JPy66IfOhd5OA7KeFwk1JfmEbnTvev0cA==}
     hasBin: true
 
-  yaml@2.7.1:
-    resolution: {integrity: sha512-10ULxpnOCQXxJvBgxsn9ptjq6uviG/htZKk9veJGhlqn3w/DxQ631zFF+nlQXLwmImeS5amR2dl2U8sg6U9jsQ==}
-    engines: {node: '>= 14'}
-    hasBin: true
-
   yaml@2.9.0:
     resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
     engines: {node: '>= 14.6'}
@@ -10525,7 +10518,9 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.85.3': {}
 
@@ -16274,9 +16269,7 @@ snapshots:
       vscode-languageserver-textdocument: 1.0.12
       vscode-languageserver-types: 3.17.5
       vscode-uri: 3.1.0
-      yaml: 2.7.1
-
-  yaml@2.7.1: {}
+      yaml: 2.9.0
 
   yaml@2.9.0: {}
 

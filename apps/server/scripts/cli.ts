@@ -17,8 +17,8 @@ import {
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 import serverPackageJson from "../package.json" with { type: "json" };
-import { parse as parseYaml } from "yaml";
 
 interface PackageJson {
   name: string;
@@ -39,10 +39,12 @@ interface PackageJson {
 const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
 const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
-interface WorkspaceConfig {
-  readonly catalog?: Record<string, string>;
-  readonly overrides?: Record<string, string>;
-}
+const WorkspaceConfig = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type WorkspaceConfig = typeof WorkspaceConfig.Type;
+const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 
 class CliError extends Data.TaggedError("CliError")<{
   readonly message: string;
@@ -58,7 +60,7 @@ const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const repoRoot = yield* RepoRoot;
   const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
-  return parseYaml(workspaceYaml) as WorkspaceConfig;
+  return yield* decodeWorkspaceConfig(workspaceYaml);
 });
 
 const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {

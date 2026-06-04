@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 
 import { referenceRepos, type ReferenceRepo } from "./lib/reference-repos.ts";
 
@@ -36,7 +37,8 @@ export class ReferenceRepoSyncError extends Data.TaggedError("ReferenceRepoSyncE
   readonly cause?: unknown;
 }> {}
 
-const decodePackageJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeJsonSource = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeYamlSource = Schema.decodeEffect(fromYaml(Schema.Unknown));
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
@@ -56,6 +58,33 @@ function readNestedString(input: unknown, keys: ReadonlyArray<string>): string |
     value = (value as Record<string, unknown>)[key];
   }
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function decodeVersionSource(
+  sourcePath: string,
+  content: string,
+): Effect.Effect<unknown, ReferenceRepoSyncError> {
+  if (sourcePath.endsWith(".yaml") || sourcePath.endsWith(".yml")) {
+    return decodeYamlSource(content).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReferenceRepoSyncError({
+            message: `Unable to parse version source ${sourcePath}.`,
+            cause,
+          }),
+      ),
+    );
+  }
+
+  return decodeJsonSource(content).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ReferenceRepoSyncError({
+          message: `Unable to parse version source ${sourcePath}.`,
+          cause,
+        }),
+    ),
+  );
 }
 
 function getSelectedRepos(
@@ -88,22 +117,22 @@ export const resolveReferenceRepoRef = Effect.fn("resolveReferenceRepoRef")(func
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const packageJsonPath = path.join(rootDir, repo.packageJsonPath);
-  const packageJson = yield* fs.readFileString(packageJsonPath).pipe(
-    Effect.flatMap(decodePackageJson),
+  const versionSourcePath = path.join(rootDir, repo.versionSourcePath);
+  const versionSourceContent = yield* fs.readFileString(versionSourcePath).pipe(
     Effect.mapError(
       (cause) =>
         new ReferenceRepoSyncError({
-          message: `Unable to read package version for '${repo.id}' from ${packageJsonPath}.`,
+          message: `Unable to read package version for '${repo.id}' from ${versionSourcePath}.`,
           cause,
         }),
     ),
   );
-  const version = readNestedString(packageJson, repo.packageVersionPath);
+  const versionSource = yield* decodeVersionSource(repo.versionSourcePath, versionSourceContent);
+  const version = readNestedString(versionSource, repo.packageVersionPath);
 
   if (!version) {
     return yield* new ReferenceRepoSyncError({
-      message: `Unable to resolve package version for '${repo.id}' at ${repo.packageJsonPath}:${repo.packageVersionPath.join(
+      message: `Unable to resolve package version for '${repo.id}' at ${repo.versionSourcePath}:${repo.packageVersionPath.join(
         ".",
       )}.`,
     });

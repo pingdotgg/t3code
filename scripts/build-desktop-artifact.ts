@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { parse as parseYaml } from "yaml";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -29,22 +29,24 @@ const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
-interface WorkspaceConfig {
-  readonly catalog?: Record<string, string>;
-  readonly overrides?: Record<string, string>;
-}
+const WorkspaceConfig = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 
 const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
   const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
-  return parseYaml(workspaceYaml) as WorkspaceConfig;
+  return yield* decodeWorkspaceConfig(workspaceYaml);
 });
 
 interface DesktopBuildIconAssets {
@@ -776,7 +778,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     try: () => resolveCatalogDependencies(workspaceOverrides, workspaceCatalog, "apps/desktop"),
     catch: (cause) =>
       new BuildScriptError({
-        message: "Could not resolve overrides from package.json.",
+        message: "Could not resolve overrides from pnpm-workspace.yaml.",
         cause,
       }),
   });

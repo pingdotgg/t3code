@@ -45,6 +45,7 @@ overrides:
   effect: "catalog:"
   vite: "catalog:"
   vitest: "catalog:"
+  yaml: "catalog:"
 peerDependencyRules:
   allowAny:
     - vite
