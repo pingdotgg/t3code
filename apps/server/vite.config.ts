@@ -3,7 +3,16 @@ import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 
-const internalPackagePrefixes = ["@t3tools/", "effect-acp", "effect-codex-app-server"];
+const bundledPackagePrefixes = [
+  "@pierre/diffs",
+  "@t3tools/",
+  "effect-acp",
+  "effect-codex-app-server",
+];
+
+export function shouldBundleCliDependency(id: string): boolean {
+  return bundledPackagePrefixes.some((prefix) => id.startsWith(prefix));
+}
 
 export default mergeConfig(
   baseConfig,
@@ -23,8 +32,7 @@ export default mergeConfig(
       sourcemap: true,
       clean: true,
       deps: {
-        alwaysBundle: (id: string) =>
-          internalPackagePrefixes.some((prefix) => id.startsWith(prefix)),
+        alwaysBundle: shouldBundleCliDependency,
         onlyBundle: false,
       },
       banner: {
