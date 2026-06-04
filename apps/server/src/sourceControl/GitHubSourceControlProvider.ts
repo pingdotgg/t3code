@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
+import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubPullRequests from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
@@ -102,11 +103,28 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
   const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
-  const account = SourceControlProviderDiscovery.matchFirst(output, [
-    /Logged in to .* account\s+([^\s(]+)/iu,
-    /Logged in to .* as\s+([^\s(]+)/iu,
-  ]);
-  const host = SourceControlProviderDiscovery.parseCliHost(output);
+  const authStatus = parseGitHubAuthStatus(input.stdout);
+  const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
+  const host = authenticatedAccount?.host;
+
+  if (authenticatedAccount) {
+    return SourceControlProviderDiscovery.providerAuth({
+      status: "authenticated",
+      account: authenticatedAccount.account,
+      host,
+    });
+  }
+
+  const failedAccount = authStatus.accounts.find((entry) => entry.active) ?? authStatus.accounts[0];
+  if (authStatus.parsed) {
+    return SourceControlProviderDiscovery.providerAuth({
+      status: "unauthenticated",
+      host: failedAccount?.host,
+      detail:
+        failedAccount?.error ??
+        "Run `gh auth login` to authenticate GitHub CLI with an active account.",
+    });
+  }
 
   if (input.exitCode !== 0) {
     return SourceControlProviderDiscovery.providerAuth({
@@ -116,10 +134,6 @@ function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuth
         SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
         "Run `gh auth login` to authenticate GitHub CLI.",
     });
-  }
-
-  if (account) {
-    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
   }
 
   return SourceControlProviderDiscovery.providerAuth({
@@ -137,7 +151,7 @@ export const discovery = {
   label: "GitHub",
   executable: "gh",
   versionArgs: ["--version"],
-  authArgs: ["auth", "status"],
+  authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
