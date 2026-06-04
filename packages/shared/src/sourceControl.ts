@@ -149,9 +149,17 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   try {
-    return new URL(trimmed).hostname.toLowerCase();
+    return new URL(trimmed).host.toLowerCase();
   } catch {
     return null;
+  }
+}
+
+function parseHostName(host: string): string {
+  try {
+    return new URL(`https://${host}`).hostname.toLowerCase();
+  } catch {
+    return host.replace(/:\d+$/u, "").toLowerCase();
   }
 }
 
@@ -182,24 +190,25 @@ export function detectSourceControlProviderFromRemoteUrl(
   if (!host) {
     return null;
   }
+  const hostname = parseHostName(host);
 
-  if (isGitHubHost(host)) {
+  if (isGitHubHost(hostname)) {
     return {
       kind: "github",
-      name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+      name: hostname === "github.com" ? "GitHub" : "GitHub Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }
 
-  if (isGitLabHost(host)) {
+  if (isGitLabHost(hostname)) {
     return {
       kind: "gitlab",
-      name: host === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+      name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }
 
-  if (isAzureDevOpsHost(host)) {
+  if (isAzureDevOpsHost(hostname)) {
     return {
       kind: "azure-devops",
       name: "Azure DevOps",
@@ -207,10 +216,10 @@ export function detectSourceControlProviderFromRemoteUrl(
     };
   }
 
-  if (isBitbucketHost(host)) {
+  if (isBitbucketHost(hostname)) {
     return {
       kind: "bitbucket",
-      name: host === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
+      name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }

@@ -6,6 +6,7 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 function providerError(
   operation: string,
@@ -43,12 +44,19 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
 
 function parseGitLabAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
   const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
-  const account = SourceControlProviderDiscovery.matchFirst(output, [
-    /Logged in to .* as\s+([^\s(]+)/iu,
-    /Logged in to .* account\s+([^\s(]+)/iu,
-    /account:\s*([^\s(]+)/iu,
-  ]);
-  const host = SourceControlProviderDiscovery.parseCliHost(output);
+  const authenticatedHost = findAuthenticatedGitLabHost(parseGitLabAuthStatusHosts(output));
+  const account =
+    authenticatedHost?.account ??
+    SourceControlProviderDiscovery.matchFirst(output, [
+      /Logged in to .* as\s+([^\s(]+)/iu,
+      /Logged in to .* account\s+([^\s(]+)/iu,
+      /account:\s*([^\s(]+)/iu,
+    ]);
+  const host = authenticatedHost?.host ?? SourceControlProviderDiscovery.parseCliHost(output);
+
+  if (account) {
+    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
+  }
 
   if (input.exitCode !== 0) {
     return SourceControlProviderDiscovery.providerAuth({
@@ -60,10 +68,6 @@ function parseGitLabAuth(input: SourceControlProviderDiscovery.SourceControlAuth
     });
   }
 
-  if (account) {
-    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
-  }
-
   return SourceControlProviderDiscovery.providerAuth({
     status: "unknown",
     host,
@@ -71,6 +75,25 @@ function parseGitLabAuth(input: SourceControlProviderDiscovery.SourceControlAuth
       SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
       "GitLab CLI auth status could not be parsed.",
   });
+}
+
+function refineUnknownGitLabRemote(
+  input: SourceControlProviderDiscovery.SourceControlUnknownRemoteRefinementInput,
+) {
+  const host = input.context.provider.name.toLowerCase();
+  const authenticated = parseGitLabAuthStatusHosts(
+    SourceControlProviderDiscovery.combinedAuthOutput(input.auth),
+  ).some((entry) => entry.account !== null && entry.host === host);
+
+  if (!authenticated) {
+    return null;
+  }
+
+  return {
+    kind: "gitlab",
+    name: "GitLab Self-Hosted",
+    baseUrl: input.context.provider.baseUrl,
+  } as const;
 }
 
 export const discovery = {
@@ -81,6 +104,7 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: parseGitLabAuth,
+  refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
