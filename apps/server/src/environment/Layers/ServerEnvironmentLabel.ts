@@ -59,7 +59,6 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
       command,
       args,
       timeoutBehavior: "timedOutResult",
-      shell: process.platform === "win32",
     })
     .pipe(Effect.option);
 

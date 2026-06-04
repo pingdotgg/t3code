@@ -16,6 +16,7 @@ import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
+export const SSH_COMMAND = process.platform === "win32" ? "ssh.exe" : "ssh";
 
 const encoder = new TextEncoder();
 
@@ -192,15 +193,14 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   yield* Effect.logDebug("ssh.command.start", {
     ...sshTargetLogFields(target),
-    command: ["ssh", ...args],
+    command: [SSH_COMMAND, ...args],
     hasStdin: input.stdin !== undefined,
     timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make("ssh", args, {
+      ChildProcess.make(SSH_COMMAND, args, {
         env: environment,
-        shell: process.platform === "win32",
         stdin: {
           stream: stdinStream(input.stdin),
           endOnDone: true,
@@ -212,7 +212,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       Effect.mapError(
         (cause) =>
           new SshCommandError({
-            command: ["ssh", ...args],
+            command: [SSH_COMMAND, ...args],
             exitCode: null,
             stderr: "",
             message:
