@@ -96,6 +96,7 @@ export default defineConfig({
       "typescript/require-array-sort-compare": "off",
       "typescript/restrict-template-expressions": "off",
       "typescript/unbound-method": "off",
+      "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
     },

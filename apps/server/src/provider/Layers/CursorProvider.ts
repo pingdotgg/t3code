@@ -27,7 +27,7 @@ import {
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
 } from "@t3tools/shared/model";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   buildBooleanOptionDescriptor,
@@ -399,7 +399,6 @@ const makeCursorAcpProbeRuntime = (
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const hostEnv = yield* HostProcessEnv;
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         spawn: {
@@ -409,7 +408,7 @@ const makeCursorAcpProbeRuntime = (
             "acp",
           ],
           cwd: process.cwd(),
-          env: environment ?? hostEnv,
+          ...(environment ? { env: environment } : {}),
         },
         cwd: process.cwd(),
         clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
@@ -933,10 +932,9 @@ const runCursorCommand = (
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const hostEnv = yield* HostProcessEnv;
     const hostPlatform = yield* HostProcessPlatform;
     const command = ChildProcess.make(cursorSettings.binaryPath, [...args], {
-      env: environment ?? hostEnv,
+      ...(environment ? { env: environment } : { extendEnv: true }),
       shell: hostPlatform === "win32",
     });
 

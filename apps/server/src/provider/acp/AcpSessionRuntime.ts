@@ -13,7 +13,7 @@ import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   collectSessionConfigOptionValues,
@@ -202,13 +202,12 @@ const makeAcpSessionRuntime = (
         ),
       );
 
-    const hostEnv = yield* HostProcessEnv;
     const hostPlatform = yield* HostProcessPlatform;
     const child = yield* spawner
       .spawn(
         ChildProcess.make(options.spawn.command, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: { ...hostEnv, ...options.spawn.env } } : {}),
+          ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
           shell: hostPlatform === "win32",
         }),
       )

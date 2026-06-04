@@ -9,7 +9,6 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { HostProcessEnv } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -305,8 +304,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const hostEnv = yield* HostProcessEnv;
-  const resolvedEnvironment = environment ?? hostEnv;
+  const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;

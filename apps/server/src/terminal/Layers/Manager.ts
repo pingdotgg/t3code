@@ -10,8 +10,9 @@ import {
   type TerminalSummary,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -61,6 +62,45 @@ const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
+
+const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(input).flatMap(([key, value]) =>
+      Option.match(value, {
+        onNone: () => [],
+        onSome: (resolved) => [[key, resolved]],
+      }),
+    ),
+  );
+
+const TerminalHostEnvConfig = Config.all({
+  COLORTERM: Config.string("COLORTERM").pipe(Config.option),
+  ComSpec: Config.string("ComSpec").pipe(Config.option),
+  ELECTRON_RENDERER_PORT: Config.string("ELECTRON_RENDERER_PORT").pipe(Config.option),
+  ELECTRON_RUN_AS_NODE: Config.string("ELECTRON_RUN_AS_NODE").pipe(Config.option),
+  HOME: Config.string("HOME").pipe(Config.option),
+  LANG: Config.string("LANG").pipe(Config.option),
+  LC_ALL: Config.string("LC_ALL").pipe(Config.option),
+  PATH: Config.string("PATH").pipe(Config.option),
+  PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  PORT: Config.string("PORT").pipe(Config.option),
+  Path: Config.string("Path").pipe(Config.option),
+  SHELL: Config.string("SHELL").pipe(Config.option),
+  SSH_AUTH_SOCK: Config.string("SSH_AUTH_SOCK").pipe(Config.option),
+  SystemRoot: Config.string("SystemRoot").pipe(Config.option),
+  T3CODE_PORT: Config.string("T3CODE_PORT").pipe(Config.option),
+  TEMP: Config.string("TEMP").pipe(Config.option),
+  TERM: Config.string("TERM").pipe(Config.option),
+  TMP: Config.string("TMP").pipe(Config.option),
+  TMPDIR: Config.string("TMPDIR").pipe(Config.option),
+  USER: Config.string("USER").pipe(Config.option),
+  USERNAME: Config.string("USERNAME").pipe(Config.option),
+  VITE_DEV_SERVER_URL: Config.string("VITE_DEV_SERVER_URL").pipe(Config.option),
+  path: Config.string("path").pipe(Config.option),
+  windir: Config.string("windir").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
+const readTerminalHostEnv = TerminalHostEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
@@ -515,6 +555,7 @@ function windowsInspectSubprocess(
       timeout: "1500 millis",
       maxOutputBytes: 32_768,
       outputMode: "truncate",
+      shell: true,
       timeoutBehavior: "timedOutResult",
     });
   }).pipe(
@@ -1011,7 +1052,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const logsDir = options.logsDir;
     const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     const platform = yield* HostProcessPlatform;
-    const baseEnv = yield* HostProcessEnv;
+    const baseEnv = yield* readTerminalHostEnv;
     const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const subprocessInspector =

@@ -1,8 +1,10 @@
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
@@ -177,13 +179,19 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {
-  const hostEnv = yield* HostProcessEnv;
-  const baseEnv = { ...(input.baseEnv ?? hostEnv) };
+  const baseEnv = { ...input.baseEnv };
   if (!input.interactiveAuth) {
     return baseEnv;
   }
 
   const platform = yield* HostProcessPlatform;
+  const hostDisplay = input.baseEnv
+    ? input.baseEnv.DISPLAY
+    : yield* Config.string("DISPLAY").pipe(
+        Config.option,
+        Effect.orElseSucceed(() => Option.none<string>()),
+        Effect.map(Option.getOrUndefined),
+      );
   const directory = input.askpassDirectory ?? (yield* getDefaultSshAskpassDirectory());
   const sshAskpass = yield* ensureSshAskpassHelpers({ directory });
 
@@ -192,7 +200,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     SSH_ASKPASS: sshAskpass,
     SSH_ASKPASS_REQUIRE: "force",
     ...(input.authSecret === undefined ? {} : { T3_SSH_AUTH_SECRET: input.authSecret ?? "" }),
-    ...(platform === "win32" || baseEnv.DISPLAY ? {} : { DISPLAY: "t3code" }),
+    ...(platform === "win32" || baseEnv.DISPLAY || hostDisplay ? {} : { DISPLAY: "t3code" }),
   };
 });
 

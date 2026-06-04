@@ -12,12 +12,12 @@ import {
   type EditorId,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
-  isCommandAvailable,
   isCommandAvailableForPlatform,
   type PlatformCommandAvailabilityOptions,
 } from "@t3tools/shared/shell";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -31,7 +31,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 export { ExternalLauncherError };
 export type { LaunchEditorInput };
-export { isCommandAvailable, isCommandAvailableForPlatform } from "@t3tools/shared/shell";
+export { isCommandAvailableForPlatform } from "@t3tools/shared/shell";
 
 interface EditorLaunch {
   readonly command: string;
@@ -65,6 +65,36 @@ const DETACHED_IGNORE_STDIO_OPTIONS = {
   stdout: "ignore",
   stderr: "ignore",
 } as const satisfies ChildProcess.CommandOptions;
+
+const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(input).flatMap(([key, value]) =>
+      Option.match(value, {
+        onNone: () => [],
+        onSome: (resolved) => [[key, resolved]],
+      }),
+    ),
+  );
+
+const BrowserLaunchEnvConfig = Config.all({
+  SYSTEMROOT: Config.string("SYSTEMROOT").pipe(Config.option),
+  windir: Config.string("windir").pipe(Config.option),
+  WSL_DISTRO_NAME: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
+  WSL_INTEROP: Config.string("WSL_INTEROP").pipe(Config.option),
+  SSH_CONNECTION: Config.string("SSH_CONNECTION").pipe(Config.option),
+  SSH_TTY: Config.string("SSH_TTY").pipe(Config.option),
+  container: Config.string("container").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
+const CommandLookupEnvConfig = Config.all({
+  PATH: Config.string("PATH").pipe(Config.option),
+  Path: Config.string("Path").pipe(Config.option),
+  path: Config.string("path").pipe(Config.option),
+  PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
+const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
   const match = TARGET_WITH_POSITION_PATTERN.exec(target);
@@ -140,7 +170,7 @@ function escapePowerShellStringLiteral(input: string): string {
   return `'${input.replaceAll("'", "''")}'`;
 }
 
-function resolvePowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {
   return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
@@ -150,7 +180,7 @@ function resolveWslPowerShellPath(): string {
 
 function shouldUseWindowsBrowserFromWsl(
   platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = {},
 ): boolean {
   return (
     platform === "linux" &&
@@ -243,7 +273,7 @@ export function resolveAvailableEditors(
 
 export const getAvailableEditors = Effect.fn("externalLauncher.getAvailableEditors")(function* () {
   const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnv;
+  const env = yield* readCommandLookupEnv;
   return resolveAvailableEditors(platform, env);
 });
 
@@ -314,7 +344,7 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
 ): Effect.fn.Return<EditorLaunch, ExternalLauncherError> {
   const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnv;
+  const env = yield* readCommandLookupEnv;
   return yield* resolveEditorLaunchForPlatform(input, platform, env);
 });
 
@@ -337,7 +367,7 @@ export const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(functio
   target: string,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnv;
+  const env = yield* readBrowserLaunchEnv;
   return yield* launchAndUnref(
     resolveBrowserLaunch(target, platform, env),
     "Browser auto-open failed",
@@ -347,13 +377,14 @@ export const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(functio
 export const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
-  if (!isCommandAvailable(launch.command)) {
+  const platform = yield* HostProcessPlatform;
+  const env = yield* readCommandLookupEnv;
+  if (!isCommandAvailableForPlatform(launch.command, { platform, env })) {
     return yield* new ExternalLauncherError({
       message: `Editor command not found: ${launch.command}`,
     });
   }
 
-  const platform = yield* HostProcessPlatform;
   const isWin32 = platform === "win32";
   yield* launchAndUnref(
     {

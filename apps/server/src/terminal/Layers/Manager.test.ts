@@ -8,7 +8,8 @@ import {
   type TerminalOpenInput,
   type TerminalRestartInput,
 } from "@t3tools/contracts";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -267,14 +268,15 @@ const createManager = (
     }),
   );
 
-const withHostProcess = (input: {
+const withHostProcess = (platform: NodeJS.Platform) => Layer.succeed(HostProcessPlatform, platform);
+
+const withConfigEnv = (env: Record<string, string>) =>
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
+
+const withHostRuntime = (input: {
   readonly platform: NodeJS.Platform;
-  readonly env?: NodeJS.ProcessEnv;
-}) =>
-  Layer.mergeAll(
-    Layer.succeed(HostProcessPlatform, input.platform),
-    Layer.succeed(HostProcessEnv, input.env ?? {}),
-  );
+  readonly env?: Record<string, string>;
+}) => Layer.merge(withHostProcess(input.platform), withConfigEnv(input.env ?? {}));
 
 it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
@@ -1128,7 +1130,7 @@ it.layer(
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5).pipe(
         Effect.provide(
-          withHostProcess({
+          withHostRuntime({
             platform: "win32",
             env: {
               ComSpec: "C:\\Windows\\System32\\cmd.exe",
@@ -1158,7 +1160,7 @@ it.layer(
         shellResolver: () => "C:\\missing\\custom-shell.exe",
       }).pipe(
         Effect.provide(
-          withHostProcess({
+          withHostRuntime({
             platform: "win32",
             env: {
               ComSpec: "C:\\Windows\\System32\\cmd.exe",
@@ -1187,46 +1189,25 @@ it.layer(
 
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
-      const originalValues = new Map<string, string | undefined>();
-      const setEnv = (key: string, value: string | undefined) => {
-        if (!originalValues.has(key)) {
-          originalValues.set(key, process.env[key]);
-        }
-        if (value === undefined) {
-          delete process.env[key];
-          return;
-        }
-        process.env[key] = value;
-      };
-      const restoreEnv = () => {
-        for (const [key, value] of originalValues) {
-          if (value === undefined) {
-            delete process.env[key];
-          } else {
-            process.env[key] = value;
-          }
-        }
-      };
+      const { manager, ptyAdapter } = yield* createManager().pipe(
+        Effect.provide(
+          withConfigEnv({
+            PORT: "5173",
+            T3CODE_PORT: "3773",
+            VITE_DEV_SERVER_URL: "http://localhost:5173",
+            LANG: "en_US.UTF-8",
+          }),
+        ),
+      );
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
 
-      setEnv("PORT", "5173");
-      setEnv("T3CODE_PORT", "3773");
-      setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
-      setEnv("TEST_TERMINAL_KEEP", "keep-me");
-
-      try {
-        const { manager, ptyAdapter } = yield* createManager();
-        yield* manager.open(openInput());
-        const spawnInput = ptyAdapter.spawnInputs[0];
-        expect(spawnInput).toBeDefined();
-        if (!spawnInput) return;
-
-        expect(spawnInput.env.PORT).toBeUndefined();
-        expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
-        expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
-        expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
-      } finally {
-        restoreEnv();
-      }
+      expect(spawnInput.env.PORT).toBeUndefined();
+      expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
+      expect(spawnInput.env.LANG).toBe("en_US.UTF-8");
     }),
   );
 

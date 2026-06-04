@@ -1,7 +1,6 @@
 import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
-import { HostProcessEnv } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
@@ -19,8 +18,7 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
-  const hostEnv = yield* HostProcessEnv;
-  const resolvedBaseEnv = baseEnv ?? hostEnv;
+  const resolvedBaseEnv = baseEnv ?? process.env;
   const homePath = config.homePath.trim();
   if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);

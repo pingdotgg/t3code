@@ -1,8 +1,4 @@
-import {
-  HostProcessArchitecture,
-  HostProcessEnv,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -14,7 +10,7 @@ interface PlatformConfig {
   readonly archChoices: ReadonlyArray<BuildArch>;
 }
 
-export { HostProcessArchitecture, HostProcessEnv, HostProcessPlatform };
+export { HostProcessArchitecture, HostProcessPlatform };
 
 const WindowsProcessorArchitectureConfig = Config.all({
   processorArchitecture: Config.string("PROCESSOR_ARCHITECTURE").pipe(Config.option),

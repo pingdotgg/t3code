@@ -9,7 +9,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -51,9 +51,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
-  const hostEnv = yield* HostProcessEnv;
   const hostPlatform = yield* HostProcessPlatform;
-  const resolvedEnvironment = environment ?? hostEnv;
+  const resolvedEnvironment = environment ?? process.env;
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;

@@ -3,9 +3,10 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath, resolveCommandPathForPlatform } from "@t3tools/shared/shell";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +17,25 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
+
+const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(input).flatMap(([key, value]) =>
+      Option.match(value, {
+        onNone: () => [],
+        onSome: (resolved) => [[key, resolved]],
+      }),
+    ),
+  );
+
+const CommandLookupEnvConfig = Config.all({
+  PATH: Config.string("PATH").pipe(Config.option),
+  Path: Config.string("Path").pipe(Config.option),
+  path: Config.string("path").pipe(Config.option),
+  PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+}).pipe(Config.map(compactEnv));
+
+const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
@@ -336,7 +356,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const platform = yield* HostProcessPlatform;
-  const env = options?.env ?? (yield* HostProcessEnv);
+  const env = options?.env ?? (yield* readCommandLookupEnv);
   const resolvedCommandPath =
     resolveCommandPathForPlatform(binaryPath, {
       platform,

@@ -6,11 +6,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
-import {
-  getDefaultBuildArch,
-  HostProcessEnv,
-  HostProcessPlatform,
-} from "./lib/build-target-arch.ts";
+import { getDefaultBuildArch, HostProcessPlatform } from "./lib/build-target-arch.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -330,6 +326,12 @@ const BuildEnvConfig = Config.all({
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+});
+
+const ElectronBuilderEnvConfig = Config.all({
+  debug: Config.string("DEBUG").pipe(Config.option),
+  npmConfigMsvsVersion: Config.string("npm_config_msvs_version").pipe(Config.option),
+  gypMsvsVersion: Config.string("GYP_MSVS_VERSION").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -794,7 +796,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
-  const hostEnv = yield* HostProcessEnv;
   const useWindowsShell = hostPlatform === "win32";
   const workspaceConfig = yield* readWorkspaceConfig();
   const workspaceCatalog = workspaceConfig.catalog ?? {};
@@ -958,21 +959,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     { label: "vp install --prod --no-optional", verbose: options.verbose },
   );
 
-  const buildEnv: NodeJS.ProcessEnv = {
-    ...hostEnv,
-  };
-  for (const [key, value] of Object.entries(buildEnv)) {
-    if (value === "") {
-      delete buildEnv[key];
-    }
-  }
+  const currentBuildEnv = yield* ElectronBuilderEnvConfig;
+  const buildEnv: NodeJS.ProcessEnv = {};
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-    delete buildEnv.CSC_LINK;
-    delete buildEnv.CSC_KEY_PASSWORD;
-    delete buildEnv.APPLE_API_KEY;
-    delete buildEnv.APPLE_API_KEY_ID;
-    delete buildEnv.APPLE_API_ISSUER;
+    buildEnv.CSC_LINK = undefined;
+    buildEnv.CSC_KEY_PASSWORD = undefined;
+    buildEnv.APPLE_API_KEY = undefined;
+    buildEnv.APPLE_API_KEY_ID = undefined;
+    buildEnv.APPLE_API_ISSUER = undefined;
   }
 
   if (hostPlatform === "win32") {
@@ -981,14 +976,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       buildEnv.PYTHON = python;
       buildEnv.npm_config_python = python;
     }
-    buildEnv.npm_config_msvs_version = buildEnv.npm_config_msvs_version ?? "2022";
-    buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
+    buildEnv.npm_config_msvs_version =
+      Option.getOrUndefined(currentBuildEnv.npmConfigMsvsVersion) ?? "2022";
+    buildEnv.GYP_MSVS_VERSION = Option.getOrUndefined(currentBuildEnv.gypMsvsVersion) ?? "2022";
   }
   if (options.verbose) {
+    const debug = Option.getOrUndefined(currentBuildEnv.debug);
     buildEnv.DEBUG =
-      buildEnv.DEBUG === undefined || buildEnv.DEBUG === ""
+      debug === undefined || debug === ""
         ? "electron-builder,electron-builder:*"
-        : `${buildEnv.DEBUG},electron-builder,electron-builder:*`;
+        : `${debug},electron-builder,electron-builder:*`;
   }
 
   yield* Effect.log(
@@ -998,6 +995,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     ChildProcess.make({
       cwd: repoRoot,
       env: buildEnv,
+      extendEnv: true,
       // Windows needs shell mode to resolve .cmd shims.
       shell: useWindowsShell,
     })`vp exec --filter @t3tools/desktop -- electron-builder --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,

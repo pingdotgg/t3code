@@ -31,7 +31,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -277,7 +277,6 @@ function ensureRuntimeError(
 const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
-  const hostEnv = yield* HostProcessEnv;
   const hostPlatform = yield* HostProcessPlatform;
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
@@ -285,7 +284,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const child = yield* spawner.spawn(
         ChildProcess.make(input.binaryPath, [...input.args], {
           shell: hostPlatform === "win32",
-          env: input.environment ?? hostEnv,
+          ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
@@ -344,9 +343,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             detached: hostPlatform !== "win32",
             shell: hostPlatform === "win32",
             env: {
-              ...(input.environment ?? hostEnv),
+              ...input.environment,
               OPENCODE_CONFIG_CONTENT: OPENCODE_EMPTY_CONFIG_CONTENT,
             },
+            extendEnv: input.environment === undefined,
           }),
         )
         .pipe(

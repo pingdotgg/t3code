@@ -15,7 +15,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
@@ -63,9 +63,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const hostEnv = yield* HostProcessEnv;
   const hostPlatform = yield* HostProcessPlatform;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment ?? hostEnv);
+  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
 
   const readStreamAsString = <E>(
     operation: string,

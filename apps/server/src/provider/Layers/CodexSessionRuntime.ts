@@ -16,7 +16,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { HostProcessEnv, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -720,10 +720,9 @@ export const makeCodexSessionRuntime = (
     // `child_process.spawn`; `expandHomePath` lets a configured
     // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
-    const hostEnv = yield* HostProcessEnv;
     const hostPlatform = yield* HostProcessPlatform;
     const env = {
-      ...(options.environment ?? hostEnv),
+      ...options.environment,
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const child = yield* spawner
@@ -731,6 +730,7 @@ export const makeCodexSessionRuntime = (
         ChildProcess.make(options.binaryPath, ["app-server", ...(options.appServerArgs ?? [])], {
           cwd: options.cwd,
           env,
+          extendEnv: options.environment === undefined,
           forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
           shell: hostPlatform === "win32",
         }),

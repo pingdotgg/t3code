@@ -6,7 +6,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { HostProcessEnv } from "@t3tools/shared/hostProcess";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
@@ -63,8 +62,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const hostEnv = yield* HostProcessEnv;
-  const resolvedEnvironment = environment ?? hostEnv;
+  const resolvedEnvironment = environment ?? process.env;
 
   const runCursorJson = <S extends Schema.Top>({
     operation,

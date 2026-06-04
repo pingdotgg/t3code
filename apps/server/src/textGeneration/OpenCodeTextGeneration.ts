@@ -12,7 +12,6 @@ import {
   type OpenCodeSettings,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { HostProcessEnv } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -104,8 +103,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 ) {
   const serverConfig = yield* ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const hostEnv = yield* HostProcessEnv;
-  const resolvedEnvironment = environment ?? hostEnv;
+  const resolvedEnvironment = environment ?? process.env;
   const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
