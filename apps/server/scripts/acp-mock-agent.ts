@@ -19,7 +19,6 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
-const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -586,27 +585,6 @@ const program = Effect.gen(function* () {
           result.answers === null
         ) {
           throw new Error("Expected _x.ai/ask_user_question response outcome.");
-        }
-
-        return { stopReason: "end_turn" };
-      }
-
-      if (emitXAiExitPlanMode) {
-        const result = yield* agent.client.extRequest("_x.ai/exit_plan_mode", {
-          method: "x.ai/exit_plan_mode",
-          params: {
-            sessionId: requestedSessionId,
-            toolCallId: "exit-plan-mode-tool-call-1",
-            planContent: "# Grok plan\n\n- Inspect the workspace\n- Apply the fix",
-          },
-        });
-        if (
-          typeof result !== "object" ||
-          result === null ||
-          !("outcome" in result) ||
-          result.outcome !== "approved"
-        ) {
-          throw new Error("Expected _x.ai/exit_plan_mode approved outcome.");
         }
 
         return { stopReason: "end_turn" };

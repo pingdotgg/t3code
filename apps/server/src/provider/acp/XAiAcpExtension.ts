@@ -2,7 +2,6 @@ import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contr
 import * as Schema from "effect/Schema";
 
 export const XAiAskUserQuestionRequest = Schema.Unknown;
-export const XAiExitPlanModeRequest = Schema.Unknown;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -136,15 +135,6 @@ export function extractXAiAskUserQuestions(params: unknown): ReadonlyArray<UserI
   return [extractQuestion(question, title, 0)];
 }
 
-export function extractXAiExitPlanMarkdown(params: unknown): string | undefined {
-  const root = unwrapParams(params);
-  const nestedPlan = nestedRecord(root, ["plan"]);
-  return (
-    stringField(root, ["planContent", "plan_content", "planMarkdown", "plan", "content"]) ??
-    (nestedPlan ? stringField(nestedPlan, ["content", "markdown", "text"]) : undefined)
-  );
-}
-
 function answerValues(answer: unknown): ReadonlyArray<string> {
   if (Array.isArray(answer)) {
     return answer.flatMap((entry) => {
@@ -166,8 +156,4 @@ export function makeXAiAskUserQuestionResponse(answers: ProviderUserInputAnswers
       Object.entries(answers).map(([questionId, answer]) => [questionId, answerValues(answer)]),
     ),
   };
-}
-
-export function makeXAiExitPlanModeResponse(): { readonly outcome: "approved" } {
-  return { outcome: "approved" };
 }

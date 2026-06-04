@@ -335,47 +335,6 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("handles xAI exit_plan_mode extension requests", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("grok-xai-exit-plan-mode");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_EMIT_XAI_EXIT_PLAN_MODE: "1" }),
-      );
-      const adapter = yield* makeTestAdapter(wrapperPath);
-      const proposedPlan =
-        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>>();
-
-      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
-        if (
-          String(event.threadId) !== String(threadId) ||
-          event.type !== "turn.proposed.completed"
-        ) {
-          return Effect.void;
-        }
-        return Deferred.succeed(proposedPlan, event).pipe(Effect.ignore);
-      }).pipe(Effect.forkChild);
-
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("grok"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({ threadId, input: "propose a plan", attachments: [] });
-
-      const event = yield* Deferred.await(proposedPlan);
-      assert.equal(
-        event.payload.planMarkdown,
-        "# Grok plan\n\n- Inspect the workspace\n- Apply the fix",
-      );
-      assert.equal(event.raw?.method, "_x.ai/exit_plan_mode");
-
-      yield* Fiber.interrupt(eventsFiber);
-      yield* adapter.stopSession(threadId);
-    }),
-  );
-
   it.effect("continues streaming events when native notification logging fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-native-log-failure");

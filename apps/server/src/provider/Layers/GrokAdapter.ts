@@ -59,11 +59,8 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import {
   extractXAiAskUserQuestions,
-  extractXAiExitPlanMarkdown,
   makeXAiAskUserQuestionResponse,
-  makeXAiExitPlanModeResponse,
   XAiAskUserQuestionRequest,
-  XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -431,35 +428,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         },
                       });
                       return makeXAiAskUserQuestionResponse(resolved);
-                    }),
-                  ),
-                ),
-              { discard: true },
-            );
-            yield* Effect.forEach(
-              ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"] as const,
-              (method) =>
-                acp.handleExtRequest(method, XAiExitPlanModeRequest, (params) =>
-                  mapAcpCallbackFailure(
-                    Effect.gen(function* () {
-                      yield* logNative(input.threadId, method, params);
-                      const planMarkdown = extractXAiExitPlanMarkdown(params)?.trim();
-                      if (planMarkdown) {
-                        yield* offerRuntimeEvent({
-                          type: "turn.proposed.completed",
-                          ...(yield* makeEventStamp()),
-                          provider: PROVIDER,
-                          threadId: input.threadId,
-                          turnId: sessions.get(input.threadId)?.activeTurnId,
-                          payload: { planMarkdown },
-                          raw: {
-                            source: "acp.grok.extension",
-                            method,
-                            payload: params,
-                          },
-                        });
-                      }
-                      return makeXAiExitPlanModeResponse();
                     }),
                   ),
                 ),
