@@ -20,7 +20,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
+          run-install: true
 
       - name: Cache Playwright browsers
         uses: actions/cache@v5
@@ -29,9 +29,6 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -89,10 +86,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
 
       - name: Install mobile native static analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
@@ -113,10 +107,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts

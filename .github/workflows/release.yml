@@ -90,10 +90,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -216,10 +213,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -446,15 +440,16 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
+          run-install: |
+            args:
+              - --filter=t3
+              - --filter=@t3tools/web
+              - --filter=@t3tools/scripts
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -493,10 +488,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile --filter=@t3tools/scripts
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -611,10 +605,10 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install release tooling dependencies
-        run: vp install --frozen-lockfile --filter=@t3tools/scripts --filter=@t3tools/web
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts
+              - --filter=@t3tools/web
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -713,10 +707,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile --filter=@t3tools/scripts
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts
 
       - id: update_versions
         name: Update version strings
@@ -772,10 +765,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile --filter=@t3tools/scripts
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts
 
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'
