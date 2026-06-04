@@ -416,8 +416,9 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         serviceTier: "fast",
       });
     }).pipe(
-      Effect.provide(customLayer),
-      Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+      Effect.provide(
+        Layer.mergeAll(customLayer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+      ),
     );
   });
 });

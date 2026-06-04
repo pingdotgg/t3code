@@ -646,8 +646,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
                   worktreePath,
                 })
-                .pipe(Effect.provideService(ProcessRunner, processRunner))
                 .pipe(
+                  Effect.provideService(ProcessRunner, processRunner),
                   Effect.matchEffect({
                     onFailure: (error) =>
                       recordSetupScriptLaunchFailure({

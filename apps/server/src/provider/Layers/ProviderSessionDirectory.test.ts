@@ -183,7 +183,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           ${"codex"},
           ${"full-access"},
           ${"running"},
-          // @effect-diagnostics-next-line globalDate:off
+          // @effect-diagnostics-next-line globalDateInEffect:off
           ${new Date().toISOString()},
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           ${JSON.stringify(JSON.stringify({ kind: "wsl", distroName: "Ubuntu" }))},

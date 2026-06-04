@@ -212,7 +212,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           args: ["remote", "-v"],
         },
       ]);
-    }).pipe(Effect.provide(resolverLayer), Effect.provide(ProcessRunner.layer));
+    }).pipe(Effect.provide(resolverLayer.pipe(Layer.provideMerge(ProcessRunner.layer))));
   });
 
   it.effect(
