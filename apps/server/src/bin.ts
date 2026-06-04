@@ -11,9 +11,7 @@ import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 
-import * as ProcessRunner from "./processRunner.ts";
-
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, ProcessRunner.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription("Run the T3 Code server."),

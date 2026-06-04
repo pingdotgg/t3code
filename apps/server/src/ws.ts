@@ -233,7 +233,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
-      const processRunner = yield* ProcessRunner.ProcessRunner;
+      const processRunner = yield* ProcessRunner;
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -646,7 +646,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
                   worktreePath,
                 })
-                .pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner))
+                .pipe(Effect.provideService(ProcessRunner, processRunner))
                 .pipe(
                   Effect.matchEffect({
                     onFailure: (error) =>
