@@ -26,6 +26,7 @@
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "cross-env": "^10.1.0",
+    "electron-builder": "26.8.1",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },

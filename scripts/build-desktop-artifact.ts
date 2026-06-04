@@ -944,13 +944,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* runCommand(
     ChildProcess.make({
-      cwd: stageAppDir,
+      cwd: repoRoot,
       env: buildEnv,
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`vp dlx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`vp exec --filter @t3tools/desktop -- electron-builder --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,
     {
-      label: `vp dlx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+      label: `vp exec --filter @t3tools/desktop -- electron-builder --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,
       verbose: options.verbose,
     },
   );
