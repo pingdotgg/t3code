@@ -6,6 +6,7 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
+import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
   $createRangeSelection,
@@ -198,7 +199,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   }
 
   override getTextContent(): string {
-    return `@${this.__path}`;
+    return `@${serializeComposerMentionPath(this.__path)}`;
   }
 
   override isInline(): true {

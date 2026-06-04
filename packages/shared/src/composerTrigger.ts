@@ -8,6 +8,15 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+const SIMPLE_MENTION_PATH_REGEX = /^[^\s@"\\]+$/;
+
+export function serializeComposerMentionPath(path: string): string {
+  if (SIMPLE_MENTION_PATH_REGEX.test(path)) {
+    return path;
+  }
+  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
   return Math.max(0, Math.min(text.length, Math.floor(cursor)));

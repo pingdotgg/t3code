@@ -21,8 +21,8 @@ export type ComposerPromptSegment =
       context: TerminalContextDraft | null;
     };
 
-const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 
 function rangeIncludesIndex(start: number, end: number, index: number): boolean {
   return start <= index && index < end;
@@ -52,13 +52,18 @@ type InlineTokenMatch =
       end: number;
     };
 
-function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
-  const matches: InlineTokenMatch[] = [];
+type MentionTokenMatch = Extract<InlineTokenMatch, { type: "mention" }>;
+
+function collectMentionTokenMatches(text: string): MentionTokenMatch[] {
+  const matches: MentionTokenMatch[] = [];
 
   for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
-    const path = match[2] ?? "";
+    const quotedPath = match[2];
+    const unquotedPath = match[3];
+    const path =
+      quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (unquotedPath ?? "");
     const matchIndex = match.index ?? 0;
     const start = matchIndex + prefix.length;
     const end = start + fullMatch.length - prefix.length;
@@ -66,6 +71,12 @@ function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
       matches.push({ type: "mention", value: path, start, end });
     }
   }
+
+  return matches;
+}
+
+function collectInlineTokenMatches(text: string): InlineTokenMatch[] {
+  const matches: InlineTokenMatch[] = collectMentionTokenMatches(text);
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];
@@ -148,10 +159,10 @@ function forEachPromptTextSlice(
 
 function forEachMentionMatch(
   prompt: string,
-  visitor: (match: RegExpMatchArray, promptOffset: number) => boolean | void,
+  visitor: (match: MentionTokenMatch, promptOffset: number) => boolean | void,
 ): boolean {
   return forEachPromptTextSlice(prompt, (text, promptOffset) => {
-    for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
+    for (const match of collectMentionTokenMatches(text)) {
       if (visitor(match, promptOffset) === true) {
         return true;
       }
@@ -203,11 +214,8 @@ export function selectionTouchesMentionBoundary(
   }
 
   return forEachMentionMatch(prompt, (match, promptOffset) => {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const matchIndex = match.index ?? 0;
-    const mentionStart = promptOffset + matchIndex + prefix.length;
-    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
+    const mentionStart = promptOffset + match.start;
+    const mentionEnd = promptOffset + match.end;
     const beforeMentionIndex = mentionStart - 1;
     const afterMentionIndex = mentionEnd;
 
