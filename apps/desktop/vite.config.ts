@@ -5,6 +5,11 @@ const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
 export default defineConfig({
   run: {
     tasks: {
+      build: {
+        command: "vp pack",
+        dependsOn: ["t3#build"],
+        cache: false,
+      },
       dev: {
         command: "cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["t3#build"],

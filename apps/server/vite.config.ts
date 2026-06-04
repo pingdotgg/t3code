@@ -8,6 +8,15 @@ const internalPackagePrefixes = ["@t3tools/", "effect-acp", "effect-codex-app-se
 export default mergeConfig(
   baseConfig,
   defineConfig({
+    run: {
+      tasks: {
+        build: {
+          command: "node scripts/cli.ts build",
+          dependsOn: ["@t3tools/web#build"],
+          cache: false,
+        },
+      },
+    },
     pack: {
       entry: ["src/bin.ts"],
       outDir: "dist",
