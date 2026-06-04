@@ -1,0 +1,24 @@
+# Expo artifacts
+.expo/
+.eas/
+
+# Build outputs
+android/
+ios/
+dist/
+web-build/
+
+# Test files
+**/*.test.ts
+**/*.test.tsx
+
+# Docs
+*.md
+
+# Local env
+.env
+.env.local
+.env*.local
+
+# TypeScript
+*.tsbuildinfo

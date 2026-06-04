@@ -1,0 +1,93 @@
+diff --git a/build/serializer/sourceMap.js b/build/serializer/sourceMap.js
+index 4cc9aa4..703dfe0 100644
+--- a/build/serializer/sourceMap.js
++++ b/build/serializer/sourceMap.js
+@@ -20,6 +20,20 @@ function loadRemapping() {
+     }
+     return _remapping;
+ }
++let _sourceMapCodec;
++function loadSourceMapCodec() {
++    if (!_sourceMapCodec) {
++        _sourceMapCodec = require('@jridgewell/sourcemap-codec');
++    }
++    return _sourceMapCodec;
++}
++let _traceMapping;
++function loadTraceMapping() {
++    if (!_traceMapping) {
++        _traceMapping = require('@jridgewell/trace-mapping');
++    }
++    return _traceMapping;
++}
+ let _Generator;
+ function loadGenerator() {
+     if (!_Generator) {
+@@ -199,6 +213,58 @@ function patchMetroSourceMapStringForPackedMaps() {
+     stock.sourceMapString = sourceMapString;
+     stock.sourceMapStringNonBlocking = sourceMapStringNonBlocking;
+ }
++// Hermes can emit mappings for Metro trailer/debug lines that have no
++// corresponding Metro source-map line. @jridgewell/remapping assumes every
++// referenced generated line exists, so strip those invalid bridge segments.
++function getGeneratedLineCount(map) {
++    const { TraceMap, decodedMappings } = loadTraceMapping();
++    return decodedMappings(new TraceMap(map)).length;
++}
++function dropInvalidOriginalSegments(map, maxOriginalLine) {
++    const { TraceMap, decodedMappings } = loadTraceMapping();
++    const decoded = decodedMappings(new TraceMap(map));
++    let didChange = false;
++    const filtered = decoded.map((line) => {
++        const filteredLine = line.filter((segment) => {
++            if (segment.length < 4) {
++                return true;
++            }
++            const sourceIndex = segment[1];
++            const sourceLine = segment[2];
++            const sourceColumn = segment[3];
++            return (sourceIndex >= 0 &&
++                sourceIndex < map.sources.length &&
++                sourceLine >= 0 &&
++                sourceLine < maxOriginalLine &&
++                sourceColumn >= 0);
++        });
++        if (filteredLine.length !== line.length) {
++            didChange = true;
++        }
++        return filteredLine;
++    });
++    if (!didChange) {
++        return map;
++    }
++    return {
++        ...map,
++        mappings: loadSourceMapCodec().encode(filtered),
++    };
++}
++function sanitizeSourceMapsForComposition(maps) {
++    let sanitized = maps;
++    for (let index = 1; index < maps.length; index++) {
++        const maxOriginalLine = getGeneratedLineCount(sanitized[index - 1]);
++        const next = dropInvalidOriginalSegments(sanitized[index], maxOriginalLine);
++        if (next !== sanitized[index]) {
++            if (sanitized === maps) {
++                sanitized = maps.slice();
++            }
++            sanitized[index] = next;
++        }
++    }
++    return sanitized;
++}
+ // `maps[0]` is the original-most transform; `maps[maps.length - 1]` is
+ // the most recent. Built on `@jridgewell/remapping` instead of mozilla's
+ // `SourceMapConsumer`-based composer.
+@@ -226,7 +292,7 @@ function composeSourceMaps(maps) {
+         return { ...map, ignoreList: map.x_google_ignoreList };
+     });
+     // Metro convention is original-first; remapping is most-recent first.
+-    const reversed = normalized.slice().reverse();
++    const reversed = sanitizeSourceMapsForComposition(normalized).slice().reverse();
+     const composed = loadRemapping()(reversed, () => null);
+     // Re-emit as a plain object — remapping returns a `SourceMap` class
+     // instance, which doesn't round-trip JSON cleanly.

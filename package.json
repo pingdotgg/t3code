@@ -67,6 +67,7 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
+    "@babel/plugin-transform-react-jsx": "7.28.6",
     "@effect/tsgo": "catalog:",
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
@@ -99,6 +100,7 @@
     ]
   },
   "patchedDependencies": {
+    "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
     "@pierre/diffs@1.1.20@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
     "effect@4.0.0-beta.73@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
     "react-native-nitro-modules@0.35.9@0.35.9": "patches/react-native-nitro-modules@0.35.9.patch"
