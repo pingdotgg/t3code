@@ -117,6 +117,7 @@ export default defineConfig(() => {
         "@pierre/diffs/worker/worker.js",
         "effect/Array",
         "effect/Order",
+        "react-dom/client",
       ],
     },
     define: {
