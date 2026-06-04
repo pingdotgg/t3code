@@ -7,8 +7,61 @@ on:
       - main
 
 jobs:
-  quality:
-    name: Format, Lint, Typecheck, Test, Browser Test, Build
+  check:
+    name: Check
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Check
+        run: vp check
+
+      - name: Typecheck
+        run: vpr typecheck
+
+      - name: Build desktop pipeline
+        run: vp run build:desktop
+
+      - name: Verify preload bundle output
+        run: |
+          test -f apps/desktop/dist-electron/preload.cjs
+          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
+
+  test:
+    name: Test
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Test
+        run: vp run test
+
+  test_browser:
+    name: Test Browser
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -29,18 +82,6 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
-      - name: Check
-        run: vp check
-
-      - name: Typecheck
-        run: vp run typecheck
-
-      - name: Test
-        run: vp run test
 
       - name: Install browser test runtime
         run: vp run --filter @t3tools/web test:browser:install
@@ -64,14 +105,6 @@ jobs:
             src/components/chat/ProviderModelPicker.browser.tsx \
             src/components/chat/CompactComposerControlsMenu.browser.tsx \
             src/components/settings/SettingsPanels.browser.tsx
-
-      - name: Build desktop pipeline
-        run: vp run build:desktop
-
-      - name: Verify preload bundle output
-        run: |
-          test -f apps/desktop/dist-electron/preload.cjs
-          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis

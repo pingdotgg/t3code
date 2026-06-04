@@ -752,6 +752,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.73
         version: 4.0.0-beta.73(patch_hash=a28d840fa97ffebabe628e5562837c537d83c40cfdad8049de73c38086f2fb01)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.73
