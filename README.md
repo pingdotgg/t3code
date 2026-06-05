@@ -46,11 +46,7 @@ We are very very early in this project. Expect bugs.
 
 We are not accepting contributions yet.
 
-Observability guide: [docs/operations/observability.md](./docs/operations/observability.md)
-
-Relay observability: [docs/operations/relay-observability.md](./docs/operations/relay-observability.md)
-
-T3 Cloud Clerk setup: [docs/cloud/t3-cloud-clerk.md](./docs/cloud/t3-cloud-clerk.md)
+There's no public docs site yet, checkout the miscellaneous markdown files in [docs](./docs).
 
 ## Documentation
 
@@ -85,10 +81,6 @@ Checkout their getting started guide for more information: https://viteplus.dev/
 ```bash
 vp i
 ```
-
-T3 Cloud is optional and disabled in a fresh clone. To enable it for web, desktop, and mobile source
-builds, copy [`.env.example`](./.env.example) to `.env` at the repository root and set the canonical
-public configuration there.
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
