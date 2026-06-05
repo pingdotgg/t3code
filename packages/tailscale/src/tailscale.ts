@@ -297,7 +297,7 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onNone: () => false,
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
-  }).pipe(Effect.catch(() => Effect.succeed(false)));
+  }).pipe(Effect.orElseSucceed(() => false));
 
 export const resolveTailscaleHttpsBaseUrl = (
   input: {

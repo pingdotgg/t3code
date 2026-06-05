@@ -299,7 +299,7 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
               auth,
             }),
           ),
-          Effect.catch(() => Effect.succeed(null)),
+          Effect.orElseSucceed(() => null),
         ),
     );
     const provider = providers.find((candidate) => candidate !== null);

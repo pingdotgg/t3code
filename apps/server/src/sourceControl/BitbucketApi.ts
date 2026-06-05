@@ -359,7 +359,7 @@ function responseError(
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<never, BitbucketApiError> {
   return response.text.pipe(
-    Effect.catch(() => Effect.succeed("")),
+    Effect.orElseSucceed(() => ""),
     Effect.flatMap((body) =>
       Effect.fail(
         new BitbucketApiError({
@@ -524,7 +524,7 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
     );
 
   const readConfigValueNullable = (cwd: string, key: string) =>
-    git.readConfigValue(cwd, key).pipe(Effect.catch(() => Effect.succeed(null)));
+    git.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
   const resolveCheckoutRemote = Effect.fn("BitbucketApi.resolveCheckoutRemote")(function* (input: {
     readonly cwd: string;
@@ -544,7 +544,7 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
     if (!input.isCrossRepository) {
       const remoteName = yield* git
         .resolvePrimaryRemoteName(input.cwd)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+        .pipe(Effect.orElseSucceed(() => null));
       if (remoteName) return remoteName;
     }
 
@@ -575,7 +575,7 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
         host: Option.some("bitbucket.org"),
         detail: Option.none<string>(),
       })),
-      Effect.catch(() => Effect.succeed(authFromConfig(config))),
+      Effect.orElseSucceed(() => authFromConfig(config)),
     ),
     listPullRequests: (input) =>
       resolveRepository(input).pipe(
@@ -685,8 +685,8 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
             {
               repository: getRepositoryFromLocator(locator),
               branchingModel: getBranchingModelFromLocator(locator).pipe(
-                Effect.catch(() =>
-                  Effect.succeed<typeof RawBitbucketBranchingModelSchema.Type | null>(null),
+                Effect.orElseSucceed(
+                  (): typeof RawBitbucketBranchingModelSchema.Type | null => null,
                 ),
               ),
             },

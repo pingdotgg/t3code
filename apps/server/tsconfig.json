@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node", "bun"],
+    "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
   "include": ["src", "vite.config.ts", "scripts", "integration", "../../scripts/lib"]

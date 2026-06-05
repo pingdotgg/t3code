@@ -80,9 +80,7 @@ export const makeProjectFaviconResolver = Effect.gen(function* () {
       if (!isPathWithinProject(projectCwd, candidate)) {
         continue;
       }
-      const stats = yield* fileSystem
-        .stat(candidate)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const stats = yield* fileSystem.stat(candidate).pipe(Effect.orElseSucceed(() => null));
       if (stats?.type === "File") {
         return candidate;
       }
@@ -105,7 +103,7 @@ export const makeProjectFaviconResolver = Effect.gen(function* () {
       const sourcePath = path.join(cwd, sourceFile);
       const source = yield* fileSystem
         .readFileString(sourcePath)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+        .pipe(Effect.orElseSucceed(() => null));
       if (!source) {
         continue;
       }

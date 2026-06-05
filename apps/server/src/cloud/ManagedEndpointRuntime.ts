@@ -152,9 +152,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
     const nextConfigKey = runtimeConfigKey(config);
     const active = yield* Ref.get(activeRef);
     if (active?.configKey === nextConfigKey) {
-      const isRunning = yield* active.child.isRunning.pipe(
-        Effect.catch(() => Effect.succeed(false)),
-      );
+      const isRunning = yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (isRunning) {
         return {
           status: "running",

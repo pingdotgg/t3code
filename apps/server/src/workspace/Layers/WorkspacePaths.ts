@@ -37,7 +37,7 @@ export const makeWorkspacePaths = Effect.gen(function* () {
     const normalizedWorkspaceRoot = path.resolve(expandHomePath(workspaceRoot.trim(), path));
     let workspaceStat = yield* fileSystem
       .stat(normalizedWorkspaceRoot)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.orElseSucceed(() => null));
     if (!workspaceStat && options?.createIfMissing) {
       yield* fileSystem.makeDirectory(normalizedWorkspaceRoot, { recursive: true }).pipe(
         Effect.mapError(
@@ -50,7 +50,7 @@ export const makeWorkspacePaths = Effect.gen(function* () {
       );
       workspaceStat = yield* fileSystem
         .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+        .pipe(Effect.orElseSucceed(() => null));
     }
     if (!workspaceStat) {
       return yield* new WorkspaceRootNotExistsError({

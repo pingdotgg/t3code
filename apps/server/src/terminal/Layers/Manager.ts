@@ -1289,7 +1289,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       const threadPrefix = `${toSafeThreadId(threadId)}_`;
       const entries = yield* fileSystem
         .readDirectory(logsDir, { recursive: false })
-        .pipe(Effect.catch(() => Effect.succeed([] as Array<string>)));
+        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
       yield* Effect.forEach(
         entries.filter(
           (name) =>

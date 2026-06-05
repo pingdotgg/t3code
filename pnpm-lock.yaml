@@ -10,8 +10,8 @@ catalogs:
       specifier: 4.0.0-beta.78
       version: 4.0.0-beta.78
     '@effect/tsgo':
-      specifier: 0.11.4
-      version: 0.11.4
+      specifier: 0.13.2
+      version: 0.13.2
     '@noble/curves':
       specifier: 1.9.1
       version: 1.9.1
@@ -21,12 +21,9 @@ catalogs:
     '@pierre/diffs':
       specifier: 1.1.20
       version: 1.1.20
-    '@types/bun':
-      specifier: ^1.3.11
-      version: 1.3.14
     '@typescript/native-preview':
-      specifier: 7.0.0-dev.20260527.2
-      version: 7.0.0-dev.20260527.2
+      specifier: 7.0.0-dev.20260604.1
+      version: 7.0.0-dev.20260604.1
     jose:
       specifier: 6.2.2
       version: 6.2.2
@@ -87,7 +84,7 @@ importers:
         version: 7.28.6(@babel/core@7.29.7)
       '@effect/tsgo':
         specifier: 'catalog:'
-        version: 0.11.4
+        version: 0.13.2
       '@oxlint/plugins':
         specifier: ^1.63.0
         version: 1.68.0
@@ -96,7 +93,7 @@ importers:
         version: 24.12.4
       '@typescript/native-preview':
         specifier: 'catalog:'
-        version: 7.0.0-dev.20260527.2
+        version: 7.0.0-dev.20260604.1
       vite-plus:
         specifier: 'catalog:'
         version: 0.1.24(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -417,7 +414,7 @@ importers:
         specifier: workspace:*
         version: link:../web
       '@types/bun':
-        specifier: 'catalog:'
+        specifier: 1.3.14
         version: 1.3.14
       '@types/node':
         specifier: 24.12.4
@@ -644,9 +641,6 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))
-      '@types/bun':
-        specifier: 'catalog:'
-        version: 1.3.14
       vite-plus:
         specifier: 'catalog:'
         version: 0.1.24(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -807,9 +801,6 @@ importers:
 
   scripts:
     dependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.77
-        version: 0.2.141(zod@4.4.3)
       '@effect/platform-node':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(bufferutil@4.1.0)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))(ioredis@5.11.0)(utf-8-validate@6.0.6)
@@ -829,9 +820,6 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))
-      '@types/bun':
-        specifier: 'catalog:'
-        version: 1.3.14
       vite-plus:
         specifier: 'catalog:'
         version: 0.1.24(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -851,19 +839,9 @@ packages:
   '@alchemy.run/node-utils@0.0.4':
     resolution: {integrity: sha512-TiIhPXCTCi3tk0zmdYJJ14CNSesSfsJxXdIOP0HTSItQ1mZWLocrF7qCuEWKyW/IEFzp6kaiOf19aIA/mbCp1g==}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.141':
-    resolution: {integrity: sha512-9HZ0ot6+FwOfQ1aeMqQLH4IJGMm/DcP08SysDxscVjBm6l2JjqleHohxi3zid0DurfGweqT+4x9GScJffwg55g==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.159':
     resolution: {integrity: sha512-3nnH4yUNJVSyaU5DBlGw2yxc4zlnVvAnc9UOe+La47QVG7/dN+rWAgn4zCbqKk9bWFLDQ1Ek0r56EZE1Qo4UKQ==}
     cpu: [arm64]
-    os: [darwin]
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.2.141':
-    resolution: {integrity: sha512-4iAdarJaQ+2R58s6QJswZCzUdz2WQmL5lYG7Y+FLzWbRSROFfcH0QYpmOqSaPXd2KRQhIJwEacqecDZd/Q1XKQ==}
-    cpu: [x64]
     os: [darwin]
 
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.159':
@@ -871,18 +849,8 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.2.141':
-    resolution: {integrity: sha512-6H1AJ/AVaWNnV22kubUPkOTRzZFH0+qP9k7WlhriHMN9gtgZcVAsITMddDeGjQsQJMCAdhXFd6sgi7TM1LdeOQ==}
-    cpu: [arm64]
-    os: [linux]
-
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.159':
     resolution: {integrity: sha512-WvwiQBWt3tdu5EwqjpDZszI6p2uetYsw4Cxc6ptO/SmLIYXcDienP8nmirZdsZrS+Gzk6imgY0IY5mmNaRhelQ==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.2.141':
-    resolution: {integrity: sha512-Jdf0ZEwJzOP8sE6rPqdJN+SxMb0/L8sxJg4twCv/7S+Qzk0hJtls+wxSi+0Tjh6EEMaNxJqEGc7S3fx99Wi99Q==}
     cpu: [arm64]
     os: [linux]
 
@@ -891,18 +859,8 @@ packages:
     cpu: [arm64]
     os: [linux]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.2.141':
-    resolution: {integrity: sha512-fTI1YuM4cxOa4nSgsyMAdB5ELizkWp+w5Ispo4JnnYtcczMAL4D9GBNjWPW0sUzKvjsJOUVim68SmWLWhUOpXQ==}
-    cpu: [x64]
-    os: [linux]
-
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.159':
     resolution: {integrity: sha512-kFH6RC2YJbPc8XWRNy/wL4YU7LzdJjSwAdH488sVzIif3q+TrvVrV5y/IW0+MLmta+CKIqtFYpGaucsJYvj7Eg==}
-    cpu: [x64]
-    os: [linux]
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.2.141':
-    resolution: {integrity: sha512-DVjp72f3HmrRYpbneWZZWIqkUht5kTZXS7wXGFiwzLz6eNYEgjjh+GcsnhIi8UOwZUtNiKUrjZnoP38ovFqV8A==}
     cpu: [x64]
     os: [linux]
 
@@ -911,31 +869,15 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.2.141':
-    resolution: {integrity: sha512-Wm10J6kfbufbPGFELokiJ/7Y5Oqug4Uag3HXFsV8g7TWCpaItx/oqVaJoiGptuAtXQB7xGLQVTuk082wER+Y5w==}
-    cpu: [arm64]
-    os: [win32]
-
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.159':
     resolution: {integrity: sha512-WN1QEZGgWXz9GMl61QU6j9E+LEF5plki87bL2xsGwuCPzK+OeVPQU55pabuP8P+vFBFHUo3Y9OlTVyZHnUzmAQ==}
     cpu: [arm64]
-    os: [win32]
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.2.141':
-    resolution: {integrity: sha512-IXuP29YJuWbR5Q6xOHrjFVGG54V2s1FC61UVNwEN5fpxL09MwPnbwtQL6fqgzt/U1MP7vWAwpXZriYAklkH/mg==}
-    cpu: [x64]
     os: [win32]
 
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.159':
     resolution: {integrity: sha512-Ty4seccD+dTDX5hhj89IUELZd/LkxO5O43Uiz5Mo8ZJktoX38SK4XMZlBS935QdqTFLRvPL0hvK4Lt4dTOqzPw==}
     cpu: [x64]
     os: [win32]
-
-  '@anthropic-ai/claude-agent-sdk@0.2.141':
-    resolution: {integrity: sha512-AIBacMWGcZIUcXlUoObqjwJ6pmJI3BayAqPAFXuvSq3DHJXdiuZVs7l/zTB5l3nRhRv5cqSrI2XbiDeHgZWizw==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      zod: ^4.0.0
 
   '@anthropic-ai/claude-agent-sdk@0.3.159':
     resolution: {integrity: sha512-Xh1oVMIK6N3KsiNIhqNH8ZK90zjRmAEL9d1Md8ZlGdHJE+HhdMYdBadujc3KEkV0uufsEUvYp+A3fDenfypGSA==}
@@ -1776,43 +1718,43 @@ packages:
     peerDependencies:
       effect: 4.0.0-beta.78
 
-  '@effect/tsgo-darwin-arm64@0.11.4':
-    resolution: {integrity: sha512-rslT4W8tWY8pdd48kDpY7Q+yo0xkrmcEySG1+sJfb06w7TwbywjHsGlC0BmcUaQt0qmLY+BApbWWDfZw7fgwjw==}
+  '@effect/tsgo-darwin-arm64@0.13.2':
+    resolution: {integrity: sha512-AlYlxU2sD3urNCmNCQWtatPJS/+m2r3CvgZdDTs9KEz2YcyQc2GV1g2RWFkoMwmgzYBx69DBLu1oscqJO2qAog==}
     cpu: [arm64]
     os: [darwin]
 
-  '@effect/tsgo-darwin-x64@0.11.4':
-    resolution: {integrity: sha512-p3v3j+zp7L7yx5ctjvA1W85I4WjOpbOcga8kUu5MFEKfYfsApxUHXwsunCVbUKwrpXqcTc0sw9AjnCNs6i6GRw==}
+  '@effect/tsgo-darwin-x64@0.13.2':
+    resolution: {integrity: sha512-oGWIUsWuzCGBRaxB3R4ZjzmqaWb20OtLpBc8HKf3mGstyiCpGUtb7arqncpSq04nN9yb+mM5yBpGKZ9EJAYuEA==}
     cpu: [x64]
     os: [darwin]
 
-  '@effect/tsgo-linux-arm64@0.11.4':
-    resolution: {integrity: sha512-dz5ZIQUnRzN9mpVcELYCmVERpmstes5rVHbKUb7DOWCbrbupT3tV1LCzOaNX9sIsoBKmpvdGvAWEPLHgymSgTQ==}
+  '@effect/tsgo-linux-arm64@0.13.2':
+    resolution: {integrity: sha512-v9PIgdLR6jREQk42EIm/mtFBwmB4Xzuq70l1Uf/7MnV/eivrZP+Wjfex/UuzMRbjM5eLRP3FFMj2HZvjkFQv6Q==}
     cpu: [arm64]
     os: [linux]
 
-  '@effect/tsgo-linux-arm@0.11.4':
-    resolution: {integrity: sha512-uXsw+IbO+ltn/fbhOWWqXK8ZW3Qa5EZD+wnGbF3gIGWINthbF+/7X+CgRzvcgLBWeBfV6F83hAmOaEZ4hQmd+w==}
+  '@effect/tsgo-linux-arm@0.13.2':
+    resolution: {integrity: sha512-y5aTN7MrwnsStcSJ4Z8J93Nszeh9yf8kbaHk+03bRm9n0TrhVea/bJZoi9cprLJSy01Umt+xC3jFyvOSMrWB8g==}
     cpu: [arm]
     os: [linux]
 
-  '@effect/tsgo-linux-x64@0.11.4':
-    resolution: {integrity: sha512-P3m7Y4FJtziL13Muffyb99AnQeTRvo0/knfYRqoHKNwYUaNM59RO3qFi5y57Hasgd8rKat0xTPmUkK6koZPPFQ==}
+  '@effect/tsgo-linux-x64@0.13.2':
+    resolution: {integrity: sha512-MzrApKfCL0DnFGvoyJUKtW39PGDykJZkkB/tOZSuTSurcYAzkmUIOUwuTASeNqDjj4/DixT7Ha4CMVeCQgg6hg==}
     cpu: [x64]
     os: [linux]
 
-  '@effect/tsgo-win32-arm64@0.11.4':
-    resolution: {integrity: sha512-FKLm9Y+luZSdLpfkbdw8VXa8xy0zR+Asg078qemqHHGwRQLDVGjvIk7tj1HxBM6VQN+TwsofDd225ht83kMk8w==}
+  '@effect/tsgo-win32-arm64@0.13.2':
+    resolution: {integrity: sha512-WwYLSrgCa4iiSIZe5KkG2P1q+JmIloDI6tbqHqpvumrz3uU8fg33e5A7wQ68sRgr4ofqrTYPQhJ6b+Eyeadazg==}
     cpu: [arm64]
     os: [win32]
 
-  '@effect/tsgo-win32-x64@0.11.4':
-    resolution: {integrity: sha512-oc4Y8TbLlv0b1deAILAEep1N6pnSS1d4pk7gJJM4NDXrTKWDyEulO6tXwRQ6vWkO2lhLTUVWHDFfzmMJj3HxPQ==}
+  '@effect/tsgo-win32-x64@0.13.2':
+    resolution: {integrity: sha512-M4Cf98tlCzCWig61QNoPxhE0LyMJtlVIQY2hed0Y1uYpwv0W1BMyOACLcj6ll+vuLWmXvVlOfXC+BuDOqPo9fg==}
     cpu: [x64]
     os: [win32]
 
-  '@effect/tsgo@0.11.4':
-    resolution: {integrity: sha512-wliq5Dis2gLoIUKoCRT3Iv5kpO+fKrUBJPPxIsHADeirk9HMQevKvYaBpGS3Khw1tNLmoQWsSX559owJAdHgBA==}
+  '@effect/tsgo@0.13.2':
+    resolution: {integrity: sha512-zPQMHBdCN1k7Jbxjxq0HVAbzsZd+LAoRPzBEZ3F4y/uxNK0K/XGvFXUUw/CUAsD6rhUtC2VahZY1tp0owb5lgg==}
     hasBin: true
 
   '@effect/vitest@4.0.0-beta.78':
@@ -4505,50 +4447,50 @@ packages:
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
 
-  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-3LqSu4DlxkEfeC/Z/29QMCJn5jjkDtXI7LYuxfmjdmAatS6umDKqm8J17fnP/7fyrZUMBTIYRwSDpChGV3G1ew==}
+  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-zs616um9UuaODLsNlCu5Aw95rFcTV4u3hVt090r6k0lVvTxfaJOv8HKA6BpIotcEYlZlMQowrMSYCCdedo7iyA==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-H4+sxE9qaBbLF83wMdWE0FsgfK0Pom+/O+/oxqyGzhVkDJlNt3vfpgQZMit48/Gm44AacGfBggJ9Dhbi3aeSFw==}
+  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-pOdNAf2pwc9JBjo8gUsvLs5uqg7d0AhYXfE8/3zvPKBlIZG+mTcvEWW1hPawlWxXzf/vxnP4dgYwUHAMDghhKA==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-BGUDMjC2Z3TTdZRkGGwhBLelkP5UYgO2rbep8aF4dS3fu7T5lFPPrnfS6EgqJgie+cF5Fsev7xEq8wWyBDM+lg==}
+  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-GjIrt6YHP3bbOWBCCE08SlBSDf84Lnjn3Td822/lOX9nm6ODlA/HI7rtGh7KzS/fxehep2Vy4dXU4Il12X1s5A==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@typescript/native-preview-linux-arm@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-6I9Cv9ozwfS9zB9vRQDPIYseLX3artEO9jl3yVgLj4ishwlSF4cWAbIsjl5IztPaEgHv8coej/6tX1D0uaBzXg==}
+  '@typescript/native-preview-linux-arm@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-IKaZL3i5HKmKqwb2IZEXW1j68fVg1HsvAaXkbrkOIG/J5Eyksu5tEnTzucrIY1oPdzgHT+y2HpDIYp2sGeHFvw==}
     engines: {node: '>=16.20.0'}
     cpu: [arm]
     os: [linux]
 
-  '@typescript/native-preview-linux-x64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-vpazOu+ozlxBo8U57YJMzsOPuxAV8H7fu36KJ8ea8At/D8pdGmOAy5TuB+9OBQV9JDe0OXJMy2kmbhOpmkTAmA==}
+  '@typescript/native-preview-linux-x64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-twQ7XDjsmaHIevN1MjeRYIVLUPL0fBm8A0jg1FhGYPckhTxEBiHIpJf9E//eFidAdrEHjeTSBP1jJw3GNAensg==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [linux]
 
-  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-DBFnFE3V6AITkPO1K1VxXf3yEZKjU2FwtXlNwRqhzDu0rrL2SsJHOSrBDX+OacTxQFzZMxFcpiuhV8jHZALPEg==}
+  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-QBRxaVT3SFiNfOhwYb/56ddpHWPMFdfiJ4zkFJIjaAXeZ/ssWNHM9lH7yR++GrE9VTsUZ4eVSZfOmQbzRERhgw==}
     engines: {node: '>=16.20.0'}
     cpu: [arm64]
     os: [win32]
 
-  '@typescript/native-preview-win32-x64@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-1tBlErMvQgcMqqYwsx4tytupcjCJcOUXD3vBn1Wb/kAvus1FzWQAFE0fcKBvLfcqLQfTiiEwKKEtbLjGmakqqg==}
+  '@typescript/native-preview-win32-x64@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-hR7YHoRpm88Q86gK6/IMayWUA+ROdHGzOPKK8EBp1xD/Cg2Bh5AXbut8HcyUDx/bcGQvnuht/XsW47bT3to9mg==}
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
 
-  '@typescript/native-preview@7.0.0-dev.20260527.2':
-    resolution: {integrity: sha512-piqkDwikVeizCFqA1lcwI5F4wOAtBdxuliWe77ApBNRyBPPvfCJB+u/HYi9/8t5nd0sWvFs6/qt/AzJ1CCoykQ==}
+  '@typescript/native-preview@7.0.0-dev.20260604.1':
+    resolution: {integrity: sha512-A3/9yZTt2V5NlDURcVJ4mN2YjfeQTXCRyLuENKrNdGhO+y59mC/2UDr7UvpB3Li+83TRAuhDN8SBoM+7gkHdzQ==}
     engines: {node: '>=16.20.0'}
     hasBin: true
 
@@ -9698,71 +9640,29 @@ snapshots:
 
   '@alchemy.run/node-utils@0.0.4': {}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.2.141':
-    optional: true
-
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.159':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.2.141':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.159':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.2.141':
-    optional: true
-
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.159':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.2.141':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.159':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.2.141':
-    optional: true
-
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.159':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.2.141':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.159':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.2.141':
-    optional: true
-
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.159':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.2.141':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.159':
     optional: true
-
-  '@anthropic-ai/claude-agent-sdk@0.2.141(zod@4.4.3)':
-    dependencies:
-      '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      zod: 4.4.3
-    optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.2.141
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.2.141
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
 
   '@anthropic-ai/claude-agent-sdk@0.3.159(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
@@ -10931,36 +10831,36 @@ snapshots:
     dependencies:
       effect: 4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754)
 
-  '@effect/tsgo-darwin-arm64@0.11.4':
+  '@effect/tsgo-darwin-arm64@0.13.2':
     optional: true
 
-  '@effect/tsgo-darwin-x64@0.11.4':
+  '@effect/tsgo-darwin-x64@0.13.2':
     optional: true
 
-  '@effect/tsgo-linux-arm64@0.11.4':
+  '@effect/tsgo-linux-arm64@0.13.2':
     optional: true
 
-  '@effect/tsgo-linux-arm@0.11.4':
+  '@effect/tsgo-linux-arm@0.13.2':
     optional: true
 
-  '@effect/tsgo-linux-x64@0.11.4':
+  '@effect/tsgo-linux-x64@0.13.2':
     optional: true
 
-  '@effect/tsgo-win32-arm64@0.11.4':
+  '@effect/tsgo-win32-arm64@0.13.2':
     optional: true
 
-  '@effect/tsgo-win32-x64@0.11.4':
+  '@effect/tsgo-win32-x64@0.13.2':
     optional: true
 
-  '@effect/tsgo@0.11.4':
+  '@effect/tsgo@0.13.2':
     optionalDependencies:
-      '@effect/tsgo-darwin-arm64': 0.11.4
-      '@effect/tsgo-darwin-x64': 0.11.4
-      '@effect/tsgo-linux-arm': 0.11.4
-      '@effect/tsgo-linux-arm64': 0.11.4
-      '@effect/tsgo-linux-x64': 0.11.4
-      '@effect/tsgo-win32-arm64': 0.11.4
-      '@effect/tsgo-win32-x64': 0.11.4
+      '@effect/tsgo-darwin-arm64': 0.13.2
+      '@effect/tsgo-darwin-x64': 0.13.2
+      '@effect/tsgo-linux-arm': 0.13.2
+      '@effect/tsgo-linux-arm64': 0.13.2
+      '@effect/tsgo-linux-x64': 0.13.2
+      '@effect/tsgo-win32-arm64': 0.13.2
+      '@effect/tsgo-win32-x64': 0.13.2
 
   '@effect/vitest@4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))':
     dependencies:
@@ -13581,36 +13481,36 @@ snapshots:
       '@types/node': 24.12.4
     optional: true
 
-  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-darwin-x64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-linux-arm64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-linux-arm@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-linux-arm@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-linux-x64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-linux-x64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-win32-arm64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview-win32-x64@7.0.0-dev.20260527.2':
+  '@typescript/native-preview-win32-x64@7.0.0-dev.20260604.1':
     optional: true
 
-  '@typescript/native-preview@7.0.0-dev.20260527.2':
+  '@typescript/native-preview@7.0.0-dev.20260604.1':
     optionalDependencies:
-      '@typescript/native-preview-darwin-arm64': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-darwin-x64': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-linux-arm': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-linux-arm64': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-linux-x64': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260527.2
-      '@typescript/native-preview-win32-x64': 7.0.0-dev.20260527.2
+      '@typescript/native-preview-darwin-arm64': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-darwin-x64': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-linux-arm': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-linux-arm64': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-linux-x64': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260604.1
+      '@typescript/native-preview-win32-x64': 7.0.0-dev.20260604.1
 
   '@ungap/structured-clone@1.3.1': {}
 

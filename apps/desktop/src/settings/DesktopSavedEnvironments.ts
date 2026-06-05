@@ -185,7 +185,7 @@ function readRegistryDocument(
         onSome: (raw) =>
           decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
             Effect.map(normalizeSavedEnvironmentRegistryDocument),
-            Effect.catch(() => Effect.succeed({ version: 1, records: [] })),
+            Effect.orElseSucceed(() => ({ version: 1, records: [] })),
           ),
       }),
     ),

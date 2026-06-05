@@ -13,7 +13,6 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@types/bun": "catalog:",
     "vite-plus": "catalog:"
   }
 }

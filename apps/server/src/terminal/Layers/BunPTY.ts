@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { PtyAdapter } from "../Services/PTY.ts";

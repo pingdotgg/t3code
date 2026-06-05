@@ -95,7 +95,7 @@ const loadDeployConfigProvider = Effect.fn("relay.deploy.loadConfigProvider")(fu
   }
 
   return yield* ConfigProvider.fromDotEnv({ path: path.join(root, ".env") }).pipe(
-    Effect.catch(() => Effect.succeed(ConfigProvider.fromEnv())),
+    Effect.orElseSucceed(() => ConfigProvider.fromEnv()),
   );
 });
 

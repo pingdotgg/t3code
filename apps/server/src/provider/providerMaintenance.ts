@@ -347,7 +347,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   const fileSystem = yield* FileSystem.FileSystem;
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
-    .pipe(Effect.catch(() => Effect.succeed(resolvedCommandPath)));
+    .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
   return resolver.resolve({
     ...options,
     realCommandPath,
@@ -406,7 +406,7 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
   const response = yield* client.execute(request).pipe(
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
-    Effect.catch(() => Effect.succeed(Option.none())),
+    Effect.orElseSucceed(() => Option.none()),
   );
   if (Option.isNone(response)) {
     return null;
@@ -417,7 +417,7 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   }
   const payload = yield* httpResponse.json.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
   return payload ? nonEmptyString(payload.version) : null;
 });

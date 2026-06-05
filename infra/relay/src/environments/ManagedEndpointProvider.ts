@@ -242,7 +242,7 @@ const make = Effect.gen(function* () {
         .updateRecord(preferredDnsRecordId, dnsRecord)
         .pipe(
           Effect.as(true),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
         );
       if (checkpointedRecordUpdated) {
         return preferredDnsRecordId;

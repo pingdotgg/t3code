@@ -161,7 +161,7 @@ const make = Effect.gen(function* () {
         }
         return claims;
       }),
-      Effect.catch(() => Effect.succeed(null)),
+      Effect.orElseSucceed(() => null),
     ),
   );
 
