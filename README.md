@@ -16,10 +16,10 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor,
 ### Run without installing
 
 ```bash
-npx t3
+npx t3@latest
 ```
 
-Tip: Use `npx t3 --help` for the full CLI reference.
+Tip: Use `npx t3@latest --help` for the full CLI reference.
 
 ### Desktop app
 
