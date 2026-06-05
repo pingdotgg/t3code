@@ -1,13 +1,22 @@
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Redacted from "effect/Redacted";
-import { FetchHttpClient } from "effect/unstable/http";
+import * as Schema from "effect/Schema";
+import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type { OtlpTracer } from "effect/unstable/observability";
-import { expect, it } from "vite-plus/test";
 
 import { EnvironmentMintRequestFailed } from "./environments/EnvironmentConnector.ts";
 import { makeRelayTraceLayer } from "./observability.ts";
+
+interface ExportedRequest {
+  readonly authorization: string | undefined;
+  readonly body: string;
+  readonly dataset: string | undefined;
+}
 
 const otlpAttributeValue = (value: {
   readonly stringValue?: string | null;
@@ -16,74 +25,43 @@ const otlpAttributeValue = (value: {
   readonly doubleValue?: number | null;
 }) => value.stringValue ?? value.boolValue ?? value.intValue ?? value.doubleValue;
 
-it("exports schema error fields as span attributes", async () => {
-  const NodeHttp = await import("node:http");
-  let resolveRequest:
-    | ((request: {
-        readonly body: string;
-        readonly headers: Record<string, string | ReadonlyArray<string> | undefined>;
-      }) => void)
-    | undefined;
-  const firstRequest = new Promise<{
-    readonly body: string;
-    readonly headers: Record<string, string | ReadonlyArray<string> | undefined>;
-  }>((resolve) => {
-    resolveRequest = resolve;
-  });
-  const server = NodeHttp.createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    request.on("end", () => {
-      resolveRequest?.({
-        body: Buffer.concat(chunks).toString("utf8"),
-        headers: request.headers,
-      });
-      resolveRequest = undefined;
-      response.statusCode = 204;
-      response.end();
-    });
-  });
+const decodeJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Expected TCP collector address");
-  }
-
-  const runtime = ManagedRuntime.make(
-    makeRelayTraceLayer({
-      tracesEndpoint: `http://127.0.0.1:${address.port}/v1/traces`,
-      tracesDatasetName: "relay-test-traces",
-      ingestToken: Redacted.make("test-token"),
-    }).pipe(Layer.provide(FetchHttpClient.layer)),
-  );
-
-  try {
-    await runtime.runPromise(
-      Effect.fail(
-        new EnvironmentMintRequestFailed({
-          environmentId: "environment-1",
-          operation: "connect",
-          cause: new Error("upstream unavailable"),
-        }),
-      ).pipe(Effect.withSpan("relay.test.schema_error"), Effect.exit),
+it.effect("exports schema error fields as span attributes", () =>
+  Effect.gen(function* () {
+    const exportedRequest = yield* Deferred.make<ExportedRequest>();
+    yield* HttpServer.serveEffect(
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        yield* Deferred.succeed(exportedRequest, {
+          authorization: request.headers.authorization,
+          body: yield* request.text,
+          dataset: request.headers["x-axiom-dataset"],
+        });
+        return HttpServerResponse.empty({ status: 204 });
+      }),
     );
-    await runtime.dispose();
 
-    const request = await Effect.runPromise(
-      Effect.raceFirst(
-        Effect.promise(() => firstRequest),
-        Effect.sleep("1 second").pipe(
-          Effect.andThen(Effect.die(new Error("Timed out waiting for OTLP trace export"))),
-        ),
+    yield* Effect.fail(
+      new EnvironmentMintRequestFailed({
+        environmentId: "environment-1",
+        operation: "connect",
+        cause: new Error("upstream unavailable"),
+      }),
+    ).pipe(
+      Effect.withSpan("relay.test.schema_error"),
+      Effect.exit,
+      Effect.provide(
+        makeRelayTraceLayer({
+          tracesEndpoint: "/v1/traces",
+          tracesDatasetName: "relay-test-traces",
+          ingestToken: Redacted.make("test-token"),
+        }),
       ),
     );
-    const payload = JSON.parse(request.body) as OtlpTracer.TraceData;
+
+    const request = yield* Deferred.await(exportedRequest).pipe(Effect.timeout("1 second"));
+    const payload = (yield* decodeJson(request.body)) as OtlpTracer.TraceData;
     const span = payload.resourceSpans
       .flatMap((resourceSpan) => resourceSpan.scopeSpans)
       .flatMap((scopeSpan) => scopeSpan.spans)
@@ -95,8 +73,8 @@ it("exports schema error fields as span attributes", async () => {
       ]),
     );
 
-    expect(request.headers.authorization).toBe("Bearer test-token");
-    expect(request.headers["x-axiom-dataset"]).toBe("relay-test-traces");
+    expect(request.authorization).toBe("Bearer test-token");
+    expect(request.dataset).toBe("relay-test-traces");
     expect(attributes).toMatchObject({
       "error.type": "EnvironmentMintRequestFailed",
       "error.environmentId": "environment-1",
@@ -104,16 +82,5 @@ it("exports schema error fields as span attributes", async () => {
       "error.cause.name": "Error",
       "error.cause.message": "upstream unavailable",
     });
-  } finally {
-    await runtime.dispose();
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-});
+  }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
+);
