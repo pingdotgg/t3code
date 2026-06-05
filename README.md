@@ -62,12 +62,26 @@ T3 Cloud Clerk setup: [docs/cloud/t3-cloud-clerk.md](./docs/cloud/t3-cloud-clerk
 
 ## If you REALLY want to contribute still.... read this first
 
-Before local development, prepare the environment and install dependencies:
+### Install `vp`
+
+T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+
+#### macOS / Linux
 
 ```bash
-# Optional: only needed if you use mise for dev tool management.
-mise install
-vp install
+curl -fsSL https://vite.plus | bash
+```
+
+#### Windows
+
+```bash
+irm https://vite.plus/ps1 | iex
+```
+
+### Install dependencies
+
+```bash
+vp i
 ```
 
 T3 Cloud is optional and disabled in a fresh clone. To enable it for web, desktop, and mobile source
