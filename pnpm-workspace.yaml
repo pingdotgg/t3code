@@ -36,9 +36,9 @@ catalog:
   jose: 6.2.2
   tsdown: ^0.20.3
   typescript: ~6.0.3
-  vitest: npm:@voidzero-dev/vite-plus-test@latest
-  vite: npm:@voidzero-dev/vite-plus-core@latest
-  vite-plus: latest
+  vitest: npm:@voidzero-dev/vite-plus-test@0.1.24
+  vite: npm:@voidzero-dev/vite-plus-core@0.1.24
+  vite-plus: 0.1.24
   yaml: ^2.9.0
 overrides:
   # Clerk publishes wallet auth integrations as required dependencies. T3 Code does
