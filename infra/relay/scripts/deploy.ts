@@ -74,9 +74,14 @@ const loadDeployConfigProvider = Effect.fn("relay.deploy.loadConfigProvider")(fu
 ) {
   const path = yield* Path.Path;
   const root = yield* relayRoot;
-  const selectedEnvFile = Option.getOrUndefined(envFileOverride);
-  const envFile = selectedEnvFile ? path.resolve(root, selectedEnvFile) : path.join(root, ".env");
-  return yield* ConfigProvider.fromDotEnv({ path: envFile });
+
+  if (Option.isSome(envFileOverride)) {
+    return yield* ConfigProvider.fromDotEnv({ path: path.resolve(root, envFileOverride.value) });
+  }
+
+  return yield* ConfigProvider.fromDotEnv({ path: path.join(root, ".env") }).pipe(
+    Effect.catch(() => Effect.succeed(ConfigProvider.fromEnv())),
+  );
 });
 
 const relayDeployStage = Config.nonEmptyString("stage").pipe(
@@ -184,7 +189,9 @@ export const relayDeployCommand = Command.make(
       Flag.withDefault(false),
     ),
     envFile: Flag.string("env-file").pipe(
-      Flag.withDescription("Environment file to load. Defaults to infra/relay/.env."),
+      Flag.withDescription(
+        "Environment file to load. Defaults to infra/relay/.env with process env fallback.",
+      ),
       Flag.optional,
     ),
     stage: Flag.string("stage").pipe(
