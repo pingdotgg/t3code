@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  DEFAULT_APPEARANCE_SETTINGS,
+  type AppearanceSettings,
+  type ColorMode,
+  type ThemeDocument,
+} from "@t3tools/contracts";
+import { deriveAppearanceCssVariables, resolveAppearanceTheme } from "@t3tools/shared/appearance";
+import {
+  getClientSettings,
+  useClientSettingsHydrated,
+  useSettings,
+  useUpdateSettings,
+} from "./useSettings";
 
-type Theme = "light" | "dark" | "system";
+type Theme = ColorMode;
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
@@ -36,6 +49,11 @@ function getStored(): Theme {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === "light" || raw === "dark" || raw === "system") return raw;
   return DEFAULT_THEME_SNAPSHOT.theme;
+}
+
+function setStored(theme: Theme) {
+  if (!hasThemeStorage()) return;
+  localStorage.setItem(STORAGE_KEY, theme);
 }
 
 function ensureThemeColorMetaTag(): HTMLMetaElement {
@@ -87,13 +105,33 @@ export function syncBrowserChromeTheme() {
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 
-function applyTheme(theme: Theme, suppressTransitions = false) {
+function applyAppearanceVariables(appearance: AppearanceSettings) {
+  if (typeof document === "undefined") return;
+  if (typeof document.documentElement.style?.setProperty !== "function") return;
+  const theme = resolveAppearanceTheme(appearance);
+  const variables = deriveAppearanceCssVariables(theme);
+  for (const [name, value] of Object.entries(variables)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+}
+
+function resolveTheme(theme: Theme): "light" | "dark" {
+  return theme === "system" ? (getSystemDark() ? "dark" : "light") : theme;
+}
+
+function applyTheme(
+  theme: Theme,
+  suppressTransitions = false,
+  appearance: AppearanceSettings = DEFAULT_APPEARANCE_SETTINGS,
+) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const resolvedTheme = resolveTheme(theme);
+  const isDark = resolveAppearanceTheme(appearance).mode === "dark";
   document.documentElement.classList.toggle("dark", isDark);
+  applyAppearanceVariables(appearance);
   syncBrowserChromeTheme();
   syncDesktopTheme(theme);
   if (suppressTransitions) {
@@ -123,7 +161,7 @@ function syncDesktopTheme(theme: Theme) {
 
 // Apply immediately on module load to prevent flash
 if (typeof document !== "undefined" && hasThemeStorage()) {
-  applyTheme(getStored());
+  applyTheme(getStored(), false, DEFAULT_APPEARANCE_SETTINGS);
 }
 
 function getSnapshot(): ThemeSnapshot {
@@ -150,7 +188,7 @@ function subscribe(listener: () => void): () => void {
   // Listen for system preference changes
   const mq = window.matchMedia(MEDIA_QUERY);
   const handleChange = () => {
-    if (getStored() === "system") applyTheme("system", true);
+    if (getStored() === "system") applyTheme("system", true, getClientSettings().appearance);
     emitChange();
   };
   mq.addEventListener("change", handleChange);
@@ -158,7 +196,7 @@ function subscribe(listener: () => void): () => void {
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY) {
-      applyTheme(getStored(), true);
+      applyTheme(getStored(), true, getClientSettings().appearance);
       emitChange();
     }
   };
@@ -173,22 +211,95 @@ function subscribe(listener: () => void): () => void {
 
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const appearance = useSettings((settings) => settings.appearance);
+  const hydrated = useClientSettingsHydrated();
+  const { updateSettings } = useUpdateSettings();
   const theme = snapshot.theme;
+  const migrationAttemptedRef = useRef(false);
 
-  const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+  const setTheme = useCallback(
+    (next: Theme) => {
+      if (!hasThemeStorage()) return;
+      setStored(next);
+      const nextAppearance = {
+        ...getClientSettings().appearance,
+        colorMode: next,
+      };
+      updateSettings({ appearance: nextAppearance });
+      applyTheme(next, true, nextAppearance);
+      emitChange();
+    },
+    [updateSettings],
+  );
 
-  const setTheme = useCallback((next: Theme) => {
-    if (!hasThemeStorage()) return;
-    localStorage.setItem(STORAGE_KEY, next);
-    applyTheme(next, true);
-    emitChange();
-  }, []);
+  // One-time migration: sync legacy localStorage theme to settings.
+  // This runs once per session when settings hydrate. After migration,
+  // settings.appearance.colorMode becomes the source of truth.
+  useEffect(() => {
+    if (!hydrated || migrationAttemptedRef.current) return;
+    migrationAttemptedRef.current = true;
+
+    const legacyTheme = getStored();
+    const settingsColorMode = appearance.colorMode;
+
+    // If settings already have a non-system colorMode, they're authoritative.
+    // Only migrate if settings are at default ("system") but localStorage differs.
+    if (settingsColorMode === "system" && legacyTheme !== "system") {
+      updateSettings({
+        appearance: {
+          ...appearance,
+          colorMode: legacyTheme,
+        },
+      });
+    }
+  }, [appearance, hydrated, updateSettings]);
 
   // Keep DOM in sync on mount/change
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    const canonicalTheme = hydrated ? appearance.colorMode : theme;
 
-  return { theme, setTheme, resolvedTheme } as const;
+    // Keep localStorage in sync with settings (write-through for SSR flash prevention)
+    if (hydrated && getStored() !== appearance.colorMode) {
+      setStored(appearance.colorMode);
+    }
+
+    applyTheme(canonicalTheme, false, hydrated ? appearance : DEFAULT_APPEARANCE_SETTINGS);
+  }, [appearance, hydrated, theme]);
+
+  const canonicalTheme = hydrated ? appearance.colorMode : theme;
+  const resolvedTheme: "light" | "dark" =
+    canonicalTheme === "system" ? (snapshot.systemDark ? "dark" : "light") : canonicalTheme;
+
+  return { theme: canonicalTheme, setTheme, resolvedTheme } as const;
+}
+
+/**
+ * Preview a theme visually without persisting it to settings.
+ * Call with null to restore the current settings-based theme.
+ */
+export function previewTheme(theme: ThemeDocument | null, currentAppearance: AppearanceSettings) {
+  if (typeof document === "undefined") return;
+
+  if (theme === null) {
+    // Restore to current settings
+    const resolvedTheme = resolveAppearanceTheme(currentAppearance);
+    applyThemeVariables(resolvedTheme);
+  } else {
+    applyThemeVariables(theme);
+  }
+}
+
+function applyThemeVariables(theme: ThemeDocument) {
+  if (typeof document === "undefined") return;
+  if (typeof document.documentElement.style?.setProperty !== "function") return;
+
+  const isDark = theme.mode === "dark";
+  document.documentElement.classList.toggle("dark", isDark);
+
+  const variables = deriveAppearanceCssVariables(theme);
+  for (const [name, value] of Object.entries(variables)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+
+  syncBrowserChromeTheme();
 }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 interface CommandPaletteOpenIntent {
-  kind: "add-project";
+  kind: "add-project" | "theme-switcher";
   requestId: number;
 }
 
@@ -11,6 +11,7 @@ interface CommandPaletteStore {
   setOpen: (open: boolean) => void;
   toggleOpen: () => void;
   openAddProject: () => void;
+  openThemeSwitcher: () => void;
   clearOpenIntent: () => void;
 }
 
@@ -25,6 +26,14 @@ export const useCommandPaletteStore = create<CommandPaletteStore>((set) => ({
       open: true,
       openIntent: {
         kind: "add-project",
+        requestId: (state.openIntent?.requestId ?? 0) + 1,
+      },
+    })),
+  openThemeSwitcher: () =>
+    set((state) => ({
+      open: true,
+      openIntent: {
+        kind: "theme-switcher",
         requestId: (state.openIntent?.requestId ?? 0) + 1,
       },
     })),

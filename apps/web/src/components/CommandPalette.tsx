@@ -23,6 +23,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  PaintbrushIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -46,7 +47,7 @@ import {
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useSettings } from "../hooks/useSettings";
+import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
 import {
   getSourceControlDiscoverySnapshot,
@@ -101,6 +102,11 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
+import {
+  useThemeSwitcher,
+  useThemePreview,
+  THEME_ADDON_ICON_CLASS,
+} from "./CommandPaletteThemeSwitcher";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { useServerKeybindings } from "../rpc/serverState";
 import { resolveShortcutCommand } from "../keybindings";
@@ -330,6 +336,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const open = useCommandPaletteStore((store) => store.open);
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
+  const openThemeSwitcher = useCommandPaletteStore((store) => store.openThemeSwitcher);
   const keybindings = useServerKeybindings();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -352,16 +359,21 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
-      if (command !== "commandPalette.toggle") {
+      if (command === "commandPalette.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleOpen();
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOpen();
+      if (command === "appearance.themePicker") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThemeSwitcher();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, openThemeSwitcher, terminalOpen, toggleOpen]);
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
@@ -402,6 +414,7 @@ function OpenCommandPaletteDialog() {
   const queryClient = useQueryClient();
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
@@ -719,9 +732,12 @@ function OpenCommandPaletteDialog() {
         addonIcon: view.addonIcon,
         groups: view.groups,
         ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
+        ...(view.initialHighlightedValue
+          ? { initialHighlightedValue: view.initialHighlightedValue }
+          : {}),
       },
     ]);
-    setHighlightedItemValue(null);
+    setHighlightedItemValue(view.initialHighlightedValue ?? null);
     setQuery(view.initialQuery ?? "");
   }
 
@@ -942,6 +958,18 @@ function OpenCommandPaletteDialog() {
     [addProjectEnvironmentItems],
   );
 
+  const { themeSwitcherView, themeSearchTerms } = useThemeSwitcher({
+    appearance: settings.appearance,
+    updateAppearance: (appearance) => updateSettings({ appearance }),
+    addonIconClass: ADDON_ICON_CLASS,
+  });
+
+  // Detect if we're in the theme switcher view (either as current view or via submenu)
+  const isThemeSwitcherActive = currentView?.groups[0]?.value === "themes";
+
+  // Live preview themes as user navigates; reverts on exit/close
+  useThemePreview(highlightedItemValue, isThemeSwitcherActive, settings.appearance);
+
   const openAddProjectFlow = useCallback(() => {
     if (addProjectEnvironmentOptions.length > 1) {
       pushPaletteView({
@@ -971,13 +999,19 @@ function OpenCommandPaletteDialog() {
     startAddProjectSourceSelection,
   ]);
 
+  // Handle open intents (add-project, theme-switcher, etc.)
   useLayoutEffect(() => {
-    if (openIntent?.kind !== "add-project") {
-      return;
-    }
+    if (!openIntent) return;
     clearOpenIntent();
-    openAddProjectFlow();
-  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+    switch (openIntent.kind) {
+      case "add-project":
+        openAddProjectFlow();
+        break;
+      case "theme-switcher":
+        pushPaletteView(themeSwitcherView);
+        break;
+    }
+  }, [clearOpenIntent, openAddProjectFlow, openIntent, pushPaletteView, themeSwitcherView]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -1059,6 +1093,18 @@ function OpenCommandPaletteDialog() {
     run: async () => {
       await navigate({ to: "/settings" });
     },
+  });
+
+  actionItems.push({
+    kind: "submenu",
+    value: "action:switch-theme",
+    searchTerms: ["theme", "appearance", "color", "switch", ...themeSearchTerms],
+    title: "Switch theme...",
+    icon: <PaintbrushIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <PaintbrushIcon className={ADDON_ICON_CLASS} />,
+    groups: themeSwitcherView.groups,
+    initialQuery: "",
+    shortcutCommand: "appearance.themePicker",
   });
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });

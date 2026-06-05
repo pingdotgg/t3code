@@ -9,7 +9,7 @@ import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
 import githubDarkDefault from "@shikijs/themes/github-dark-default";
 import githubLightDefault from "@shikijs/themes/github-light-default";
-import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
+import { getFiletypeFromFileName } from "@pierre/diffs";
 
 import {
   resolveReviewHighlighterEngine,

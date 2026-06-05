@@ -46,7 +46,7 @@ import {
 } from "../rpc/serverState";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, useTheme } from "../hooks/useTheme";
 import {
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
@@ -104,6 +104,9 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+
+  // Keep theme in sync with settings at the root level
+  useTheme();
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {

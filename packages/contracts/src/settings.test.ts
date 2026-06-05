@@ -1,12 +1,61 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import {
+  AppearanceSettingsSchema,
+  DEFAULT_APPEARANCE_SETTINGS,
+  ThemeDocumentSchema,
+} from "./appearanceTheme.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
+const decodeAppearanceSettings = Schema.decodeUnknownSync(AppearanceSettingsSchema);
+const decodeThemeDocument = Schema.decodeUnknownSync(ThemeDocumentSchema);
+
+describe("ClientSettings.appearance", () => {
+  it("defaults appearance settings for legacy client settings", () => {
+    expect(decodeClientSettings({}).appearance).toEqual(DEFAULT_APPEARANCE_SETTINGS);
+  });
+
+  it("decodes complete appearance patch objects", () => {
+    expect(
+      decodeClientSettingsPatch({
+        appearance: {
+          colorMode: "dark",
+          themeId: "solarized-light",
+        },
+      }).appearance,
+    ).toEqual({
+      colorMode: "dark",
+      themeId: "solarized-light",
+    });
+  });
+
+  it("rejects invalid appearance values", () => {
+    expect(() => decodeAppearanceSettings({ themeId: "" })).toThrow();
+    expect(() =>
+      decodeThemeDocument({
+        id: "custom",
+        name: "Custom",
+        mode: "light",
+        accentSeed: "#12345g",
+        backgroundSeed: "#ffffff",
+        foregroundSeed: "#111111",
+      }),
+    ).toThrow();
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

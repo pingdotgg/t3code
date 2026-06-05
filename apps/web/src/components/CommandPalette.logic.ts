@@ -50,6 +50,7 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  readonly initialHighlightedValue?: string;
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
