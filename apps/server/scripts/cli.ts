@@ -202,7 +202,7 @@ interface PublishCommandConfig {
   readonly dryRun: boolean;
 }
 
-const createPnpmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
+const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
   const args = [
     "--filter",
     "t3",
@@ -289,11 +289,11 @@ const publishCmd = Command.make(
         // config, including override selectors, is interpreted correctly.
         () =>
           Effect.gen(function* () {
-            const args = createPnpmPublishArgs(config);
+            const args = createVpPmPublishArgs(config);
 
-            yield* Effect.log(`[cli] Running: pnpm ${args.join(" ")}`);
+            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make("pnpm", [...args], {
+              ChildProcess.make("vp", ["pm", ...args], {
                 cwd: repoRoot,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
