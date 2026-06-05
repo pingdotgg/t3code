@@ -23,8 +23,14 @@ export const RelayDeploymentConfig = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const relayApiZoneName = yield* Config.nonEmptyString("RELAY_API_ZONE_NAME");
   const managedEndpointZoneName = yield* Config.nonEmptyString("RELAY_TUNNEL_ZONE_NAME");
-  const relayPublicDomainOverride = yield* Config.nonEmptyString("RELAY_DOMAIN").pipe(
+  const relayPublicDomainOverride = yield* Config.string("RELAY_DOMAIN").pipe(
     Config.option,
+    Config.map(
+      Option.flatMap((value) => {
+        const trimmed = value.trim();
+        return trimmed ? Option.some(trimmed) : Option.none();
+      }),
+    ),
   );
   const relayPublicDomain = Option.getOrElse(relayPublicDomainOverride, () =>
     relayPublicDomainForStage(stage, relayApiZoneName),
