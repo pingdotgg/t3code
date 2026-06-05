@@ -11,7 +11,6 @@ import {
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -21,23 +20,38 @@ import * as Schema from "effect/Schema";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class EnvironmentPublishSignatureExpired extends Data.TaggedError(
+export class EnvironmentPublishSignatureExpired extends Schema.TaggedErrorClass<EnvironmentPublishSignatureExpired>()(
   "EnvironmentPublishSignatureExpired",
-)<{
-  readonly expiresAt: string;
-}> {}
+  {
+    expiresAt: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment publish signature expired at ${this.expiresAt}`;
+  }
+}
 
-export class EnvironmentPublishSignatureInvalid extends Data.TaggedError(
+export class EnvironmentPublishSignatureInvalid extends Schema.TaggedErrorClass<EnvironmentPublishSignatureInvalid>()(
   "EnvironmentPublishSignatureInvalid",
-)<{
-  readonly environmentId: string;
-}> {}
+  {
+    environmentId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' publish signature is invalid`;
+  }
+}
 
-export class EnvironmentPublishPublicKeyMissing extends Data.TaggedError(
+export class EnvironmentPublishPublicKeyMissing extends Schema.TaggedErrorClass<EnvironmentPublishPublicKeyMissing>()(
   "EnvironmentPublishPublicKeyMissing",
-)<{
-  readonly environmentId: string;
-}> {}
+  {
+    environmentId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' has no publish public key`;
+  }
+}
 
 export type EnvironmentPublishSignatureError =
   | EnvironmentPublishSignatureExpired

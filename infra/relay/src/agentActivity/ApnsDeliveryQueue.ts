@@ -2,10 +2,10 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import type { RelayDeliveryResult } from "@t3tools/contracts/relay";
 
@@ -22,9 +22,14 @@ import {
 } from "./apnsDeliveryJobs.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class ApnsDeliveryQueueSendError extends Data.TaggedError("ApnsDeliveryQueueSendError")<{
-  readonly cause: unknown;
-}> {}
+export class ApnsDeliveryQueueSendError extends Schema.TaggedErrorClass<ApnsDeliveryQueueSendError>()(
+  "ApnsDeliveryQueueSendError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to enqueue APNs delivery";
+  }
+}
 
 export type ApnsDeliveryQueueError = ApnsDeliveryQueueSendError;
 

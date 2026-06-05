@@ -1,20 +1,23 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { and, eq, isNull } from "drizzle-orm";
 import * as Crypto from "effect/Crypto";
+import * as Schema from "effect/Schema";
 
 import { RelayDb } from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
 
-export class DeliveryAttemptRecordPersistenceError extends Data.TaggedError(
+export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedErrorClass<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to persist APNs delivery attempt";
+  }
+}
 
 export interface DeliveryAttemptInput {
   readonly userId: string | null;

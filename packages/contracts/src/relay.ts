@@ -329,7 +329,11 @@ export class RelayAuthInvalidError extends Schema.TaggedErrorClass<RelayAuthInva
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
-) {}
+) {
+  override get message(): string {
+    return `Relay authentication failed: ${this.reason}`;
+  }
+}
 
 export class RelayEnvironmentLinkProofExpiredError extends Schema.TaggedErrorClass<RelayEnvironmentLinkProofExpiredError>()(
   "RelayEnvironmentLinkProofExpiredError",
@@ -338,7 +342,11 @@ export class RelayEnvironmentLinkProofExpiredError extends Schema.TaggedErrorCla
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
-) {}
+) {
+  override get message(): string {
+    return "Relay environment link proof expired";
+  }
+}
 
 export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorClass<RelayEnvironmentLinkProofInvalidError>()(
   "RelayEnvironmentLinkProofInvalidError",
@@ -348,7 +356,11 @@ export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorCla
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 400 },
-) {}
+) {
+  override get message(): string {
+    return `Relay environment link proof is invalid: ${this.reason}`;
+  }
+}
 
 export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErrorClass<RelayEnvironmentConnectNotAuthorizedError>()(
   "RelayEnvironmentConnectNotAuthorizedError",
@@ -357,7 +369,11 @@ export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErro
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
-) {}
+) {
+  override get message(): string {
+    return "Relay environment connection is not authorized";
+  }
+}
 
 export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedErrorClass<RelayEnvironmentEndpointUnavailableError>()(
   "RelayEnvironmentEndpointUnavailableError",
@@ -367,7 +383,11 @@ export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedError
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 502 },
-) {}
+) {
+  override get message(): string {
+    return `Relay environment endpoint is unavailable: ${this.reason}`;
+  }
+}
 
 export class RelayEnvironmentEndpointTimedOutError extends Schema.TaggedErrorClass<RelayEnvironmentEndpointTimedOutError>()(
   "RelayEnvironmentEndpointTimedOutError",
@@ -376,7 +396,11 @@ export class RelayEnvironmentEndpointTimedOutError extends Schema.TaggedErrorCla
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 504 },
-) {}
+) {
+  override get message(): string {
+    return "Relay environment endpoint request timed out";
+  }
+}
 
 export class RelayEnvironmentLinkFailedError extends Schema.TaggedErrorClass<RelayEnvironmentLinkFailedError>()(
   "RelayEnvironmentLinkFailedError",
@@ -386,7 +410,11 @@ export class RelayEnvironmentLinkFailedError extends Schema.TaggedErrorClass<Rel
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 500 },
-) {}
+) {
+  override get message(): string {
+    return `Relay environment link failed: ${this.reason}`;
+  }
+}
 
 export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedErrorClass<RelayEnvironmentLinkUnavailableError>()(
   "RelayEnvironmentLinkUnavailableError",
@@ -396,7 +424,11 @@ export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedErrorClas
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 503 },
-) {}
+) {
+  override get message(): string {
+    return `Relay environment link is unavailable: ${this.reason}`;
+  }
+}
 
 export class RelayAgentActivityPublishProofExpiredError extends Schema.TaggedErrorClass<RelayAgentActivityPublishProofExpiredError>()(
   "RelayAgentActivityPublishProofExpiredError",
@@ -405,7 +437,11 @@ export class RelayAgentActivityPublishProofExpiredError extends Schema.TaggedErr
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
-) {}
+) {
+  override get message(): string {
+    return "Relay agent activity publish proof expired";
+  }
+}
 
 export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErrorClass<RelayAgentActivityPublishProofInvalidError>()(
   "RelayAgentActivityPublishProofInvalidError",
@@ -415,7 +451,11 @@ export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErr
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
-) {}
+) {
+  override get message(): string {
+    return `Relay agent activity publish proof is invalid: ${this.reason}`;
+  }
+}
 
 export class RelayInternalError extends Schema.TaggedErrorClass<RelayInternalError>()(
   "RelayInternalError",
@@ -425,7 +465,11 @@ export class RelayInternalError extends Schema.TaggedErrorClass<RelayInternalErr
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 500 },
-) {}
+) {
+  override get message(): string {
+    return `Relay internal error: ${this.reason}`;
+  }
+}
 
 export const RelayProtectedError = Schema.Union([
   RelayAuthInvalidError,

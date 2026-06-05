@@ -3,12 +3,12 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import type {
   RelayManagedEndpoint,
@@ -25,28 +25,44 @@ import {
 } from "../deploymentConfig.ts";
 import { ManagedEndpointAllocations } from "./ManagedEndpointAllocations.ts";
 
-export class ManagedEndpointProvisioningNotConfigured extends Data.TaggedError(
+export class ManagedEndpointProvisioningNotConfigured extends Schema.TaggedErrorClass<ManagedEndpointProvisioningNotConfigured>()(
   "ManagedEndpointProvisioningNotConfigured",
-)<{}> {}
+  {},
+) {
+  override get message(): string {
+    return "Managed endpoint provisioning is not configured";
+  }
+}
 
-export class ManagedEndpointProvisioningFailed extends Data.TaggedError(
+export class ManagedEndpointProvisioningFailed extends Schema.TaggedErrorClass<ManagedEndpointProvisioningFailed>()(
   "ManagedEndpointProvisioningFailed",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Managed endpoint provisioning failed";
+  }
+}
 
-export class ManagedEndpointDeprovisioningFailed extends Data.TaggedError(
+export class ManagedEndpointDeprovisioningFailed extends Schema.TaggedErrorClass<ManagedEndpointDeprovisioningFailed>()(
   "ManagedEndpointDeprovisioningFailed",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Managed endpoint deprovisioning failed";
+  }
+}
 
-export class ManagedEndpointOriginNotAllowed extends Data.TaggedError(
+export class ManagedEndpointOriginNotAllowed extends Schema.TaggedErrorClass<ManagedEndpointOriginNotAllowed>()(
   "ManagedEndpointOriginNotAllowed",
-)<{
-  readonly host: string;
-  readonly port: number;
-}> {}
+  {
+    host: Schema.String,
+    port: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Managed endpoint origin '${this.host}:${this.port}' is not allowed`;
+  }
+}
 
 export type ManagedEndpointProviderError =
   | ManagedEndpointProvisioningNotConfigured
@@ -80,11 +96,14 @@ interface ManagedEndpointTunnel {
   readonly name?: string | null;
 }
 
-export class ManagedEndpointTunnelClientError extends Data.TaggedError(
+export class ManagedEndpointTunnelClientError extends Schema.TaggedErrorClass<ManagedEndpointTunnelClientError>()(
   "ManagedEndpointTunnelClientError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Managed endpoint tunnel provider request failed";
+  }
+}
 
 export interface ManagedEndpointTunnelClientShape {
   readonly list: (request: {
@@ -124,11 +143,14 @@ interface ManagedEndpointCnameRecordInput {
   readonly proxied: true;
 }
 
-export class ManagedEndpointDnsClientError extends Data.TaggedError(
+export class ManagedEndpointDnsClientError extends Schema.TaggedErrorClass<ManagedEndpointDnsClientError>()(
   "ManagedEndpointDnsClientError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Managed endpoint DNS provider request failed";
+  }
+}
 
 export interface ManagedEndpointDnsClientShape {
   readonly listRecords: (

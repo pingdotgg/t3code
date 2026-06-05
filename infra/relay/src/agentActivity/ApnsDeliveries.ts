@@ -9,7 +9,6 @@ import {
   RelayAgentAwarenessPreferences as RelayAgentAwarenessPreferencesSchema,
 } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -74,9 +73,16 @@ export type ApnsDeliveryError =
   | LiveActivities.LiveActivityTargetListPersistenceError
   | LiveActivities.LiveActivityDeliveryMarkPersistenceError;
 
-export class ApnsDeliveryJobClaimInFlight extends Data.TaggedError("ApnsDeliveryJobClaimInFlight")<{
-  readonly sourceJobId: string;
-}> {}
+export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedErrorClass<ApnsDeliveryJobClaimInFlight>()(
+  "ApnsDeliveryJobClaimInFlight",
+  {
+    sourceJobId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `APNs delivery job '${this.sourceJobId}' is already in flight`;
+  }
+}
 
 const decodeRelayAgentActivityAggregateStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),

@@ -1,6 +1,5 @@
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
-import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -813,9 +812,16 @@ export const serverApi = HttpApiBuilder.group(
   }),
 );
 
-class ClerkTokenVerificationFailed extends Data.TaggedError("ClerkTokenVerificationFailed")<{
-  readonly cause: unknown;
-}> {}
+class ClerkTokenVerificationFailed extends Schema.TaggedErrorClass<ClerkTokenVerificationFailed>()(
+  "ClerkTokenVerificationFailed",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Clerk token verification failed";
+  }
+}
 
 const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
 
@@ -846,15 +852,12 @@ const COMMON_AUTH_INVALID_REASONS = [
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
 ] as const;
 type RelayCommonPersistenceError = InstanceType<(typeof COMMON_AUTH_INVALID_REASONS)[number]>;
+const isRelayCommonPersistenceError = Schema.is(Schema.Union(COMMON_AUTH_INVALID_REASONS));
 
 type MapRelayCommonApiError<E> =
   | Exclude<E, HttpApiError.Unauthorized | RelayCommonPersistenceError>
   | (Extract<E, HttpApiError.Unauthorized> extends never ? never : RelayAuthInvalidError)
   | (Extract<E, RelayCommonPersistenceError> extends never ? never : RelayInternalError);
-
-function isRelayCommonPersistenceError(error: unknown): error is RelayCommonPersistenceError {
-  return COMMON_AUTH_INVALID_REASONS.some((ErrorType) => error instanceof ErrorType);
-}
 
 function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
   return currentTraceId.pipe(

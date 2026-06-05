@@ -5,10 +5,10 @@ import type {
   RelayManagedEndpoint,
 } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { and, eq, isNull, or } from "drizzle-orm";
 
 import { RelayDb } from "../db.ts";
@@ -24,41 +24,59 @@ export interface AgentAwarenessDeliveryUserRecord {
   readonly liveActivitiesEnabled: boolean;
 }
 
-export class EnvironmentLinkUpsertPersistenceError extends Data.TaggedError(
+export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkUpsertPersistenceError>()(
   "EnvironmentLinkUpsertPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to persist environment link";
+  }
+}
 
-export class EnvironmentLinkUserListPersistenceError extends Data.TaggedError(
+export class EnvironmentLinkUserListPersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkUserListPersistenceError>()(
   "EnvironmentLinkUserListPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to list users linked to environment";
+  }
+}
 
-export class EnvironmentPublicKeyListPersistenceError extends Data.TaggedError(
+export class EnvironmentPublicKeyListPersistenceError extends Schema.TaggedErrorClass<EnvironmentPublicKeyListPersistenceError>()(
   "EnvironmentPublicKeyListPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to list environment public keys";
+  }
+}
 
-export class EnvironmentLinkListPersistenceError extends Data.TaggedError(
+export class EnvironmentLinkListPersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkListPersistenceError>()(
   "EnvironmentLinkListPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to list environment links";
+  }
+}
 
-export class EnvironmentLinkLookupPersistenceError extends Data.TaggedError(
+export class EnvironmentLinkLookupPersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkLookupPersistenceError>()(
   "EnvironmentLinkLookupPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to look up environment link";
+  }
+}
 
-export class EnvironmentLinkRevokePersistenceError extends Data.TaggedError(
+export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkRevokePersistenceError>()(
   "EnvironmentLinkRevokePersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to revoke environment link";
+  }
+}
 
 export interface EnvironmentLinksShape {
   readonly upsert: (input: {

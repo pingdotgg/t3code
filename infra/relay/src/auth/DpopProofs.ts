@@ -1,8 +1,8 @@
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 import { lt } from "drizzle-orm";
 
@@ -10,11 +10,16 @@ import { verifyDpopProof } from "@t3tools/shared/dpop";
 import { RelayDb } from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
-export class DpopProofReplayPersistenceError extends Data.TaggedError(
+export class DpopProofReplayPersistenceError extends Schema.TaggedErrorClass<DpopProofReplayPersistenceError>()(
   "DpopProofReplayPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to persist DPoP proof replay state";
+  }
+}
 
 export interface DpopProofReplayShape {
   readonly verifyAndConsume: (input: {

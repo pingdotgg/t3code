@@ -1,10 +1,10 @@
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import { and, eq } from "drizzle-orm";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { RelayDb } from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
@@ -36,11 +36,17 @@ export function resolveReadyManagedEndpoint(input: {
   return managedEndpointForHostname(input.allocation.hostname);
 }
 
-export class ManagedEndpointAllocationPersistenceError extends Data.TaggedError(
+export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErrorClass<ManagedEndpointAllocationPersistenceError>()(
   "ManagedEndpointAllocationPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to persist managed endpoint allocation";
+  }
+}
+const isManagedEndpointAllocationPersistenceError = Schema.is(
+  ManagedEndpointAllocationPersistenceError,
+);
 
 interface ManagedEndpointAllocationKey {
   readonly userId: string;
@@ -98,7 +104,7 @@ const whereAllocation = (input: ManagedEndpointAllocationKey) =>
   );
 
 const persistenceError = (cause: unknown) =>
-  cause instanceof ManagedEndpointAllocationPersistenceError
+  isManagedEndpointAllocationPersistenceError(cause)
     ? cause
     : new ManagedEndpointAllocationPersistenceError({ cause });
 

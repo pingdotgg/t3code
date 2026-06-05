@@ -3,31 +3,42 @@ import type {
   RelayDeviceRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 import { RelayDb } from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
-export class DeviceRegistrationPersistenceError extends Data.TaggedError(
+export class DeviceRegistrationPersistenceError extends Schema.TaggedErrorClass<DeviceRegistrationPersistenceError>()(
   "DeviceRegistrationPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to persist mobile device registration";
+  }
+}
 
-export class DeviceUnregistrationPersistenceError extends Data.TaggedError(
+export class DeviceUnregistrationPersistenceError extends Schema.TaggedErrorClass<DeviceUnregistrationPersistenceError>()(
   "DeviceUnregistrationPersistenceError",
-)<{
-  readonly cause: unknown;
-}> {}
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to unregister mobile device";
+  }
+}
 
-export class DeviceListPersistenceError extends Data.TaggedError("DeviceListPersistenceError")<{
-  readonly cause: unknown;
-}> {}
+export class DeviceListPersistenceError extends Schema.TaggedErrorClass<DeviceListPersistenceError>()(
+  "DeviceListPersistenceError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to list mobile devices";
+  }
+}
 
 export interface DevicesShape {
   readonly register: (input: {

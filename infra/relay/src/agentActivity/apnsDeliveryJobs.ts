@@ -2,7 +2,6 @@ import * as NodeCrypto from "node:crypto";
 
 import { RelayAgentActivityAggregateState, type RelayDeliveryKind } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -50,13 +49,23 @@ export const SignedApnsDeliveryJob = Schema.Struct({
 });
 export type SignedApnsDeliveryJob = typeof SignedApnsDeliveryJob.Type;
 
-export class ApnsDeliveryJobInvalid extends Data.TaggedError("ApnsDeliveryJobInvalid")<{
-  readonly message: string;
-}> {}
+export class ApnsDeliveryJobInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobInvalid>()(
+  "ApnsDeliveryJobInvalid",
+  {
+    message: Schema.String,
+  },
+) {}
 
-export class ApnsDeliveryJobExpired extends Data.TaggedError("ApnsDeliveryJobExpired")<{
-  readonly expiresAt: string;
-}> {}
+export class ApnsDeliveryJobExpired extends Schema.TaggedErrorClass<ApnsDeliveryJobExpired>()(
+  "ApnsDeliveryJobExpired",
+  {
+    expiresAt: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `APNs delivery job expired at ${this.expiresAt}`;
+  }
+}
 
 export type ApnsDeliveryJobVerificationError = ApnsDeliveryJobInvalid | ApnsDeliveryJobExpired;
 

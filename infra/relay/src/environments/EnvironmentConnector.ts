@@ -28,7 +28,6 @@ import {
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -42,28 +41,53 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class EnvironmentConnectNotAuthorized extends Data.TaggedError(
+export class EnvironmentConnectNotAuthorized extends Schema.TaggedErrorClass<EnvironmentConnectNotAuthorized>()(
   "EnvironmentConnectNotAuthorized",
-)<{
-  readonly environmentId: string;
-}> {}
+  {
+    environmentId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' is not authorized to connect`;
+  }
+}
 
-export class EnvironmentMintRequestFailed extends Data.TaggedError("EnvironmentMintRequestFailed")<{
-  readonly cause: unknown;
-}> {}
+export class EnvironmentMintRequestFailed extends Schema.TaggedErrorClass<EnvironmentMintRequestFailed>()(
+  "EnvironmentMintRequestFailed",
+  {
+    environmentId: Schema.String,
+    operation: Schema.Literals(["connect", "status"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' ${this.operation} request failed`;
+  }
+}
 
-export class EnvironmentMintRequestTimedOut extends Data.TaggedError(
+export class EnvironmentMintRequestTimedOut extends Schema.TaggedErrorClass<EnvironmentMintRequestTimedOut>()(
   "EnvironmentMintRequestTimedOut",
-)<{
-  readonly environmentId: string;
-  readonly timeoutMs: number;
-}> {}
+  {
+    environmentId: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' mint request timed out after ${this.timeoutMs}ms`;
+  }
+}
 
-export class EnvironmentMintResponseInvalid extends Data.TaggedError(
+export class EnvironmentMintResponseInvalid extends Schema.TaggedErrorClass<EnvironmentMintResponseInvalid>()(
   "EnvironmentMintResponseInvalid",
-)<{
-  readonly environmentId: string;
-}> {}
+  {
+    environmentId: Schema.String,
+    operation: Schema.Literals(["connect", "status"]),
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' returned an invalid ${this.operation} response`;
+  }
+}
 
 export type EnvironmentConnectorError =
   | EnvironmentConnectNotAuthorized
@@ -277,14 +301,28 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
       const nonce = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentMintRequestFailed({
+              environmentId: input.environmentId,
+              operation: "status",
+              cause,
+            }),
+        ),
       );
       const payload = {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
         jti: yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })),
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "status",
+                cause,
+              }),
+          ),
         ),
         iat: Math.floor(now.epochMilliseconds / 1_000),
         exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
@@ -296,7 +334,16 @@ const make = Effect.gen(function* () {
         privateKey: Redacted.value(settings.cloudMintPrivateKey),
         typ: RELAY_HEALTH_REQUEST_TYP,
         payload,
-      }).pipe(Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentMintRequestFailed({
+              environmentId: input.environmentId,
+              operation: "status",
+              cause,
+            }),
+        ),
+      );
       const checkedAt = DateTime.formatIso(now);
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
       const responseOption = yield* environmentClient.cloud.health({ payload: { proof } }).pipe(
@@ -336,7 +383,10 @@ const make = Effect.gen(function* () {
         now: yield* DateTime.now,
       });
       if (!verified) {
-        return yield* new EnvironmentMintResponseInvalid({ environmentId: input.environmentId });
+        return yield* new EnvironmentMintResponseInvalid({
+          environmentId: input.environmentId,
+          operation: "status",
+        });
       }
       return {
         environmentId: link.environmentId,
@@ -364,14 +414,28 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
       const nonce = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentMintRequestFailed({
+              environmentId: input.environmentId,
+              operation: "connect",
+              cause,
+            }),
+        ),
       );
       const payload = {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
         jti: yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })),
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "connect",
+                cause,
+              }),
+          ),
         ),
         iat: Math.floor(now.epochMilliseconds / 1_000),
         exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
@@ -386,11 +450,27 @@ const make = Effect.gen(function* () {
         privateKey: Redacted.value(settings.cloudMintPrivateKey),
         typ: RELAY_MINT_REQUEST_TYP,
         payload,
-      }).pipe(Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentMintRequestFailed({
+              environmentId: input.environmentId,
+              operation: "connect",
+              cause,
+            }),
+        ),
+      );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
       const decoded = yield* environmentClient.cloud.t3MintCredential({ payload: { proof } }).pipe(
         withoutRedirects,
-        Effect.mapError((cause) => new EnvironmentMintRequestFailed({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentMintRequestFailed({
+              environmentId: input.environmentId,
+              operation: "connect",
+              cause,
+            }),
+        ),
         Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
         Effect.flatMap(
           Option.match({
@@ -415,7 +495,10 @@ const make = Effect.gen(function* () {
         nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
       });
       if (!verified) {
-        return yield* new EnvironmentMintResponseInvalid({ environmentId: input.environmentId });
+        return yield* new EnvironmentMintResponseInvalid({
+          environmentId: input.environmentId,
+          operation: "connect",
+        });
       }
       return {
         environmentId: link.environmentId,

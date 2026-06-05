@@ -1,6 +1,6 @@
 import {
   RelayEnvironmentLinkProofPayload,
-  type RelayEnvironmentLinkProofInvalidReason,
+  RelayEnvironmentLinkProofInvalidReason,
   type RelayEnvironmentLinkRequest,
 } from "@t3tools/contracts/relay";
 import {
@@ -10,7 +10,6 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,14 +22,28 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class EnvironmentLinkProofExpired extends Data.TaggedError("EnvironmentLinkProofExpired")<{
-  readonly expiresAt: string;
-}> {}
+export class EnvironmentLinkProofExpired extends Schema.TaggedErrorClass<EnvironmentLinkProofExpired>()(
+  "EnvironmentLinkProofExpired",
+  {
+    expiresAt: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment link proof expired at ${this.expiresAt}`;
+  }
+}
 
-export class EnvironmentLinkProofInvalid extends Data.TaggedError("EnvironmentLinkProofInvalid")<{
-  readonly environmentId: string;
-  readonly reason: RelayEnvironmentLinkProofInvalidReason;
-}> {}
+export class EnvironmentLinkProofInvalid extends Schema.TaggedErrorClass<EnvironmentLinkProofInvalid>()(
+  "EnvironmentLinkProofInvalid",
+  {
+    environmentId: Schema.String,
+    reason: RelayEnvironmentLinkProofInvalidReason,
+  },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' link proof is invalid: ${this.reason}`;
+  }
+}
 
 export type EnvironmentLinkError =
   | EnvironmentLinkProofExpired
