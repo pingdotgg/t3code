@@ -24,6 +24,7 @@
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "drizzle-kit": "1.0.0-rc.3",
-    "vitest": "catalog:"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

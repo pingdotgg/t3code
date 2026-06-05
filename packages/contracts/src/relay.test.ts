@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 
 import { RelayApi } from "./relay.ts";

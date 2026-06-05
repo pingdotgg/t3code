@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
-import { afterEach, beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";

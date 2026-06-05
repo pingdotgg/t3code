@@ -2,7 +2,7 @@
 
 import * as NodeCrypto from "node:crypto";
 
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";

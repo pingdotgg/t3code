@@ -6,7 +6,7 @@ import {
   setManagedRelaySession,
 } from "@t3tools/client-runtime";
 import * as Effect from "effect/Effect";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => {
   const environmentConnection = {

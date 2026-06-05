@@ -1,7 +1,7 @@
 import "../../index.css";
 
-import { page, userEvent } from "vitest/browser";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vite-plus/test/browser";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import type { DesktopCloudAuthOAuthOption } from "../../cloud/desktopAuth";

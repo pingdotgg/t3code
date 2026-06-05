@@ -2,7 +2,7 @@
 
 import * as NodeCrypto from "node:crypto";
 
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import Constants from "expo-constants";
 import * as Effect from "effect/Effect";

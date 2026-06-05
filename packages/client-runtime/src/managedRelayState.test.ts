@@ -7,7 +7,7 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ManagedRelayClient, type ManagedRelayClientShape } from "./managedRelay.ts";
 import {

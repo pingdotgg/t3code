@@ -1,7 +1,7 @@
 import "../../index.css";
 
-import { page } from "vitest/browser";
-import { beforeEach, describe, expect, it } from "vitest";
+import { page } from "vite-plus/test/browser";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import {

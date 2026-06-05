@@ -29,7 +29,7 @@ catalog:
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.1.20
-  "@vitest/runner": ^4.1.8
+  "@vitest/runner": 4.1.8
   "@types/bun": ^1.3.11
   "@types/node": 24.12.4
   "@typescript/native-preview": 7.0.0-dev.20260527.2
@@ -56,6 +56,8 @@ overrides:
   "@effect/sql-pg": "catalog:"
   "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
+  "@effect/vitest>@vitest/runner": "-"
+  "@effect/vitest>vitest": "-"
   "@types/node": "catalog:"
   effect: "catalog:"
   vite: "catalog:"
@@ -71,8 +73,15 @@ peerDependencyRules:
 packageExtensions:
   "@effect/vitest@*":
     dependencies:
-      "@vitest/runner": "catalog:"
+      vite-plus: "catalog:"
+    peerDependenciesMeta:
+      vitest:
+        optional: true
+  "vite-plus@*":
+    dependencies:
+      vite: "catalog:"
 patchedDependencies:
+  "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
   "@expo/metro-config@56.0.13": patches/@expo%2Fmetro-config@56.0.13.patch
   "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
