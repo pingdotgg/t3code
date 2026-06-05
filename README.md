@@ -18,6 +18,8 @@ T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and Ope
 npx t3
 ```
 
+Tip: Use `npx t3 --help` for the full CLI reference.
+
 ### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
