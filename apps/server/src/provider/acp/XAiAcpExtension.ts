@@ -1,138 +1,69 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+
+const XAiAskUserQuestionOption = Schema.Struct({
+  label: Schema.String,
+  description: Schema.optional(Schema.String),
+  preview: Schema.optional(Schema.String),
+  id: Schema.optional(Schema.String),
+});
+
+const XAiAskUserQuestion = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  question: Schema.String,
+  options: Schema.Array(XAiAskUserQuestionOption),
+  multiSelect: Schema.optional(Schema.Boolean),
+});
+
+const XAiAskUserQuestionParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  questions: Schema.Array(XAiAskUserQuestion),
+  mode: Schema.Union([Schema.Literal("default"), Schema.Literal("plan")]),
+});
+
+const XAiWrappedAskUserQuestionParams = Schema.Struct({
+  method: Schema.Literal("x.ai/ask_user_question"),
+  params: XAiAskUserQuestionParams,
+});
 
 export const XAiAskUserQuestionRequest = Schema.Unknown;
 
-type UnknownRecord = Record<string, unknown>;
+type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
+
+const decodeXAiAskUserQuestionParams = Schema.decodeUnknownSync(XAiAskUserQuestionParams);
+const decodeXAiWrappedAskUserQuestionParamsExit = Schema.decodeUnknownExit(
+  XAiWrappedAskUserQuestionParams,
+);
 
 function trimmed(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text && text.length > 0 ? text : undefined;
 }
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringField(record: UnknownRecord, keys: ReadonlyArray<string>): string | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string") {
-      const text = trimmed(value);
-      if (text) {
-        return text;
-      }
-    }
+function unwrapAskUserQuestionParams(params: unknown): XAiAskUserQuestionRequestParams {
+  const wrapped = decodeXAiWrappedAskUserQuestionParamsExit(params);
+  if (Exit.isSuccess(wrapped)) {
+    return wrapped.value.params;
   }
-  return undefined;
-}
-
-function booleanField(record: UnknownRecord, keys: ReadonlyArray<string>): boolean | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "boolean") {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function arrayField(record: UnknownRecord, keys: ReadonlyArray<string>): ReadonlyArray<unknown> {
-  for (const key of keys) {
-    const value = record[key];
-    if (Array.isArray(value)) {
-      return value;
-    }
-  }
-  return [];
-}
-
-function nestedRecord(
-  record: UnknownRecord,
-  keys: ReadonlyArray<string>,
-): UnknownRecord | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (isRecord(value)) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function unwrapParams(params: unknown): UnknownRecord {
-  if (!isRecord(params)) {
-    return {};
-  }
-  const request = nestedRecord(params, ["request"]);
-  const requestInput = request ? nestedRecord(request, ["input", "arguments", "args"]) : undefined;
-  return nestedRecord(params, ["input", "arguments", "args", "params"]) ?? requestInput ?? params;
-}
-
-function extractOptionLabel(option: unknown): string | undefined {
-  return typeof option === "string"
-    ? trimmed(option)
-    : isRecord(option)
-      ? stringField(option, ["label", "value", "id", "text", "title", "name"])
-      : undefined;
-}
-
-function extractOptions(options: ReadonlyArray<unknown>) {
-  const extracted = (options ?? []).flatMap((option) => {
-    const label = extractOptionLabel(option);
-    if (!label) {
-      return [];
-    }
-    const description =
-      typeof option === "string"
-        ? label
-        : isRecord(option)
-          ? (stringField(option, ["description", "detail", "subtitle"]) ?? label)
-          : label;
-    return [{ label, description }];
-  });
-  return extracted.length > 0 ? extracted : [{ label: "OK", description: "Continue" }];
-}
-
-function extractQuestion(
-  question: unknown,
-  fallbackTitle: string | undefined,
-  index: number,
-): UserInputQuestion {
-  const record = isRecord(question) ? question : {};
-  const nestedQuestion = nestedRecord(record, ["question"]);
-  const questionSource = nestedQuestion ?? record;
-  const questionText =
-    (typeof question === "string" ? trimmed(question) : undefined) ??
-    stringField(questionSource, ["question", "prompt", "text", "content", "message"]) ??
-    fallbackTitle ??
-    `Question ${index + 1}`;
-  const id = stringField(questionSource, ["id", "questionId", "key"]) ?? questionText;
-  return {
-    id,
-    header:
-      stringField(questionSource, ["header", "title", "label"]) ?? fallbackTitle ?? "Question",
-    question: questionText,
-    multiSelect:
-      booleanField(questionSource, ["multiSelect", "allowMultiple", "allow_multiple"]) === true,
-    options: extractOptions(arrayField(questionSource, ["options", "choices", "answers"])),
-  };
+  return decodeXAiAskUserQuestionParams(params);
 }
 
 export function extractXAiAskUserQuestions(params: unknown): ReadonlyArray<UserInputQuestion> {
-  const root = unwrapParams(params);
-  const title = stringField(root, ["title", "header", "toolTitle"]);
-  const questions = arrayField(root, ["questions", "items", "prompts"]);
-  if (questions.length > 0) {
-    return questions.map((question, index) => extractQuestion(question, title, index));
-  }
-  const singleQuestion = nestedRecord(root, ["question"]) ?? root;
-  const singleQuestionOptions = arrayField(root, ["options", "choices", "answers"]);
-  const question =
-    singleQuestion === root || singleQuestionOptions.length === 0
-      ? singleQuestion
-      : { ...singleQuestion, options: singleQuestionOptions };
-  return [extractQuestion(question, title, 0)];
+  return unwrapAskUserQuestionParams(params).questions.map((question) => ({
+    id: question.id ?? question.question,
+    header: "Question",
+    question: question.question,
+    multiSelect: question.multiSelect === true,
+    options:
+      question.options.length > 0
+        ? question.options.map((option) => ({
+            label: option.label,
+            description: option.description ?? option.label,
+          }))
+        : [{ label: "OK", description: "Continue" }],
+  }));
 }
 
 function answerValues(answer: unknown): ReadonlyArray<string> {
