@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { hasDeployChanges, reconcileRootEnvRelayUrl } from "./deploy.ts";
+import { hasDeployChanges, reconcileRootEnvRelayUrl, serializeGithubOutput } from "./deploy.ts";
 
 describe("hasDeployChanges", () => {
   it("detects resource, binding, and deletion changes", () => {
@@ -48,5 +48,17 @@ describe("reconcileRootEnvRelayUrl", () => {
     ).toBe(
       "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nT3CODE_RELAY_URL=https://relay.example.test\n",
     );
+  });
+});
+
+describe("serializeGithubOutput", () => {
+  it("serializes relay deploy metadata for GitHub Actions outputs", () => {
+    expect(
+      serializeGithubOutput({
+        changed: false,
+        result: "noop",
+        relay_url: "https://relay.example.test",
+      }),
+    ).toBe("changed=false\nresult=noop\nrelay_url=https://relay.example.test\n");
   });
 });

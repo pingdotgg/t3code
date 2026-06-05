@@ -39,6 +39,7 @@ export interface RelayDeployOptions {
   readonly stage: Option.Option<string>;
   readonly yes: boolean;
   readonly adopt: boolean;
+  readonly githubOutput: boolean;
 }
 
 export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): string {
@@ -60,6 +61,20 @@ export function hasDeployChanges(plan: Plan.Plan): boolean {
         node.action !== "noop" || node.bindings.some((binding) => binding.action !== "noop"),
     )
   );
+}
+
+export type RelayDeployResult = "applied" | "noop" | "dry-run" | "cancelled";
+
+export interface RelayDeployOutcome {
+  readonly result: RelayDeployResult;
+  readonly changed: boolean;
+  readonly relayUrl: Option.Option<string>;
+}
+
+export function serializeGithubOutput(entries: Readonly<Record<string, string | boolean>>): string {
+  return Object.entries(entries)
+    .map(([key, value]) => `${key}=${value}\n`)
+    .join("");
 }
 
 const relayRoot = Effect.service(Path.Path).pipe(
@@ -102,6 +117,22 @@ const reconcileRootEnv = Effect.fn("relay.deploy.reconcileRootEnv")(function* (r
   yield* Console.log(`Updated ${rootEnvPath} with T3CODE_RELAY_URL=${relayUrl}`);
 });
 
+const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* (
+  outcome: RelayDeployOutcome,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
+  yield* fs.writeFileString(
+    githubOutputPath,
+    serializeGithubOutput({
+      changed: outcome.changed,
+      result: outcome.result,
+      ...(Option.isSome(outcome.relayUrl) ? { relay_url: outcome.relayUrl.value } : {}),
+    }),
+    { flag: "a" },
+  );
+});
+
 const deployServices = Layer.mergeAll(
   Layer.provideMerge(AlchemyContextLive, PlatformServices),
   Layer.provide(ProfileLive, PlatformServices),
@@ -123,11 +154,16 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
     const plan = yield* Plan.make(stack, { force: options.force }).pipe(
       Effect.provide(stack.services),
     );
+    const changed = hasDeployChanges(plan);
     if (options.dryRun) {
       yield* cli.displayPlan(plan);
-      return Option.none<string>();
+      return {
+        result: "dry-run",
+        changed,
+        relayUrl: Option.none<string>(),
+      } satisfies RelayDeployOutcome;
     }
-    if (!options.yes && hasDeployChanges(plan)) {
+    if (!options.yes && changed) {
       yield* cli.displayPlan(plan);
       const approved = yield* Prompt.run(
         Prompt.confirm({
@@ -136,7 +172,11 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
       );
       if (!approved) {
         yield* Console.log("Deployment cancelled.");
-        return Option.none<string>();
+        return {
+          result: "cancelled",
+          changed,
+          relayUrl: Option.none<string>(),
+        } satisfies RelayDeployOutcome;
       }
     }
     const output = yield* Apply.apply(plan).pipe(Effect.provide(stack.services));
@@ -145,7 +185,11 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
         message: "Alchemy relay deploy output did not include a URL",
       });
     }
-    return Option.some(output.url);
+    return {
+      result: changed ? "applied" : "noop",
+      changed,
+      relayUrl: Option.some(output.url),
+    } satisfies RelayDeployOutcome;
   },
   (effect, options, configProvider, stage) =>
     effect.pipe(
@@ -171,9 +215,12 @@ export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployO
     Effect.provide(ConfigProvider.layer(configProvider)),
   );
   const stage = Option.getOrElse(options.stage, () => configuredStage);
-  const relayUrl = yield* runRelayDeploy(options, configProvider, stage);
-  if (Option.isSome(relayUrl)) {
-    yield* reconcileRootEnv(relayUrl.value);
+  const outcome = yield* runRelayDeploy(options, configProvider, stage);
+  if (Option.isSome(outcome.relayUrl)) {
+    yield* reconcileRootEnv(outcome.relayUrl.value);
+  }
+  if (options.githubOutput) {
+    yield* writeGithubOutput(outcome);
   }
 });
 
@@ -204,6 +251,10 @@ export const relayDeployCommand = Command.make(
     ),
     adopt: Flag.boolean("adopt").pipe(
       Flag.withDescription("Adopt pre-existing cloud resources that conflict with this stack."),
+      Flag.withDefault(false),
+    ),
+    githubOutput: Flag.boolean("github-output").pipe(
+      Flag.withDescription("Append relay deployment metadata to GITHUB_OUTPUT."),
       Flag.withDefault(false),
     ),
   },
