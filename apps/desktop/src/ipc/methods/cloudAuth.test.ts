@@ -1,29 +1,35 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { afterEach } from "vite-plus/test";
 
 import { fetchCloudAuth, validateClerkFrontendApiUrl } from "./cloudAuth.ts";
 
 const originalClerkPublishableKey = process.env.T3CODE_CLERK_PUBLISHABLE_KEY;
+const originalFetch = globalThis.fetch;
 
 const clerkPublishableKey = (hostname: string): string =>
   `pk_test_${Buffer.from(`${hostname}$`).toString("base64")}`;
 
-function makeHttpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, never>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
+type FetchCall = readonly [input: RequestInfo | URL, init: RequestInit];
+
+const recordedFetch = (...responses: ReadonlyArray<Response>) => {
+  const calls: Array<FetchCall> = [];
+  let responseIndex = 0;
+  const fetchFn = ((input, init) => {
+    calls.push([input, init ?? {}]);
+    const response = responses[responseIndex++];
+    if (!response) {
+      return Promise.reject(new Error("Unexpected fetch call"));
+    }
+    return Promise.resolve(response);
+  }) satisfies typeof fetch;
+
+  return { fetchFn, calls };
+};
 
 describe("Desktop cloud auth IPC", () => {
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     if (originalClerkPublishableKey === undefined) {
       delete process.env.T3CODE_CLERK_PUBLISHABLE_KEY;
     } else {
@@ -33,16 +39,8 @@ describe("Desktop cloud auth IPC", () => {
 
   it.effect("preserves Clerk's URL-encoded OAuth form content type", () => {
     const body = "strategy=oauth_google&redirect_url=t3code%3A%2F%2Fauth%2Fcallback";
-    let forwardedRequest: HttpClientRequest.HttpClientRequest | null = null;
-    const layer = makeHttpClientLayer((request) =>
-      Effect.sync(() => {
-        forwardedRequest = request;
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json({ response: { object: "sign_in_attempt" } }),
-        );
-      }),
-    );
+    const fetch = recordedFetch(Response.json({ response: { object: "sign_in_attempt" } }));
+    globalThis.fetch = fetch.fetchFn;
 
     return Effect.gen(function* () {
       yield* fetchCloudAuth.handler({
@@ -55,32 +53,25 @@ describe("Desktop cloud auth IPC", () => {
         body,
       });
 
-      assert(forwardedRequest !== null);
+      const forwardedRequest = fetch.calls[0];
+      assert(forwardedRequest !== undefined);
+      const [url, init] = forwardedRequest;
+      assert.equal(String(url), "https://example.clerk.accounts.dev/v1/client/sign_ins");
+      assert.equal(init.method, "POST");
       assert.equal(
-        forwardedRequest.headers["content-type"],
+        new Headers(init.headers).get("content-type"),
         "application/x-www-form-urlencoded;charset=UTF-8",
       );
-      assert.equal(forwardedRequest.body._tag, "Uint8Array");
-      if (forwardedRequest.body._tag === "Uint8Array") {
-        assert.equal(new TextDecoder().decode(forwardedRequest.body.body), body);
-      }
-    }).pipe(Effect.provide(layer));
+      assert.equal(new TextDecoder().decode(init.body as Uint8Array), body);
+    });
   });
 
   it.effect(
     "allows the custom Clerk Frontend API host encoded by the configured publishable key",
     () => {
       process.env.T3CODE_CLERK_PUBLISHABLE_KEY = clerkPublishableKey("clerk.t3.codes");
-      let forwardedRequest: HttpClientRequest.HttpClientRequest | null = null;
-      const layer = makeHttpClientLayer((request) =>
-        Effect.sync(() => {
-          forwardedRequest = request;
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({ response: { object: "client" } }),
-          );
-        }),
-      );
+      const fetch = recordedFetch(Response.json({ response: { object: "client" } }));
+      globalThis.fetch = fetch.fetchFn;
 
       return Effect.gen(function* () {
         yield* fetchCloudAuth.handler({
@@ -89,9 +80,10 @@ describe("Desktop cloud auth IPC", () => {
           headers: {},
         });
 
-        assert(forwardedRequest !== null);
-        assert.equal(forwardedRequest.url.toString(), "https://clerk.t3.codes/v1/client");
-      }).pipe(Effect.provide(layer));
+        const forwardedRequest = fetch.calls[0];
+        assert(forwardedRequest !== undefined);
+        assert.equal(String(forwardedRequest[0]), "https://clerk.t3.codes/v1/client");
+      });
     },
   );
 
