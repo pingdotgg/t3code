@@ -13,7 +13,7 @@ The file must be a JSON array of rules:
 ]
 ```
 
-See the full schema for more details: [`packages/contracts/src/keybindings.ts`](packages/contracts/src/keybindings.ts)
+See the full schema for more details: [`packages/contracts/src/keybindings.ts`](../../packages/contracts/src/keybindings.ts)
 
 ## Defaults
 
@@ -31,7 +31,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
 ]
 ```
 
-For most up to date defaults, see [`DEFAULT_KEYBINDINGS` in `apps/server/src/keybindings.ts`](apps/server/src/keybindings.ts)
+For most up to date defaults, see [`DEFAULT_KEYBINDINGS` in `apps/server/src/keybindings.ts`](../../apps/server/src/keybindings.ts)
 
 ## Configuration
 
