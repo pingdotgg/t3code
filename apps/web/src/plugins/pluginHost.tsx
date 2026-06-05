@@ -9,7 +9,6 @@ import type {
   PluginUiContext,
   PluginUiFactory,
   PluginUiProject,
-  PluginUiRegistration,
   T3PluginHostGlobal,
 } from "@t3tools/plugin-api/ui";
 import { useNavigate, type AnyRouter } from "@tanstack/react-router";
@@ -25,6 +24,7 @@ import { resolvePrimaryEnvironmentHttpUrl, usePrimaryEnvironmentId } from "../en
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 import { readLocalApi } from "../localApi";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import { resolvePluginRouteReadiness } from "./pluginNavigation";
 import { createPluginUiComponents } from "./pluginUiComponents";
 
 interface PluginHostState {
@@ -35,17 +35,6 @@ interface PluginHostState {
   readonly loadErrors: ReadonlyMap<string, string>;
   readonly client: WsRpcClient | null;
 }
-
-type PluginRouteResolution =
-  | { readonly status: "loading" }
-  | { readonly status: "missing"; readonly message: string }
-  | { readonly status: "failed"; readonly catalogEntry: PluginCatalogEntry }
-  | {
-      readonly status: "ready";
-      readonly catalogEntry: PluginCatalogEntry;
-      readonly context: PluginUiContext;
-      readonly registration: PluginUiRegistration;
-    };
 
 type DynamicNavigate = ReturnType<typeof useNavigate<AnyRouter>>;
 
@@ -262,15 +251,15 @@ function createPluginContext(input: {
       id: input.routeId,
       surface: input.routeSurface,
     },
-    react: React as unknown as PluginUiContext["react"],
+    react: React,
     api: {
-      invoke: async (command, commandInput) => {
+      invoke: async <O,>(command: PluginCommandName | string, commandInput: unknown) => {
         const result = await input.client.plugins.invoke({
           pluginId,
           command: PluginCommandName.make(String(command)),
           input: commandInput,
         });
-        return result.output;
+        return result.output as O;
       },
     },
     host: {
@@ -295,80 +284,6 @@ function createPluginContext(input: {
   };
 }
 
-function resolvePluginRoute(input: {
-  readonly hostState: PluginHostState;
-  readonly pluginId: PluginId;
-  readonly routeId: PluginRouteId;
-  readonly surface: PluginRouteSurface;
-  readonly navigate: ReturnType<typeof useNavigate>;
-}): PluginRouteResolution {
-  const catalogEntry = input.hostState.catalog.find(
-    (entry) => entry.manifest.id === input.pluginId,
-  );
-  if (!catalogEntry) {
-    return input.hostState.catalog.length === 0
-      ? { status: "loading" }
-      : {
-          status: "missing",
-          message: `Plugin ${input.pluginId} was not found.`,
-        };
-  }
-  if (catalogEntry.status.status === "failed") {
-    return { status: "failed", catalogEntry };
-  }
-  if (catalogEntry.status.status !== "active") {
-    return {
-      status: "missing",
-      message: `Plugin ${input.pluginId} is ${catalogEntry.status.status}.`,
-    };
-  }
-  const routeContribution = catalogEntry.manifest.routes.find(
-    (route) => route.id === input.routeId,
-  );
-  if (!routeContribution) {
-    return {
-      status: "missing",
-      message: `Plugin route ${input.routeId} was not found.`,
-    };
-  }
-  if (routeContribution.surface !== input.surface) {
-    return {
-      status: "missing",
-      message: `Plugin route ${input.routeId} is not available on the ${input.surface} surface.`,
-    };
-  }
-
-  const factory = input.hostState.factories.get(input.pluginId);
-  if (!factory) {
-    const loadError = input.hostState.loadErrors.get(input.pluginId);
-    return loadError ? { status: "missing", message: loadError } : { status: "loading" };
-  }
-  if (!input.hostState.client) {
-    return { status: "loading" };
-  }
-
-  const context = createPluginContext({
-    client: input.hostState.client,
-    catalogEntry,
-    routeId: input.routeId,
-    routeSurface: input.surface,
-    navigate: input.navigate,
-  });
-  const registration = factory(context);
-  if (!registration.routes[input.routeId]) {
-    return {
-      status: "missing",
-      message: `Plugin route ${input.routeId} was not found.`,
-    };
-  }
-  return {
-    status: "ready",
-    catalogEntry,
-    context,
-    registration,
-  };
-}
-
 export function PluginRouteView({
   pluginId,
   routeId,
@@ -380,40 +295,48 @@ export function PluginRouteView({
 }) {
   const hostState = usePluginHostState();
   const navigate = useNavigate<AnyRouter>();
-  const resolution = useMemo(
-    () => resolvePluginRoute({ hostState, pluginId, routeId, surface, navigate }),
-    [hostState, navigate, pluginId, routeId, surface],
+  const readiness = useMemo(
+    () => resolvePluginRouteReadiness({ hostState, pluginId, routeId, surface }),
+    [hostState, pluginId, routeId, surface],
   );
 
-  if (resolution.status === "loading") {
+  if (readiness.status === "loading") {
     return <PluginRouteShell surface={surface} title="Loading plugin" />;
   }
 
-  if (resolution.status === "failed") {
+  if (readiness.status === "failed") {
     return (
       <PluginRouteShell
         surface={surface}
-        title={`${resolution.catalogEntry.manifest.name} failed to start`}
-        description={resolution.catalogEntry.status.diagnostics?.join("\n") ?? "No diagnostics."}
+        title={`${readiness.catalogEntry.manifest.name} failed to start`}
+        description={readiness.catalogEntry.status.diagnostics?.join("\n") ?? "No diagnostics."}
       />
     );
   }
 
-  if (resolution.status === "missing") {
+  if (readiness.status === "missing") {
     return (
       <PluginRouteShell
         surface={surface}
         title="Plugin unavailable"
-        description={resolution.message}
+        description={readiness.message}
       />
     );
   }
 
-  const route = resolution.registration.routes[routeId];
+  const context = createPluginContext({
+    client: readiness.client,
+    catalogEntry: readiness.catalogEntry,
+    routeId,
+    routeSurface: surface,
+    navigate,
+  });
+  const registration = readiness.factory(context);
+  const route = registration.routes[routeId];
   if (!route) {
     return <PluginRouteShell surface={surface} title="Plugin route unavailable" />;
   }
-  return <>{route({ ctx: resolution.context }) as ReactNode}</>;
+  return <>{route({ ctx: context }) as ReactNode}</>;
 }
 
 function PluginRouteShell({

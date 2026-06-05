@@ -2,6 +2,7 @@ import {
   PluginManifest,
   type PluginManifest as PluginManifestType,
   type PluginRouteSurface,
+  type PluginUiPlacementPosition,
 } from "@t3tools/contracts";
 import {
   isPluginApiVersionCompatible,
@@ -24,6 +25,13 @@ import { ServerConfig } from "../config.ts";
 const decodePluginPackageJson = Schema.decodeUnknownEffect(PluginPackageJson);
 const decodePluginManifest = Schema.decodeUnknownEffect(PluginManifest);
 const decodeUnknownJsonString = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+
+const expectedRouteSurfaceByPlacement = {
+  "sidebar.primary": "app",
+  "sidebar.footer": "app",
+  "settings.sidebar": "settings",
+  "commandPalette.actions": null,
+} satisfies Record<PluginUiPlacementPosition, PluginRouteSurface | null>;
 
 class PluginPackageResolverError extends Data.TaggedError("PluginPackageResolverError")<{
   readonly message: string;
@@ -182,17 +190,10 @@ function assertUniqueIds(input: {
   }
 }
 
-function expectedSurfaceForPlacement(position: string): PluginRouteSurface | null {
-  switch (position) {
-    case "sidebar.primary":
-    case "sidebar.footer":
-      return "app";
-    case "settings.sidebar":
-      return "settings";
-    case "commandPalette.actions":
-      return null;
-  }
-  return null;
+function expectedSurfaceForPlacement(
+  position: PluginUiPlacementPosition,
+): PluginRouteSurface | null {
+  return expectedRouteSurfaceByPlacement[position];
 }
 
 function routeSurfaceLabel(surface: PluginRouteSurface): string {

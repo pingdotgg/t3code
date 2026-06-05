@@ -1,70 +1,20 @@
-import {
-  PluginId,
-  PluginRouteId,
-  PluginUiPlacementId,
-  type PluginCatalogEntry,
-} from "@t3tools/contracts";
+import { PluginId, PluginRouteId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getActivePluginPlacementEntries, resolvePluginPlacementPath } from "./pluginPlacements";
-
-function catalogEntry(input: {
-  readonly pluginId: string;
-  readonly name: string;
-  readonly routeId?: string;
-  readonly routeSurface?: "app" | "settings";
-  readonly placementId: string;
-  readonly placementLabel: string;
-  readonly placementPosition:
-    | "sidebar.primary"
-    | "sidebar.footer"
-    | "settings.sidebar"
-    | "commandPalette.actions";
-  readonly order?: number;
-  readonly status?: "active" | "failed" | "disabled";
-}): PluginCatalogEntry {
-  const pluginId = PluginId.make(input.pluginId);
-  const routeId = PluginRouteId.make(input.routeId ?? "main");
-  return {
-    manifest: {
-      id: pluginId,
-      name: input.name,
-      version: "0.1.0",
-      routes: [
-        {
-          id: routeId,
-          label: input.name,
-          surface: input.routeSurface ?? "app",
-        },
-      ],
-      ui: {
-        placements: [
-          {
-            id: PluginUiPlacementId.make(input.placementId),
-            position: input.placementPosition,
-            label: input.placementLabel,
-            routeId,
-            ...(input.order !== undefined ? { order: input.order } : {}),
-          },
-        ],
-      },
-      commands: [],
-    },
-    status: {
-      pluginId,
-      status: input.status ?? "active",
-    },
-    assets: {
-      client: `/plugins/assets/${pluginId}/client.js`,
-    },
-  };
-}
+import {
+  getActivePluginPlacementEntries,
+  isPluginPlacementPathActive,
+  pluginPlacementKey,
+  resolvePluginPlacementPath,
+  resolvePluginPlacementRouteTarget,
+} from "./pluginPlacements";
+import { makePluginCatalogEntry } from "./testing/pluginPlacementFixtures";
 
 describe("pluginPlacements", () => {
   it("filters active placements by fixed position and applies stable ordering", () => {
     const entries = getActivePluginPlacementEntries(
       [
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.zeta",
           name: "Zeta",
           placementId: "main",
@@ -72,7 +22,7 @@ describe("pluginPlacements", () => {
           placementPosition: "sidebar.primary",
           order: 2,
         }),
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.alpha",
           name: "Alpha",
           placementId: "main",
@@ -80,7 +30,7 @@ describe("pluginPlacements", () => {
           placementPosition: "sidebar.primary",
           order: 1,
         }),
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.footer",
           name: "Footer",
           placementId: "main",
@@ -88,7 +38,7 @@ describe("pluginPlacements", () => {
           placementPosition: "sidebar.footer",
           order: 0,
         }),
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.failed",
           name: "Failed",
           placementId: "main",
@@ -106,7 +56,7 @@ describe("pluginPlacements", () => {
   it("resolves app and settings placement paths", () => {
     const [appEntry] = getActivePluginPlacementEntries(
       [
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.app",
           name: "App",
           placementId: "main",
@@ -119,7 +69,7 @@ describe("pluginPlacements", () => {
     );
     const [settingsEntry] = getActivePluginPlacementEntries(
       [
-        catalogEntry({
+        makePluginCatalogEntry({
           pluginId: "t3.settings",
           name: "Settings",
           placementId: "settings",
@@ -136,5 +86,43 @@ describe("pluginPlacements", () => {
     expect(settingsEntry ? resolvePluginPlacementPath(settingsEntry) : null).toBe(
       "/settings/plugins/t3.settings/settings",
     );
+    expect(appEntry ? resolvePluginPlacementRouteTarget(appEntry) : null).toEqual({
+      to: "/plugins/$pluginId/$routeId",
+      params: {
+        pluginId: PluginId.make("t3.app"),
+        routeId: PluginRouteId.make("main"),
+      },
+    });
+    expect(settingsEntry ? resolvePluginPlacementRouteTarget(settingsEntry) : null).toEqual({
+      to: "/settings/plugins/$pluginId/$routeId",
+      params: {
+        pluginId: PluginId.make("t3.settings"),
+        routeId: PluginRouteId.make("settings"),
+      },
+    });
+  });
+
+  it("provides stable keys and active path checks for rendered placements", () => {
+    const [entry] = getActivePluginPlacementEntries(
+      [
+        makePluginCatalogEntry({
+          pluginId: "t3.rendered",
+          name: "Rendered",
+          placementId: "primary",
+          placementLabel: "Rendered",
+          placementPosition: "sidebar.primary",
+        }),
+      ],
+      "sidebar.primary",
+    );
+
+    expect(entry ? pluginPlacementKey(entry) : null).toBe("t3.rendered:primary");
+    expect(entry ? isPluginPlacementPathActive(entry, "/plugins/t3.rendered/main") : false).toBe(
+      true,
+    );
+    expect(
+      entry ? isPluginPlacementPathActive(entry, "/plugins/t3.rendered/main/details") : false,
+    ).toBe(true);
+    expect(entry ? isPluginPlacementPathActive(entry, "/plugins/t3.rendered") : true).toBe(false);
   });
 });

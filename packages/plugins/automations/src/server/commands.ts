@@ -18,11 +18,10 @@ import {
   AutomationsRunsListRecentResult,
   type AutomationRule,
 } from "../shared/schema.ts";
-import { RULES_COLLECTION, SCHEDULE_STATE_COLLECTION } from "./constants.ts";
 import { AutomationPluginError } from "./errors.ts";
 import { nextRuleId } from "./ids.ts";
 import { compareNewestRuns } from "./runs.ts";
-import type { AutomationsRuntime } from "./runtime.ts";
+import type { AutomationCollections, AutomationsRuntime } from "./runtime.ts";
 import { nowIso } from "./time.ts";
 
 export function commandName(name: AutomationCommandName) {
@@ -32,6 +31,7 @@ export function commandName(name: AutomationCommandName) {
 export const registerAutomationCommands = (
   ctx: PluginActivationContext,
   runtime: AutomationsRuntime,
+  collections: AutomationCollections,
 ) =>
   Effect.gen(function* () {
     yield* ctx.commands.register(commandName(AUTOMATIONS_COMMANDS.rulesList), {
@@ -58,12 +58,12 @@ export const registerAutomationCommands = (
             updatedAt: createdAt,
           };
           yield* runtime.persistRuleSchedule(rule);
-          yield* ctx.store
-            .upsert<AutomationRule>(RULES_COLLECTION, rule.id, rule)
+          yield* collections.rules
+            .upsert(rule.id, rule)
             .pipe(
               Effect.catch((error) =>
-                ctx.store
-                  .delete(SCHEDULE_STATE_COLLECTION, rule.id)
+                collections.scheduleState
+                  .delete(rule.id)
                   .pipe(Effect.ignoreCause({ log: true }), Effect.andThen(Effect.fail(error))),
               ),
             );
@@ -77,7 +77,7 @@ export const registerAutomationCommands = (
       output: AutomationsRulesUpdateResult,
       handler: (input) =>
         Effect.gen(function* () {
-          const existing = yield* ctx.store.get<AutomationRule>(RULES_COLLECTION, input.ruleId);
+          const existing = yield* collections.rules.get(input.ruleId);
           if (existing === null) {
             return yield* new AutomationPluginError({
               message: `Automation rule ${input.ruleId} was not found.`,
@@ -96,8 +96,8 @@ export const registerAutomationCommands = (
             updatedAt,
           };
           yield* runtime.persistRuleSchedule(rule);
-          yield* ctx.store
-            .upsert<AutomationRule>(RULES_COLLECTION, rule.id, rule)
+          yield* collections.rules
+            .upsert(rule.id, rule)
             .pipe(
               Effect.catch((error) =>
                 runtime

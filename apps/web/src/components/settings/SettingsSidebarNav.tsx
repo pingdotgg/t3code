@@ -23,7 +23,9 @@ import {
 } from "../ui/sidebar";
 import {
   getActivePluginPlacementEntries,
-  resolvePluginPlacementPath,
+  isPluginPlacementPathActive,
+  pluginPlacementKey,
+  resolvePluginPlacementRouteTarget,
   type PluginPlacementEntry,
 } from "../../plugins/pluginPlacements";
 import { usePluginCatalog } from "../../plugins/pluginHost";
@@ -69,12 +71,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       if (isMobile) {
         setOpenMobile(false);
       }
+      const routeTarget = resolvePluginPlacementRouteTarget(placement);
       void navigate({
-        to: "/settings/plugins/$pluginId/$routeId",
-        params: {
-          pluginId: placement.catalogEntry.manifest.id,
-          routeId: placement.placement.routeId,
-        },
+        to: routeTarget.to,
+        params: routeTarget.params,
         replace: true,
       });
     },
@@ -132,11 +132,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </div>
             <SidebarMenu>
               {pluginPlacements.map((placement) => {
-                const isActive = pathname === resolvePluginPlacementPath(placement);
+                const isActive = isPluginPlacementPathActive(placement, pathname);
                 return (
-                  <SidebarMenuItem
-                    key={`${placement.catalogEntry.manifest.id}:${placement.placement.id}`}
-                  >
+                  <SidebarMenuItem key={pluginPlacementKey(placement)}>
                     <SidebarMenuButton
                       size="sm"
                       isActive={isActive}

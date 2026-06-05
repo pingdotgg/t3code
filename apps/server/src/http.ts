@@ -3,7 +3,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  PluginId,
 } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
@@ -33,6 +32,7 @@ import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { resolveStaticDir, ServerConfig } from "./config.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
+import { resolvePluginClientAsset } from "./plugins/PluginAssets.ts";
 import { PluginRegistry } from "./plugins/PluginRegistry.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
@@ -283,40 +283,23 @@ export const pluginAssetsRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
 
-    const match = /^\/plugins\/assets\/([^/]+)\/client\.js$/.exec(url.value.pathname);
-    if (!match) {
+    const registry = yield* PluginRegistry;
+    const asset = yield* resolvePluginClientAsset({
+      pathname: url.value.pathname,
+      registry,
+    });
+    if (asset.status === "not-found") {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
-
-    const pluginId = yield* Effect.try({
-      try: () => PluginId.make(decodeURIComponent(match[1] ?? "")),
-      catch: () => "Invalid plugin id.",
-    }).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (pluginId === null) {
+    if (asset.status === "invalid") {
       return HttpServerResponse.text("Invalid plugin id", { status: 400 });
     }
 
-    const registry = yield* PluginRegistry;
-    const clientEntryPath = yield* registry
-      .getClientAssetPath(pluginId)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (clientEntryPath === null) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-
-    const fileSystem = yield* FileSystem.FileSystem;
-    const script = yield* fileSystem
-      .readFileString(clientEntryPath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (script === null) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-
-    return HttpServerResponse.text(script, {
+    return HttpServerResponse.text(asset.script, {
       status: 200,
-      contentType: "application/javascript; charset=utf-8",
+      contentType: asset.contentType,
       headers: {
-        "Cache-Control": "no-store",
+        "Cache-Control": asset.cacheControl,
       },
     });
   }).pipe(

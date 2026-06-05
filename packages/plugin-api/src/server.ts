@@ -11,26 +11,18 @@ import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+export interface PluginCollection<A> {
+  readonly list: () => Effect.Effect<ReadonlyArray<A>, PluginStoreError>;
+  readonly get: (documentId: string) => Effect.Effect<A | null, PluginStoreError>;
+  readonly upsert: (documentId: string, document: A) => Effect.Effect<void, PluginStoreError>;
+  readonly delete: (documentId: string) => Effect.Effect<void, PluginStoreError>;
+}
+
 export interface PluginDocumentStore {
   readonly registerCollection: <A, I>(
     collection: string,
     schema: Schema.Codec<A, I>,
-  ) => Effect.Effect<void>;
-  readonly list: <A>(collection: string) => Effect.Effect<ReadonlyArray<A>, PluginStoreError>;
-  readonly get: <A>(
-    collection: string,
-    documentId: string,
-  ) => Effect.Effect<A | null, PluginStoreError>;
-  readonly upsert: <A>(
-    collection: string,
-    documentId: string,
-    document: A,
-  ) => Effect.Effect<void, PluginStoreError>;
-  readonly delete: (
-    collection: string,
-    documentId: string,
-  ) => Effect.Effect<void, PluginStoreError>;
-  readonly deleteCollection: (collection: string) => Effect.Effect<void, PluginStoreError>;
+  ) => Effect.Effect<PluginCollection<A>, PluginStoreError>;
 }
 
 export interface PluginCommandRegistration<I = unknown, O = unknown> {

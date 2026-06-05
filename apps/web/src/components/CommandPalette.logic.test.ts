@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildPluginPlacementActionItems,
   buildThreadActionItems,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+import type { PluginPlacementEntry } from "../plugins/pluginPlacements";
+import { makePluginPlacementEntry } from "../plugins/testing/pluginPlacementFixtures";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -35,6 +38,41 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("buildPluginPlacementActionItems", () => {
+  it("builds searchable route-opening actions for plugin placements", async () => {
+    const placement = makePluginPlacementEntry({
+      pluginId: "t3.automations",
+      name: "Automations",
+      placementId: "main-sidebar",
+      placementLabel: "Open Automations",
+      placementPosition: "commandPalette.actions",
+      placementDescription: "Manage scheduled agent runs",
+      routeLabel: "Automation Runs",
+    });
+    const runPlacement = vi.fn(async (_entry: PluginPlacementEntry) => undefined);
+
+    const items = buildPluginPlacementActionItems({
+      placements: [placement],
+      icon: null,
+      runPlacement,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.value).toBe("plugin:t3.automations:main-sidebar");
+    expect(items[0]?.title).toBe("Open Automations");
+    expect(items[0]?.description).toBe("Manage scheduled agent runs");
+    expect(items[0]?.searchTerms).toEqual([
+      "Automations",
+      "Open Automations",
+      "Automation Runs",
+      "Manage scheduled agent runs",
+    ]);
+
+    await items[0]?.run();
+    expect(runPlacement).toHaveBeenCalledWith(placement);
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {

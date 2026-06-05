@@ -36,10 +36,10 @@ export function useAutomationsController(ctx: PluginUiContext) {
     setLoading(true);
     try {
       const [rulesResult, runsResult] = await Promise.all([
-        ctx.api.invoke(AUTOMATIONS_COMMANDS.rulesList, {}) as Promise<AutomationsRulesListResult>,
-        ctx.api.invoke(AUTOMATIONS_COMMANDS.runsListRecent, {
+        ctx.api.invoke<AutomationsRulesListResult>(AUTOMATIONS_COMMANDS.rulesList, {}),
+        ctx.api.invoke<AutomationsRunsListRecentResult>(AUTOMATIONS_COMMANDS.runsListRecent, {
           limit: 500,
-        }) as Promise<AutomationsRunsListRecentResult>,
+        }),
       ]);
       setRules(rulesResult.rules);
       setRuns(runsResult.runs);
@@ -99,7 +99,7 @@ export function useAutomationsController(ctx: PluginUiContext) {
     setPendingAction("form");
     try {
       if (editingRule) {
-        await (ctx.api.invoke(AUTOMATIONS_COMMANDS.rulesUpdate, {
+        await ctx.api.invoke<AutomationsRulesUpdateResult>(AUTOMATIONS_COMMANDS.rulesUpdate, {
           ruleId: editingRule.id,
           patch: {
             name,
@@ -109,17 +109,17 @@ export function useAutomationsController(ctx: PluginUiContext) {
             timezone,
             prompt,
           },
-        }) as Promise<AutomationsRulesUpdateResult>);
+        });
         ctx.toast.success("Automation updated");
       } else {
-        await (ctx.api.invoke(AUTOMATIONS_COMMANDS.rulesCreate, {
+        await ctx.api.invoke<AutomationsRulesCreateResult>(AUTOMATIONS_COMMANDS.rulesCreate, {
           name,
           enabled: form.enabled,
           projectId: form.projectId,
           cron,
           timezone,
           prompt,
-        }) as Promise<AutomationsRulesCreateResult>);
+        });
         ctx.toast.success("Automation created");
       }
       setDialogOpen(false);
@@ -135,10 +135,10 @@ export function useAutomationsController(ctx: PluginUiContext) {
     async (rule: AutomationRule, enabled: boolean) => {
       setPendingAction(`toggle:${rule.id}`);
       try {
-        await (ctx.api.invoke(AUTOMATIONS_COMMANDS.rulesUpdate, {
+        await ctx.api.invoke<AutomationsRulesUpdateResult>(AUTOMATIONS_COMMANDS.rulesUpdate, {
           ruleId: rule.id,
           patch: { enabled },
-        }) as Promise<AutomationsRulesUpdateResult>);
+        });
         await refresh();
       } catch (error) {
         ctx.toast.error("Could not update automation", commandErrorMessage(error));
@@ -153,9 +153,12 @@ export function useAutomationsController(ctx: PluginUiContext) {
     async (rule: AutomationRule) => {
       setPendingAction(`run:${rule.id}`);
       try {
-        const result = (await ctx.api.invoke(AUTOMATIONS_COMMANDS.rulesRunNow, {
-          ruleId: rule.id,
-        })) as AutomationsRulesRunNowResult;
+        const result = await ctx.api.invoke<AutomationsRulesRunNowResult>(
+          AUTOMATIONS_COMMANDS.rulesRunNow,
+          {
+            ruleId: rule.id,
+          },
+        );
         ctx.toast.success(
           result.run.status === "skipped" ? "Automation skipped" : "Automation started",
         );

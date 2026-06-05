@@ -3,6 +3,7 @@ import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
+import { pluginPlacementKey, type PluginPlacementEntry } from "../plugins/pluginPlacements";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -105,6 +106,29 @@ export function buildProjectActionItems(input: {
     icon: input.icon(project),
     run: async () => {
       await input.runProject(project);
+    },
+  }));
+}
+
+export function buildPluginPlacementActionItems(input: {
+  readonly placements: ReadonlyArray<PluginPlacementEntry>;
+  readonly icon: ReactNode;
+  readonly runPlacement: (placement: PluginPlacementEntry) => Promise<void>;
+}): CommandPaletteActionItem[] {
+  return input.placements.map((placement) => ({
+    kind: "action",
+    value: `plugin:${pluginPlacementKey(placement)}`,
+    searchTerms: [
+      placement.catalogEntry.manifest.name,
+      placement.placement.label,
+      placement.route.label,
+      placement.placement.description ?? "",
+    ],
+    title: placement.placement.label,
+    description: placement.placement.description ?? placement.catalogEntry.manifest.name,
+    icon: input.icon,
+    run: async () => {
+      await input.runPlacement(placement);
     },
   }));
 }

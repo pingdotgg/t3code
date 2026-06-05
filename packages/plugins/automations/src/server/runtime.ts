@@ -1,10 +1,14 @@
-import type { PluginActivationContext } from "@t3tools/plugin-api/server";
+import type {
+  PluginActivationContext,
+  PluginCollection,
+  PluginStoreError,
+} from "@t3tools/plugin-api/server";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
-import { AutomationRuleId, type AutomationRule, type AutomationRun } from "../shared/schema.ts";
+import { AutomationRule, AutomationRuleId, AutomationRun } from "../shared/schema.ts";
 import {
   RULES_COLLECTION,
   RUNS_COLLECTION,
@@ -15,7 +19,7 @@ import { AutomationPluginError } from "./errors.ts";
 import { nextRunId } from "./ids.ts";
 import { compareNewestRuns } from "./runs.ts";
 import {
-  type AutomationScheduleState,
+  AutomationScheduleState,
   computeNextRunAt,
   isMissedRun,
   shouldFireSchedule,
@@ -24,6 +28,25 @@ import {
 import { automationThreadTitle, errorMessage, nowIso } from "./time.ts";
 
 export type AutomationRunReason = "manual" | "schedule";
+
+export interface AutomationCollections {
+  readonly rules: PluginCollection<AutomationRule>;
+  readonly runs: PluginCollection<AutomationRun>;
+  readonly scheduleState: PluginCollection<AutomationScheduleState>;
+}
+
+export const registerAutomationCollections = (
+  ctx: PluginActivationContext,
+): Effect.Effect<AutomationCollections, PluginStoreError> =>
+  Effect.gen(function* () {
+    const rules = yield* ctx.store.registerCollection(RULES_COLLECTION, AutomationRule);
+    const runs = yield* ctx.store.registerCollection(RUNS_COLLECTION, AutomationRun);
+    const scheduleState = yield* ctx.store.registerCollection(
+      SCHEDULE_STATE_COLLECTION,
+      AutomationScheduleState,
+    );
+    return { rules, runs, scheduleState };
+  });
 
 type PreparedRun =
   | {
@@ -68,7 +91,10 @@ const getRuleSemaphore = (
     });
   });
 
-export function makeAutomationsRuntime(ctx: PluginActivationContext) {
+export function makeAutomationsRuntime(
+  ctx: PluginActivationContext,
+  collections: AutomationCollections,
+) {
   return Effect.gen(function* () {
     const activeRuleIds = new Set<AutomationRuleId>();
     const ruleLocksRef = yield* Ref.make<ReadonlyMap<AutomationRuleId, Semaphore.Semaphore>>(
@@ -87,7 +113,7 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
       readonly projectId?: AutomationRule["projectId"] | undefined;
       readonly enabled?: boolean | undefined;
     }) =>
-      ctx.store.list<AutomationRule>(RULES_COLLECTION).pipe(
+      collections.rules.list().pipe(
         Effect.map((rules) =>
           [...rules]
             .filter((rule) => input.projectId === undefined || rule.projectId === input.projectId)
@@ -96,8 +122,7 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
         ),
       );
 
-    const getRule = (ruleId: AutomationRuleId) =>
-      ctx.store.get<AutomationRule>(RULES_COLLECTION, ruleId);
+    const getRule = (ruleId: AutomationRuleId) => collections.rules.get(ruleId);
 
     const requireRule = (ruleId: AutomationRuleId) =>
       getRule(ruleId).pipe(
@@ -115,7 +140,7 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
     const ruleExists = (ruleId: AutomationRuleId) =>
       getRule(ruleId).pipe(Effect.map((rule) => rule !== null));
 
-    const listRuns = () => ctx.store.list<AutomationRun>(RUNS_COLLECTION);
+    const listRuns = () => collections.runs.list();
 
     const listRunsForRule = (ruleId: AutomationRuleId) =>
       listRuns().pipe(
@@ -134,14 +159,14 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
       });
 
     const writeRun = (run: AutomationRun) =>
-      ctx.store
-        .upsert<AutomationRun>(RUNS_COLLECTION, run.id, run)
+      collections.runs
+        .upsert(run.id, run)
         .pipe(Effect.andThen(publishChanged({ runId: run.id, ruleId: run.ruleId })));
 
     const trimRunsForRule = (ruleId: AutomationRuleId) =>
       Effect.gen(function* () {
         const staleRuns = (yield* listRunsForRule(ruleId)).slice(RUN_RETENTION_PER_RULE);
-        yield* Effect.forEach(staleRuns, (run) => ctx.store.delete(RUNS_COLLECTION, run.id), {
+        yield* Effect.forEach(staleRuns, (run) => collections.runs.delete(run.id), {
           concurrency: 1,
           discard: true,
         });
@@ -159,14 +184,13 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
         Effect.map((persistedActive) => persistedActive || activeRuleIds.has(ruleId)),
       );
 
-    const getScheduleState = (ruleId: AutomationRuleId) =>
-      ctx.store.get<AutomationScheduleState>(SCHEDULE_STATE_COLLECTION, ruleId);
+    const getScheduleState = (ruleId: AutomationRuleId) => collections.scheduleState.get(ruleId);
 
     const writeScheduleState = (state: AutomationScheduleState) =>
-      ctx.store.upsert<AutomationScheduleState>(SCHEDULE_STATE_COLLECTION, state.ruleId, state);
+      collections.scheduleState.upsert(state.ruleId, state);
 
     const deleteScheduleState = (ruleId: AutomationRuleId) =>
-      ctx.store.delete(SCHEDULE_STATE_COLLECTION, ruleId);
+      collections.scheduleState.delete(ruleId);
 
     const createSkippedRun = (ruleId: AutomationRuleId, scheduledFor: string) =>
       Effect.gen(function* () {
@@ -325,11 +349,11 @@ export function makeAutomationsRuntime(ctx: PluginActivationContext) {
         Effect.gen(function* () {
           yield* deleteScheduleState(ruleId);
           const runs = yield* listRunsForRule(ruleId);
-          yield* Effect.forEach(runs, (run) => ctx.store.delete(RUNS_COLLECTION, run.id), {
+          yield* Effect.forEach(runs, (run) => collections.runs.delete(run.id), {
             concurrency: 1,
             discard: true,
           });
-          yield* ctx.store.delete(RULES_COLLECTION, ruleId);
+          yield* collections.rules.delete(ruleId);
           yield* publishChanged({ ruleId, deleted: true });
         }),
       );
@@ -457,6 +481,7 @@ export const startAutomationScheduleLoop = (runtime: AutomationsRuntime) =>
   ).pipe(Effect.forkScoped);
 
 export const runAutomationScheduleTick = (ctx: PluginActivationContext, triggeredAt: string) =>
-  makeAutomationsRuntime(ctx).pipe(
+  registerAutomationCollections(ctx).pipe(
+    Effect.flatMap((collections) => makeAutomationsRuntime(ctx, collections)),
     Effect.flatMap((runtime) => runtime.tickSchedules(triggeredAt, { forkRuns: false })),
   );

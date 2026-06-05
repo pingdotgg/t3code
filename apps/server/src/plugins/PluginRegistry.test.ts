@@ -10,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { pluginClientAssetUrl } from "./PluginAssets.ts";
 import { PluginRegistry, PluginRegistryLive } from "./PluginRegistry.ts";
 
 const layer = it.layer(PluginRegistryLive);
@@ -71,7 +72,7 @@ layer("PluginRegistry", (it) => {
       assert.equal(catalog.length, 1);
       assert.equal(catalog[0]?.manifest.id, pluginId);
       assert.equal(catalog[0]?.manifest.ui.placements[0]?.badgeCount, 2);
-      assert.equal(catalog[0]?.assets.client, `/plugins/assets/${pluginId}/client.js`);
+      assert.equal(catalog[0]?.assets.client, pluginClientAssetUrl(pluginId));
 
       const output = yield* registry.invoke(pluginId, command, {
         text: "ok",
@@ -106,6 +107,21 @@ layer("PluginRegistry", (it) => {
 
       const invokeResult = yield* Effect.result(registry.invoke(pluginId, command, { text: "ok" }));
       assert.equal(invokeResult._tag, "Failure");
+    }),
+  );
+
+  it.effect("normalizes invalid badge provider counts out of catalog entries", () =>
+    Effect.gen(function* () {
+      const registry = yield* PluginRegistry;
+
+      yield* registry.registerActivePlugin(loadedPlugin);
+      yield* registry.setPlacementBadgeProvider(pluginId, placementId, () =>
+        Effect.succeed(Number.POSITIVE_INFINITY),
+      );
+
+      const catalog = yield* registry.listCatalog;
+
+      assert.isUndefined(catalog[0]?.manifest.ui.placements[0]?.badgeCount);
     }),
   );
 });

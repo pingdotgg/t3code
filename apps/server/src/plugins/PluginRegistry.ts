@@ -18,8 +18,12 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { pluginClientAssetUrl } from "./PluginAssets.ts";
+
 type CommandKey = `${PluginId}:${PluginCommandName}`;
 type BadgeKey = `${PluginId}:${PluginUiPlacementId}`;
+
+const CATALOG_BADGE_PROVIDER_CONCURRENCY = 4;
 
 interface StoredCommandRegistration {
   readonly invoke: (input: unknown) => Effect.Effect<unknown, PluginRpcError>;
@@ -38,6 +42,10 @@ function commandKey(pluginId: PluginId, command: PluginCommandName): CommandKey 
 
 function badgeKey(pluginId: PluginId, placementId: PluginUiPlacementId): BadgeKey {
   return `${pluginId}:${placementId}` as BadgeKey;
+}
+
+function normalizeBadgeCount(count: number): number {
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
 }
 
 export interface PluginRegistryShape {
@@ -94,24 +102,33 @@ const makePluginRegistry = Effect.gen(function* () {
       ...(input.cause !== undefined ? { cause: input.cause } : {}),
     });
 
+  const placementCatalogContributionFor = (
+    record: PluginRecord,
+    placement: PluginManifest["ui"]["placements"][number],
+  ) =>
+    Effect.gen(function* () {
+      const provider = placementBadgeProviderByKey.get(badgeKey(record.manifest.id, placement.id));
+      const badgeCount =
+        provider === undefined
+          ? (placement.badgeCount ?? 0)
+          : yield* provider().pipe(
+              Effect.map(normalizeBadgeCount),
+              Effect.catch(() => Effect.succeed(placement.badgeCount ?? 0)),
+            );
+
+      return {
+        ...placement,
+        ...(badgeCount > 0 ? { badgeCount } : {}),
+      };
+    });
+
   const catalogEntryFor = (record: PluginRecord): Effect.Effect<PluginCatalogEntry> =>
     Effect.gen(function* () {
-      const placements = [];
-      for (const item of record.manifest.ui.placements) {
-        const provider = placementBadgeProviderByKey.get(badgeKey(record.manifest.id, item.id));
-        const badgeCount =
-          provider === undefined
-            ? (item.badgeCount ?? 0)
-            : yield* provider().pipe(
-                Effect.map((count) => Math.max(0, Math.floor(count))),
-                Effect.catch(() => Effect.succeed(item.badgeCount ?? 0)),
-              );
-        placements.push({
-          ...item,
-          ...(badgeCount > 0 ? { badgeCount } : {}),
-        });
-      }
-
+      const placements = yield* Effect.forEach(
+        record.manifest.ui.placements,
+        (placement) => placementCatalogContributionFor(record, placement),
+        { concurrency: CATALOG_BADGE_PROVIDER_CONCURRENCY },
+      );
       return {
         manifest: {
           ...record.manifest,
@@ -126,7 +143,7 @@ const makePluginRegistry = Effect.gen(function* () {
           ...(record.diagnostics.length > 0 ? { diagnostics: [...record.diagnostics] } : {}),
         },
         assets: {
-          client: `/plugins/assets/${record.manifest.id}/client.js`,
+          client: pluginClientAssetUrl(record.manifest.id),
         },
       };
     });
@@ -222,7 +239,7 @@ const makePluginRegistry = Effect.gen(function* () {
     listCatalog: Effect.gen(function* () {
       const records = Array.from(pluginById.values());
       return yield* Effect.forEach(records, catalogEntryFor, {
-        concurrency: 1,
+        concurrency: CATALOG_BADGE_PROVIDER_CONCURRENCY,
       });
     }).pipe(Effect.mapError((cause) => toRpcError({ message: "Failed to list plugins.", cause }))),
 

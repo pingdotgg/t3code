@@ -1,36 +1,17 @@
-import {
-  CommandId,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
-  MessageId,
-  ProjectId,
-  ThreadId,
-  type PluginId,
-} from "@t3tools/contracts";
+import type { PluginId } from "@t3tools/contracts";
 import type { LoadedServerPlugin } from "@t3tools/plugin-api/package";
-import type { PluginActivationContext } from "@t3tools/plugin-api/server";
-import {
-  PluginRuntimeError,
-  PluginStoreError as ApiPluginStoreError,
-} from "@t3tools/plugin-api/server";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import type { PluginActivationContext, PluginCollection } from "@t3tools/plugin-api/server";
+import { PluginStoreError as ApiPluginStoreError } from "@t3tools/plugin-api/server";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { GitWorkflowService } from "../git/GitWorkflowService.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProjectSetupScriptRunner } from "../project/Services/ProjectSetupScriptRunner.ts";
-import { getAutoBootstrapDefaultModelSelection } from "../serverRuntimeStartup.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
 import { PluginPackageResolver } from "./PluginPackageResolver.ts";
 import { PluginRegistry } from "./PluginRegistry.ts";
+import { makePluginRuntimeAdapter } from "./PluginRuntimeAdapter.ts";
 import { PluginStore } from "./PluginStore.ts";
 
 export interface PluginHostShape {
@@ -54,193 +35,6 @@ function toApiStoreError(error: unknown): ApiPluginStoreError {
     : new ApiPluginStoreError("Plugin store operation failed.", error);
 }
 
-const makePluginRuntimeApi = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const orchestration = yield* OrchestrationEngineService;
-  const snapshot = yield* ProjectionSnapshotQuery;
-  const settings = yield* ServerSettingsService;
-  const gitWorkflow = yield* GitWorkflowService;
-  const setupScripts = yield* ProjectSetupScriptRunner;
-
-  const uuid = crypto.randomUUIDv4;
-  const nextCommandId = (tag: string) =>
-    uuid.pipe(
-      Effect.mapError(
-        (detail) => new PluginRuntimeError("Failed to generate plugin command id.", detail),
-      ),
-      Effect.map((id) => CommandId.make(`plugin:${tag}:${id}`)),
-    );
-  const nextThreadId = uuid.pipe(
-    Effect.mapError(
-      (detail) => new PluginRuntimeError("Failed to generate plugin thread id.", detail),
-    ),
-    Effect.map(ThreadId.make),
-  );
-  const nextMessageId = uuid.pipe(
-    Effect.mapError(
-      (detail) => new PluginRuntimeError("Failed to generate plugin message id.", detail),
-    ),
-    Effect.map((id) => MessageId.make(`plugin-msg-${id}`)),
-  );
-
-  return {
-    createAndSendThread: (input) =>
-      Effect.gen(function* () {
-        const project = yield* snapshot.getProjectShellById(ProjectId.make(input.projectId)).pipe(
-          Effect.map(Option.getOrNull),
-          Effect.mapError(
-            (detail) => new PluginRuntimeError("Failed to read target project.", detail),
-          ),
-        );
-        if (project === null) {
-          return yield* Effect.fail(
-            new PluginRuntimeError(`Project ${input.projectId} was not found.`),
-          );
-        }
-
-        const serverSettings = yield* settings.getSettings.pipe(
-          Effect.mapError((detail) => new PluginRuntimeError("Failed to read settings.", detail)),
-        );
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const modelSelection =
-          project.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
-        const threadId = yield* nextThreadId;
-        let branch: string | null = null;
-        let worktreePath: string | null = null;
-
-        if (serverSettings.defaultThreadEnvMode === "worktree") {
-          const localStatus = yield* gitWorkflow.localStatus({ cwd: project.workspaceRoot }).pipe(
-            Effect.catch((detail) =>
-              Effect.logWarning("Plugin thread launch could not inspect Git status", {
-                projectId: project.id,
-                cwd: project.workspaceRoot,
-                detail,
-              }).pipe(Effect.as(null)),
-            ),
-          );
-          if (localStatus?.isRepo && localStatus.refName !== null) {
-            const branchToken = (yield* uuid.pipe(
-              Effect.mapError(
-                (detail) =>
-                  new PluginRuntimeError("Failed to generate automation branch token.", detail),
-              ),
-            )).replace(/-/g, "");
-            const worktree = yield* gitWorkflow
-              .createWorktree({
-                cwd: project.workspaceRoot,
-                refName: localStatus.refName,
-                newRefName: buildTemporaryWorktreeBranchName(() => branchToken.slice(0, 8)),
-                path: null,
-              })
-              .pipe(
-                Effect.mapError(
-                  (detail) =>
-                    new PluginRuntimeError("Failed to create automation worktree.", detail),
-                ),
-              );
-            branch = worktree.worktree.refName;
-            worktreePath = worktree.worktree.path;
-          }
-        }
-
-        let createdThread = false;
-        const cleanupCreatedThread = () =>
-          Effect.gen(function* () {
-            if (!createdThread) {
-              return;
-            }
-            yield* orchestration
-              .dispatch({
-                type: "thread.delete",
-                commandId: yield* nextCommandId("thread-delete"),
-                threadId,
-              })
-              .pipe(Effect.ignoreCause({ log: true }));
-          });
-
-        return yield* Effect.gen(function* () {
-          yield* orchestration
-            .dispatch({
-              type: "thread.create",
-              commandId: yield* nextCommandId("thread-create"),
-              threadId,
-              projectId: project.id,
-              title: input.title,
-              modelSelection,
-              runtimeMode: "full-access",
-              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-              branch,
-              worktreePath,
-              createdAt,
-            })
-            .pipe(
-              Effect.mapError(
-                (detail) => new PluginRuntimeError("Failed to create automation thread.", detail),
-              ),
-            );
-          createdThread = true;
-
-          if (worktreePath !== null) {
-            yield* setupScripts
-              .runForThread({
-                threadId,
-                projectId: project.id,
-                projectCwd: project.workspaceRoot,
-                worktreePath,
-              })
-              .pipe(
-                Effect.catch((detail) =>
-                  Effect.logWarning("Plugin thread launch could not start setup script", {
-                    threadId,
-                    projectId: project.id,
-                    worktreePath,
-                    detail,
-                  }),
-                ),
-              );
-          }
-
-          yield* orchestration
-            .dispatch({
-              type: "thread.turn.start",
-              commandId: yield* nextCommandId("turn-start"),
-              threadId,
-              message: {
-                messageId: yield* nextMessageId,
-                role: "user",
-                text: input.prompt,
-                attachments: [],
-              },
-              modelSelection,
-              titleSeed: input.title,
-              runtimeMode: "full-access",
-              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-              createdAt,
-            })
-            .pipe(
-              Effect.mapError(
-                (detail) => new PluginRuntimeError("Failed to start automation turn.", detail),
-              ),
-            );
-
-          return { threadId };
-        }).pipe(
-          Effect.catch((detail) =>
-            cleanupCreatedThread().pipe(
-              Effect.flatMap(() =>
-                Effect.fail(
-                  detail instanceof PluginRuntimeError
-                    ? detail
-                    : new PluginRuntimeError("Failed to launch automation thread.", detail),
-                ),
-              ),
-            ),
-          ),
-        );
-      }),
-  } satisfies PluginActivationContext["runtime"];
-});
-
 function makeActivationContext(input: {
   readonly pluginId: PluginId;
   readonly store: PluginStore["Service"];
@@ -248,23 +42,25 @@ function makeActivationContext(input: {
   readonly runtime: PluginActivationContext["runtime"];
 }): PluginActivationContext {
   const { pluginId, store, registry, runtime } = input;
+  const collectionAdapter = <A>(collection: string): PluginCollection<A> => ({
+    list: () => store.list<A>(pluginId, collection).pipe(Effect.mapError(toApiStoreError)),
+    get: (documentId) =>
+      store.get<A>(pluginId, collection, documentId).pipe(Effect.mapError(toApiStoreError)),
+    upsert: (documentId, document) =>
+      store
+        .upsert(pluginId, collection, documentId, document)
+        .pipe(Effect.mapError(toApiStoreError)),
+    delete: (documentId) =>
+      store.delete(pluginId, collection, documentId).pipe(Effect.mapError(toApiStoreError)),
+  });
+
   return {
     pluginId,
     store: {
-      registerCollection: (collection, schema) =>
-        store.registerCollection(pluginId, collection, schema as Schema.Codec<unknown, unknown>),
-      list: <A>(collection: string) =>
-        store.list<A>(pluginId, collection).pipe(Effect.mapError(toApiStoreError)),
-      get: <A>(collection: string, documentId: string) =>
-        store.get<A>(pluginId, collection, documentId).pipe(Effect.mapError(toApiStoreError)),
-      upsert: (collection, documentId, document) =>
+      registerCollection: <A, I>(collection: string, schema: Schema.Codec<A, I>) =>
         store
-          .upsert(pluginId, collection, documentId, document)
-          .pipe(Effect.mapError(toApiStoreError)),
-      delete: (collection, documentId) =>
-        store.delete(pluginId, collection, documentId).pipe(Effect.mapError(toApiStoreError)),
-      deleteCollection: (collection) =>
-        store.deleteCollection(pluginId, collection).pipe(Effect.mapError(toApiStoreError)),
+          .registerCollection(pluginId, collection, schema as Schema.Codec<unknown, unknown>)
+          .pipe(Effect.as(collectionAdapter<A>(collection))),
     },
     commands: {
       register: (command, registration) =>
@@ -285,7 +81,7 @@ const makePluginHost = Effect.gen(function* () {
   const store = yield* PluginStore;
   const registry = yield* PluginRegistry;
   const packageResolver = yield* PluginPackageResolver;
-  const runtime = yield* makePluginRuntimeApi;
+  const runtime = yield* makePluginRuntimeAdapter;
   const pluginScopes = new Map<PluginId, Scope.Scope>();
 
   yield* Effect.addFinalizer(() =>

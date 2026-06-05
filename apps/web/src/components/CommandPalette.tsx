@@ -85,6 +85,7 @@ import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoute
 import {
   ADDON_ICON_CLASS,
   buildBrowseGroups,
+  buildPluginPlacementActionItems,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -104,7 +105,10 @@ import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons"
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { useServerKeybindings } from "../rpc/serverState";
-import { getActivePluginPlacementEntries } from "../plugins/pluginPlacements";
+import {
+  getActivePluginPlacementEntries,
+  resolvePluginPlacementRouteTarget,
+} from "../plugins/pluginPlacements";
 import { usePluginCatalog } from "../plugins/pluginHost";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -1069,41 +1073,15 @@ function OpenCommandPaletteDialog() {
     },
   });
 
-  for (const placement of commandPalettePluginPlacements) {
-    actionItems.push({
-      kind: "action",
-      value: `plugin:${placement.catalogEntry.manifest.id}:${placement.placement.id}`,
-      searchTerms: [
-        placement.catalogEntry.manifest.name,
-        placement.placement.label,
-        placement.route.label,
-        placement.placement.description ?? "",
-      ],
-      title: placement.placement.label,
-      description: placement.placement.description ?? placement.catalogEntry.manifest.name,
+  actionItems.push(
+    ...buildPluginPlacementActionItems({
+      placements: commandPalettePluginPlacements,
       icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        if (placement.route.surface === "settings") {
-          await navigate({
-            to: "/settings/plugins/$pluginId/$routeId",
-            params: {
-              pluginId: placement.catalogEntry.manifest.id,
-              routeId: placement.placement.routeId,
-            },
-          });
-          return;
-        }
-
-        await navigate({
-          to: "/plugins/$pluginId/$routeId",
-          params: {
-            pluginId: placement.catalogEntry.manifest.id,
-            routeId: placement.placement.routeId,
-          },
-        });
+      runPlacement: async (placement) => {
+        await navigate(resolvePluginPlacementRouteTarget(placement));
       },
-    });
-  }
+    }),
+  );
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const activeGroups = currentView ? currentView.groups : rootGroups;

@@ -8,7 +8,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "~/components/ui/sidebar";
-import { getActivePluginPlacementEntries, resolvePluginPlacementPath } from "./pluginPlacements";
+import {
+  getActivePluginPlacementEntries,
+  isPluginPlacementPathActive,
+  pluginPlacementKey,
+  resolvePluginPlacementRouteTarget,
+} from "./pluginPlacements";
 import { usePluginCatalog } from "./pluginHost";
 
 function PluginSidebarPlacementMenu({
@@ -27,22 +32,13 @@ function PluginSidebarPlacementMenu({
   return (
     <SidebarMenu>
       {placements.map((entry) => {
-        const path = resolvePluginPlacementPath(entry);
-        const active = pathname === path || pathname.startsWith(`${path}/`);
+        const routeTarget = resolvePluginPlacementRouteTarget(entry);
         return (
-          <SidebarMenuItem key={`${entry.catalogEntry.manifest.id}:${entry.placement.id}`}>
+          <SidebarMenuItem key={pluginPlacementKey(entry)}>
             <SidebarMenuButton
               size="sm"
-              isActive={active}
-              render={
-                <Link
-                  to="/plugins/$pluginId/$routeId"
-                  params={{
-                    pluginId: entry.catalogEntry.manifest.id,
-                    routeId: entry.placement.routeId,
-                  }}
-                />
-              }
+              isActive={isPluginPlacementPathActive(entry, pathname)}
+              render={<Link to={routeTarget.to} params={routeTarget.params} />}
             >
               <WorkflowIcon className="size-3.5" />
               <span className="flex-1 truncate text-left text-xs">{entry.placement.label}</span>

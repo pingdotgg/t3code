@@ -1,6 +1,8 @@
 import type {
   PluginCatalogEntry,
+  PluginId,
   PluginRouteContribution,
+  PluginRouteId,
   PluginUiPlacementContribution,
   PluginUiPlacementPosition,
 } from "@t3tools/contracts";
@@ -9,6 +11,14 @@ export interface PluginPlacementEntry {
   readonly catalogEntry: PluginCatalogEntry;
   readonly placement: PluginUiPlacementContribution;
   readonly route: PluginRouteContribution;
+}
+
+export interface PluginPlacementRouteTarget {
+  readonly to: "/plugins/$pluginId/$routeId" | "/settings/plugins/$pluginId/$routeId";
+  readonly params: {
+    readonly pluginId: PluginId;
+    readonly routeId: PluginRouteId;
+  };
 }
 
 function comparePlacementEntries(left: PluginPlacementEntry, right: PluginPlacementEntry): number {
@@ -46,10 +56,37 @@ export function getActivePluginPlacementEntries(
     .toSorted(comparePlacementEntries);
 }
 
+export function pluginPlacementKey(entry: PluginPlacementEntry): string {
+  return `${entry.catalogEntry.manifest.id}:${entry.placement.id}`;
+}
+
+export function resolvePluginPlacementRouteTarget(
+  entry: PluginPlacementEntry,
+): PluginPlacementRouteTarget {
+  return {
+    to:
+      entry.route.surface === "settings"
+        ? "/settings/plugins/$pluginId/$routeId"
+        : "/plugins/$pluginId/$routeId",
+    params: {
+      pluginId: entry.catalogEntry.manifest.id,
+      routeId: entry.placement.routeId,
+    },
+  };
+}
+
 export function resolvePluginPlacementPath(entry: PluginPlacementEntry): string {
   const pluginId = encodeURIComponent(entry.catalogEntry.manifest.id);
   const routeId = encodeURIComponent(entry.placement.routeId);
   return entry.route.surface === "settings"
     ? `/settings/plugins/${pluginId}/${routeId}`
     : `/plugins/${pluginId}/${routeId}`;
+}
+
+export function isPluginPlacementPathActive(
+  entry: PluginPlacementEntry,
+  pathname: string,
+): boolean {
+  const path = resolvePluginPlacementPath(entry);
+  return pathname === path || pathname.startsWith(`${path}/`);
 }

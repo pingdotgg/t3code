@@ -20,14 +20,4 @@ export default Effect.gen(function* () {
     CREATE INDEX IF NOT EXISTS idx_plugin_documents_collection_updated
     ON plugin_documents(plugin_id, collection, updated_at DESC, document_id)
   `;
-
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS plugin_runtime_state (
-      plugin_id TEXT NOT NULL,
-      key TEXT NOT NULL,
-      value_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (plugin_id, key)
-    )
-  `;
 });

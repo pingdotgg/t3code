@@ -42,6 +42,7 @@ interface StoredCommand {
 
 interface Harness {
   readonly ctx: PluginActivationContext;
+  readonly documents: HarnessDocuments;
   readonly collections: Set<string>;
   readonly commands: Map<string, StoredCommand>;
   readonly launchedThreads: Array<{
@@ -51,6 +52,23 @@ interface Harness {
   }>;
   readonly publishedEvents: Array<unknown>;
   readonly badgeProviders: Map<string, () => Effect.Effect<number, Error>>;
+}
+
+interface HarnessDocuments {
+  readonly list: <A>(collection: string) => Effect.Effect<ReadonlyArray<A>, PluginStoreError>;
+  readonly get: <A>(
+    collection: string,
+    documentId: string,
+  ) => Effect.Effect<A | null, PluginStoreError>;
+  readonly upsert: <A>(
+    collection: string,
+    documentId: string,
+    document: A,
+  ) => Effect.Effect<void, PluginStoreError>;
+  readonly delete: (
+    collection: string,
+    documentId: string,
+  ) => Effect.Effect<void, PluginStoreError>;
 }
 
 function makeHarness(options?: {
@@ -63,7 +81,6 @@ function makeHarness(options?: {
   const launchedThreads: Harness["launchedThreads"] = [];
   const publishedEvents: Array<unknown> = [];
   const badgeProviders = new Map<string, () => Effect.Effect<number, Error>>();
-  const harness = {} as Harness;
 
   const requireSchema = (collection: string) =>
     Effect.sync(() => schemas.get(collection)).pipe(
@@ -89,6 +106,38 @@ function makeHarness(options?: {
     return values;
   };
 
+  const documentStore: HarnessDocuments = {
+    list: <A>(collection: string) =>
+      Effect.gen(function* () {
+        yield* requireSchema(collection);
+        const values = Array.from(collectionMap(collection).values());
+        return yield* Effect.forEach(values, (value) => decode(collection, value), {
+          concurrency: 1,
+        });
+      }).pipe(Effect.map((values) => values as ReadonlyArray<A>)),
+    get: <A>(collection: string, documentId: string) =>
+      Effect.gen(function* () {
+        yield* requireSchema(collection);
+        const value = collectionMap(collection).get(documentId);
+        if (value === undefined) {
+          return null;
+        }
+        return (yield* decode(collection, value)) as A;
+      }),
+    upsert: (collection, documentId, document) =>
+      decode(collection, document).pipe(
+        Effect.flatMap((decoded) =>
+          Effect.sync(() => {
+            collectionMap(collection).set(documentId, decoded);
+          }),
+        ),
+      ),
+    delete: (collection, documentId) =>
+      Effect.sync(() => {
+        collectionMap(collection).delete(documentId);
+      }),
+  };
+
   const defaultCreateAndSendThread: PluginActivationContext["runtime"]["createAndSendThread"] = (
     input,
   ) =>
@@ -100,43 +149,17 @@ function makeHarness(options?: {
   const ctx: PluginActivationContext = {
     pluginId: PluginId.make(AUTOMATIONS_PLUGIN_ID),
     store: {
-      registerCollection: (collection, schema) =>
+      registerCollection: <A, I>(collection: string, schema: Schema.Codec<A, I>) =>
         Effect.sync(() => {
           collections.add(collection);
           schemas.set(collection, schema as Schema.Codec<unknown, unknown>);
-        }),
-      list: <A>(collection: string) =>
-        Effect.gen(function* () {
-          yield* requireSchema(collection);
-          const values = Array.from(collectionMap(collection).values());
-          return yield* Effect.forEach(values, (value) => decode(collection, value), {
-            concurrency: 1,
-          });
-        }).pipe(Effect.map((values) => values as ReadonlyArray<A>)),
-      get: <A>(collection: string, documentId: string) =>
-        Effect.gen(function* () {
-          yield* requireSchema(collection);
-          const value = collectionMap(collection).get(documentId);
-          if (value === undefined) {
-            return null;
-          }
-          return (yield* decode(collection, value)) as A;
-        }),
-      upsert: (collection, documentId, document) =>
-        decode(collection, document).pipe(
-          Effect.flatMap((decoded) =>
-            Effect.sync(() => {
-              collectionMap(collection).set(documentId, decoded);
-            }),
-          ),
-        ),
-      delete: (collection, documentId) =>
-        Effect.sync(() => {
-          collectionMap(collection).delete(documentId);
-        }),
-      deleteCollection: (collection) =>
-        Effect.sync(() => {
-          documents.delete(collection);
+          return {
+            list: () => documentStore.list<A>(collection),
+            get: (documentId: string) => documentStore.get<A>(collection, documentId),
+            upsert: (documentId: string, document: A) =>
+              documentStore.upsert<A>(collection, documentId, document),
+            delete: (documentId: string) => documentStore.delete(collection, documentId),
+          };
         }),
     },
     commands: {
@@ -191,15 +214,15 @@ function makeHarness(options?: {
     },
   };
 
-  Object.assign(harness, {
+  return {
     ctx,
+    documents: documentStore,
     collections,
     commands,
     launchedThreads,
     publishedEvents,
     badgeProviders,
-  });
-  return harness;
+  };
 }
 
 function commandName(command: (typeof AUTOMATIONS_COMMANDS)[keyof typeof AUTOMATIONS_COMMANDS]) {
@@ -300,7 +323,7 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
       AUTOMATIONS_COMMANDS.rulesCreate,
       createRuleInput,
     );
-    const scheduleState = yield* harness.ctx.store.get<{ readonly nextRunAt: string }>(
+    const scheduleState = yield* harness.documents.get<{ readonly nextRunAt: string }>(
       "scheduleState",
       created.rule.id,
     );
@@ -317,7 +340,7 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
     });
     assert.equal(updated.rule.name, "Daily disabled check");
     assert.isFalse(updated.rule.enabled);
-    assert.isNull(yield* harness.ctx.store.get("scheduleState", created.rule.id));
+    assert.isNull(yield* harness.documents.get("scheduleState", created.rule.id));
 
     yield* invoke(harness, AUTOMATIONS_COMMANDS.rulesRunNow, {
       ruleId: created.rule.id,
@@ -333,7 +356,7 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
     yield* invoke(harness, AUTOMATIONS_COMMANDS.rulesDelete, {
       ruleId: created.rule.id,
     });
-    assert.isNull(yield* harness.ctx.store.get("scheduleState", created.rule.id));
+    assert.isNull(yield* harness.documents.get("scheduleState", created.rule.id));
 
     const afterDeleteRules = yield* invoke<{
       readonly rules: ReadonlyArray<unknown>;
@@ -384,7 +407,7 @@ it.effect("Automations scheduled tick creates a schedule run and thread", () =>
       AUTOMATIONS_COMMANDS.rulesCreate,
       createRuleInput,
     );
-    yield* harness.ctx.store.upsert("scheduleState", created.rule.id, {
+    yield* harness.documents.upsert("scheduleState", created.rule.id, {
       ruleId: created.rule.id,
       nextRunAt: "2026-01-01T09:00:00.000Z",
       updatedAt: "2026-01-01T08:59:00.000Z",
@@ -413,7 +436,7 @@ it.effect("Automations overlap policy records skipped runs without launching a t
       AUTOMATIONS_COMMANDS.rulesCreate,
       createRuleInput,
     );
-    yield* harness.ctx.store.upsert<AutomationRun>("runs", "run-active", {
+    yield* harness.documents.upsert<AutomationRun>("runs", "run-active", {
       id: AutomationRunId.make("run-active"),
       ruleId: created.rule.id,
       status: "running",
@@ -531,7 +554,7 @@ it.effect("Automations retains only the last 100 runs per rule", () =>
     );
     for (let index = 0; index < 101; index += 1) {
       const id = AutomationRunId.make(`run-stale-${index}`);
-      yield* harness.ctx.store.upsert<AutomationRun>("runs", id, {
+      yield* harness.documents.upsert<AutomationRun>("runs", id, {
         id,
         ruleId: created.rule.id,
         status: "completed",

@@ -5,7 +5,6 @@ import type {
   PluginId,
   PluginRouteId,
   PluginRouteSurface,
-  PluginsInvokeResult,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -183,7 +182,7 @@ export interface PluginUiProject {
 }
 
 export interface PluginUiApi {
-  readonly invoke: (command: PluginCommandName | string, input: unknown) => Promise<unknown>;
+  readonly invoke: <O = unknown>(command: PluginCommandName | string, input: unknown) => Promise<O>;
 }
 
 export interface PluginUiNavigation {
@@ -236,8 +235,4 @@ export function registerPluginUi(
   factory: PluginUiFactory,
 ): void {
   host.register(pluginId, factory);
-}
-
-export function unwrapPluginInvokeResult(result: PluginsInvokeResult): unknown {
-  return result.output;
 }
