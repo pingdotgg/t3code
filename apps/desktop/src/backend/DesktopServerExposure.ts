@@ -422,7 +422,7 @@ const make = Effect.gen(function* () {
   const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
     readTailscaleStatus.pipe(
       Effect.map((status) => status.magicDnsName),
-      Effect.catch(() => Effect.succeed<string | null>(null)),
+      Effect.orElseSucceed(() => null),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
     ),
     TAILSCALE_STATUS_CACHE_TTL,
