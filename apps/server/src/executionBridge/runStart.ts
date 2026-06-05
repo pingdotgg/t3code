@@ -1,3 +1,5 @@
+// @effect-diagnostics cryptoRandomUUIDInEffect:off
+
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -26,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { randomBytes } from "node:crypto";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -89,7 +92,7 @@ interface ExecutionBridgeRunRegistryShape {
 export class ExecutionBridgeRunRegistry extends Context.Service<
   ExecutionBridgeRunRegistry,
   ExecutionBridgeRunRegistryShape
->()("t3/executionBridge/ExecutionBridgeRunRegistry") {}
+>()("t3/executionBridge/runStart/ExecutionBridgeRunRegistry") {}
 
 function deriveProjectTitle(workspaceRoot: string) {
   const segments = workspaceRoot.split(/[/\\]/).filter(Boolean);
@@ -544,7 +547,9 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
       });
     }
 
-    const branch = buildTemporaryWorktreeBranchName();
+    const branch = buildTemporaryWorktreeBranchName((byteLength) =>
+      randomBytes(byteLength).toString("hex"),
+    );
     const worktree = yield* git.createWorktree(taskRuntimeWorktreeCreateInput(request, branch));
     const threadId = ThreadId.make(crypto.randomUUID());
 

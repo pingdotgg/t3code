@@ -25,20 +25,19 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "generate": "bun run scripts/generate.ts",
-    "probe": "bun run test/examples/codex-app-server-probe.ts"
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run",
+    "generate": "node scripts/generate.ts",
+    "probe": "node test/examples/codex-app-server-probe.ts"
   },
   "dependencies": {
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@effect/language-service": "catalog:",
     "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

@@ -335,7 +335,7 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
   const attachmentsRootDir = serverConfig.attachmentsDir;
   const readAttachmentRootEntries = fileSystem
     .readDirectory(attachmentsRootDir, { recursive: false })
-    .pipe(Effect.catch(() => Effect.succeed([] as Array<string>)));
+    .pipe(Effect.orElseSucceed(() => [] as Array<string>));
 
   const removeDeletedThreadAttachmentEntry = Effect.fn("removeDeletedThreadAttachmentEntry")(
     function* (threadSegment: string, entry: string) {
@@ -397,9 +397,7 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     }
 
     const absolutePath = path.join(attachmentsRootDir, relativePath);
-    const fileInfo = yield* fileSystem
-      .stat(absolutePath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+    const fileInfo = yield* fileSystem.stat(absolutePath).pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
       return;
     }
@@ -537,12 +535,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
       ]);
 
-      const latestUserMessageAt =
-        messages
-          .filter((message) => message.role === "user")
-          .map((message) => message.createdAt)
-          .toSorted()
-          .at(-1) ?? null;
+      let latestUserMessageAt: string | null = null;
+      for (const message of messages) {
+        if (
+          message.role === "user" &&
+          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
+        ) {
+          latestUserMessageAt = message.createdAt;
+        }
+      }
 
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",

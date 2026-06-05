@@ -1,6 +1,7 @@
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -9,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 
@@ -53,6 +53,7 @@ const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
   desktopSsh: Schema.optionalKey(DesktopSshTargetSchema),
+  relayManaged: Schema.optionalKey(Schema.Struct({ relayUrl: Schema.String })),
   encryptedBearerToken: Schema.optionalKey(Schema.String),
 });
 
@@ -121,7 +122,7 @@ export interface DesktopSavedEnvironmentsShape {
 export class DesktopSavedEnvironments extends Context.Service<
   DesktopSavedEnvironments,
   DesktopSavedEnvironmentsShape
->()("t3/desktop/SavedEnvironments") {}
+>()("@t3tools/desktop/settings/DesktopSavedEnvironments") {}
 
 function toPersistedSavedEnvironmentRecord(
   record: PersistedSavedEnvironmentStorageRecord,
@@ -134,7 +135,11 @@ function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
+  return {
+    ...nextRecord,
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+  };
 }
 
 function toSavedEnvironmentStorageRecord(
@@ -149,20 +154,13 @@ function toSavedEnvironmentStorageRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  const desktopSsh = record.desktopSsh;
-  if (desktopSsh) {
-    return Option.match(encryptedBearerToken, {
-      onNone: () => ({ ...nextRecord, desktopSsh }),
-      onSome: (value) => ({
-        ...nextRecord,
-        desktopSsh,
-        encryptedBearerToken: value,
-      }),
-    });
-  }
+  const metadata = {
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+  };
   return Option.match(encryptedBearerToken, {
-    onNone: () => nextRecord,
-    onSome: (value) => ({ ...nextRecord, encryptedBearerToken: value }),
+    onNone: () => ({ ...nextRecord, ...metadata }),
+    onSome: (value) => ({ ...nextRecord, ...metadata, encryptedBearerToken: value }),
   });
 }
 
@@ -187,7 +185,7 @@ function readRegistryDocument(
         onSome: (raw) =>
           decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
             Effect.map(normalizeSavedEnvironmentRegistryDocument),
-            Effect.catch(() => Effect.succeed({ version: 1, records: [] })),
+            Effect.orElseSucceed(() => ({ version: 1, records: [] })),
           ),
       }),
     ),
@@ -200,10 +198,10 @@ const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistry
     readonly path: Path.Path;
     readonly registryPath: string;
     readonly document: SavedEnvironmentRegistryDocument;
+    readonly suffix: string;
   }): Effect.fn.Return<void, PlatformError.PlatformError | Schema.SchemaError> {
     const directory = input.path.dirname(input.registryPath);
-    const suffix = (yield* Random.nextUUIDv4).replace(/-/g, "");
-    const tempPath = `${input.registryPath}.${process.pid}.${suffix}.tmp`;
+    const tempPath = `${input.registryPath}.${process.pid}.${input.suffix}.tmp`;
     const encoded = yield* encodeSavedEnvironmentRegistryDocumentJson(input.document);
     yield* input.fileSystem.makeDirectory(directory, { recursive: true });
     yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
@@ -247,14 +245,22 @@ export const layer = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+    const crypto = yield* Crypto.Crypto;
 
     const writeDocument = (document: SavedEnvironmentRegistryDocument) =>
-      writeRegistryDocument({
-        fileSystem,
-        path,
-        registryPath: environment.savedEnvironmentRegistryPath,
-        document,
-      }).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
+      crypto.randomUUIDv4.pipe(
+        Effect.map((uuid) => uuid.replace(/-/g, "")),
+        Effect.flatMap((suffix) =>
+          writeRegistryDocument({
+            fileSystem,
+            path,
+            registryPath: environment.savedEnvironmentRegistryPath,
+            document,
+            suffix,
+          }),
+        ),
+        Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })),
+      );
 
     return DesktopSavedEnvironments.of({
       getRegistry: readRegistryDocument(fileSystem, environment.savedEnvironmentRegistryPath).pipe(

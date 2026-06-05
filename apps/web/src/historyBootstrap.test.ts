@@ -1,5 +1,5 @@
 import { MessageId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { buildBootstrapInput } from "./historyBootstrap";
 

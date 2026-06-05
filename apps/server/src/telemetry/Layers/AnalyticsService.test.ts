@@ -62,7 +62,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
           const payload = yield* request.json.pipe(
             Effect.map((body) => body as RecordedBatchRequest["body"]),
-            Effect.catch(() => Effect.succeed(null)),
+            Effect.orElseSucceed(() => null),
           );
 
           capturedRequests.push({ path: request.url, body: payload });

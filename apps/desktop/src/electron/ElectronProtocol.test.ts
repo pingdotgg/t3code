@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Electron from "electron";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 
 const { registerFileProtocolMock, registerSchemesAsPrivilegedMock, unregisterProtocolMock } =
   vi.hoisted(() => ({

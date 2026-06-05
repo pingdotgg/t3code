@@ -1,7 +1,7 @@
 import { EnvironmentId, MessageId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
@@ -25,6 +25,25 @@ vi.mock("@legendapp/list/react", async () => {
   );
 
   return { LegendList };
+});
+
+function MockFileDiff(props: {
+  fileDiff: { name?: string | null; prevName?: string | null };
+  renderCustomHeader?: (fileDiff: {
+    name?: string | null;
+    prevName?: string | null;
+  }) => React.ReactNode;
+}) {
+  return (
+    <div data-testid="file-diff">
+      {props.renderCustomHeader?.(props.fileDiff)}
+      {props.fileDiff.name ?? props.fileDiff.prevName ?? "diff"}
+    </div>
+  );
+}
+
+vi.mock("@pierre/diffs/react", () => {
+  return { FileDiff: MockFileDiff };
 });
 
 function matchMedia() {
@@ -237,5 +256,44 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+  });
+
+  it("renders review comment contexts as structured cards instead of raw tags", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-2"),
+              role: "user",
+              text: [
+                '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
+                "Wadduo",
+                "```diff",
+                "@@ -0,0 +47,2 @@",
+                '+  it("keeps valid zero-usage snapshots", () => {',
+                "+    expect(snapshot).not.toBeNull();",
+                "```",
+                "</review_comment>",
+              ].join("\n"),
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("contextWindow.test.ts");
+    expect(markup).toContain("Wadduo");
+    expect(markup).toContain('data-testid="file-diff"');
+    expect(markup).not.toContain(">Review comment<");
+    expect(markup).not.toContain("&lt;review_comment");
+    expect(markup).not.toContain("&lt;/review_comment&gt;");
   });
 });

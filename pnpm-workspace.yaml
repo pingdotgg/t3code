@@ -1,0 +1,86 @@
+packages:
+  - "apps/*"
+  - "infra/*"
+  - "oxlint-plugin-t3code"
+  - "packages/*"
+  - "scripts"
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - msgpackr-extract
+  - node-pty
+  - sharp
+
+ignoredBuiltDependencies:
+  - msw
+
+catalog:
+  effect: 4.0.0-beta.78
+  "@effect/atom-react": 4.0.0-beta.78
+  "@effect/openapi-generator": 4.0.0-beta.78
+  "@effect/platform-bun": 4.0.0-beta.78
+  "@effect/platform-node": 4.0.0-beta.78
+  "@effect/platform-node-shared": 4.0.0-beta.78
+  "@effect/sql-pg": 4.0.0-beta.78
+  "@effect/sql-sqlite-bun": 4.0.0-beta.78
+  "@effect/vitest": 4.0.0-beta.78
+  "@effect/tsgo": 0.13.2
+  "@noble/curves": 1.9.1
+  "@noble/hashes": 1.8.0
+  "@pierre/diffs": 1.1.20
+  "@vitest/runner": 4.1.8
+  "@types/node": 24.12.4
+  "@typescript/native-preview": 7.0.0-dev.20260604.1
+  jose: 6.2.2
+  typescript: ~6.0.3
+  vitest: npm:@voidzero-dev/vite-plus-test@0.1.24
+  vite: npm:@voidzero-dev/vite-plus-core@0.1.24
+  vite-plus: 0.1.24
+  yaml: ^2.9.0
+overrides:
+  # Clerk publishes wallet auth integrations as required dependencies. T3 Code does
+  # not support wallet auth, so keep that unused dependency tree out of installs.
+  "@clerk/clerk-js>@base-org/account": "-"
+  "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
+  "@clerk/clerk-js>@solana/wallet-standard": "-"
+  "@clerk/clerk-js>@wallet-standard/core": "-"
+  "@effect/atom-react": "catalog:"
+  "@effect/platform-bun": "catalog:"
+  "@effect/platform-node": "catalog:"
+  "@effect/platform-node-shared": "catalog:"
+  "@effect/sql-pg": "catalog:"
+  "@effect/sql-sqlite-bun": "catalog:"
+  "@effect/vitest": "catalog:"
+  "@effect/vitest>@vitest/runner": "-"
+  "@effect/vitest>vitest": "-"
+  "@types/node": "catalog:"
+  effect: "catalog:"
+  vite: "catalog:"
+  vitest: "catalog:"
+  yaml: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      vite-plus: "catalog:"
+    peerDependenciesMeta:
+      vitest:
+        optional: true
+  "vite-plus@*":
+    dependencies:
+      vite: "catalog:"
+patchedDependencies:
+  "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
+  "@expo/metro-config@56.0.13": patches/@expo%2Fmetro-config@56.0.13.patch
+  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
+  effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
+  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

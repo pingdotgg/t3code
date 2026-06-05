@@ -325,6 +325,7 @@ function ComboboxChips({
   startAddon?: React.ReactNode;
 }) {
   const { chipsRef } = React.use(ComboboxContext);
+  const primitiveChipsRef = (chipsRef ?? undefined) as ComboboxPrimitive.Chips.Props["ref"];
 
   return (
     <ComboboxPrimitive.Chips
@@ -333,7 +334,7 @@ function ComboboxChips({
         className,
       )}
       data-slot="combobox-chips"
-      ref={chipsRef as React.Ref<HTMLDivElement> | null}
+      ref={primitiveChipsRef}
       {...props}
     >
       {startAddon && (

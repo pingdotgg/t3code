@@ -3,14 +3,16 @@ import {
   type LocalApi,
   type PersistedSavedEnvironmentRecord,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  readSavedEnvironmentCredential,
   resetSavedEnvironmentRegistryStoreForTests,
   resetSavedEnvironmentRuntimeStoreForTests,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
   waitForSavedEnvironmentRegistryHydration,
+  writeSavedEnvironmentCredential,
 } from "./catalog";
 
 describe("environment runtime catalog stores", () => {
@@ -72,6 +74,47 @@ describe("environment runtime catalog stores", () => {
     resetSavedEnvironmentRuntimeStoreForTests();
 
     expect(useSavedEnvironmentRuntimeStore.getState().byId).toEqual({});
+  });
+
+  it("decodes legacy bearer secrets and writes versioned DPoP credentials", async () => {
+    let storedSecret: string | null = "legacy-bearer-token";
+    vi.stubGlobal("window", {
+      nativeApi: {
+        persistence: {
+          getClientSettings: async () => null,
+          setClientSettings: async () => undefined,
+          getSavedEnvironmentRegistry: async () => [],
+          setSavedEnvironmentRegistry: async () => undefined,
+          getSavedEnvironmentSecret: async () => storedSecret,
+          setSavedEnvironmentSecret: async (_environmentId, secret) => {
+            storedSecret = secret;
+            return true;
+          },
+          removeSavedEnvironmentSecret: async () => undefined,
+        },
+      } satisfies Pick<LocalApi, "persistence">,
+    });
+    const { __resetLocalApiForTests } = await import("../../localApi");
+    await __resetLocalApiForTests();
+    const environmentId = EnvironmentId.make("environment-1");
+
+    await expect(readSavedEnvironmentCredential(environmentId)).resolves.toEqual({
+      version: 1,
+      method: "bearer",
+      token: "legacy-bearer-token",
+    });
+    await expect(
+      writeSavedEnvironmentCredential(environmentId, {
+        version: 1,
+        method: "dpop",
+        accessToken: "managed-dpop-access-token",
+      }),
+    ).resolves.toBe(true);
+    await expect(readSavedEnvironmentCredential(environmentId)).resolves.toEqual({
+      version: 1,
+      method: "dpop",
+      accessToken: "managed-dpop-access-token",
+    });
   });
 
   it("does not throw when local api lookup fails during registry persistence", async () => {

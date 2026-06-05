@@ -1,0 +1,54 @@
+{
+  "name": "cloudflare-vue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "vue": "beta",
+    "vue-router": "^5.0.4"
+  },
+  "devDependencies": {
+    "@tsconfig/node24": "^24.0.4",
+    "@types/node": "^24.12.0",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "@vue/tsconfig": "^0.9.1",
+    "npm-run-all2": "^8.0.4",
+    "oxfmt": "^0.42.0",
+    "typescript": "~6.0.0",
+    "vite": "^8.0.3",
+    "vite-plugin-vue-devtools": "^8.1.1",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "vue-tsc": "^3.2.6"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "overrides": {
+    "vue": "beta",
+    "@vue/compiler-core": "beta",
+    "@vue/compiler-dom": "beta",
+    "@vue/compiler-sfc": "beta",
+    "@vue/compiler-ssr": "beta",
+    "@vue/compiler-vapor": "beta",
+    "@vue/reactivity": "beta",
+    "@vue/runtime-core": "beta",
+    "@vue/runtime-dom": "beta",
+    "@vue/runtime-vapor": "beta",
+    "@vue/server-renderer": "beta",
+    "@vue/shared": "beta",
+    "@vue/compat": "beta"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/cloudflare-vue"
+  }
+}

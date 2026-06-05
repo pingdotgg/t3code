@@ -17,6 +17,10 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
+import { loadRepoEnv } from "./lib/public-config.ts";
+
+Object.assign(process.env, loadRepoEnv());
+
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
@@ -31,22 +35,25 @@ export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
 const MODE_ARGS = {
   dev: [
     "run",
-    "dev",
-    "--ui=tui",
     "--filter=@t3tools/contracts",
     "--filter=@t3tools/web",
     "--filter=t3",
     "--parallel",
+    "dev",
   ],
-  "dev:server": ["run", "dev", "--filter=t3"],
-  "dev:web": ["run", "dev", "--filter=@t3tools/web"],
-  "dev:desktop": ["run", "dev", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "--parallel"],
+  "dev:server": ["run", "--filter=t3", "dev"],
+  "dev:web": ["run", "--filter=@t3tools/web", "dev"],
+  "dev:desktop": ["run", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "dev"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
 type PortAvailabilityCheck<R = never> = (port: number) => Effect.Effect<boolean, never, R>;
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
+
+export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
+  return MODE_ARGS[mode];
+}
 
 class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly message: string;
@@ -380,12 +387,12 @@ interface DevRunnerCliInput {
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
   readonly dryRun: boolean;
-  readonly turboArgs: ReadonlyArray<string>;
+  readonly runArgs: ReadonlyArray<string>;
 }
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
-    const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
+    const { portOffset, devInstance } = yield* OffsetConfig.pipe(
       Effect.mapError(
         (cause) =>
           new DevRunnerError({
@@ -438,29 +445,25 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const child = yield* ChildProcess.make(
-      "turbo",
-      [...MODE_ARGS[input.mode], ...input.turboArgs],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        env,
-        extendEnv: false,
-        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-        shell: process.platform === "win32",
-        // Keep turbo in the same process group so terminal signals (Ctrl+C)
-        // reach it directly. Effect defaults to detached: true on non-Windows,
-        // which would put turbo in a new group and require manual forwarding.
-        detached: false,
-        forceKillAfter: "1500 millis",
-      },
-    );
+    const child = yield* ChildProcess.make("vp", [...MODE_ARGS[input.mode], ...input.runArgs], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+      env,
+      extendEnv: false,
+      // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
+      shell: process.platform === "win32",
+      // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
+      // reach it directly. Effect defaults to detached: true on non-Windows,
+      // which would put the runner in a new group and require manual forwarding.
+      detached: false,
+      forceKillAfter: "1500 millis",
+    });
 
     const exitCode = yield* child.exitCode;
     if (exitCode !== 0) {
       return yield* new DevRunnerError({
-        message: `turbo exited with code ${exitCode}`,
+        message: `vp run exited with code ${exitCode}`,
       });
     }
   }).pipe(
@@ -513,11 +516,11 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withFallbackConfig(optionalUrlConfig("VITE_DEV_SERVER_URL")),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
-    Flag.withDescription("Resolve mode/ports/env and print, but do not spawn turbo."),
+    Flag.withDescription("Resolve mode/ports/env and print, but do not spawn Vite+."),
     Flag.withDefault(false),
   ),
-  turboArgs: Argument.string("turbo-arg").pipe(
-    Argument.withDescription("Additional turbo args (pass after `--`)."),
+  runArgs: Argument.string("run-arg").pipe(
+    Argument.withDescription("Additional Vite+ run args (pass after `--`)."),
     Argument.variadic(),
   ),
 }).pipe(

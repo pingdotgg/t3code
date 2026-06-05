@@ -26,7 +26,7 @@ export interface DesktopAppIdentityShape {
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
   DesktopAppIdentityShape
->()("t3/desktop/AppIdentity") {}
+>()("@t3tools/desktop/app/DesktopAppIdentity") {}
 
 const normalizeCommitHash = (value: string): Option.Option<string> => {
   const trimmed = value.trim();
@@ -52,7 +52,7 @@ const make = Effect.gen(function* () {
           Effect.map((parsed) =>
             Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
           ),
-          Effect.catch(() => Effect.succeed(Option.none<string>())),
+          Effect.orElseSucceed(() => Option.none<string>()),
         ),
     });
   });

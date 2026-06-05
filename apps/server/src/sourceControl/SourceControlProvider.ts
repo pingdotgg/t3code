@@ -100,4 +100,4 @@ export interface SourceControlProviderShape {
 export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   SourceControlProviderShape
->()("t3/source-control/SourceControlProvider") {}
+>()("t3/sourceControl/SourceControlProvider") {}

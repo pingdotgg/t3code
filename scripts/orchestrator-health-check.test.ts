@@ -23,7 +23,8 @@ describe("orchestrator-health-check", () => {
     const config = defaultHealthCheckConfig({
       T3CODE_HEALTH_LOCAL_BASE_URL: "http://localhost:4773",
       T3CODE_HEALTH_PUBLIC_BASE_URL: "https://example.com",
-      T3CODE_HEALTH_CONVEX_SITE_URL: "https://convex.example",
+      T3CODE_HEALTH_EXTERNAL_INTAKE_PATH: "/custom-health",
+      T3CODE_HEALTH_ALERT_URL: "https://alerts.example/health",
       T3_OPS_ALERT_SECRET: "ops-secret",
       T3CODE_HEALTH_NOTIFY: "1",
       T3CODE_HEALTH_ALERT_STATE_PATH: "tmp/health-state.json",
@@ -37,7 +38,8 @@ describe("orchestrator-health-check", () => {
     expect(config.tunnelServiceName).toBe("custom-tunnel");
     expect(config.notifyOnFailure).toBe(true);
     expect(config.alertSecret).toBe("ops-secret");
-    expect(config.alertEndpointUrl).toBe("https://convex.example/ops/health-alert");
+    expect(config.alertEndpointUrl).toBe("https://alerts.example/health");
+    expect(config.externalIntakeHealthPath).toBe("/custom-health");
     expect(config.alertStatePath).toBe("tmp/health-state.json");
   });
 
@@ -45,13 +47,13 @@ describe("orchestrator-health-check", () => {
     expect(
       parseEnvFileContents(`
 # ignored
-ORCHESTRATOR_BASE_URL=https://<your-dev-convex-site>
-CONVEX_DEPLOYMENT=dev:example-dev-deployment # team: example, project: example-project
+T3CODE_PUBLIC_BASE_URL=https://t3.example
+T3CODE_HEALTH_EXTERNAL_INTAKE_PATH=/api/external-intake/health # local route
 bad-line
 `),
     ).toEqual([
-      ["ORCHESTRATOR_BASE_URL", "https://<your-dev-convex-site>"],
-      ["CONVEX_DEPLOYMENT", "dev:example-dev-deployment"],
+      ["T3CODE_PUBLIC_BASE_URL", "https://t3.example"],
+      ["T3CODE_HEALTH_EXTERNAL_INTAKE_PATH", "/api/external-intake/health"],
     ]);
   });
 

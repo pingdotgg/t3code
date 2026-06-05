@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export class GitLabCliError extends Schema.TaggedErrorClass<GitLabCliError>()("GitLabCliError", {
   operation: Schema.String,
   detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
@@ -97,7 +97,7 @@ export interface GitLabCliShape {
 }
 
 export class GitLabCli extends Context.Service<GitLabCli, GitLabCliShape>()(
-  "t3/source-control/GitLabCli",
+  "t3/sourceControl/GitLabCli",
 ) {}
 
 function isVcsProcessSpawnError(error: unknown): boolean {
@@ -247,10 +247,13 @@ function parseRepositoryPath(repository: string): {
   readonly namespacePath: string | null;
   readonly projectPath: string;
 } {
-  const parts = repository
-    .split("/")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const parts: Array<string> = [];
+  for (const part of repository.split("/")) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) {
+      parts.push(trimmed);
+    }
+  }
   const projectPath = parts.at(-1) ?? repository.trim();
   const namespacePath = parts.length > 1 ? parts.slice(0, -1).join("/") : null;
   return { namespacePath, projectPath };

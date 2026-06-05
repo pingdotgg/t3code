@@ -1,0 +1,56 @@
+{
+  "name": "website",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "website"
+  },
+  "type": "module",
+  "scripts": {
+    "build:reference": "bun ../scripts/generate-api-reference.ts",
+    "build:llms": "bun scripts/generate-llms-txt.ts",
+    "generate:readme-hero": "bun scripts/download-fonts.ts && bun scripts/generate-readme-hero.ts",
+    "build": "bun scripts/download-fonts.ts && bun scripts/generate-brand-assets.ts && bun run build:reference && bun run build:llms && NODE_OPTIONS=--max-old-space-size=8192 astro build",
+    "dev:site": "astro dev",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/mdx": "^5.0.3",
+    "@astrojs/react": "^5.0.3",
+    "@astrojs/sitemap": "^3.5.0",
+    "@astrojs/starlight": "^0.34.3",
+    "@astrojs/starlight-tailwind": "^4.0.1",
+    "@effect/platform-node": "catalog:",
+    "@iconify-json/logos": "^1.2.11",
+    "@iconify-json/lucide": "^1.2.102",
+    "@iconify/react": "^6.0.2",
+    "@resvg/resvg-js": "^2.6.2",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "alchemy": "workspace:*",
+    "astro": "^5.12.8",
+    "effect": "catalog:",
+    "expressive-code-twoslash": "^0.6.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-icons": "^5.6.0",
+    "rehype-mermaid": "^3.0.0",
+    "satori": "^0.26.0",
+    "starlight-blog": "0.24.0",
+    "tailwindcss": "^4.1.14"
+  },
+  "devDependencies": {
+    "astro-broken-links-checker": "^1.1.0",
+    "typescript": "catalog:",
+    "zod": "^3"
+  }
+}

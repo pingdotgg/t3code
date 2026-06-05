@@ -1,3 +1,0 @@
-# Limit v1 Orchestrator autonomy to Task coordination
-
-The Orchestrator is the brain of the AI Engineer, but v1 intentionally limits that brain to predictable Task coordination: creating Tasks, Worktrees, and Primary Threads; resolving Projects; interpreting Conversations; syncing status; posting meaningful updates; and coordinating Coding Agent Threads. We are not including autonomous supporting Thread creation, Coding Agent switching, production deployment, or periodic heartbeat updates in v1 because the first product milestone needs reliable Task/Worktree/Primary Thread behavior before broader autonomy.

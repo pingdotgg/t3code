@@ -1,109 +1,68 @@
 # T3 Code Production Update Runbook
 
-This machine runs the production-like T3 Code server from this checkout:
-
-```text
-<repo-root>
-```
-
-The server process runs `apps\server\dist\bin.mjs` on `127.0.0.1:3773`, and Cloudflare Tunnel forwards `https://<your-public-t3-url>` to that local port.
+This runbook assumes the production-like server runs from the WSL checkout and
+is managed by the user-level systemd service `t3code-server.service`.
 
 ## Golden Rule
 
-Do not run an inline server restart from a T3/Slack coding session unless the restart is detached. Restarting the server kills the process that is currently relaying the agent response, so the update can appear to crash even when the build succeeded.
+If an update is initiated from a T3/Slack-launched agent session, avoid
+restarting the server inline. Restarting T3 kills the process relaying the
+agent's response. Use an external WSL terminal, the Codex desktop app, or a
+detached wrapper.
 
-Preferred operators:
+## Normal WSL Update
 
-- External elevated PowerShell: use the normal updater.
-- T3/Slack session: use `-DetachedRestart` and respond before the queued restart fires.
-
-## Normal Update From External PowerShell
-
-Run PowerShell as Administrator:
-
-```powershell
-cd <repo-root>
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\scripts\update-t3code-server.ps1 -Remote origin -Branch main
+```bash
+cd ~/code/t3code
+git fetch origin
+git pull --ff-only origin <branch>
+vp i
+vp run build
+systemctl --user restart t3code-server.service
 ```
 
-Use `-SkipGitUpdate` if the checkout is already on the commit you want:
+Verify:
 
-```powershell
-.\scripts\update-t3code-server.ps1 -SkipGitUpdate
+```bash
+systemctl --user status t3code-server.service --no-pager
+curl -i http://127.0.0.1:3773/
+curl -i https://<your-public-t3-url>/
+curl -sS https://<your-public-t3-url>/api/external-intake/health
+vp run health:orchestrator
 ```
-
-The script:
-
-- refuses to merge over a dirty worktree unless `-AllowDirty` is passed
-- runs `bun install`
-- runs `bun run build`
-- restarts the active `t3code-server` path
-- verifies local T3 at `http://127.0.0.1:3773/`
-- verifies Cloudflare T3 at `https://<your-public-t3-url>/`
-- runs `bun run health:orchestrator`
-
-## Update From T3 Or Slack
-
-Use the safe wrapper. It queues the full rebuild in a detached PowerShell process and returns before the server restarts:
-
-```powershell
-cd <repo-root>
-.\scripts\rebuild-t3code-production-safe.ps1 -Remote origin -Branch main
-```
-
-Equivalent package script:
-
-```powershell
-bun run server:update:safe -- -Remote origin -Branch main
-```
-
-If the code is already pulled and only needs rebuilding/restarting:
-
-```powershell
-.\scripts\rebuild-t3code-production-safe.ps1 -SkipGitUpdate
-```
-
-After running this wrapper, immediately tell the user that the rebuild was queued and include the log paths printed by the script. Do not keep doing long work in that same T3 session.
-
-The wrapper writes timestamped update logs under `logs\`, then the updater queues a restart helper. The restart helper waits a few seconds, restarts T3, verifies local and Cloudflare reachability, and writes logs here:
-
-```text
-logs\t3code-server-detached-restart.log
-logs\t3code-server-detached-restart.err.log
-```
-
-Do not use `.\scripts\update-t3code-server.ps1` directly from a T3/Slack-launched session unless you explicitly pass `-DetachedRestart`. The wrapper exists so agents have a one-command safe path.
 
 ## Restart Only
 
-Use this after a manual build:
-
-```powershell
-.\scripts\update-t3code-server.ps1 -RestartOnly
+```bash
+cd ~/code/t3code
+systemctl --user restart t3code-server.service
+systemctl --user status t3code-server.service --no-pager
 ```
 
-Detached restart only:
+## Logs
 
-```powershell
-.\scripts\update-t3code-server.ps1 -RestartOnly -DetachedRestartDelaySeconds 5
+```bash
+journalctl --user -u t3code-server.service -n 150 --no-pager
+journalctl --user -u t3code-server.service -f
 ```
 
-## Health Checks
+## Expected Health
 
-After restart, the updater checks local and Cloudflare reachability automatically. To verify manually:
+The public app should return `200`:
 
-```powershell
-Get-NetTCPConnection -LocalPort 3773 -State Listen
-curl.exe -i http://127.0.0.1:3773/
-curl.exe -i https://<your-public-t3-url>/
-curl.exe -i -X POST https://<your-public-t3-url>/api/execution/runs/status
+```bash
+curl -i https://<your-public-t3-url>/
 ```
 
-Expected bridge status response:
+The unauthenticated bridge check should return:
 
-- `401`: route is live and shared-secret auth is active
-- `503`: route is live but local server is missing `T3_EXECUTION_BRIDGE_SHARED_SECRET`
-- `404`: running build is stale or Cloudflare is not reaching the server
+- `401`: bridge route is live and shared-secret auth is active.
+- `503`: bridge route is live but the shared secret is missing.
+- `404`: stale build or Cloudflare is not reaching the server.
 
-Cloudflare usually does not need a restart for T3 code changes because it only forwards to `127.0.0.1:3773`.
+The external-intake health endpoint should return `ok: true` and the current
+webhook URLs:
+
+```bash
+curl -sS https://<your-public-t3-url>/api/external-intake/health
+```

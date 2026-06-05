@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { WsConnectionStatus } from "../rpc/wsConnectionState";
 import { shouldAutoReconnect, shouldRestartStalledReconnect } from "./WebSocketConnectionSurface";

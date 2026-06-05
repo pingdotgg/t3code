@@ -27,6 +27,7 @@ const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
       port: Schema.NullOr(Schema.Number),
     }),
   ),
+  relayManaged: Schema.optionalKey(Schema.Struct({ relayUrl: Schema.String })),
   bearerToken: Schema.optionalKey(Schema.String),
 });
 type BrowserSavedEnvironmentRecord = typeof BrowserSavedEnvironmentRecordSchema.Type;
@@ -53,7 +54,11 @@ function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
+  return {
+    ...nextRecord,
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+  };
 }
 
 export function readBrowserClientSettings(): ClientSettings | null {
@@ -145,6 +150,7 @@ export function writeBrowserSavedEnvironmentRegistry(
             createdAt: record.createdAt,
             lastConnectedAt: record.lastConnectedAt,
             ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+            ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
             bearerToken,
           }
         : toPersistedSavedEnvironmentRecord(record);
@@ -171,6 +177,8 @@ export function writeBrowserSavedEnvironmentSecret(
   let found = false;
   writeBrowserSavedEnvironmentRegistryDocument({
     version: document.version ?? 1,
+    // The persistence update is copy-on-write so storage subscribers observe a new document.
+    // oxlint-disable-next-line oxc/no-map-spread
     records: records.map((record) => {
       if (record.environmentId !== environmentId) {
         return record;
@@ -185,7 +193,11 @@ export function writeBrowserSavedEnvironmentSecret(
         lastConnectedAt: record.lastConnectedAt,
         bearerToken: secret,
       };
-      return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
+      return {
+        ...nextRecord,
+        ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+        ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+      };
     }),
   });
   return found;

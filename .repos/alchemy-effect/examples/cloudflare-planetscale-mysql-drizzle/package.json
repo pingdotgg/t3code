@@ -1,0 +1,31 @@
+{
+  "name": "cloudflare-planetscale-mysql-drizzle",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/cloudflare-planetscale-mysql-drizzle"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "generate:migrations": "drizzle-kit generate",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.1",
+    "effect": "catalog:",
+    "mysql2": "^3.15.3"
+  },
+  "devDependencies": {
+    "drizzle-kit": "1.0.0-rc.1"
+  }
+}

@@ -54,18 +54,19 @@ describe("owner-pairing-token", () => {
     try {
       const first = db
         .prepare(
-          "SELECT credential, role, subject, consumed_at, revoked_at FROM auth_pairing_links",
+          "SELECT credential, scopes, subject, consumed_at, revoked_at FROM auth_pairing_links",
         )
         .get() as {
         readonly credential: string;
-        readonly role: string;
+        readonly scopes: string;
         readonly subject: string;
         readonly consumed_at: string | null;
         readonly revoked_at: string | null;
       };
       assert.deepStrictEqual(first, {
         credential: "stable-token",
-        role: "owner",
+        scopes:
+          '["orchestration:read","orchestration:operate","terminal:operate","review:write","relay:read","access:read","access:write","relay:write"]',
         subject: "owner-bootstrap",
         consumed_at: null,
         revoked_at: null,

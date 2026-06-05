@@ -132,7 +132,7 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
         const escapedPath = path.resolve(cwd, "..", "escape.md");
         const escapedStat = yield* fileSystem
           .stat(escapedPath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
+          .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
       }),
     );

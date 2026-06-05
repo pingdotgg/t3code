@@ -13,7 +13,7 @@ export interface ElectronThemeShape {
 }
 
 export class ElectronTheme extends Context.Service<ElectronTheme, ElectronThemeShape>()(
-  "t3/desktop/electron/Theme",
+  "@t3tools/desktop/electron/ElectronTheme",
 ) {}
 
 const make = ElectronTheme.of({

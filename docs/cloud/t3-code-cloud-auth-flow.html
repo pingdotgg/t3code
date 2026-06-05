@@ -1,0 +1,1160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Code Cloud Architecture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #171717;
+        --muted: #62646b;
+        --hairline: #d8d8dd;
+        --panel: #ffffff;
+        --paper: #f5f5f2;
+        --blue: #1457d9;
+        --green: #1d7d4d;
+        --amber: #a65f00;
+        --red: #b8242c;
+        --violet: #6150b8;
+        --shadow: 0 18px 55px rgba(25, 25, 28, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+          linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px), var(--paper);
+        background-size: 34px 34px;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.48;
+      }
+
+      .shell {
+        width: min(1540px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 38px 0 72px;
+      }
+
+      header {
+        border-bottom: 2px solid var(--ink);
+        padding-bottom: 24px;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 980px;
+        margin: 8px 0 12px;
+        font-size: clamp(34px, 5vw, 66px);
+        line-height: 0.98;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 26px;
+        line-height: 1.08;
+      }
+
+      h3 {
+        margin: 22px 0 8px;
+        font-size: 17px;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      code,
+      .mono {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      code {
+        border-radius: 4px;
+        background: #f0f0ed;
+        padding: 1px 4px;
+        font-size: 0.92em;
+      }
+
+      .lede {
+        max-width: 1000px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        grid-column: span 12;
+        border: 1px solid var(--hairline);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      .half {
+        grid-column: span 6;
+      }
+
+      .callout {
+        border-left: 5px solid var(--blue);
+        background: #eef4ff;
+        padding: 14px 16px;
+        margin-top: 14px;
+      }
+
+      .callout.warning {
+        border-left-color: var(--amber);
+        background: #fff6e6;
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .badge {
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        background: #fff;
+        padding: 5px 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .badge.user {
+        border-color: rgba(20, 87, 217, 0.3);
+        color: var(--blue);
+      }
+
+      .badge.env {
+        border-color: rgba(29, 125, 77, 0.3);
+        color: var(--green);
+      }
+
+      .badge.local {
+        border-color: rgba(166, 95, 0, 0.35);
+        color: var(--amber);
+      }
+
+      .diagram {
+        overflow-x: auto;
+        margin: 12px 0 0;
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        background: #fbfbf8;
+        color: var(--ink);
+        padding: 18px;
+      }
+
+      .diagram svg {
+        display: block;
+        width: auto !important;
+        min-width: 100%;
+        max-width: none !important;
+        height: auto;
+        margin: 0 auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--hairline);
+        padding: 11px 9px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .flow {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .step {
+        border: 1px solid var(--hairline);
+        border-left: 5px solid var(--green);
+        border-radius: 8px;
+        background: #fff;
+        padding: 12px 14px;
+      }
+
+      .step strong {
+        display: block;
+        margin-bottom: 3px;
+      }
+
+      .source-list a {
+        color: var(--blue);
+        font-weight: 700;
+      }
+
+      @media (max-width: 860px) {
+        .half {
+          grid-column: span 12;
+        }
+
+        .shell {
+          width: min(100vw - 24px, 1540px);
+          padding-top: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div class="eyebrow">Implemented architecture</div>
+        <h1>T3 Code Cloud Control Plane and Managed Endpoint Flow</h1>
+        <p class="lede">
+          T3 Cloud links a locally authorized T3 environment to a signed-in cloud user, provisions a
+          managed HTTPS/WSS endpoint for that environment, and brokers proof-bound remote
+          connections. The local environment remains the authority that issues environment access
+          credentials. The hosted relay stores links, reconciles managed endpoint resources,
+          validates signed proofs, and delivers agent-activity notifications.
+        </p>
+        <div class="badge-row">
+          <span class="badge user">Client -> Relay: Clerk bearer or relay DPoP</span>
+          <span class="badge env">Relay -> Environment: relay-signed health and mint proofs</span>
+          <span class="badge env"
+            >Environment -> Relay: environment bearer plus signed activity proof</span
+          >
+          <span class="badge local">Client -> Environment: environment access token plus DPoP</span>
+        </div>
+      </header>
+
+      <section class="grid" aria-label="Architecture summary">
+        <article class="panel half">
+          <h2>Security Invariant</h2>
+          <p>
+            A cloud identity is not an environment login. Remote access requires all of the
+            following:
+          </p>
+          <ul>
+            <li>a Clerk-authenticated T3 Cloud user;</li>
+            <li>an active relay link for that user and environment;</li>
+            <li>a DPoP proof key held by the remote client;</li>
+            <li>a relay-signed mint request accepted by the linked local environment; and</li>
+            <li>an environment-issued credential bound to the remote client's DPoP thumbprint.</li>
+          </ul>
+          <div class="callout">
+            The relay cannot mint an environment access token by itself. It can only ask the local
+            environment to mint a short-lived bootstrap credential for an authorized cloud user.
+          </div>
+          <p>During an honest connection flow, the relay cannot act as the remote client:</p>
+          <ul>
+            <li>
+              Normal environment API traffic goes directly from the remote client through the
+              managed endpoint. The relay does not receive the resulting environment access token.
+            </li>
+            <li>
+              The one-time bootstrap credential and resulting environment access token are bound to
+              the remote client's DPoP public-key thumbprint. Redeeming or using them requires
+              request proofs signed by the corresponding private key, which stays on the client.
+            </li>
+            <li>
+              Relay-signed health and mint proofs are short-lived, audience-bound, scoped, and
+              replay-guarded. They are accepted only by the narrow cloud endpoints, not as normal
+              environment API credentials.
+            </li>
+            <li>
+              Environment health and mint responses are signed by the linked environment and bound
+              to the request nonce, so a different process behind the tunnel cannot impersonate the
+              linked environment.
+            </li>
+          </ul>
+          <div class="callout warning">
+            The hosted relay remains a trusted mint broker: it holds the cloud-mint signing key.
+            DPoP prevents credential reuse by the relay or tunnel transport during an honest flow,
+            but it does not make compromise of the relay signing authority harmless.
+          </div>
+        </article>
+
+        <article class="panel half">
+          <h2>Product Boundaries</h2>
+          <p>
+            The generic local connector is called the <strong>relay client</strong>. The current
+            implementation layer uses <code>cloudflared</code>, but that is an internal transport
+            detail rather than the product contract.
+          </p>
+          <ul>
+            <li>
+              The relay Worker owns cloud links, managed endpoint allocations, and notifications.
+            </li>
+            <li>
+              The environment server owns local sessions, environment keys, and access tokens.
+            </li>
+            <li>The relay client exposes only the environment's loopback HTTP server.</li>
+            <li>
+              Web and mobile clients connect directly to the managed environment endpoint after
+              bootstrap.
+            </li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="panel" aria-label="Topology">
+        <h2>Current Topology</h2>
+        <pre class="diagram mermaid">
+flowchart LR
+  subgraph Clients["User-facing clients"]
+    Web["Desktop / hosted web UI"]
+    Mobile["Mobile app"]
+    CLI["Headless CLI"]
+  end
+
+  Clerk["Clerk<br/>user identity and OAuth"]
+
+  subgraph Relay["T3 Code Relay on Cloudflare"]
+    Worker["Relay Worker<br/>HTTP API"]
+    Queue["APNs delivery queue<br/>with dead-letter queue"]
+    Hyperdrive["Hyperdrive"]
+    CF["Cloudflare tunnel + DNS APIs"]
+  end
+
+  DB["PlanetScale Postgres<br/>prod database + stage branches"]
+  APNs["Apple Push Notification service"]
+  Traces["Axiom OTLP traces"]
+
+  subgraph Local["Linked T3 environment"]
+    Env["Environment server<br/>local auth authority"]
+    RelayClient["Relay client<br/>cloudflared implementation"]
+    Secrets["Server secret store<br/>keys + relay config"]
+  end
+
+  Endpoint["Managed HTTPS/WSS endpoint"]
+
+  Web -->|"Clerk bearer / relay DPoP"| Worker
+  Mobile -->|"Clerk bearer / relay DPoP"| Worker
+  CLI -->|"Clerk OAuth bearer"| Worker
+  Web --> Clerk
+  Mobile --> Clerk
+  CLI -->|"PKCE authorization code flow"| Clerk
+  Worker --> Hyperdrive --> DB
+  Worker --> Traces
+  Worker --> CF
+  Worker --> Queue --> APNs
+  Worker --> Endpoint
+  Endpoint --> RelayClient -->|"http://127.0.0.1:port"| Env
+  Env --> Secrets
+  Web -->|"environment token + DPoP<br/>HTTPS / WSS"| Endpoint
+  Mobile -->|"environment token + DPoP<br/>HTTPS / WSS"| Endpoint
+  Env -->|"environment bearer + signed activity proof"| Worker
+        </pre>
+      </section>
+
+      <section class="panel" aria-label="Authentication matrix">
+        <h2>Authentication and Transport Matrix</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Boundary</th>
+              <th>Transport</th>
+              <th>Authentication</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Web or mobile -> relay link management</td>
+              <td>HTTPS</td>
+              <td>Clerk session-template bearer token</td>
+              <td>Create a link challenge, submit an environment proof, list links, or unlink.</td>
+            </tr>
+            <tr>
+              <td>CLI -> relay link management</td>
+              <td>HTTPS</td>
+              <td>Clerk OAuth access token obtained with PKCE</td>
+              <td>Reconcile the desired headless cloud link when the server starts.</td>
+            </tr>
+            <tr>
+              <td>Web or mobile -> relay protected client endpoints</td>
+              <td>HTTPS</td>
+              <td>Relay-issued DPoP token plus per-request DPoP proof</td>
+              <td>
+                Check environment status, request a remote connection, and register mobile devices.
+              </td>
+            </tr>
+            <tr>
+              <td>Relay -> managed environment endpoint</td>
+              <td>HTTPS over the managed tunnel</td>
+              <td>Short-lived relay-signed JWT request proof</td>
+              <td>
+                Request a signed health response or ask the local environment to mint a credential.
+              </td>
+            </tr>
+            <tr>
+              <td>Environment -> relay activity publication</td>
+              <td>HTTPS</td>
+              <td>Relay-issued environment bearer credential plus environment-signed JWT proof</td>
+              <td>
+                Publish redacted agent-activity state for push notifications and Live Activities.
+              </td>
+            </tr>
+            <tr>
+              <td>Remote client -> environment</td>
+              <td>HTTPS and WSS over the managed tunnel</td>
+              <td>Environment-issued access token bound to the client DPoP key</td>
+              <td>Use the normal environment HTTP APIs and request a one-time WebSocket ticket.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel" aria-label="Credential ownership">
+        <h2>Credential Ownership</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Credential</th>
+              <th>Created by</th>
+              <th>Stored by</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Clerk session-template JWT</td>
+              <td>Clerk</td>
+              <td>Web or mobile client</td>
+              <td>
+                Authenticate cloud-user relay requests and bootstrap relay DPoP token exchange.
+              </td>
+            </tr>
+            <tr>
+              <td>CLI OAuth access and refresh token</td>
+              <td>Clerk OAuth</td>
+              <td>Local server secret store</td>
+              <td>Authorize headless CLI link reconciliation.</td>
+            </tr>
+            <tr>
+              <td>Environment Ed25519 key pair</td>
+              <td>Local environment server</td>
+              <td>Local server secret store</td>
+              <td>
+                Sign link proofs, health responses, mint responses, and activity publication proofs.
+              </td>
+            </tr>
+            <tr>
+              <td>Relay cloud-mint key pair</td>
+              <td>Relay deployment</td>
+              <td>Private key in relay Worker config; public key installed into the environment</td>
+              <td>Sign relay-to-environment health and mint requests.</td>
+            </tr>
+            <tr>
+              <td>Relay environment bearer credential</td>
+              <td>Relay</td>
+              <td>Hashed in relay Postgres; plaintext in local server secret store</td>
+              <td>Authenticate environment-to-relay agent-activity publication.</td>
+            </tr>
+            <tr>
+              <td>Relay DPoP access token</td>
+              <td>Relay</td>
+              <td>Remote client memory cache</td>
+              <td>
+                Authorize status, connect, and mobile registration endpoints with proof of
+                possession.
+              </td>
+            </tr>
+            <tr>
+              <td>Environment bootstrap credential</td>
+              <td>Local environment server</td>
+              <td>Passed relay -> remote client</td>
+              <td>One-time exchange at the environment <code>/oauth/token</code> endpoint.</td>
+            </tr>
+            <tr>
+              <td>Environment access token</td>
+              <td>Local environment server</td>
+              <td>Remote client</td>
+              <td>Authorize environment HTTP operations and WebSocket ticket issuance.</td>
+            </tr>
+            <tr>
+              <td>WebSocket ticket</td>
+              <td>Local environment server</td>
+              <td>Remote client until consumed</td>
+              <td>Short-lived one-time credential for the WSS upgrade.</td>
+            </tr>
+            <tr>
+              <td>Relay client connector token</td>
+              <td>Cloudflare tunnel API</td>
+              <td>Local server secret store</td>
+              <td>
+                Start the local relay client. It is passed through <code>TUNNEL_TOKEN</code>, not a
+                shell argument.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="grid" aria-label="Core flows">
+        <article class="panel">
+          <h2>Flow 1: Link From the Desktop Web UI</h2>
+          <pre class="diagram mermaid">
+sequenceDiagram
+  participant U as Signed-in user
+  participant C as Desktop web UI
+  participant E as Local environment
+  participant R as Relay Worker
+  participant CF as Cloudflare APIs
+  participant RC as Local relay client
+
+  U->>C: Enable T3 Cloud for a locally paired environment
+  C->>E: Check relay client availability
+  alt relay client is missing
+    C->>U: Prompt before download and install
+    U->>C: Confirm
+    C->>E: Stream relay-client install RPC
+    E-->>C: Progress stages
+  end
+  C->>R: POST /v1/client/environment-link-challenges (Clerk bearer)
+  R-->>C: Short-lived challenge
+  C->>E: POST /api/cloud/link-proof (local relay:write bearer)
+  E->>E: Authenticate, reject forwarded authority, get or create key pair, validate loopback origin
+  E-->>C: Environment-signed link proof
+  C->>R: POST /v1/client/environment-links (Clerk bearer + proof)
+  R->>R: Verify challenge, proof, capabilities, nonce, and loopback origin
+  R->>CF: Reconcile tunnel, ingress, and CNAME
+  R->>R: Upsert user/environment link and issue environment bearer
+  R-->>C: Managed endpoint, relay config, and connector token
+  C->>E: POST /api/cloud/relay-config (local relay:write bearer)
+  E->>RC: Start relay client with TUNNEL_TOKEN
+          </pre>
+          <div class="callout">
+            The local link-proof endpoint requires <code>relay:write</code>, rejects forwarded
+            authority headers, and accepts only an exact loopback origin. Environment keypair
+            persistence is atomic across concurrent link attempts.
+          </div>
+          <p>
+            A locally paired mobile client uses the same relay challenge, local proof, relay link,
+            and local relay-config endpoints. The desktop web UI is the surface that checks relay
+            client availability and offers the managed install dialog.
+          </p>
+        </article>
+
+        <article class="panel">
+          <h2>Flow 2: Headless CLI Link</h2>
+          <pre class="diagram mermaid">
+sequenceDiagram
+  participant U as Operator
+  participant CLI as t3 cloud CLI
+  participant Clerk as Clerk OAuth
+  participant S as Environment server on next start
+  participant R as Relay Worker
+  participant RC as Local relay client
+
+  U->>CLI: t3 cloud link
+  CLI->>CLI: Resolve relay client
+  alt relay client is missing
+    CLI->>U: Confirm managed relay-client install
+    U->>CLI: Confirm
+    CLI->>CLI: Install with terminal progress updates
+  end
+  CLI->>Clerk: Browser PKCE authorization-code flow
+  Clerk-->>CLI: OAuth access and refresh tokens
+  CLI->>CLI: Persist desired cloud-link state
+  U->>S: Start T3 environment server
+  S->>R: Create challenge and submit local signed proof
+  R-->>S: Managed endpoint config and connector token
+  S->>RC: Start relay client
+          </pre>
+          <p>
+            <code>t3 cloud login</code> stores authorization without enabling exposure.
+            <code>t3 cloud unlink</code> disables exposure while retaining authorization.
+            <code>t3 cloud logout</code> also removes the stored CLI authorization.
+          </p>
+        </article>
+
+        <article class="panel">
+          <h2>Flow 3: Remote Connect Bootstrap</h2>
+          <pre class="diagram mermaid">
+sequenceDiagram
+  participant C as Web or mobile client
+  participant Clerk as Clerk
+  participant R as Relay Worker
+  participant E as Managed environment endpoint
+
+  C->>Clerk: Get Clerk session-template JWT
+  C->>R: POST /v1/client/dpop-token (Clerk JWT + DPoP proof)
+  R-->>C: Relay DPoP access token
+  C->>R: POST /v1/environments/:id/connect (relay DPoP)
+  R->>E: POST /api/t3-cloud/mint-credential (relay-signed proof)
+  E->>E: Verify relay signer, linked user, scope, lifetime, cnf, and replay guards
+  E-->>R: Bootstrap credential + environment-signed proof
+  R->>R: Verify environment signature, nonce, endpoint, and DPoP binding
+  R-->>C: Managed endpoint + bootstrap credential
+  C->>E: POST /oauth/token (bootstrap credential + DPoP proof)
+  E-->>C: Environment DPoP-bound access token
+  C->>E: POST /api/auth/websocket-ticket
+  E-->>C: One-time WebSocket ticket
+  C->>E: WSS /ws with ticket
+          </pre>
+          <div class="callout">
+            Relay-to-environment control requests disable redirects, use only a reconciled managed
+            endpoint allocation, and require a signed environment response before the relay returns
+            data to the client.
+          </div>
+        </article>
+
+        <article class="panel">
+          <h2>Flow 4: Agent Activity Notifications</h2>
+          <pre class="diagram mermaid">
+sequenceDiagram
+  participant E as Local environment
+  participant R as Relay Worker
+  participant DB as Relay Postgres
+  participant Q as APNs queue
+  participant APNs as Apple Push Notification service
+  participant M as Mobile app
+
+  E->>E: Project publishable thread state and redact failure detail
+  E->>R: POST /v1/environments/:environmentId/threads/:threadId/agent-activity
+  Note over E,R: Environment bearer credential + environment-signed per-state proof
+  R->>R: Verify credential, signature, scope, expiry, and nonce
+  R->>DB: Store current activity row
+  R->>Q: Enqueue push or Live Activity delivery jobs
+  Q->>APNs: Deliver signed APNs request
+  APNs-->>M: Push notification or Live Activity update
+          </pre>
+          <p>
+            The local server publishes a deliberately narrow projection. Failed runs use a fixed
+            redacted summary, and detail strings are capped before publication.
+          </p>
+        </article>
+      </section>
+
+      <section class="grid" aria-label="Managed endpoint lifecycle">
+        <article class="panel half">
+          <h2>Managed Endpoint Reconciliation</h2>
+          <p>
+            Managed endpoint resources are keyed by <code>(userId, environmentId)</code>. The relay
+            reserves a stable hostname and tunnel name before provisioning, then checkpoints the
+            tunnel ID, DNS record ID, and ready state in Postgres.
+          </p>
+          <div class="flow">
+            <div class="step">
+              <strong>1. Reserve deterministic allocation</strong>
+              Hostname and tunnel name derive from relay stage, cloud user, and environment ID.
+            </div>
+            <div class="step">
+              <strong>2. Reuse or create tunnel</strong>
+              Existing named tunnels are reused. Tunnel ingress is rewritten to the validated
+              loopback origin.
+            </div>
+            <div class="step">
+              <strong>3. Reconcile DNS</strong>
+              Existing CNAMEs are updated and duplicate records are removed. Create conflicts are
+              recovered by listing and reconciling the winning record.
+            </div>
+            <div class="step">
+              <strong>4. Mark ready</strong>
+              Connect and status requests use only ready allocations whose hostname still matches
+              the relay-managed namespace.
+            </div>
+          </div>
+        </article>
+
+        <article class="panel half">
+          <h2>Unlink Cleanup</h2>
+          <p>
+            Relay unlink removes the user's managed endpoint allocation before revoking the
+            user/environment link:
+          </p>
+          <ul>
+            <li>delete the managed DNS record if present;</li>
+            <li>delete the Cloudflare tunnel if present;</li>
+            <li>remove the allocation row;</li>
+            <li>revoke the user's environment link; and</li>
+            <li>
+              revoke the environment publication credential only after the final active link for
+              that environment key disappears.
+            </li>
+          </ul>
+          <p>
+            Local unlink stops the relay client and removes the locally persisted relay URL, issuer,
+            linked user, environment publication credential, cloud-mint public key, connector
+            config, and agent-activity preference.
+          </p>
+        </article>
+      </section>
+
+      <section class="panel" aria-label="Cloudflare tunnel operational profile">
+        <h2>Cloudflare Tunnel Operational Profile</h2>
+        <p>
+          Managed tunnels are private application backends, not general-purpose public hosting. The
+          relay provisions one named Cloudflare tunnel and one DNS record per active
+          <code>(userId, environmentId)</code> allocation.
+        </p>
+        <ul>
+          <li>
+            <strong>Lifecycle:</strong> the tunnel is created when an environment is linked, reused
+            across retry-safe reconciliation, kept for the lifetime of that link, and deleted on
+            unlink. If teardown fails, the allocation checkpoint remains so cleanup can be retried.
+          </li>
+          <li>
+            <strong>Origin:</strong> tunnel ingress is restricted to the linked environment server's
+            validated loopback HTTP origin. Arbitrary upstream hosts and raw TCP origins are
+            rejected.
+          </li>
+          <li>
+            <strong>Protocols:</strong> managed endpoints carry HTTPS request/response traffic and
+            WSS connections only. Remote clients use the normal environment HTTP APIs and
+            authenticated WebSocket RPC transport through the tunnel.
+          </li>
+          <li>
+            <strong>Relay-generated traffic:</strong> the hosted relay sends sparse HTTPS health
+            checks and credential-mint requests during status checks and remote connection
+            bootstrap. It does not proxy steady-state remote sessions.
+          </li>
+          <li>
+            <strong>Traffic shape:</strong> expected load is interactive and user-driven. Active
+            remote sessions may keep WebSockets open and exchange terminal, agent, and UI updates;
+            inactive linked environments should carry little or no tunnel traffic.
+          </li>
+          <li>
+            <strong>Capacity planning:</strong> the project is pre-launch, so there is not yet a
+            production bandwidth baseline. Tunnel count grows with active linked user/environment
+            allocations, while bandwidth and concurrent WebSockets grow with active remote use.
+          </li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-label="SSRF and tunnel hardening">
+        <h2>SSRF and Tunnel Hardening</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Implemented control</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>A client asks the relay to tunnel an arbitrary host.</td>
+              <td>
+                The environment and relay both accept managed tunnel origins only for loopback hosts
+                and valid ports.
+              </td>
+            </tr>
+            <tr>
+              <td>A forwarded request tricks local origin validation.</td>
+              <td>
+                The local link-proof handler requires an exact loopback request URL and rejects
+                forwarded host or protocol headers.
+              </td>
+            </tr>
+            <tr>
+              <td>A stored endpoint is replaced with an arbitrary external URL.</td>
+              <td>
+                Connect and status resolve a ready allocation from Postgres and require a hostname
+                under the configured managed endpoint zone.
+              </td>
+            </tr>
+            <tr>
+              <td>A managed endpoint redirects relay egress elsewhere.</td>
+              <td>
+                Relay-to-environment status and mint requests set redirect handling to
+                <code>manual</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>A process behind the tunnel returns attacker-controlled data.</td>
+              <td>
+                The relay verifies environment-signed health and mint responses against the linked
+                environment public key, expected nonce, and request binding.
+              </td>
+            </tr>
+            <tr>
+              <td>A stolen remote access token is replayed.</td>
+              <td>
+                Relay and environment access tokens are DPoP-bound; per-request proofs and replay
+                guards are required.
+              </td>
+            </tr>
+            <tr>
+              <td>The relay client token leaks through process listings or shell parsing.</td>
+              <td>
+                The relay client is spawned without a shell and receives its connector token in
+                <code>TUNNEL_TOKEN</code>.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout warning">
+          Managed tunnel hostnames live under the configured tunnel DNS zone. Serving them from a
+          dedicated registrable domain with a Public Suffix List entry remains an operational
+          isolation requirement before broad untrusted use.
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Relay HTTP API">
+        <h2>Relay HTTP API</h2>
+        <p>
+          The relay publishes an OpenAPI document at <code>/openapi.json</code>, interactive API
+          docs at <code>/docs</code>, and redirects <code>/</code> to the docs.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Endpoint</th>
+              <th>Authentication</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>GET /health</code></td>
+              <td>None</td>
+              <td>Relay health check.</td>
+            </tr>
+            <tr>
+              <td><code>GET /.well-known/oauth-authorization-server</code></td>
+              <td>None</td>
+              <td>Relay OAuth token-exchange discovery metadata.</td>
+            </tr>
+            <tr>
+              <td><code>GET /.well-known/oauth-protected-resource</code></td>
+              <td>None</td>
+              <td>Relay DPoP protected-resource discovery metadata.</td>
+            </tr>
+            <tr>
+              <td><code>GET /v1/environments</code></td>
+              <td>Clerk bearer</td>
+              <td>List environments linked to the signed-in user.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/client/environment-link-challenges</code></td>
+              <td>Clerk bearer</td>
+              <td>Create a short-lived user-bound environment link challenge.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/client/environment-links</code></td>
+              <td>Clerk bearer</td>
+              <td>
+                Verify a local environment proof, reconcile a managed endpoint, and upsert the user
+                link.
+              </td>
+            </tr>
+            <tr>
+              <td><code>DELETE /v1/client/environment-links/:environmentId</code></td>
+              <td>Clerk bearer</td>
+              <td>Remove managed endpoint resources and revoke the user's link.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/client/dpop-token</code></td>
+              <td>Clerk token in token-exchange payload plus DPoP proof</td>
+              <td>Issue a relay DPoP access token for the requested supported scopes.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/environments/:environmentId/status</code></td>
+              <td>Relay DPoP</td>
+              <td>Request and validate a signed environment health response.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/environments/:environmentId/connect</code></td>
+              <td>Relay DPoP</td>
+              <td>Request and validate an environment bootstrap credential.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/mobile/devices</code></td>
+              <td>Relay DPoP</td>
+              <td>Register or update a mobile device for notifications.</td>
+            </tr>
+            <tr>
+              <td><code>POST /v1/mobile/live-activities</code></td>
+              <td>Relay DPoP</td>
+              <td>Register a Live Activity push token.</td>
+            </tr>
+            <tr>
+              <td><code>DELETE /v1/mobile/devices/:deviceId</code></td>
+              <td>Relay DPoP</td>
+              <td>Unregister a mobile device.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>POST /v1/environments/:environmentId/threads/:threadId/agent-activity</code>
+              </td>
+              <td>Environment bearer plus signed publish proof</td>
+              <td>Publish redacted current agent activity for notification delivery.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel" aria-label="Environment HTTP API">
+        <h2>Environment Cloud HTTP API</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Endpoint</th>
+              <th>Authentication</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>POST /api/cloud/link-proof</code></td>
+              <td>Local environment token with <code>relay:write</code></td>
+              <td>Validate local origin and sign an environment link proof.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/cloud/relay-config</code></td>
+              <td>Local environment token with <code>relay:write</code></td>
+              <td>Persist linked relay configuration and start the relay client.</td>
+            </tr>
+            <tr>
+              <td><code>GET /api/cloud/link-state</code></td>
+              <td>Local environment token with <code>relay:read</code></td>
+              <td>Read the environment's current T3 Cloud link state.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/cloud/preferences</code></td>
+              <td>Local environment token with <code>relay:write</code></td>
+              <td>Enable or disable agent-activity publication.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/cloud/unlink</code></td>
+              <td>Local environment token with <code>relay:write</code></td>
+              <td>Stop the relay client and clear local T3 Cloud configuration.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/t3-cloud/health</code></td>
+              <td>Relay-signed proof</td>
+              <td>Return a signed environment health response.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/t3-cloud/mint-credential</code></td>
+              <td>Relay-signed proof</td>
+              <td>Mint a DPoP-bound one-time bootstrap credential for a remote client.</td>
+            </tr>
+            <tr>
+              <td><code>POST /oauth/token</code></td>
+              <td>Bootstrap credential plus DPoP proof</td>
+              <td>Exchange a bootstrap credential for an environment access token.</td>
+            </tr>
+            <tr>
+              <td><code>POST /api/auth/websocket-ticket</code></td>
+              <td>Environment access token</td>
+              <td>Issue a one-time ticket for the WSS upgrade.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="grid" aria-label="Runtime and infrastructure">
+        <article class="panel half">
+          <h2>Relay Client Installation</h2>
+          <p>
+            Desktop web UI availability checks and installs are local WebSocket RPC methods:
+            <code>cloud.getRelayClientStatus</code> and streaming
+            <code>cloud.installRelayClient</code>. The install stream emits the current stage:
+            checking, waiting for lock, downloading, verifying, installing, validating, and
+            activating.
+          </p>
+          <p>
+            The web UI asks for confirmation before installation and displays a custom progress
+            dialog. The CLI invokes the same local relay-client service directly and reports the
+            same progress stages in the terminal.
+          </p>
+        </article>
+
+        <article class="panel half">
+          <h2>Relay Infrastructure</h2>
+          <ul>
+            <li>Cloudflare Worker for the hosted relay HTTP API.</li>
+            <li>PlanetScale Postgres database named <code>t3coderelay</code>.</li>
+            <li>
+              Production uses the shared database; non-production stages use database branches.
+            </li>
+            <li>
+              Cloudflare Hyperdrive with caching disabled and a constrained origin connection limit.
+            </li>
+            <li>Cloudflare tunnel and DNS bindings for managed endpoint reconciliation.</li>
+            <li>Cloudflare APNs delivery queue plus dead-letter queue.</li>
+            <li>A five-minute cron job that prunes expired DPoP replay rows.</li>
+            <li>Axiom OTLP trace dataset, scoped ingest token, and recent-spans view per stage.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="panel" aria-label="Deployment configuration">
+        <h2>Deployment Configuration</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Boundary</th>
+              <th>Configuration</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Relay infrastructure</td>
+              <td>
+                <code>RELAY_API_ZONE_NAME</code>, <code>RELAY_TUNNEL_ZONE_NAME</code>, optional
+                <code>RELAY_DOMAIN</code>, <code>CLERK_PUBLISHABLE_KEY</code>,
+                <code>CLERK_SECRET_KEY</code>, <code>CLERK_JWT_AUDIENCE</code>, and APNs
+                credentials.
+              </td>
+            </tr>
+            <tr>
+              <td>Source-built desktop/server cloud features</td>
+              <td>
+                Optional <code>T3CODE_RELAY_URL</code>, <code>T3CODE_CLERK_PUBLISHABLE_KEY</code>,
+                and <code>T3CODE_CLERK_CLI_OAUTH_CLIENT_ID</code>. Release builds inject public
+                values at build time.
+              </td>
+            </tr>
+            <tr>
+              <td>Web and mobile cloud clients</td>
+              <td>
+                Public Clerk publishable key, Clerk JWT template name, and relay URL. Relay URLs
+                must normalize to an absolute HTTPS origin without credentials, query, fragment, or
+                non-root path.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel" aria-label="Implementation checklist">
+        <h2>Implementation Checklist</h2>
+        <ul>
+          <li>
+            Keep the relay cloud-mint private key hosted-only; install only its public key into
+            environments.
+          </li>
+          <li>
+            Keep environment signing private keys local and persist keypair creation atomically.
+          </li>
+          <li>
+            Require a local <code>relay:write</code> session before linking or changing relay
+            config.
+          </li>
+          <li>Validate relay URLs as secure absolute HTTPS origins before sending credentials.</li>
+          <li>Require loopback-only tunnel origins on both sides of the link-proof boundary.</li>
+          <li>
+            Resolve managed endpoint egress from ready allocation rows, not client-supplied URLs.
+          </li>
+          <li>Disable redirects on relay-to-environment requests.</li>
+          <li>Validate environment-signed response proofs before consuming tunneled responses.</li>
+          <li>Keep tunnel and DNS provisioning retry-safe and deprovision them on unlink.</li>
+          <li>
+            Revoke shared environment publication credentials only after the final active link
+            disappears.
+          </li>
+          <li>Redact and cap local agent failure details before publishing them externally.</li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-label="Standards references">
+        <h2>Standards References</h2>
+        <ul class="source-list">
+          <li>
+            <a href="https://www.rfc-editor.org/rfc/rfc8252">RFC 8252</a>: browser-based OAuth for
+            native apps, used by the CLI PKCE authorization flow.
+          </li>
+          <li>
+            <a href="https://www.rfc-editor.org/rfc/rfc8693">RFC 8693</a>: OAuth token exchange,
+            used for Clerk-token to relay-DPoP-token exchange.
+          </li>
+          <li>
+            <a href="https://www.rfc-editor.org/rfc/rfc9449">RFC 9449</a>: DPoP proof of possession,
+            used for relay and environment access tokens.
+          </li>
+        </ul>
+      </section>
+    </main>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: {
+          fontFamily: 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          primaryColor: "#eef4ff",
+          primaryBorderColor: "#1457d9",
+          primaryTextColor: "#171717",
+          lineColor: "#62646b",
+          signalColor: "#171717",
+          signalTextColor: "#171717",
+          noteBkgColor: "#fff6e6",
+          noteTextColor: "#171717",
+          actorBkg: "#fbfbf8",
+          actorBorder: "#62646b",
+          actorTextColor: "#171717",
+        },
+        flowchart: {
+          htmlLabels: true,
+          curve: "basis",
+          padding: 18,
+        },
+        sequence: {
+          showSequenceNumbers: true,
+          mirrorActors: false,
+          rightAngles: false,
+        },
+      });
+
+      await mermaid.run({ querySelector: ".diagram.mermaid" });
+
+      for (const svg of document.querySelectorAll(".diagram.mermaid svg")) {
+        const viewBox = svg.getAttribute("viewBox");
+        const width = viewBox?.split(/\s+/).map(Number)[2];
+        if (Number.isFinite(width) && width > 0) {
+          svg.style.setProperty("width", `${Math.ceil(width)}px`, "important");
+          svg.style.setProperty("max-width", "none", "important");
+        }
+      }
+    </script>
+  </body>
+</html>

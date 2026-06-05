@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { beforeEach } from "vitest";
+import { beforeEach } from "vite-plus/test";
 
 import {
   OpenCodeSettings,
@@ -37,7 +37,7 @@ import {
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
 class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
-  "test/OpenCodeAdapter",
+  "t3/provider/Layers/OpenCodeAdapter.test/OpenCodeAdapter",
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);

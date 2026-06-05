@@ -1,0 +1,16 @@
+diff --git a/package.json b/package.json
+index 4e4366fb9d05a6c250acfc62e79487475d8ac05b..200e4680d77cbb4f14d22eb986efde1275a0d3e8 100644
+--- a/package.json
++++ b/package.json
+@@ -88,6 +88,11 @@
+     "jsSrcsDir": "./src",
+     "android": {
+       "javaPackageName": "com.margelo.nitro"
++    },
++    "ios": {
++      "modulesProvider": {
++        "NitroModules": "NativeNitroModules"
++      }
+     }
+   },
+   "jest": {

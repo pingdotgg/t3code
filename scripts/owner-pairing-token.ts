@@ -9,6 +9,16 @@ import { DatabaseSync } from "node:sqlite";
 export const OWNER_PAIRING_TOKEN_ENV = "T3CODE_OWNER_PAIRING_TOKEN";
 export const DEFAULT_OWNER_PAIRING_ID = "env-owner-bootstrap";
 export const DEFAULT_OWNER_PAIRING_LABEL = "Stable owner bootstrap";
+const OWNER_PAIRING_SCOPES = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "review:write",
+  "relay:read",
+  "access:read",
+  "access:write",
+  "relay:write",
+] as const;
 
 export type OwnerPairingState = "dev" | "userdata";
 
@@ -71,9 +81,10 @@ export function ensureOwnerPairingSchema(db: DatabaseSync): void {
       id TEXT PRIMARY KEY,
       credential TEXT NOT NULL UNIQUE,
       method TEXT NOT NULL,
-      role TEXT NOT NULL,
+      scopes TEXT NOT NULL,
       subject TEXT NOT NULL,
       label TEXT,
+      proof_key_thumbprint TEXT,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       consumed_at TEXT,
@@ -88,6 +99,12 @@ export function ensureOwnerPairingSchema(db: DatabaseSync): void {
   }>;
   if (!columns.some((column) => column.name === "label")) {
     db.exec("ALTER TABLE auth_pairing_links ADD COLUMN label TEXT;");
+  }
+  if (!columns.some((column) => column.name === "scopes")) {
+    db.exec("ALTER TABLE auth_pairing_links ADD COLUMN scopes TEXT;");
+  }
+  if (!columns.some((column) => column.name === "proof_key_thumbprint")) {
+    db.exec("ALTER TABLE auth_pairing_links ADD COLUMN proof_key_thumbprint TEXT;");
   }
 
   db.exec(`
@@ -122,26 +139,28 @@ export function seedOwnerPairingToken(config: OwnerPairingConfig): void {
             id,
             credential,
             method,
-            role,
+            scopes,
             subject,
             label,
+            proof_key_thumbprint,
             created_at,
             expires_at,
             consumed_at,
             revoked_at
           )
-          VALUES (?, ?, 'one-time-token', 'owner', 'owner-bootstrap', ?, ?, ?, NULL, NULL)
+          VALUES (?, ?, 'one-time-token', ?, 'owner-bootstrap', ?, NULL, ?, ?, NULL, NULL)
           ON CONFLICT(id) DO UPDATE SET
             credential = excluded.credential,
             method = excluded.method,
-            role = excluded.role,
+            scopes = excluded.scopes,
             subject = excluded.subject,
             label = excluded.label,
+            proof_key_thumbprint = excluded.proof_key_thumbprint,
             expires_at = excluded.expires_at,
             consumed_at = NULL,
             revoked_at = NULL
         `,
-      ).run(id, token, label, now, expiresAt);
+      ).run(id, token, JSON.stringify(OWNER_PAIRING_SCOPES), label, now, expiresAt);
       db.exec("COMMIT;");
     } catch (error) {
       db.exec("ROLLBACK;");

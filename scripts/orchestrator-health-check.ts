@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalConsole:off
 // @effect-diagnostics globalDate:off
+// @effect-diagnostics globalFetch:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics nodeBuiltinImport:off
 
@@ -12,12 +13,11 @@ import { pathToFileURL } from "node:url";
 export interface HealthCheckConfig {
   readonly localBaseUrl: string;
   readonly publicBaseUrl: string;
-  readonly convexSiteUrl?: string | undefined;
+  readonly externalIntakeHealthPath: string;
   readonly alertEndpointUrl?: string | undefined;
   readonly alertSecret?: string | undefined;
   readonly notifyOnFailure: boolean;
   readonly alertStatePath: string;
-  readonly orchestratorDir: string;
   readonly serverServiceName: string;
   readonly tunnelServiceName: string;
   readonly timeoutMs: number;
@@ -79,8 +79,6 @@ export function loadLocalEnvFiles(env: NodeJS.ProcessEnv = process.env): void {
 }
 
 export function defaultHealthCheckConfig(env: NodeJS.ProcessEnv = process.env): HealthCheckConfig {
-  const convexSiteUrl =
-    envValue(env, "T3CODE_HEALTH_CONVEX_SITE_URL") ?? envValue(env, "ORCHESTRATOR_BASE_URL");
   const localBaseUrl = envValue(env, "T3CODE_HEALTH_LOCAL_BASE_URL") ?? "http://127.0.0.1:3773";
   return {
     localBaseUrl,
@@ -88,17 +86,13 @@ export function defaultHealthCheckConfig(env: NodeJS.ProcessEnv = process.env): 
       envValue(env, "T3CODE_HEALTH_PUBLIC_BASE_URL") ??
       envValue(env, "T3CODE_PUBLIC_BASE_URL") ??
       localBaseUrl,
-    convexSiteUrl,
-    alertEndpointUrl:
-      envValue(env, "T3CODE_HEALTH_ALERT_URL") ??
-      (convexSiteUrl === undefined
-        ? undefined
-        : `${convexSiteUrl.replace(/\/$/, "")}/ops/health-alert`),
+    externalIntakeHealthPath:
+      envValue(env, "T3CODE_HEALTH_EXTERNAL_INTAKE_PATH") ?? "/api/external-intake/health",
+    alertEndpointUrl: envValue(env, "T3CODE_HEALTH_ALERT_URL"),
     alertSecret: envValue(env, "T3_OPS_ALERT_SECRET"),
     notifyOnFailure: env.T3CODE_HEALTH_NOTIFY === "1",
     alertStatePath:
       env.T3CODE_HEALTH_ALERT_STATE_PATH ?? "logs/orchestrator-health-monitor-state.json",
-    orchestratorDir: env.T3CODE_HEALTH_ORCHESTRATOR_DIR ?? "apps/orchestrator",
     serverServiceName: env.T3CODE_HEALTH_SERVER_SERVICE ?? "t3code-server",
     tunnelServiceName: env.T3CODE_HEALTH_TUNNEL_SERVICE ?? "cloudflared-t3code",
     timeoutMs: Number(env.T3CODE_HEALTH_TIMEOUT_MS ?? "10000"),
@@ -178,6 +172,42 @@ async function checkBridge(config: HealthCheckConfig): Promise<CheckResult> {
   } catch (error) {
     return {
       name: "bridge auth",
+      ok: false,
+      details: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function checkExternalIntakeHealth(config: HealthCheckConfig): Promise<CheckResult> {
+  const path = config.externalIntakeHealthPath.startsWith("/")
+    ? config.externalIntakeHealthPath
+    : `/${config.externalIntakeHealthPath}`;
+  const url = `${config.publicBaseUrl.replace(/\/$/, "")}${path}`;
+  try {
+    const response = await fetchWithTimeout(url, {}, config.timeoutMs, "external intake health");
+    const detailsPrefix = `${url} -> HTTP ${response.status}`;
+    if (!response.ok) {
+      return {
+        name: "external intake health",
+        ok: false,
+        details: detailsPrefix,
+      };
+    }
+
+    const body = (await response.json().catch(() => null)) as unknown;
+    const ok =
+      typeof body === "object" &&
+      body !== null &&
+      "ok" in body &&
+      (body as { readonly ok?: unknown }).ok === true;
+    return {
+      name: "external intake health",
+      ok,
+      details: ok ? `${detailsPrefix}; ok=true` : `${detailsPrefix}; response missing ok=true`,
+    };
+  } catch (error) {
+    return {
+      name: "external intake health",
       ok: false,
       details: error instanceof Error ? error.message : String(error),
     };
@@ -292,75 +322,6 @@ async function checkT3ServerRuntime(config: HealthCheckConfig): Promise<CheckRes
   };
 }
 
-function convexDeploymentFromSiteUrl(siteUrl: string | undefined) {
-  if (siteUrl === undefined) {
-    return undefined;
-  }
-  try {
-    const host = new URL(siteUrl).hostname;
-    const deploymentName = host.endsWith(".convex.site")
-      ? host.slice(0, -".convex.site".length)
-      : "";
-    return deploymentName.length > 0 ? `prod:${deploymentName}` : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function checkConvex(config: HealthCheckConfig): Promise<ReadonlyArray<CheckResult>> {
-  const results: CheckResult[] = [];
-  if (config.convexSiteUrl !== undefined) {
-    results.push(
-      await checkFetch(
-        "convex health",
-        `${config.convexSiteUrl.replace(/\/$/, "")}/health`,
-        config.timeoutMs,
-      ),
-    );
-  } else {
-    results.push({
-      name: "convex health",
-      ok: false,
-      details: "set T3CODE_HEALTH_CONVEX_SITE_URL or ORCHESTRATOR_BASE_URL",
-    });
-  }
-
-  const convexEnv = {
-    ...process.env,
-    ...(convexDeploymentFromSiteUrl(config.convexSiteUrl) !== undefined
-      ? { CONVEX_DEPLOYMENT: convexDeploymentFromSiteUrl(config.convexSiteUrl) }
-      : {}),
-  };
-  const events = await runCommand(
-    "bunx",
-    [
-      "convex",
-      "run",
-      "--prod",
-      "observability:listRecent",
-      "--",
-      '{ "severity": "error", "limit": 5 }',
-    ],
-    { cwd: config.orchestratorDir, timeoutMs: config.timeoutMs, env: convexEnv },
-  );
-  results.push({
-    name: "recent orchestrator errors",
-    ok: events.code === 0,
-    details:
-      events.code === 0
-        ? summarizeConvexRun(events.stdout)
-        : (events.stderr || events.stdout || `convex exited ${events.code}`).trim(),
-  });
-
-  return results;
-}
-
-function summarizeConvexRun(output: string) {
-  const trimmed = output.trim();
-  if (!trimmed || trimmed === "[]") return "no recent error events returned";
-  return trimmed.split(/\r?\n/).slice(-8).join(" ").slice(0, 500);
-}
-
 export async function runHealthChecks(config: HealthCheckConfig) {
   const results: CheckResult[] = [];
   results.push(await checkT3ServerRuntime(config));
@@ -368,7 +329,7 @@ export async function runHealthChecks(config: HealthCheckConfig) {
   results.push(await checkFetch("local T3", config.localBaseUrl, config.timeoutMs));
   results.push(await checkFetch("public T3", config.publicBaseUrl, config.timeoutMs));
   results.push(await checkBridge(config));
-  results.push(...(await checkConvex(config)));
+  results.push(await checkExternalIntakeHealth(config));
   return results;
 }
 
@@ -446,9 +407,7 @@ async function postHealthAlert(input: {
   const { config, status, checkedAt, results } = input;
   const failing = results.filter((result) => !result.ok);
   if (config.alertEndpointUrl === undefined || config.alertSecret === undefined) {
-    console.warn(
-      "WARN ops alert: set T3CODE_HEALTH_ALERT_URL/ORCHESTRATOR_BASE_URL and T3_OPS_ALERT_SECRET",
-    );
+    console.warn("WARN ops alert: set T3CODE_HEALTH_ALERT_URL and T3_OPS_ALERT_SECRET");
     return;
   }
 

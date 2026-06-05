@@ -10,7 +10,7 @@ export class CodexAppServerSpawnError extends Schema.TaggedErrorClass<CodexAppSe
   "CodexAppServerSpawnError",
   {
     command: Schema.optional(Schema.String),
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
   },
 ) {
   override get message() {
@@ -24,7 +24,7 @@ export class CodexAppServerProcessExitedError extends Schema.TaggedErrorClass<Co
   "CodexAppServerProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
@@ -38,7 +38,7 @@ export class CodexAppServerProtocolParseError extends Schema.TaggedErrorClass<Co
   "CodexAppServerProtocolParseError",
   {
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
@@ -50,7 +50,7 @@ export class CodexAppServerTransportError extends Schema.TaggedErrorClass<CodexA
   "CodexAppServerTransportError",
   {
     detail: Schema.String,
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
   },
 ) {
   override get message() {

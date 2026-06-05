@@ -1,0 +1,29 @@
+{
+  "name": "cloudflare-worker-async",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/cloudflare-worker-async"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "logs": "alchemy logs",
+    "tail": "alchemy tail",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/better-auth": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:",
+    "effect": "catalog:"
+  }
+}

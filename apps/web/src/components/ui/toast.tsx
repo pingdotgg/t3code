@@ -501,7 +501,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
   );
 }
 
-function Toasts({ position = "top-right" }: { position: ToastPosition }) {
+function Toasts({ position }: { position: ToastPosition }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");

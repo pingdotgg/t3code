@@ -1,6 +1,12 @@
-import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@t3tools/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientMetadataDeviceType,
+  AuthClientPresentationMetadata,
+} from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
+import * as Encoding from "effect/Encoding";
+import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
 
@@ -16,12 +22,13 @@ export function resolveSessionCookieName(input: {
 }
 
 export function base64UrlEncode(input: string | Uint8Array): string {
-  const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);
-  return buffer.toString("base64url");
+  return typeof input === "string"
+    ? Encoding.encodeBase64Url(new TextEncoder().encode(input))
+    : Encoding.encodeBase64Url(input);
 }
 
 export function base64UrlDecodeUtf8(input: string): string {
-  return Buffer.from(input, "base64url").toString("utf8");
+  return Result.getOrThrow(Encoding.decodeBase64UrlString(input));
 }
 
 export function signPayload(payload: string, secret: Uint8Array): string {
@@ -115,17 +122,17 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
 
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
-  readonly label?: string;
+  readonly presented?: AuthClientPresentationMetadata;
 }): AuthClientMetadata {
   const userAgent = normalizeNonEmptyString(input.request.headers["user-agent"]);
   const ipAddress = readRemoteAddressFromSource(input.request.source);
-  const os = inferOs(userAgent);
+  const os = input.presented?.os ?? inferOs(userAgent);
   const browser = inferBrowser(userAgent);
   return {
-    ...(input.label ? { label: input.label } : {}),
+    ...(input.presented?.label ? { label: input.presented.label } : {}),
     ...(ipAddress ? { ipAddress } : {}),
     ...(userAgent ? { userAgent } : {}),
-    deviceType: inferDeviceType(userAgent),
+    deviceType: input.presented?.deviceType ?? inferDeviceType(userAgent),
     ...(os ? { os } : {}),
     ...(browser ? { browser } : {}),
   };

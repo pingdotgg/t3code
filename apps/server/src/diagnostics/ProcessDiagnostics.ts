@@ -47,7 +47,7 @@ class ProcessDiagnosticsError extends Schema.TaggedErrorClass<ProcessDiagnostics
   "ProcessDiagnosticsError",
   {
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
@@ -280,7 +280,6 @@ const runProcess = Effect.fn("runProcess")(
     const child = yield* spawner.spawn(
       ChildProcess.make(input.command, input.args, {
         cwd: process.cwd(),
-        shell: process.platform === "win32",
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(

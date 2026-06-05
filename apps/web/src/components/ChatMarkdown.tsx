@@ -544,17 +544,33 @@ function ChatMarkdown({
   }, []);
   const markdownComponents = useMemo<Components>(
     () => ({
-      p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+      p({ node: _node, ref, children, ...props }) {
+        return (
+          <p {...props} ref={ref as React.Ref<HTMLParagraphElement> | undefined}>
+            {renderSkillInlineMarkdownChildren(children, skills)}
+          </p>
+        );
       },
-      li({ node: _node, children, ...props }) {
-        return <li {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</li>;
+      li({ node: _node, ref, children, ...props }) {
+        return (
+          <li {...props} ref={ref as React.Ref<HTMLLIElement> | undefined}>
+            {renderSkillInlineMarkdownChildren(children, skills)}
+          </li>
+        );
       },
-      a({ node: _node, href, ...props }) {
+      a({ node: _node, ref, href, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          return (
+            <a
+              {...props}
+              ref={ref as React.Ref<HTMLAnchorElement> | undefined}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          );
         }
 
         const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
@@ -580,16 +596,32 @@ function ChatMarkdown({
           />
         );
       },
-      pre({ node: _node, children, ...props }) {
+      pre({ node: _node, ref, children, ...props }) {
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
+          return (
+            <pre {...props} ref={ref as React.Ref<HTMLPreElement> | undefined}>
+              {children}
+            </pre>
+          );
         }
 
         return (
           <MarkdownCodeBlock code={codeBlock.code}>
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
+            <CodeHighlightErrorBoundary
+              fallback={
+                <pre {...props} ref={ref as React.Ref<HTMLPreElement> | undefined}>
+                  {children}
+                </pre>
+              }
+            >
+              <Suspense
+                fallback={
+                  <pre {...props} ref={ref as React.Ref<HTMLPreElement> | undefined}>
+                    {children}
+                  </pre>
+                }
+              >
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}

@@ -2,10 +2,12 @@
   "name": "T3 Code Dev",
   "image": "debian:bookworm",
   "features": {
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers-extra/features/bun:1": {
-      "version": "1.3.11"
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "upgradePackages": false
     },
+    "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/node:1": {
       "version": "24.13.1"
     },
@@ -15,12 +17,11 @@
     }
   },
   "overrideFeatureInstallOrder": [
+    "ghcr.io/devcontainers/features/common-utils",
     "ghcr.io/devcontainers/features/git",
-    "ghcr.io/devcontainers-extra/features/bun"
+    "ghcr.io/devcontainers/features/node"
   ],
-  "postCreateCommand": {
-    "bun-install": "bun install --backend=copyfile --frozen-lockfile"
-  },
+  "postCreateCommand": "curl -fsSL https://vite.plus | bash && . \"$HOME/.vite-plus/env\" && vp i",
   "customizations": {
     "vscode": {
       "extensions": ["oxc.oxc-vscode"]

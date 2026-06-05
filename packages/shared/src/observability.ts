@@ -73,6 +73,22 @@ export interface OtlpTraceRecord extends BaseTraceRecord {
 
 export type TraceRecord = EffectTraceRecord | OtlpTraceRecord;
 
+function taggedErrorName(error: unknown): string {
+  return typeof error === "object" && error !== null && "_tag" in error
+    ? String(error._tag)
+    : error instanceof Error
+      ? error.name
+      : typeof error;
+}
+
+export function causeErrorTag(cause: Cause.Cause<unknown>): string {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isSome(failure)) {
+    return taggedErrorName(failure.value);
+  }
+  return cause.reasons[0]?._tag ?? "Empty";
+}
+
 export interface TraceSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;
@@ -184,11 +200,13 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
-  return Object.fromEntries(
-    Object.entries(attributes)
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [key, normalizeJsonValue(value)]),
-  );
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value !== undefined) {
+      entries.push([key, normalizeJsonValue(value)]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["exit"] {

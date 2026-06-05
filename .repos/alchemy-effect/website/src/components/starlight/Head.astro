@@ -1,0 +1,55 @@
+---
+/**
+ * Starlight `Head` override that wraps the default head and appends our
+ * per-page Open Graph image and Twitter card metadata. The image URL is
+ * derived from the Starlight route slug and points at the static
+ * `/og/<slug>.png` artifact emitted at build time by
+ * `src/pages/og/[...slug].png.ts`.
+ *
+ * We intentionally append (rather than replace) so all of Starlight's
+ * default `<title>`, description, canonical, RSS, and theme-color tags
+ * still ship.
+ */
+import Default from "@astrojs/starlight/components/Head.astro";
+import PostHog from "../analytics/PostHog.astro";
+
+// Starlight injects route data via Astro.locals at runtime; the public
+// types aren't ambient-declared in this project, so we cast through any.
+const { slug } = (Astro.locals as { starlightRoute: { slug: string } }).starlightRoute;
+// Starlight normalizes the index entry's slug to an empty string.
+const ogSlug = slug === "" ? "index" : slug;
+const ogImage = new URL(`/og/${ogSlug}.png`, Astro.site);
+---
+
+<Default><slot /></Default>
+
+{/* Brand mark — Starlight emits a `favicon.ico`/svg pair via its own
+    config; we add the PNG/apple-touch fallbacks here for parity with
+    the marketing layout. */}
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+{/* Open Graph image (Starlight's default Head emits og:title/description). */}
+<meta property="og:image" content={ogImage.href} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+
+{/* Twitter / X */}
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content={ogImage.href} />
+
+<PostHog />
+
+<script>
+  // Copy the heading link to the clipboard whenever a user clicks one of
+  // Starlight's auto-generated anchor buttons. Navigation still happens
+  // normally — we just piggyback the copy on top of it.
+  document.addEventListener("click", (event) => {
+    const target = event.target as Element | null;
+    const link = target?.closest?.("a.sl-anchor-link") as HTMLAnchorElement | null;
+    if (!link) return;
+    // `link.href` resolves to the absolute URL including the hash.
+    void navigator.clipboard?.writeText(link.href).catch(() => {});
+  });
+</script>

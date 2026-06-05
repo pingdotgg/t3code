@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import type * as Electron from "electron";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, vi } from "vite-plus/test";
 
 const { appFocusMock, getAllWindowsMock } = vi.hoisted(() => ({
   appFocusMock: vi.fn(),

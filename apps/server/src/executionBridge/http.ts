@@ -1,3 +1,6 @@
+// @effect-diagnostics globalFetchInEffect:off
+// @effect-diagnostics preferSchemaOverJson:off
+
 import {
   type ExecutionRunActivityEvent,
   type ExecutionRunLifecycleEvent,

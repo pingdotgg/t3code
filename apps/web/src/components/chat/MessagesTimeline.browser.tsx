@@ -3,8 +3,8 @@ import "../../index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
-import { page } from "vitest/browser";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { page } from "vite-plus/test/browser";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 const scrollToEndSpy = vi.fn();

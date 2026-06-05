@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
-import { beforeEach, expect } from "vitest";
+import { beforeEach, expect } from "vite-plus/test";
 
 import { ServerConfig } from "../config.ts";
 import {

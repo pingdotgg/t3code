@@ -1,0 +1,41 @@
+---
+import { CF_COLOR } from "./_colors";
+
+interface Props {
+  label?: string;
+  height?: number;
+  color?: string;
+}
+
+const { label, height = 22, color = CF_COLOR } = Astro.props;
+---
+
+<div class="diag-arrow">
+  {label && <div class="diag-arrow__label">{label}</div>}
+  <svg width="14" height={height} viewBox={`0 0 14 ${height}`}>
+    <path d={`M7 0 L7 ${height - 6}`} stroke={color} stroke-width="1.4" />
+    <path
+      d={`M3 ${height - 8} L7 ${height - 1} L11 ${height - 8}`}
+      stroke={color}
+      stroke-width="1.4"
+      fill="none"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+</div>
+
+<style>
+  .diag-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 0;
+  }
+  .diag-arrow__label {
+    font-family: var(--alc-font-mono);
+    font-size: 10px;
+    color: var(--alc-fg-3);
+  }
+</style>

@@ -2,7 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { logCleanupCauseUnlessInterrupted } from "./ThreadDeletionReactor.ts";
 
