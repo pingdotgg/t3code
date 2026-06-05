@@ -96,17 +96,19 @@ function executeCloudAuthFetch(url: URL, input: typeof DesktopCloudAuthFetchInpu
 const electronNetFetchLayer = Layer.unwrap(
   Effect.gen(function* () {
     const electronFetch = yield* Effect.promise(async () => {
-      try {
-        const electron = (await import("electron")) as {
-          readonly net?: { readonly fetch?: typeof globalThis.fetch };
-        };
-        return typeof electron.net?.fetch === "function"
-          ? electron.net.fetch.bind(electron.net)
-          : null;
-      } catch {
-        return null;
-      }
+      const electron = (await import("electron")) as {
+        readonly net?: { readonly fetch?: typeof globalThis.fetch };
+      };
+      return typeof electron.net?.fetch === "function"
+        ? electron.net.fetch.bind(electron.net)
+        : null;
     }).pipe(Effect.catchCause(() => Effect.succeed(null)));
+
+    if (!electronFetch) {
+      yield* Effect.logWarning(
+        "electron.net.fetch is not available, falling back to global fetch. This may cause unexpected errors.",
+      );
+    }
 
     return FetchHttpClient.layer.pipe(
       Layer.provide(Layer.succeed(FetchHttpClient.Fetch, electronFetch ?? globalThis.fetch)),
