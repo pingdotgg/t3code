@@ -204,9 +204,9 @@ interface PublishCommandConfig {
 
 const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
   const args = [
+    "publish",
     "--filter",
     "t3",
-    "publish",
     "--access",
     config.access,
     "--tag",
