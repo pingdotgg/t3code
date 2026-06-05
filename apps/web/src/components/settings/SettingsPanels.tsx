@@ -1419,6 +1419,7 @@ export function ArchivedThreadsPanel() {
     () => filterArchivedThreadGroups(archivedGroups, archiveSearchQuery),
     [archiveSearchQuery, archivedGroups],
   );
+  const isArchiveSearchActive = archiveSearchQuery.trim().length > 0;
   const toggleArchivedProjectCollapsed = useCallback((projectKey: string) => {
     setCollapsedArchivedProjectKeys((current) => {
       const next = new Set(current);
@@ -1523,12 +1524,13 @@ export function ArchivedThreadsPanel() {
             visibleArchivedGroups.map(({ project, threads: projectThreads }) => {
               const projectKey = `${project.environmentId}:${project.id}`;
               const isCollapsed = collapsedArchivedProjectKeys.has(projectKey);
+              const isSectionCollapsed = isCollapsed && !isArchiveSearchActive;
               return (
                 <SettingsSection
                   key={projectKey}
                   title={project.name}
                   icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
-                  contentVisible={!isCollapsed}
+                  contentVisible={!isSectionCollapsed}
                   headerAction={
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] text-muted-foreground">
@@ -1540,13 +1542,18 @@ export function ArchivedThreadsPanel() {
                         variant="ghost"
                         className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
                         onClick={() => toggleArchivedProjectCollapsed(projectKey)}
-                        aria-expanded={!isCollapsed}
+                        disabled={isArchiveSearchActive}
+                        aria-expanded={!isSectionCollapsed}
                         aria-label={
-                          isCollapsed ? `Expand ${project.name}` : `Collapse ${project.name}`
+                          isArchiveSearchActive
+                            ? `${project.name} expanded while searching`
+                            : isCollapsed
+                              ? `Expand ${project.name}`
+                              : `Collapse ${project.name}`
                         }
                       >
                         <ChevronDownIcon
-                          className={`size-3 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                          className={`size-3 transition-transform ${isSectionCollapsed ? "-rotate-90" : ""}`}
                         />
                       </Button>
                     </div>

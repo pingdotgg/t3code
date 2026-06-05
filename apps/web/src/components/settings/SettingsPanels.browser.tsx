@@ -1429,6 +1429,23 @@ describe("ArchivedThreadsPanel", () => {
     await expect.element(page.getByText("Fix publishing bug")).not.toBeInTheDocument();
     await expect.element(page.getByText("Rewrite homepage copy")).not.toBeInTheDocument();
 
+    await page.getByLabelText("Search archived threads").fill("homepage");
+
+    await expect.element(page.getByText("Rewrite homepage copy")).toBeInTheDocument();
+    await expect.element(page.getByText("Fix publishing bug")).not.toBeInTheDocument();
+
+    const searchExpandedToggle = page.getByRole("button", {
+      name: "Docs Portal expanded while searching",
+      exact: true,
+    });
+    await expect.element(searchExpandedToggle).toHaveAttribute("aria-expanded", "true");
+    await expect.element(searchExpandedToggle).toBeDisabled();
+
+    await page.getByLabelText("Search archived threads").fill("");
+
+    await expect.element(page.getByText("Fix publishing bug")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Rewrite homepage copy")).not.toBeInTheDocument();
+
     await page.getByRole("button", { name: "Expand Docs Portal", exact: true }).click();
 
     await expect.element(page.getByText("Fix publishing bug")).toBeInTheDocument();
