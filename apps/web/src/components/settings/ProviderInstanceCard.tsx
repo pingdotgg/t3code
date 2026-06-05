@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -47,6 +47,7 @@ import {
   getProviderVersionLabel,
   type ProviderStatusKey,
 } from "./providerStatus";
+import { HermesSetupSection } from "./HermesSetupSection";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -61,6 +62,13 @@ const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
+
+function isInteractiveEventTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("a,button,input,select,textarea,[role='switch']") !== null
+  );
+}
 
 type EnvironmentDraftRow = {
   readonly id: string;
@@ -486,6 +494,8 @@ export function ProviderInstanceCard({
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const suggestedBinaryPath = liveProvider?.suggestedBinaryPath?.trim();
+  const isHermesDriver = String(instance.driver) === "hermes";
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -565,6 +575,12 @@ export function ProviderInstanceCard({
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
 
+  const applySuggestedBinaryPath = (binaryPath: string) => {
+    const nextConfig = nextConfigBlobWithValue(instance.config, "binaryPath", binaryPath);
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
     const { environment: _omit, ...rest } = instance;
@@ -573,6 +589,20 @@ export function ProviderInstanceCard({
         ? ({ ...rest, environment: cleaned } as ProviderInstanceConfig)
         : (rest as ProviderInstanceConfig),
     );
+  };
+
+  const toggleExpanded = () => onExpandedChange(!isExpanded);
+
+  const handleHeaderClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (isInteractiveEventTarget(event.target)) return;
+    toggleExpanded();
+  };
+
+  const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleExpanded();
   };
 
   const titleIconNode = driverKind ? (
@@ -672,9 +702,25 @@ export function ProviderInstanceCard({
     <code className="text-xs text-muted-foreground">{versionLabel}</code>
   ) : null;
 
+  const hermesSetupNode = isHermesDriver ? (
+    <HermesSetupSection
+      suggestedBinaryPath={suggestedBinaryPath}
+      onApplySuggestedPath={applySuggestedBinaryPath}
+      onCopyCommand={(command, label) => copyToClipboard(command, { providerName: label })}
+    />
+  ) : null;
+
   return (
     <div className="border-t border-border/60 first:border-t-0">
-      <div className="px-4 py-3.5 sm:px-5">
+      <div
+        className="cursor-pointer px-4 py-3.5 outline-none transition-colors hover:bg-muted/25 focus-visible:bg-muted/25 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5"
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? "Collapse" : "Expand"} ${displayName} provider details`}
+        onClick={handleHeaderClick}
+        onKeyDown={handleHeaderKeyDown}
+      >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -784,7 +830,7 @@ export function ProviderInstanceCard({
               size="sm"
               variant="ghost"
               className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => onExpandedChange(!isExpanded)}
+              onClick={toggleExpanded}
               aria-label={`Toggle ${displayName} details`}
             >
               <ChevronDownIcon
@@ -834,6 +880,8 @@ export function ProviderInstanceCard({
                 onChange={updateEnvironment}
               />
             </div>
+
+            {hermesSetupNode}
 
             {driverOption ? (
               <ProviderSettingsForm

@@ -12,6 +12,7 @@ function provider(input: {
   enabled?: boolean;
   availability?: ServerProvider["availability"];
   displayName?: string;
+  models?: ServerProvider["models"];
 }): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
@@ -24,7 +25,9 @@ function provider(input: {
     ...(input.availability ? { availability: input.availability } : {}),
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
-    models: [],
+    models: input.models ?? [
+      { slug: "default", name: "Default", isCustom: false, capabilities: {} },
+    ],
     slashCommands: [],
     skills: [],
   };

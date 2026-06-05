@@ -21,7 +21,7 @@ import {
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { TooltipProvider } from "../ui/tooltip";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { isSelectableProviderInstance, type ProviderInstanceEntry } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
@@ -166,15 +166,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [props.lockedContinuationGroupKey, props.lockedProvider],
   );
 
-  const readyInstanceSet = useMemo(() => {
-    const ready = new Set<ProviderInstanceId>();
+  const selectableInstanceSet = useMemo(() => {
+    const selectable = new Set<ProviderInstanceId>();
     for (const entry of instanceEntries) {
-      if (entry.status === "ready") {
-        ready.add(entry.instanceId);
+      const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
+      if (isSelectableProviderInstance(entry) && models.length > 0) {
+        selectable.add(entry.instanceId);
       }
     }
-    return ready;
-  }, [instanceEntries]);
+    return selectable;
+  }, [instanceEntries, modelOptionsByInstance]);
 
   // Flatten models into a searchable array. One pass over the
   // instance-keyed map; each model carries its instance id + driver kind
@@ -189,7 +190,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // its models — stale options shouldn't appear in the picker.
         continue;
       }
-      if (!readyInstanceSet.has(instanceId)) {
+      if (!selectableInstanceSet.has(instanceId)) {
         continue;
       }
       for (const model of models) {
@@ -209,20 +210,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+  }, [modelOptionsByInstance, entryByInstanceId, selectableInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
   const lockedInstanceEntries = useMemo(
     () =>
-      props.lockedProvider ? instanceEntries.filter((entry) => matchesLockedProvider(entry)) : [],
-    [instanceEntries, matchesLockedProvider, props.lockedProvider],
+      props.lockedProvider
+        ? instanceEntries.filter(
+            (entry) => selectableInstanceSet.has(entry.instanceId) && matchesLockedProvider(entry),
+          )
+        : [],
+    [instanceEntries, matchesLockedProvider, props.lockedProvider, selectableInstanceSet],
   );
   const showLockedInstanceSidebar = isLocked && lockedInstanceEntries.length > 1;
   const showSidebar = !isSearching && (!isLocked || showLockedInstanceSidebar);
   const sidebarInstanceEntries = showLockedInstanceSidebar
     ? lockedInstanceEntries
-    : instanceEntries;
+    : instanceEntries.filter((entry) => selectableInstanceSet.has(entry.instanceId));
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],

@@ -1,0 +1,98 @@
+/**
+ * Hermes provider chat surface theme.
+ *
+ * Golden/amber color scheme with grid overlay and sigil decoration.
+ */
+
+.chat-surface-hermes {
+  isolation: isolate;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px) 0
+      0 / 42px 42px,
+    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px) 0 0 /
+      42px 42px,
+    radial-gradient(
+        circle at 12% 10%,
+        color-mix(in srgb, #f5c542 18%, transparent) 0 5px,
+        transparent 6px
+      )
+      0 0 / 96px 96px,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 90%, #f5c542) 0%,
+      color-mix(in srgb, var(--background) 94%, #d4961c) 34%,
+      color-mix(in srgb, var(--background) 97%, #0f172a) 68%,
+      var(--background) 100%
+    );
+}
+
+.chat-surface-hermes::before,
+.chat-surface-hermes::after {
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+  content: "";
+}
+
+.chat-surface-hermes::before {
+  top: max(2rem, 8%);
+  right: max(1.5rem, 5%);
+  width: min(32rem, 58vw);
+  aspect-ratio: 1;
+  opacity: 0.13;
+  background:
+    linear-gradient(#f5c542, #d4961c) 50% 12% / 3% 58% no-repeat,
+    radial-gradient(circle at 50% 12%, #fff8e1 0 2.5%, #f5c542 2.75% 6%, transparent 6.25%),
+    conic-gradient(from 300deg at 50% 28%, transparent 0 17%, #f5c542 17% 22%, transparent 22%),
+    conic-gradient(from 120deg at 50% 28%, transparent 0 17%, #f5c542 17% 22%, transparent 22%),
+    radial-gradient(ellipse at 38% 26%, transparent 0 42%, #f5c542 43% 47%, transparent 48%),
+    radial-gradient(ellipse at 62% 26%, transparent 0 42%, #d4961c 43% 47%, transparent 48%),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, #f5c542 40%, transparent) 0 8px,
+      transparent 8px 16px
+    );
+  clip-path: polygon(50% 0, 83% 22%, 67% 100%, 50% 80%, 33% 100%, 17% 22%);
+  filter: saturate(1.15);
+}
+
+.chat-surface-hermes::after {
+  inset: 0;
+  opacity: 0.1;
+  background:
+    linear-gradient(90deg, transparent 0 18px, #f5c542 18px 24px, transparent 24px 42px) right 9%
+      top 8% / 252px 54px no-repeat,
+    linear-gradient(90deg, transparent 0 12px, #d4961c 12px 18px, transparent 18px 36px) right 6%
+      top calc(8% + 54px) / 216px 42px no-repeat,
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--foreground) 5%, transparent) 0 1px,
+      transparent 1px 4px
+    );
+  mix-blend-mode: multiply;
+}
+
+.dark .chat-surface-hermes {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, #f5c542 16%, transparent) 0 2px, transparent 2px) 0
+      0 / 42px 42px,
+    linear-gradient(0deg, color-mix(in srgb, #d4961c 12%, transparent) 0 2px, transparent 2px) 0 0 /
+      42px 42px,
+    radial-gradient(
+        circle at 12% 10%,
+        color-mix(in srgb, #f5c542 16%, transparent) 0 5px,
+        transparent 6px
+      )
+      0 0 / 96px 96px,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 80%, #f5c542) 0%,
+      color-mix(in srgb, var(--background) 88%, #d4961c) 34%,
+      color-mix(in srgb, var(--background) 96%, #0f172a) 68%,
+      var(--background) 100%
+    );
+}
+
+.dark .chat-surface-hermes::after {
+  mix-blend-mode: screen;
+}
