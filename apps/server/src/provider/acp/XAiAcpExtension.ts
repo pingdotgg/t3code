@@ -1,5 +1,4 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 const XAiAskUserQuestionOption = Schema.Struct({
@@ -13,44 +12,43 @@ const XAiAskUserQuestion = Schema.Struct({
   id: Schema.optional(Schema.String),
   question: Schema.String,
   options: Schema.Array(XAiAskUserQuestionOption),
-  multiSelect: Schema.optional(Schema.Boolean),
+  multiSelect: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const XAiAskUserQuestionParams = Schema.Struct({
   sessionId: Schema.String,
   toolCallId: Schema.String,
   questions: Schema.Array(XAiAskUserQuestion),
-  mode: Schema.Union([Schema.Literal("default"), Schema.Literal("plan")]),
+  mode: Schema.Literals(["default", "plan"]),
 });
 
 const XAiWrappedAskUserQuestionParams = Schema.Struct({
-  method: Schema.Literal("x.ai/ask_user_question"),
+  method: Schema.Literals(["x.ai/ask_user_question", "_x.ai/ask_user_question"]),
   params: XAiAskUserQuestionParams,
 });
 
-export const XAiAskUserQuestionRequest = Schema.Unknown;
+export const XAiAskUserQuestionRequest = Schema.Union([
+  XAiAskUserQuestionParams,
+  XAiWrappedAskUserQuestionParams,
+]);
 
 type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
-
-const decodeXAiAskUserQuestionParams = Schema.decodeUnknownSync(XAiAskUserQuestionParams);
-const decodeXAiWrappedAskUserQuestionParamsExit = Schema.decodeUnknownExit(
-  XAiWrappedAskUserQuestionParams,
-);
+type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
 
 function trimmed(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text && text.length > 0 ? text : undefined;
 }
 
-function unwrapAskUserQuestionParams(params: unknown): XAiAskUserQuestionRequestParams {
-  const wrapped = decodeXAiWrappedAskUserQuestionParamsExit(params);
-  if (Exit.isSuccess(wrapped)) {
-    return wrapped.value.params;
-  }
-  return decodeXAiAskUserQuestionParams(params);
+function unwrapAskUserQuestionParams(
+  params: XAiAskUserQuestionRequest,
+): XAiAskUserQuestionRequestParams {
+  return "params" in params ? params.params : params;
 }
 
-export function extractXAiAskUserQuestions(params: unknown): ReadonlyArray<UserInputQuestion> {
+export function extractXAiAskUserQuestions(
+  params: XAiAskUserQuestionRequest,
+): ReadonlyArray<UserInputQuestion> {
   return unwrapAskUserQuestionParams(params).questions.map((question) => ({
     id: question.id ?? question.question,
     header: "Question",
@@ -66,6 +64,31 @@ export function extractXAiAskUserQuestions(params: unknown): ReadonlyArray<UserI
   }));
 }
 
+interface XAiAskUserQuestionAnnotation {
+  readonly preview?: string;
+  readonly notes?: string;
+}
+
+interface XAiAskUserQuestionAcceptedResponse {
+  readonly outcome: "accepted";
+  readonly answers: Record<string, ReadonlyArray<string>>;
+  readonly annotations?: Record<string, XAiAskUserQuestionAnnotation>;
+}
+
+interface XAiAskUserQuestionCancelledResponse {
+  readonly outcome: "cancelled";
+}
+
+export type XAiAskUserQuestionResponse =
+  | XAiAskUserQuestionAcceptedResponse
+  | XAiAskUserQuestionCancelledResponse;
+
+interface NormalizedXAiAnswer {
+  readonly questionText: string;
+  readonly selectedLabels: ReadonlyArray<string>;
+  readonly annotation?: XAiAskUserQuestionAnnotation;
+}
+
 function answerValues(answer: unknown): ReadonlyArray<string> {
   if (Array.isArray(answer)) {
     return answer.flatMap((entry) => {
@@ -77,14 +100,74 @@ function answerValues(answer: unknown): ReadonlyArray<string> {
   return text ? [text] : [];
 }
 
-export function makeXAiAskUserQuestionResponse(answers: ProviderUserInputAnswers): {
-  readonly outcome: "accepted";
-  readonly answers: Record<string, ReadonlyArray<string>>;
-} {
+function normalizeAnswerForXAi(
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+  answer: unknown,
+): NormalizedXAiAnswer | undefined {
+  const values = answerValues(answer);
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  const optionByLabel = new Map(question.options.map((option) => [option.label, option]));
+  const resolvedValues = values.map((value) => ({
+    value,
+    option: optionByLabel.get(value),
+  }));
+  const selectedLabels = resolvedValues.flatMap(({ option }) => (option ? [option.label] : []));
+  const notes = resolvedValues.flatMap(({ option, value }) => (option ? [] : [value]));
+  const preview =
+    question.multiSelect === true
+      ? undefined
+      : resolvedValues.map(({ option }) => trimmed(option?.preview)).find((value) => value);
+
+  const annotation =
+    preview || notes.length > 0
+      ? {
+          ...(preview ? { preview } : {}),
+          ...(notes.length > 0 ? { notes: notes.join("\n") } : {}),
+        }
+      : undefined;
+
+  return {
+    questionText: question.question,
+    selectedLabels: selectedLabels.length > 0 ? selectedLabels : ["Other"],
+    ...(annotation ? { annotation } : {}),
+  };
+}
+
+function findQuestionAnswer(
+  answers: ProviderUserInputAnswers,
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+): unknown {
+  const key = question.id ?? question.question;
+  return answers[key] ?? answers[question.question];
+}
+
+export function makeXAiAskUserQuestionResponse(
+  params: XAiAskUserQuestionRequest,
+  answers: ProviderUserInputAnswers,
+): XAiAskUserQuestionAcceptedResponse {
+  const questions = unwrapAskUserQuestionParams(params).questions;
+  const normalized = questions.flatMap((question) => {
+    const entry = normalizeAnswerForXAi(question, findQuestionAnswer(answers, question));
+    return entry ? [entry] : [];
+  });
+  const annotations = Object.fromEntries(
+    normalized.flatMap((entry) =>
+      entry.annotation ? [[entry.questionText, entry.annotation] as const] : [],
+    ),
+  );
+
   return {
     outcome: "accepted",
     answers: Object.fromEntries(
-      Object.entries(answers).map(([questionId, answer]) => [questionId, answerValues(answer)]),
+      normalized.map((entry) => [entry.questionText, entry.selectedLabels]),
     ),
+    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
   };
+}
+
+export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCancelledResponse {
+  return { outcome: "cancelled" };
 }

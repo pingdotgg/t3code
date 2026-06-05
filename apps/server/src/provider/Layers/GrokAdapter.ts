@@ -59,6 +59,7 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import {
   extractXAiAskUserQuestions,
+  makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   XAiAskUserQuestionRequest,
 } from "../acp/XAiAcpExtension.ts";
@@ -86,8 +87,12 @@ interface PendingApproval {
   readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
 }
 
+type PendingUserInputResolution =
+  | { readonly _tag: "answered"; readonly answers: ProviderUserInputAnswers }
+  | { readonly _tag: "cancelled" };
+
 interface PendingUserInput {
-  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+  readonly resolution: Deferred.Deferred<PendingUserInputResolution>;
 }
 
 interface GrokSessionContext {
@@ -116,12 +121,12 @@ function settlePendingApprovalsAsCancelled(
   );
 }
 
-function settlePendingUserInputsAsEmptyAnswers(
+function settlePendingUserInputsAsCancelled(
   pendingUserInputs: ReadonlyMap<ApprovalRequestId, PendingUserInput>,
 ): Effect.Effect<void> {
   return Effect.forEach(
     Array.from(pendingUserInputs.values()),
-    (pending) => Deferred.succeed(pending.answers, {}).pipe(Effect.ignore),
+    (pending) => Deferred.succeed(pending.resolution, { _tag: "cancelled" }).pipe(Effect.ignore),
     { discard: true },
   );
 }
@@ -308,7 +313,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -395,8 +400,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       yield* logNative(input.threadId, method, params);
                       const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                       const runtimeRequestId = RuntimeRequestId.make(requestId);
-                      const answers = yield* Deferred.make<ProviderUserInputAnswers>();
-                      pendingUserInputs.set(requestId, { answers });
+                      const resolution = yield* Deferred.make<PendingUserInputResolution>();
+                      pendingUserInputs.set(requestId, { resolution });
                       yield* offerRuntimeEvent({
                         type: "user-input.requested",
                         ...(yield* makeEventStamp()),
@@ -411,8 +416,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           payload: params,
                         },
                       });
-                      const resolved = yield* Deferred.await(answers);
+                      const resolved = yield* Deferred.await(resolution);
                       pendingUserInputs.delete(requestId);
+                      const resolvedAnswers = resolved._tag === "answered" ? resolved.answers : {};
                       yield* offerRuntimeEvent({
                         type: "user-input.resolved",
                         ...(yield* makeEventStamp()),
@@ -420,14 +426,19 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         threadId: input.threadId,
                         turnId: sessions.get(input.threadId)?.activeTurnId,
                         requestId: runtimeRequestId,
-                        payload: { answers: resolved },
+                        payload: { answers: resolvedAnswers },
                         raw: {
                           source: "acp.grok.extension",
                           method,
                           payload: params,
                         },
                       });
-                      return makeXAiAskUserQuestionResponse(resolved);
+                      switch (resolved._tag) {
+                        case "answered":
+                          return makeXAiAskUserQuestionResponse(params, resolved.answers);
+                        case "cancelled":
+                          return makeXAiAskUserQuestionCancelledResponse();
+                      }
                     }),
                   ),
                 ),
@@ -804,7 +815,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
         yield* Effect.ignore(
           ctx.acp.cancel.pipe(
             Effect.mapError((error) =>
@@ -847,7 +858,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             detail: `Unknown pending user-input request: ${requestId}`,
           });
         }
-        yield* Deferred.succeed(pending.answers, answers);
+        yield* Deferred.succeed(pending.resolution, { _tag: "answered", answers });
       });
 
     const readThread: GrokAdapterShape["readThread"] = (threadId) =>

@@ -566,6 +566,7 @@ const program = Effect.gen(function* () {
             questions: [
               {
                 question: "Which scope should Grok use?",
+                multiSelect: null,
                 options: [
                   { label: "Workspace", description: "Use the current workspace" },
                   { label: "Session", description: "Only use this session" },
