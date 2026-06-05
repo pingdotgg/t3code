@@ -78,6 +78,8 @@ curl -fsSL https://vite.plus | bash
 irm https://vite.plus/ps1 | iex
 ```
 
+Checkout their getting started guide for more information: https://viteplus.dev/guide/
+
 ### Install dependencies
 
 ```bash
