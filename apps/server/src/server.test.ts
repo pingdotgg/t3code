@@ -1381,6 +1381,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(response.status, 200);
+      assert.equal(response.headers["cache-control"], "public, max-age=3600");
       assert.equal(yield* response.text, "<svg>router-project-favicon</svg>");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1406,6 +1407,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(response.status, 200);
+      assert.equal(response.headers["cache-control"], "no-store");
       assert.include(yield* response.text, 'data-fallback="project-favicon"');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
