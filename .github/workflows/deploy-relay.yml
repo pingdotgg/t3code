@@ -46,7 +46,7 @@ jobs:
           run-install: true
 
       - name: Deploy production relay stage
-        run: vp run --filter t3code-relay deploy -- --stage prod --yes
+        run: vp run --filter t3code-relay deploy --stage prod --yes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
