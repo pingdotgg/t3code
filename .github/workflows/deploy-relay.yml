@@ -43,10 +43,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install --frozen-lockfile
+          run-install: true
 
       - name: Deploy production relay stage
         run: vp run --filter t3code-relay deploy -- --stage prod --yes
