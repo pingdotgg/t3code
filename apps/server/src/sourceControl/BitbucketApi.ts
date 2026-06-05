@@ -37,7 +37,7 @@ export class BitbucketApiError extends Schema.TaggedErrorClass<BitbucketApiError
     operation: Schema.String,
     detail: Schema.String,
     status: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

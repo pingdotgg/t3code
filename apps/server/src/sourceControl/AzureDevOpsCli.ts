@@ -21,7 +21,7 @@ export class AzureDevOpsCliError extends Schema.TaggedErrorClass<AzureDevOpsCliE
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

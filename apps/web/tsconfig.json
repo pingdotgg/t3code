@@ -26,5 +26,5 @@
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "vercel.ts", "test"]
+  "include": ["src", "vite.config.ts", "vercel.ts", "test", "../../scripts/lib/public-config.ts"]
 }

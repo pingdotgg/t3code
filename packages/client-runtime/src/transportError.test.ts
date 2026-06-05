@@ -11,6 +11,14 @@ describe("isTransportConnectionErrorMessage", () => {
     expect(isTransportConnectionErrorMessage("SocketOpenError: ECONNREFUSED")).toBe(true);
   });
 
+  it("returns true for React Native disconnected socket errors", () => {
+    expect(
+      isTransportConnectionErrorMessage(
+        "The operation couldn't be completed. Socket is not connected",
+      ),
+    ).toBe(true);
+  });
+
   it("returns true for the T3 server WebSocket message", () => {
     expect(isTransportConnectionErrorMessage("Unable to connect to the T3 server WebSocket.")).toBe(
       true,

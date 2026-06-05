@@ -6,6 +6,8 @@ import type {
   PersistedSavedEnvironmentRecord,
   ServerConfig,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
 import { ensureLocalApi } from "../../localApi";
@@ -19,7 +21,28 @@ export interface SavedEnvironmentRecord {
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
   readonly desktopSsh?: PersistedSavedEnvironmentRecord["desktopSsh"];
+  readonly relayManaged?: PersistedSavedEnvironmentRecord["relayManaged"];
 }
+
+export const SavedEnvironmentCredential = Schema.Union([
+  Schema.Struct({
+    version: Schema.Literal(1),
+    method: Schema.Literal("bearer"),
+    token: Schema.String,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    method: Schema.Literal("dpop"),
+    accessToken: Schema.String,
+  }),
+]);
+export type SavedEnvironmentCredential = typeof SavedEnvironmentCredential.Type;
+
+const SavedEnvironmentCredentialJson = Schema.fromJsonString(SavedEnvironmentCredential);
+const decodeSavedEnvironmentCredentialJson = Schema.decodeUnknownOption(
+  SavedEnvironmentCredentialJson,
+);
+const encodeSavedEnvironmentCredentialJson = Schema.encodeSync(SavedEnvironmentCredentialJson);
 
 interface SavedEnvironmentRegistryState {
   readonly byId: Record<EnvironmentId, SavedEnvironmentRecord>;
@@ -47,6 +70,7 @@ export function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
     ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
   };
 }
 
@@ -248,6 +272,31 @@ export async function readSavedEnvironmentBearerToken(
   environmentId: EnvironmentId,
 ): Promise<string | null> {
   return ensureLocalApi().persistence.getSavedEnvironmentSecret(environmentId);
+}
+
+export async function readSavedEnvironmentCredential(
+  environmentId: EnvironmentId,
+): Promise<SavedEnvironmentCredential | null> {
+  const secret = await ensureLocalApi().persistence.getSavedEnvironmentSecret(environmentId);
+  if (!secret) {
+    return null;
+  }
+  const decoded = decodeSavedEnvironmentCredentialJson(secret);
+  if (Option.isSome(decoded)) {
+    return decoded.value;
+  }
+  // Legacy bearer secrets were stored directly as strings.
+  return { version: 1, method: "bearer", token: secret };
+}
+
+export async function writeSavedEnvironmentCredential(
+  environmentId: EnvironmentId,
+  credential: SavedEnvironmentCredential,
+): Promise<boolean> {
+  return ensureLocalApi().persistence.setSavedEnvironmentSecret(
+    environmentId,
+    encodeSavedEnvironmentCredentialJson(credential),
+  );
 }
 
 export async function writeSavedEnvironmentBearerToken(

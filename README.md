@@ -48,6 +48,10 @@ We are not accepting contributions yet.
 
 Observability guide: [docs/observability.md](./docs/observability.md)
 
+Relay observability: [docs/relay-observability.md](./docs/relay-observability.md)
+
+T3 Cloud Clerk setup: [docs/t3-cloud-clerk.md](./docs/t3-cloud-clerk.md)
+
 ## If you REALLY want to contribute still.... read this first
 
 Before local development, prepare the environment and install dependencies:
@@ -57,6 +61,10 @@ Before local development, prepare the environment and install dependencies:
 mise install
 vp install
 ```
+
+T3 Cloud is optional and disabled in a fresh clone. To enable it for web, desktop, and mobile source
+builds, copy [`.env.example`](./.env.example) to `.env` at the repository root and set the canonical
+public configuration there.
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 

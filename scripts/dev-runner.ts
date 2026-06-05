@@ -17,6 +17,10 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
+import { loadRepoEnv } from "./lib/public-config.ts";
+
+Object.assign(process.env, loadRepoEnv());
+
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;

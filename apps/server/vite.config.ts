@@ -2,6 +2,7 @@ import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
+import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const bundledPackagePrefixes = [
   "@pierre/diffs",
@@ -13,6 +14,8 @@ const bundledPackagePrefixes = [
 export function shouldBundleCliDependency(id: string): boolean {
   return bundledPackagePrefixes.some((prefix) => id.startsWith(prefix));
 }
+
+const repoEnv = loadRepoEnv();
 
 export default mergeConfig(
   baseConfig,
@@ -37,6 +40,15 @@ export default mergeConfig(
       },
       banner: {
         js: "#!/usr/bin/env node\n",
+      },
+      define: {
+        __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
+        __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+          repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+        ),
+        __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
+          repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
+        ),
       },
     },
     test: {

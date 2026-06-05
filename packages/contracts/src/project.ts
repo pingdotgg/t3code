@@ -30,7 +30,7 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
   "ProjectSearchEntriesError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
@@ -50,6 +50,6 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
   "ProjectWriteFileError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}

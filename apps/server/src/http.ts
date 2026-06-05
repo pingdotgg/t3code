@@ -8,6 +8,7 @@ import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { cast } from "effect/Function";
@@ -47,11 +48,18 @@ const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vi
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
-export const browserApiCorsLayer = HttpRouter.cors({
-  allowedMethods: browserApiCorsAllowedMethods,
-  allowedHeaders: browserApiCorsAllowedHeaders,
-  maxAge: 600,
-});
+export const browserApiCorsLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    const devOrigin = config.devUrl?.origin;
+    return HttpRouter.cors({
+      ...(devOrigin ? { allowedOrigins: [devOrigin], credentials: true } : {}),
+      allowedMethods: browserApiCorsAllowedMethods,
+      allowedHeaders: browserApiCorsAllowedHeaders,
+      maxAge: 600,
+    });
+  }),
+);
 
 export function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname

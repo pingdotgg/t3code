@@ -5,10 +5,15 @@ import * as Schema from "effect/Schema";
 import * as SecureStore from "expo-secure-store";
 import { EnvironmentId, OrchestrationShellSnapshot } from "@t3tools/contracts";
 
-import type { SavedRemoteConnection } from "./connection";
+import {
+  isRelayManagedConnection,
+  type SavedRemoteConnection,
+  toStableSavedRemoteConnection,
+} from "./connection";
 
 const CONNECTIONS_KEY = "t3code.connections";
 const PREFERENCES_KEY = "t3code.preferences";
+const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 const SHELL_SNAPSHOT_CACHE_DIRECTORY = "shell-snapshots";
 
@@ -20,6 +25,7 @@ export interface CachedShellSnapshot {
 }
 
 export interface MobilePreferences {
+  readonly liveActivitiesEnabled?: boolean;
   readonly terminalFontSize?: number;
 }
 
@@ -133,18 +139,23 @@ export async function loadSavedConnections(): Promise<ReadonlyArray<SavedRemoteC
 
   return pipe(
     parsed.connections ?? [],
-    Arr.filter((c) => !!c.environmentId && !!c.bearerToken?.trim()),
+    Arr.filter(
+      (c) => !!c.environmentId && (!!c.bearerToken?.trim() || isRelayManagedConnection(c)),
+    ),
   );
 }
 
 export async function saveConnection(connection: SavedRemoteConnection): Promise<void> {
   const current = await loadSavedConnections();
+  const stableConnection = toStableSavedRemoteConnection(connection);
   const next = current.some((entry) => entry.environmentId === connection.environmentId)
     ? pipe(
         current,
-        Arr.map((entry) => (entry.environmentId === connection.environmentId ? connection : entry)),
+        Arr.map((entry) =>
+          entry.environmentId === connection.environmentId ? stableConnection : entry,
+        ),
       )
-    : pipe(current, Arr.append(connection));
+    : pipe(current, Arr.append(stableConnection));
 
   await writeStorageItem(CONNECTIONS_KEY, JSON.stringify({ connections: next }));
 }
@@ -164,11 +175,19 @@ export async function loadPreferences(): Promise<MobilePreferences> {
     return {};
   }
 
+  const preferences: {
+    liveActivitiesEnabled?: boolean;
+    terminalFontSize?: number;
+  } = {};
+
+  if (typeof parsed.liveActivitiesEnabled === "boolean") {
+    preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
   if (typeof parsed.terminalFontSize === "number") {
-    return { terminalFontSize: parsed.terminalFontSize };
+    preferences.terminalFontSize = parsed.terminalFontSize;
   }
 
-  return {};
+  return preferences;
 }
 
 export async function savePreferencesPatch(
@@ -181,4 +200,21 @@ export async function savePreferencesPatch(
   };
   await writeStorageItem(PREFERENCES_KEY, JSON.stringify(next));
   return next;
+}
+
+export async function loadOrCreateAgentAwarenessDeviceId(): Promise<string> {
+  const existing = await readStorageItem(AGENT_AWARENESS_DEVICE_ID_KEY);
+  if (existing?.trim()) {
+    return existing;
+  }
+
+  const { uuidv4 } = await import("./uuid");
+  const deviceId = uuidv4();
+  await writeStorageItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
+  return deviceId;
+}
+
+export async function loadAgentAwarenessDeviceId(): Promise<string | null> {
+  const existing = await readStorageItem(AGENT_AWARENESS_DEVICE_ID_KEY);
+  return existing?.trim() ? existing : null;
 }

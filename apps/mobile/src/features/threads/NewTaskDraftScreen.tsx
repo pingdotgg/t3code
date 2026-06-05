@@ -1,16 +1,27 @@
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { TextInputWrapper } from "expo-paste-input";
-import { useCallback, useEffect, useMemo } from "react";
-import { View } from "react-native";
-import { KeyboardStickyView, useKeyboardState } from "react-native-keyboard-controller";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  InteractionManager,
+  View,
+  useColorScheme,
+  type TextInput as RNTextInput,
+} from "react-native";
+import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EnvironmentId, type ModelSelection } from "@t3tools/contracts";
 
 import { AppTextInput as TextInput } from "../../components/AppText";
+import {
+  ComposerToolbarButton,
+  ComposerToolbarRow,
+  ComposerToolbarScroller,
+  ComposerToolbarTrigger,
+} from "../../components/ComposerToolbarTrigger";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -18,7 +29,6 @@ import { buildThreadRoutePath } from "../../lib/routes";
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
-import { NewTaskSheetHeader } from "./NewTaskSheetHeader";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useProjectActions } from "./use-project-actions";
 
@@ -34,6 +44,22 @@ function withModelSelectionOption(
   };
 }
 
+function formatTitleCase(value: string): string {
+  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function formatWorkspaceLabel(input: {
+  readonly workspaceMode: string;
+  readonly currentBranchName: string | null;
+  readonly selectedBranchName: string | null;
+}): string {
+  const branchName = input.selectedBranchName ?? input.currentBranchName;
+  if (input.workspaceMode === "worktree") {
+    return branchName ? `New worktree · ${branchName}` : "New worktree";
+  }
+  return branchName ? `Current · ${branchName}` : "Current checkout";
+}
+
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -45,11 +71,15 @@ export function NewTaskDraftScreen(props: {
   const flow = useNewTaskFlow();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { logicalProjects, selectedProject, setProject } = flow;
+  const promptInputRef = useRef<RNTextInput>(null);
 
   const borderColor = useThemeColor("--color-border");
+  const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
+  const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
   useEffect(() => {
     if (props.initialProjectRef?.environmentId && props.initialProjectRef?.projectId) {
@@ -92,6 +122,24 @@ export function NewTaskDraftScreen(props: {
     }
     void flow.loadBranches();
   }, [flow, selectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      return;
+    }
+
+    let focusFrame: ReturnType<typeof requestAnimationFrame> | null = null;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      focusFrame = requestAnimationFrame(() => promptInputRef.current?.focus());
+    });
+
+    return () => {
+      interaction.cancel();
+      if (focusFrame !== null) {
+        cancelAnimationFrame(focusFrame);
+      }
+    };
+  }, [selectedProject]);
 
   const environmentMenuActions = useMemo(
     () =>
@@ -231,10 +279,10 @@ export function NewTaskDraftScreen(props: {
       {
         id: "workspace:mode",
         title: "Mode",
-        subtitle: flow.workspaceMode === "local" ? "Local" : "Worktree",
+        subtitle: flow.workspaceMode === "local" ? "Current checkout" : "New worktree",
         subactions: (["local", "worktree"] as const).map((value) => ({
           id: `workspace:mode:${value}`,
-          title: value === "local" ? "Local" : "Worktree",
+          title: value === "local" ? "Current checkout" : "New worktree",
           state: flow.workspaceMode === value ? ("on" as const) : undefined,
         })),
       },
@@ -253,6 +301,31 @@ export function NewTaskDraftScreen(props: {
     flow.workspaceMode,
   ]);
 
+  const selectedEnvironmentLabel =
+    flow.environments.find(
+      (environment) => environment.environmentId === flow.selectedEnvironmentId,
+    )?.environmentLabel ?? "Environment";
+  const currentBranchName =
+    flow.availableBranches.find((branch) => branch.current)?.name ??
+    flow.availableBranches.find((branch) => branch.isDefault)?.name ??
+    null;
+  const configurationLabel = useMemo(() => {
+    const parts = [
+      formatTitleCase(flow.effort),
+      flow.fastMode ? "Fast" : null,
+      flow.contextWindow !== "1M" ? flow.contextWindow : null,
+    ].filter((part): part is string => Boolean(part));
+    return parts.length > 0 ? parts.join(" · ") : "Configuration";
+  }, [flow.contextWindow, flow.effort, flow.fastMode]);
+  const workspaceLabel = useMemo(
+    () =>
+      formatWorkspaceLabel({
+        currentBranchName,
+        selectedBranchName: flow.selectedBranchName,
+        workspaceMode: flow.workspaceMode,
+      }),
+    [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
+  );
   function handleModelMenuAction(event: string) {
     if (!event.startsWith("model:")) {
       return;
@@ -382,6 +455,8 @@ export function NewTaskDraftScreen(props: {
       });
 
       if (createdThread) {
+        flow.setPrompt("");
+        flow.clearAttachments();
         router.replace(buildThreadRoutePath(createdThread));
       }
     } finally {
@@ -392,40 +467,36 @@ export function NewTaskDraftScreen(props: {
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <NewTaskSheetHeader title="Loading task" />
+        <Stack.Screen options={{ title: "Loading task" }} />
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-sheet">
-      <NewTaskSheetHeader
-        title={selectedProject.title}
-        control={
-          flow.logicalProjects.length > 1
-            ? { icon: "chevron.left", onPress: () => router.back() }
-            : undefined
-        }
-      />
+      <Stack.Screen options={{ title: selectedProject.title }} />
 
-      <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 8 }}>
-        <TextInputWrapper
-          onPaste={(payload) => void handleNativePaste(payload)}
-          style={{ flex: 1 }}
-        >
-          <TextInput
-            multiline
-            value={flow.prompt}
-            onChangeText={flow.setPrompt}
-            placeholder={`Describe a coding task in ${selectedProject.title}`}
-            textAlignVertical="top"
-            className="h-full flex-1 border-0 bg-transparent text-[18px] leading-[28px]"
-            style={{ flex: 1 }}
-          />
-        </TextInputWrapper>
-      </View>
+      <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
+        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
+          <TextInputWrapper
+            onPaste={(payload) => void handleNativePaste(payload)}
+            style={{ flex: 1, minHeight: 0 }}
+          >
+            <TextInput
+              ref={promptInputRef}
+              autoFocus
+              multiline
+              scrollEnabled
+              value={flow.prompt}
+              onChangeText={flow.setPrompt}
+              placeholder={`Describe a coding task in ${selectedProject.title}`}
+              textAlignVertical="top"
+              className="h-full flex-1 border-0 bg-transparent text-[18px] leading-[28px]"
+              style={{ flex: 1, minHeight: 0 }}
+            />
+          </TextInputWrapper>
+        </View>
 
-      <KeyboardStickyView>
         <View
           style={{
             borderTopWidth: 1,
@@ -443,41 +514,65 @@ export function NewTaskDraftScreen(props: {
               />
             </View>
           ) : null}
-          <View className="flex-row items-center justify-between gap-2 px-4 pt-2">
-            <ControlPill icon="plus" onPress={() => void handlePickImages()} />
-            <ControlPillMenu
-              actions={modelMenuActions}
-              onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+          <ComposerToolbarRow paddingBottom={controlsBottomPadding} paddingHorizontal={6}>
+            <ComposerToolbarScroller
+              fadeOpaque={sheetFadeOpaque}
+              fadeTransparent={sheetFadeTransparent}
             >
-              <ControlPill
-                iconNode={
-                  <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-                }
+              <ComposerToolbarButton
+                icon="plus"
+                onPress={() => void handlePickImages()}
+                showChevron={false}
               />
-            </ControlPillMenu>
-            <ControlPillMenu
-              actions={optionsMenuActions}
-              onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-            >
-              <ControlPill icon="slider.horizontal.3" />
-            </ControlPillMenu>
-            <ControlPillMenu
-              actions={environmentMenuActions}
-              onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
-            >
-              <ControlPill icon="desktopcomputer" />
-            </ControlPillMenu>
-            <ControlPillMenu
-              actions={workspaceMenuActions}
-              onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-            >
-              <ControlPill icon="point.topleft.down.curvedto.point.bottomright.up" />
-            </ControlPillMenu>
-            <ControlPill
+              <ControlPillMenu
+                actions={modelMenuActions}
+                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Model"
+                  iconNode={
+                    <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
+                  }
+                  label={flow.selectedModelOption?.label ?? "Model"}
+                />
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={optionsMenuActions}
+                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Configuration"
+                  icon="slider.horizontal.3"
+                  label={configurationLabel}
+                />
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={environmentMenuActions}
+                onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Environment"
+                  icon="desktopcomputer"
+                  label={selectedEnvironmentLabel}
+                />
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={workspaceMenuActions}
+                onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Workspace"
+                  icon="point.topleft.down.curvedto.point.bottomright.up"
+                  label={workspaceLabel}
+                />
+              </ControlPillMenu>
+            </ComposerToolbarScroller>
+            <ComposerToolbarButton
+              accessibilityLabel={flow.submitting ? "Starting task" : "Start task"}
               icon="arrow.up"
-              label={flow.submitting ? "Starting" : "Start"}
               onPress={() => void handleStart()}
               variant="primary"
+              showChevron={false}
               disabled={
                 !flow.selectedProject ||
                 !flow.selectedModel ||
@@ -486,9 +581,9 @@ export function NewTaskDraftScreen(props: {
                 (flow.workspaceMode === "worktree" && !flow.selectedBranchName)
               }
             />
-          </View>
+          </ComposerToolbarRow>
         </View>
-      </KeyboardStickyView>
+      </KeyboardAvoidingView>
     </View>
   );
 }

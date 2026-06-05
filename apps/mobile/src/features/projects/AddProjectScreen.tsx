@@ -41,7 +41,6 @@ import {
   refreshSourceControlDiscoveryForEnvironment,
   useSourceControlDiscovery,
 } from "../../state/use-source-control-discovery";
-import { NewTaskSheetHeader } from "../threads/NewTaskSheetHeader";
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -105,25 +104,11 @@ function SectionTitle(props: { readonly children: string }) {
   );
 }
 
-function AddProjectShell(props: {
-  readonly title: string;
-  readonly closeToNew?: boolean;
-  readonly children: ReactNode;
-}) {
-  const router = useRouter();
+function AddProjectShell(props: { readonly children: ReactNode }) {
   const insets = useSafeAreaInsets();
 
   return (
     <View className="flex-1 bg-sheet">
-      <NewTaskSheetHeader
-        eyebrow="New project"
-        title={props.title}
-        control={{
-          icon: props.closeToNew ? "xmark" : "chevron.left",
-          onPress: () => router.back(),
-        }}
-      />
-
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
@@ -179,9 +164,9 @@ function ListRow(props: {
           {props.icon}
         </View>
         <View className="flex-1 gap-0.5">
-          <Text className="text-[15px] font-t3-bold">{props.title}</Text>
+          <Text className="text-[16px] leading-[21px] font-t3-bold">{props.title}</Text>
           {props.subtitle ? (
-            <Text className="text-[12px] leading-[16px] text-foreground-muted" numberOfLines={2}>
+            <Text className="text-[13px] leading-[17px] text-foreground-muted" numberOfLines={2}>
               {props.subtitle}
             </Text>
           ) : null}
@@ -363,7 +348,7 @@ export function AddProjectSourceScreen() {
   }, [selectedEnvironment]);
 
   return (
-    <AddProjectShell title="Select source" closeToNew>
+    <AddProjectShell>
       {environmentOptions.length === 0 ? <EmptyEnvironmentState /> : null}
 
       {environmentOptions.length > 1 ? (
@@ -561,7 +546,7 @@ export function AddProjectRepositoryScreen() {
   }, [environment, isSubmitting, repositoryInput, router, source]);
 
   return (
-    <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
+    <AddProjectShell>
       {error ? <ErrorBanner message={error} /> : null}
       <TextInput
         className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-[15px] leading-[20px]"
@@ -711,7 +696,7 @@ export function AddProjectLocalFolderScreen() {
   }, [createProject, environment, isSubmitting, pathInput]);
 
   return (
-    <AddProjectShell title="Local folder">
+    <AddProjectShell>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -790,7 +775,7 @@ export function AddProjectDestinationScreen() {
   }, [createProject, environment, isSubmitting, pathInput, remoteUrl]);
 
   return (
-    <AddProjectShell title="Clone destination">
+    <AddProjectShell>
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-card px-4 py-3">

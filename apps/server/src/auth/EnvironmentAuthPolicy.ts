@@ -39,7 +39,7 @@ export const make = Effect.fn("makeEnvironmentAuthPolicy")(function* () {
   const descriptor: ServerAuthDescriptor = {
     policy,
     bootstrapMethods,
-    sessionMethods: ["browser-session-cookie", "bearer-access-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-access-token", "dpop-access-token"],
     sessionCookieName: resolveSessionCookieName({
       mode: config.mode,
       port: config.port,

@@ -17,6 +17,7 @@ export default function ThreadLayout() {
           headerShown: true,
           headerTransparent: true,
           headerShadowVisible: false,
+          headerTitle: "",
         }}
       />
       <Stack.Screen

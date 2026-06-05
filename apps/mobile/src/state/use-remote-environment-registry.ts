@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 
 import {
   type EnvironmentRuntimeState,
@@ -9,16 +9,28 @@ import {
   createKnownEnvironment,
   createWsRpcClient,
   EnvironmentConnectionState,
+  ManagedRelayDpopSigner,
   WsTransport,
+  remoteEndpointUrl,
+  resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
+  waitForManagedRelayClerkToken,
 } from "@t3tools/client-runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 import * as Order from "effect/Order";
 import * as Option from "effect/Option";
 import { pipe } from "effect/Function";
 import { Atom } from "effect/unstable/reactivity";
-import { type SavedRemoteConnection, bootstrapRemoteConnection } from "../lib/connection";
+import {
+  type SavedRemoteConnection,
+  bootstrapRemoteConnection,
+  isRelayManagedConnection,
+  toStableSavedRemoteConnection,
+} from "../lib/connection";
+import { refreshCloudEnvironmentConnection } from "../features/cloud/linkEnvironment";
 import { terminalDebugLog } from "../features/terminal/terminalDebugLog";
 import {
   clearCachedShellSnapshot,
@@ -29,9 +41,10 @@ import {
   saveConnection,
 } from "../lib/storage";
 import { appAtomRegistry } from "./atom-registry";
-import { mobileRemoteHttpRuntime } from "../lib/runtime";
+import { mobileRuntime } from "../lib/runtime";
 import {
   drainEnvironmentSessions,
+  getEnvironmentSession,
   notifyEnvironmentConnectionListeners,
   removeEnvironmentSession,
   setEnvironmentSession,
@@ -41,6 +54,11 @@ import {
   invalidateSourceControlDiscoveryForEnvironment,
   resetSourceControlDiscoveryState,
 } from "./use-source-control-discovery";
+import {
+  registerAgentAwarenessConnection,
+  unregisterAgentAwarenessConnection,
+  unregisterAllAgentAwarenessConnections,
+} from "../features/agent-awareness/remoteRegistration";
 import { environmentRuntimeManager, useEnvironmentRuntimeStates } from "./use-environment-runtime";
 import {
   clearCachedShellSnapshotMetadata,
@@ -53,6 +71,8 @@ import { subscribeTerminalMetadata, terminalSessionManager } from "./use-termina
 const terminalMetadataUnsubscribers = new Map<EnvironmentId, () => void>();
 const environmentConnectionAttempts = createEnvironmentConnectionAttemptRegistry();
 const SAVED_CONNECTION_BOOTSTRAP_TIMEOUT_MS = 8_000;
+const APP_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
+let lastAppResumeReconnectAt = Number.NEGATIVE_INFINITY;
 
 interface RemoteEnvironmentLocalState {
   readonly isLoadingSavedConnection: boolean;
@@ -153,223 +173,355 @@ function setEnvironmentConnectionStatus(
   }));
 }
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timeoutId);
-        reject(error);
-      },
-    );
+function fromPromise<T>(tryPromise: () => Promise<T>): Effect.Effect<T, unknown> {
+  return Effect.tryPromise({
+    try: tryPromise,
+    catch: (cause) => cause,
   });
 }
 
-export async function disconnectEnvironment(
+export function disconnectEnvironment(
   environmentId: EnvironmentId,
   options?: {
     readonly preserveShellSnapshot?: boolean;
     readonly removeSaved?: boolean;
     readonly preserveConnectionAttempt?: boolean;
   },
-) {
-  if (!options?.preserveConnectionAttempt) {
-    environmentConnectionAttempts.cancel(environmentId);
-  }
+): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    if (!options?.preserveConnectionAttempt) {
+      environmentConnectionAttempts.cancel(environmentId);
+    }
 
-  const session = removeEnvironmentSession(environmentId);
-  notifyEnvironmentConnectionListeners();
-  await session?.connection.dispose();
-  terminalMetadataUnsubscribers.get(environmentId)?.();
-  terminalMetadataUnsubscribers.delete(environmentId);
-  if (!options?.preserveShellSnapshot) {
-    shellSnapshotManager.invalidate({ environmentId });
-  }
-  invalidateSourceControlDiscoveryForEnvironment(environmentId);
-  terminalSessionManager.invalidateEnvironment(environmentId);
-  environmentRuntimeManager.invalidate({ environmentId });
+    const session = removeEnvironmentSession(environmentId);
+    notifyEnvironmentConnectionListeners();
+    if (session) {
+      yield* fromPromise(() => session.connection.dispose());
+    }
+    terminalMetadataUnsubscribers.get(environmentId)?.();
+    terminalMetadataUnsubscribers.delete(environmentId);
+    unregisterAgentAwarenessConnection(environmentId);
+    if (!options?.preserveShellSnapshot) {
+      shellSnapshotManager.invalidate({ environmentId });
+    }
+    invalidateSourceControlDiscoveryForEnvironment(environmentId);
+    terminalSessionManager.invalidateEnvironment(environmentId);
+    environmentRuntimeManager.invalidate({ environmentId });
 
-  if (options?.removeSaved) {
-    await clearSavedConnection(environmentId);
-    await clearCachedShellSnapshot(environmentId);
-    clearCachedShellSnapshotMetadata(environmentId);
-    removeSavedConnection(environmentId);
-  }
+    if (options?.removeSaved) {
+      yield* Effect.all(
+        [
+          fromPromise(() => clearSavedConnection(environmentId)),
+          fromPromise(() => clearCachedShellSnapshot(environmentId)),
+        ],
+        { concurrency: 2 },
+      );
+      clearCachedShellSnapshotMetadata(environmentId);
+      removeSavedConnection(environmentId);
+    }
+  });
 }
 
-export async function connectSavedEnvironment(
+export function connectSavedEnvironment(
   connection: SavedRemoteConnection,
-  options?: { readonly persist?: boolean },
-) {
-  const connectionAttempt = environmentConnectionAttempts.begin(connection.environmentId);
-  const isCurrentAttempt = connectionAttempt.isCurrent;
+  options?: { readonly persist?: boolean; readonly suppressBootstrapError?: boolean },
+): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    const connectionAttempt = environmentConnectionAttempts.begin(connection.environmentId);
+    const isCurrentAttempt = connectionAttempt.isCurrent;
+    let activeConnection = connection;
+    let initialDpopAccessToken =
+      options?.persist === false ? undefined : connection.dpopAccessToken;
 
-  await disconnectEnvironment(connection.environmentId, {
-    preserveShellSnapshot: true,
-    preserveConnectionAttempt: true,
-  });
-  if (!isCurrentAttempt()) {
-    return;
-  }
-
-  if (options?.persist !== false) {
-    await saveConnection(connection);
+    yield* disconnectEnvironment(connection.environmentId, {
+      preserveShellSnapshot: true,
+      preserveConnectionAttempt: true,
+    });
     if (!isCurrentAttempt()) {
       return;
     }
-  }
 
-  upsertSavedConnection(connection);
-  setEnvironmentConnectionStatus(connection.environmentId, "connecting", null);
-  shellSnapshotManager.markPending({ environmentId: connection.environmentId });
-
-  const transport = new WsTransport(
-    () =>
-      mobileRemoteHttpRuntime.runPromise(
-        resolveRemoteWebSocketConnectionUrl({
-          wsBaseUrl: connection.wsBaseUrl,
-          httpBaseUrl: connection.httpBaseUrl,
-          bearerToken: connection.bearerToken,
-        }),
-      ),
-    {
-      onAttempt: () => {
-        if (!isCurrentAttempt()) {
-          return;
-        }
-
-        environmentRuntimeManager.patch({ environmentId: connection.environmentId }, (previous) => {
-          const nextState =
-            previous.connectionState === "ready" || previous.connectionState === "reconnecting"
-              ? "reconnecting"
-              : "connecting";
-          const keepSettledFailure =
-            previous.connectionState === "disconnected" && previous.connectionError !== null;
-          return {
-            ...previous,
-            connectionState: keepSettledFailure ? "disconnected" : nextState,
-            connectionError: keepSettledFailure ? previous.connectionError : null,
-          };
-        });
-      },
-      onError: (message) => {
-        if (isCurrentAttempt()) {
-          setEnvironmentConnectionStatus(connection.environmentId, "disconnected", message);
-        }
-      },
-      onClose: (details) => {
-        if (!isCurrentAttempt()) {
-          return;
-        }
-
-        const reason =
-          details.reason.trim().length > 0
-            ? details.reason
-            : details.code === 1000
-              ? null
-              : `Remote connection closed (${details.code}).`;
-        setEnvironmentConnectionStatus(connection.environmentId, "disconnected", reason);
-      },
-    },
-  );
-
-  const client = createWsRpcClient(transport);
-  const environmentConnection = createEnvironmentConnection({
-    kind: "saved",
-    knownEnvironment: {
-      ...createKnownEnvironment({
-        id: connection.environmentId,
-        label: connection.environmentLabel,
-        source: "manual",
-        target: {
-          httpBaseUrl: connection.httpBaseUrl,
-          wsBaseUrl: connection.wsBaseUrl,
-        },
-      }),
-      environmentId: connection.environmentId,
-    },
-    client,
-    applyShellEvent: (event, environmentId) => {
-      if (isCurrentAttempt()) {
-        shellSnapshotManager.applyEvent({ environmentId }, event);
-      }
-    },
-    syncShellSnapshot: (snapshot, environmentId) => {
+    if (options?.persist !== false) {
+      yield* fromPromise(() => saveConnection(toStableSavedRemoteConnection(connection)));
       if (!isCurrentAttempt()) {
         return;
       }
+    }
 
-      shellSnapshotManager.syncSnapshot({ environmentId }, snapshot);
-      markShellSnapshotLive(environmentId);
-      void saveCachedShellSnapshot(environmentId, snapshot);
-      environmentRuntimeManager.patch({ environmentId }, (runtime) => ({
-        ...runtime,
-        connectionState: "ready",
-        connectionError: null,
-      }));
-    },
-    onShellResubscribe: (environmentId) => {
-      if (isCurrentAttempt()) {
-        shellSnapshotManager.markPending({ environmentId });
-      }
-    },
-    onConfigSnapshot: (serverConfig) => {
-      if (isCurrentAttempt()) {
-        environmentRuntimeManager.patch({ environmentId: connection.environmentId }, (runtime) => ({
+    upsertSavedConnection(toStableSavedRemoteConnection(connection));
+    setEnvironmentConnectionStatus(connection.environmentId, "connecting", null);
+    shellSnapshotManager.markPending({ environmentId: connection.environmentId });
+
+    const transport = new WsTransport(
+      () =>
+        mobileRuntime.runPromise(
+          isRelayManagedConnection(connection)
+            ? Effect.gen(function* () {
+                let dpopAccessToken = initialDpopAccessToken;
+                initialDpopAccessToken = undefined;
+                if (!dpopAccessToken) {
+                  const clerkToken = yield* waitForManagedRelayClerkToken(appAtomRegistry);
+                  const refreshedConnection = yield* refreshCloudEnvironmentConnection({
+                    clerkToken,
+                    connection: activeConnection,
+                  });
+                  const stableConnection = toStableSavedRemoteConnection(refreshedConnection);
+                  activeConnection = refreshedConnection;
+                  if (isCurrentAttempt()) {
+                    yield* fromPromise(() => saveConnection(stableConnection));
+                    upsertSavedConnection(stableConnection);
+                  }
+                  dpopAccessToken = refreshedConnection.dpopAccessToken;
+                }
+                if (!dpopAccessToken) {
+                  return yield* Effect.fail(
+                    new Error("Managed environment connection did not return a DPoP access token."),
+                  );
+                }
+                const signer = yield* ManagedRelayDpopSigner;
+                const dpop = yield* signer.createProof({
+                  method: "POST",
+                  url: remoteEndpointUrl(
+                    activeConnection.httpBaseUrl,
+                    "/api/auth/websocket-ticket",
+                  ),
+                  accessToken: dpopAccessToken,
+                });
+                return yield* resolveRemoteDpopWebSocketConnectionUrl({
+                  wsBaseUrl: activeConnection.wsBaseUrl,
+                  httpBaseUrl: activeConnection.httpBaseUrl,
+                  accessToken: dpopAccessToken,
+                  dpopProof: dpop,
+                });
+              })
+            : resolveRemoteWebSocketConnectionUrl({
+                wsBaseUrl: connection.wsBaseUrl,
+                httpBaseUrl: connection.httpBaseUrl,
+                bearerToken: connection.bearerToken ?? "",
+              }),
+        ),
+      {
+        onAttempt: () => {
+          if (!isCurrentAttempt()) {
+            return;
+          }
+
+          environmentRuntimeManager.patch(
+            { environmentId: connection.environmentId },
+            (previous) => {
+              const nextState =
+                previous.connectionState === "ready" || previous.connectionState === "reconnecting"
+                  ? "reconnecting"
+                  : "connecting";
+              const keepSettledFailure =
+                previous.connectionState === "disconnected" && previous.connectionError !== null;
+              return {
+                ...previous,
+                connectionState: keepSettledFailure ? "disconnected" : nextState,
+                connectionError: keepSettledFailure ? previous.connectionError : null,
+              };
+            },
+          );
+        },
+        onError: (message) => {
+          if (isCurrentAttempt()) {
+            setEnvironmentConnectionStatus(connection.environmentId, "disconnected", message);
+          }
+        },
+        onClose: (details) => {
+          if (!isCurrentAttempt()) {
+            return;
+          }
+
+          const reason =
+            details.reason.trim().length > 0
+              ? details.reason
+              : details.code === 1000
+                ? null
+                : `Remote connection closed (${details.code}).`;
+          setEnvironmentConnectionStatus(connection.environmentId, "disconnected", reason);
+        },
+      },
+    );
+
+    const client = createWsRpcClient(transport);
+    const environmentConnection = createEnvironmentConnection({
+      kind: "saved",
+      knownEnvironment: {
+        ...createKnownEnvironment({
+          id: connection.environmentId,
+          label: connection.environmentLabel,
+          source: "manual",
+          target: {
+            httpBaseUrl: connection.httpBaseUrl,
+            wsBaseUrl: connection.wsBaseUrl,
+          },
+        }),
+        environmentId: connection.environmentId,
+      },
+      client,
+      applyShellEvent: (event, environmentId) => {
+        if (isCurrentAttempt()) {
+          shellSnapshotManager.applyEvent({ environmentId }, event);
+        }
+      },
+      syncShellSnapshot: (snapshot, environmentId) => {
+        if (!isCurrentAttempt()) {
+          return;
+        }
+
+        shellSnapshotManager.syncSnapshot({ environmentId }, snapshot);
+        markShellSnapshotLive(environmentId);
+        void saveCachedShellSnapshot(environmentId, snapshot).catch(() => undefined);
+        environmentRuntimeManager.patch({ environmentId }, (runtime) => ({
           ...runtime,
-          serverConfig,
+          connectionState: "ready",
+          connectionError: null,
         }));
-      }
-    },
-  });
+      },
+      onShellResubscribe: (environmentId) => {
+        if (isCurrentAttempt()) {
+          shellSnapshotManager.markPending({ environmentId });
+        }
+      },
+      onConfigSnapshot: (serverConfig) => {
+        if (isCurrentAttempt()) {
+          environmentRuntimeManager.patch(
+            { environmentId: connection.environmentId },
+            (runtime) => ({
+              ...runtime,
+              serverConfig,
+            }),
+          );
+        }
+      },
+    });
 
-  if (!isCurrentAttempt()) {
-    await environmentConnection.dispose();
+    if (!isCurrentAttempt()) {
+      yield* fromPromise(() => environmentConnection.dispose());
+      return;
+    }
+
+    setEnvironmentSession(connection.environmentId, {
+      client,
+      connection: environmentConnection,
+    });
+
+    const bootstrap = fromPromise(() => environmentConnection.ensureBootstrapped()).pipe(
+      Effect.timeoutOption(Duration.millis(SAVED_CONNECTION_BOOTSTRAP_TIMEOUT_MS)),
+      Effect.flatMap((result) =>
+        Option.match(result, {
+          onNone: () =>
+            Effect.fail(new Error("Environment did not respond before the connection timeout.")),
+          onSome: Effect.succeed,
+        }),
+      ),
+      Effect.tapError((error: unknown) =>
+        isCurrentAttempt()
+          ? Effect.gen(function* () {
+              setEnvironmentConnectionStatus(
+                connection.environmentId,
+                "disconnected",
+                error instanceof Error ? error.message : "Failed to bootstrap remote connection.",
+              );
+              const pendingSession = removeEnvironmentSession(connection.environmentId);
+              notifyEnvironmentConnectionListeners();
+              if (pendingSession) {
+                yield* fromPromise(() => pendingSession.connection.dispose());
+              }
+            })
+          : Effect.void,
+      ),
+    );
+    const bootstrapped = yield* options?.suppressBootstrapError
+      ? bootstrap.pipe(
+          Effect.as(true),
+          Effect.catch(() => Effect.succeed(false)),
+        )
+      : bootstrap.pipe(Effect.as(true));
+
+    if (!bootstrapped || !isCurrentAttempt()) {
+      return;
+    }
+
+    terminalMetadataUnsubscribers.set(
+      connection.environmentId,
+      subscribeTerminalMetadata({
+        environmentId: connection.environmentId,
+        client,
+      }),
+    );
+    terminalDebugLog("registry:terminal-metadata-subscribed", {
+      environmentId: connection.environmentId,
+    });
+    registerAgentAwarenessConnection(toStableSavedRemoteConnection(activeConnection));
+    notifyEnvironmentConnectionListeners();
+  });
+}
+
+export function reconnectEnvironmentConnectionsAfterAppResume(reason: string): void {
+  const now = Date.now();
+  if (now - lastAppResumeReconnectAt < APP_RESUME_RECONNECT_COOLDOWN_MS) {
     return;
   }
 
-  setEnvironmentSession(connection.environmentId, {
-    client,
-    connection: environmentConnection,
-  });
-  terminalMetadataUnsubscribers.set(
-    connection.environmentId,
-    subscribeTerminalMetadata({
-      environmentId: connection.environmentId,
-      client,
-    }),
-  );
-  terminalDebugLog("registry:terminal-metadata-subscribed", {
-    environmentId: connection.environmentId,
-  });
-  notifyEnvironmentConnectionListeners();
-
-  try {
-    await withTimeout(
-      environmentConnection.ensureBootstrapped(),
-      SAVED_CONNECTION_BOOTSTRAP_TIMEOUT_MS,
-      "Environment did not respond before the connection timeout.",
-    );
-  } catch (error) {
-    if (isCurrentAttempt()) {
-      setEnvironmentConnectionStatus(
-        connection.environmentId,
-        "disconnected",
-        error instanceof Error ? error.message : "Failed to bootstrap remote connection.",
-      );
+  for (const connection of Object.values(getSavedConnectionsById())) {
+    const session = getEnvironmentSession(connection.environmentId);
+    if (session?.client.isHeartbeatFresh()) {
+      continue;
     }
+
+    lastAppResumeReconnectAt = now;
+    terminalDebugLog("registry:app-resume-reconnect", {
+      environmentId: connection.environmentId,
+      reason,
+      hasSession: session !== null,
+    });
+
+    if (!session) {
+      void mobileRuntime
+        .runPromise(
+          connectSavedEnvironment(connection, {
+            persist: false,
+            suppressBootstrapError: true,
+          }),
+        )
+        .catch((error: unknown) => {
+          terminalDebugLog("registry:app-resume-reconnect-failed", {
+            environmentId: connection.environmentId,
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      continue;
+    }
+
+    setEnvironmentConnectionStatus(connection.environmentId, "reconnecting", null);
+    shellSnapshotManager.markPending({ environmentId: connection.environmentId });
+    void session.connection.reconnect().catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to reconnect remote environment.";
+      setEnvironmentConnectionStatus(connection.environmentId, "disconnected", message);
+      terminalDebugLog("registry:app-resume-reconnect-failed", {
+        environmentId: connection.environmentId,
+        reason,
+        error: message,
+      });
+    });
   }
+}
+
+function subscribeAppResumeReconnects(): () => void {
+  let previousAppState = AppState.currentState;
+  const subscription = AppState.addEventListener("change", (nextAppState) => {
+    const wasInactive = previousAppState !== "active";
+    previousAppState = nextAppState;
+    if (nextAppState === "active" && wasInactive) {
+      reconnectEnvironmentConnectionsAfterAppResume("appstate");
+    }
+  });
+
+  return () => subscription.remove();
 }
 
 const environmentsSortOrder = Order.mapInput(
@@ -392,6 +544,7 @@ function deriveConnectedEnvironments(
         environmentId: connection.environmentId,
         environmentLabel: connection.environmentLabel,
         displayUrl: connection.displayUrl,
+        isRelayManaged: isRelayManagedConnection(connection),
         connectionState: runtime?.connectionState ?? "idle",
         connectionError: runtime?.connectionError ?? null,
       };
@@ -403,9 +556,11 @@ function deriveConnectedEnvironments(
 export function useRemoteEnvironmentBootstrap() {
   useEffect(() => {
     let cancelled = false;
+    const unsubscribeAppResumeReconnects = subscribeAppResumeReconnects();
 
-    void loadSavedConnections()
-      .then((connections) => {
+    void (async () => {
+      try {
+        const connections = await loadSavedConnections();
         if (cancelled) {
           return;
         }
@@ -418,37 +573,40 @@ export function useRemoteEnvironmentBootstrap() {
 
         setIsLoadingSavedConnection(false);
 
-        void (async () => {
-          await Promise.all(
-            connections.map(async (connection) => {
-              const cached = await loadCachedShellSnapshot(connection.environmentId);
-              if (!cancelled && cached) {
-                hydrateCachedShellSnapshot(cached);
-              }
-            }),
-          );
+        await Promise.all(
+          connections.map(async (connection) => {
+            const cached = await loadCachedShellSnapshot(connection.environmentId);
+            if (!cancelled && cached) {
+              hydrateCachedShellSnapshot(cached);
+            }
+          }),
+        );
 
-          if (cancelled) {
-            return;
-          }
+        if (cancelled) {
+          return;
+        }
 
-          await Promise.all(
+        await mobileRuntime.runPromise(
+          Effect.all(
             connections.map((connection) =>
               connectSavedEnvironment(connection, {
                 persist: false,
+                suppressBootstrapError: true,
               }),
             ),
-          );
-        })();
-      })
-      .catch(() => {
+            { concurrency: "unbounded" },
+          ),
+        );
+      } catch {
         if (!cancelled) {
           setIsLoadingSavedConnection(false);
         }
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
+      unsubscribeAppResumeReconnects();
       for (const session of drainEnvironmentSessions()) {
         void session.connection.dispose();
       }
@@ -457,6 +615,7 @@ export function useRemoteEnvironmentBootstrap() {
       }
       terminalMetadataUnsubscribers.clear();
       environmentConnectionAttempts.clear();
+      unregisterAllAgentAwarenessConnections();
       environmentRuntimeManager.invalidate();
       shellSnapshotManager.invalidate();
       resetSourceControlDiscoveryState();
@@ -538,7 +697,7 @@ export function useRemoteConnections() {
         const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
         const connection = await bootstrapRemoteConnection({ pairingUrl: nextPairingUrl });
         clearPendingConnectionError();
-        await connectSavedEnvironment(connection);
+        await mobileRuntime.runPromise(connectSavedEnvironment(connection));
         clearConnectionPairingUrl();
       } catch (error) {
         setPendingConnectionError(
@@ -556,7 +715,7 @@ export function useRemoteConnections() {
       updates: { readonly label: string; readonly displayUrl: string },
     ) => {
       const connection = getSavedConnectionsById()[environmentId];
-      if (!connection) {
+      if (!connection || isRelayManagedConnection(connection)) {
         return;
       }
 
@@ -577,7 +736,14 @@ export function useRemoteConnections() {
     if (!connection) {
       return;
     }
-    void connectSavedEnvironment(connection, { persist: false });
+    void mobileRuntime
+      .runPromise(
+        connectSavedEnvironment(connection, {
+          persist: false,
+          suppressBootstrapError: true,
+        }),
+      )
+      .catch(() => undefined);
   }, []);
 
   const onRemoveEnvironmentPress = useCallback((environmentId: EnvironmentId) => {
@@ -595,7 +761,9 @@ export function useRemoteConnections() {
           text: "Remove",
           style: "destructive",
           onPress: () => {
-            void disconnectEnvironment(environmentId, { removeSaved: true });
+            void mobileRuntime
+              .runPromise(disconnectEnvironment(environmentId, { removeSaved: true }))
+              .catch(() => undefined);
           },
         },
       ],

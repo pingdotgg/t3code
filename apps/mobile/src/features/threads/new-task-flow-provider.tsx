@@ -15,6 +15,13 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import {
+  appendComposerDraftAttachments,
+  removeComposerDraftAttachment,
+  replaceComposerDraftAttachments,
+  setComposerDraftText,
+  useComposerDraft,
+} from "../../state/use-composer-drafts";
 import { vcsRefManager, useVcsRefs } from "../../state/use-vcs-refs";
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import {
@@ -153,8 +160,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [selectedBranchName, setSelectedBranchName] = useState<string | null>(null);
   const [selectedWorktreePath, setSelectedWorktreePath] = useState<string | null>(null);
   const branchLoadVersionRef = useRef(0);
-  const [prompt, setPrompt] = useState("");
-  const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
@@ -165,28 +170,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [fastMode, setFastMode] = useState(false);
   const [contextWindow, setContextWindow] = useState("1M");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
-
-  const replaceAttachments = useCallback(
-    (nextAttachments: ReadonlyArray<DraftComposerImageAttachment>) => {
-      setAttachments(nextAttachments);
-    },
-    [],
-  );
-
-  const appendAttachments = useCallback(
-    (nextAttachments: ReadonlyArray<DraftComposerImageAttachment>) => {
-      setAttachments((current) => [...current, ...nextAttachments]);
-    },
-    [],
-  );
-
-  const removeAttachment = useCallback((imageId: string) => {
-    setAttachments((current) => current.filter((candidate) => candidate.id !== imageId));
-  }, []);
-
-  const clearAttachments = useCallback(() => {
-    setAttachments([]);
-  }, []);
 
   const reset = useCallback(() => {
     console.log("[new task flow] reset", {
@@ -199,8 +182,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setWorkspaceMode("local");
     setSelectedBranchName(null);
     setSelectedWorktreePath(null);
-    setPrompt("");
-    clearAttachments();
     setSubmitting(false);
     setBranchQuery("");
     setRuntimeMode(DEFAULT_RUNTIME_MODE);
@@ -209,7 +190,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setFastMode(false);
     setContextWindow("1M");
     setExpandedProvider(null);
-  }, [clearAttachments, projects]);
+  }, [projects]);
 
   useEffect(() => {
     if (selectedEnvironmentId !== null || projects.length === 0) {
@@ -271,6 +252,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     ) ??
     projectsForEnvironment[0] ??
     null;
+  const selectedProjectDraftKey = selectedProject
+    ? `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`
+    : null;
+  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
+  const prompt = selectedProjectDraft.text;
+  const attachments = selectedProjectDraft.attachments;
 
   const modelOptions = useMemo(
     () =>
@@ -298,6 +285,48 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     ) ?? null;
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  const setPrompt = useCallback(
+    (value: string) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      setComposerDraftText(selectedProjectDraftKey, value);
+    },
+    [selectedProjectDraftKey],
+  );
+  const replaceAttachments = useCallback(
+    (nextAttachments: ReadonlyArray<DraftComposerImageAttachment>) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      replaceComposerDraftAttachments(selectedProjectDraftKey, nextAttachments);
+    },
+    [selectedProjectDraftKey],
+  );
+  const appendAttachments = useCallback(
+    (nextAttachments: ReadonlyArray<DraftComposerImageAttachment>) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments);
+    },
+    [selectedProjectDraftKey],
+  );
+  const removeAttachment = useCallback(
+    (imageId: string) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      removeComposerDraftAttachment(selectedProjectDraftKey, imageId);
+    },
+    [selectedProjectDraftKey],
+  );
+  const clearAttachments = useCallback(() => {
+    if (!selectedProjectDraftKey) {
+      return;
+    }
+    replaceComposerDraftAttachments(selectedProjectDraftKey, []);
+  }, [selectedProjectDraftKey]);
   const branchTarget = useMemo(
     () => ({
       environmentId: selectedProject?.environmentId ?? null,

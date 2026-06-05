@@ -15,9 +15,16 @@ export class SecretStoreError extends Data.TaggedError("SecretStoreError")<{
   readonly cause?: unknown;
 }> {}
 
+const isPlatformError = (value: unknown): value is PlatformError.PlatformError =>
+  Predicate.isTagged(value, "PlatformError");
+
+export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
+  isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
+
 export interface ServerSecretStoreShape {
   readonly get: (name: string) => Effect.Effect<Uint8Array | null, SecretStoreError>;
   readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
+  readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
   readonly getOrCreateRandom: (
     name: string,
     bytes: number,
@@ -47,9 +54,6 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
   );
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
-
-  const isPlatformError = (u: unknown): u is PlatformError.PlatformError =>
-    Predicate.isTagged(u, "PlatformError");
 
   const get: ServerSecretStoreShape["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
@@ -104,7 +108,7 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
     );
   };
 
-  const create: ServerSecretStoreShape["set"] = (name, value) => {
+  const create: ServerSecretStoreShape["create"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -146,7 +150,7 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
             create(name, generated).pipe(
               Effect.as(Uint8Array.from(generated)),
               Effect.catchTag("SecretStoreError", (error) =>
-                isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists"
+                isSecretAlreadyExistsError(error)
                   ? get(name).pipe(
                       Effect.flatMap((created) =>
                         created !== null
@@ -185,6 +189,7 @@ export const make = Effect.fn("makeServerSecretStore")(function* () {
   return {
     get,
     set,
+    create,
     getOrCreateRandom,
     remove,
   } satisfies ServerSecretStoreShape;

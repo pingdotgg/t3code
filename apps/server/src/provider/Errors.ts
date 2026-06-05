@@ -11,7 +11,7 @@ export class ProviderAdapterValidationError extends Schema.TaggedErrorClass<Prov
     provider: Schema.String,
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -27,7 +27,7 @@ export class ProviderAdapterSessionNotFoundError extends Schema.TaggedErrorClass
   {
     provider: Schema.String,
     threadId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -43,7 +43,7 @@ export class ProviderAdapterSessionClosedError extends Schema.TaggedErrorClass<P
   {
     provider: Schema.String,
     threadId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -60,7 +60,7 @@ export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<Provide
     provider: Schema.String,
     method: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -77,7 +77,7 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
     provider: Schema.String,
     threadId: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -93,7 +93,7 @@ export class ProviderValidationError extends Schema.TaggedErrorClass<ProviderVal
   {
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -108,7 +108,7 @@ export class ProviderUnsupportedError extends Schema.TaggedErrorClass<ProviderUn
   "ProviderUnsupportedError",
   {
     provider: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -129,7 +129,7 @@ export class ProviderInstanceNotFoundError extends Schema.TaggedErrorClass<Provi
   "ProviderInstanceNotFoundError",
   {
     instanceId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -148,7 +148,7 @@ export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverE
     driver: Schema.String,
     instanceId: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -163,7 +163,7 @@ export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<Provid
   "ProviderSessionNotFoundError",
   {
     threadId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -179,7 +179,7 @@ export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedError
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

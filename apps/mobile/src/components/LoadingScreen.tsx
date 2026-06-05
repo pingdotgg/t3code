@@ -5,10 +5,14 @@ import { useThemeColor } from "../lib/useThemeColor";
 import { AppText as Text } from "./AppText";
 import { BrandMark } from "./BrandMark";
 
-export function LoadingScreen(props: { readonly message: string }) {
+export function LoadingScreen(props: {
+  readonly message: string;
+  readonly messagePlacement?: "above-spinner" | "below-spinner";
+}) {
   const colorScheme = useColorScheme();
   const screenBg = useThemeColor("--color-screen");
   const insets = useSafeAreaInsets();
+  const messagePlacement = props.messagePlacement ?? "below-spinner";
 
   return (
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
@@ -19,8 +23,13 @@ export function LoadingScreen(props: { readonly message: string }) {
       />
       <View className="flex-1 items-center justify-center gap-5 px-6">
         <BrandMark compact />
+        {messagePlacement === "above-spinner" ? (
+          <Text className="font-t3-bold text-lg text-foreground">{props.message}</Text>
+        ) : null}
         <ActivityIndicator size="large" />
-        <Text className="font-t3-bold text-lg text-foreground">{props.message}</Text>
+        {messagePlacement === "below-spinner" ? (
+          <Text className="font-t3-bold text-lg text-foreground">{props.message}</Text>
+        ) : null}
       </View>
     </View>
   );

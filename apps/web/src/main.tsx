@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { ClerkProvider } from "@clerk/react";
 import { RouterProvider } from "@tanstack/react-router";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
@@ -7,6 +8,9 @@ import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 import { isElectron } from "./env";
+import { DesktopClerkProvider } from "./cloud/desktopClerk";
+import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
+import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
@@ -22,8 +26,25 @@ if (isElectron) {
 
 document.title = APP_DISPLAY_NAME;
 
+const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+const cloudWaitlistUrl = "/settings/cloud";
+
+const app = <RouterProvider router={router} />;
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    {clerkPublishableKey && hasCloudPublicConfig() ? (
+      isElectron ? (
+        <DesktopClerkProvider publishableKey={clerkPublishableKey}>
+          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+        </DesktopClerkProvider>
+      ) : (
+        <ClerkProvider publishableKey={clerkPublishableKey} waitlistUrl={cloudWaitlistUrl}>
+          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+        </ClerkProvider>
+      )
+    ) : (
+      app
+    )}
   </React.StrictMode>,
 );

@@ -53,6 +53,7 @@ const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
   desktopSsh: Schema.optionalKey(DesktopSshTargetSchema),
+  relayManaged: Schema.optionalKey(Schema.Struct({ relayUrl: Schema.String })),
   encryptedBearerToken: Schema.optionalKey(Schema.String),
 });
 
@@ -134,7 +135,11 @@ function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
+  return {
+    ...nextRecord,
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+  };
 }
 
 function toSavedEnvironmentStorageRecord(
@@ -149,20 +154,13 @@ function toSavedEnvironmentStorageRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  const desktopSsh = record.desktopSsh;
-  if (desktopSsh) {
-    return Option.match(encryptedBearerToken, {
-      onNone: () => ({ ...nextRecord, desktopSsh }),
-      onSome: (value) => ({
-        ...nextRecord,
-        desktopSsh,
-        encryptedBearerToken: value,
-      }),
-    });
-  }
+  const metadata = {
+    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
+    ...(record.relayManaged ? { relayManaged: record.relayManaged } : {}),
+  };
   return Option.match(encryptedBearerToken, {
-    onNone: () => nextRecord,
-    onSome: (value) => ({ ...nextRecord, encryptedBearerToken: value }),
+    onNone: () => ({ ...nextRecord, ...metadata }),
+    onSome: (value) => ({ ...nextRecord, ...metadata, encryptedBearerToken: value }),
   });
 }
 

@@ -8,15 +8,26 @@ import {
   PrimaryEnvironmentHttpClient,
   primaryEnvironmentHttpClientLive,
 } from "../environments/primary/httpClient";
+import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 
-export const remoteHttpRuntime = ManagedRuntime.make(remoteHttpClientLayer(globalThis.fetch));
+import { browserCryptoLayer } from "../cloud/dpop";
+import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
+import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+
+function configuredRelayUrl(): string {
+  return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
+}
+
+const webHttpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+
+export const remoteHttpRuntime = ManagedRuntime.make(webHttpClientLayer);
 
 const primaryHttpRuntime = ManagedRuntime.make(
   primaryEnvironmentHttpClientLive.pipe(
     Layer.provide(
       Layer.mergeAll(
         remoteHttpClientLayer((input, init) => globalThis.fetch(input, init)),
-        Layer.succeed(FetchHttpClient.RequestInit, { credentials: "include" }),
+        Layer.succeed(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
       ),
     ),
   ),
@@ -37,3 +48,13 @@ export const runPrimaryHttp = <A, E>(effect: Effect.Effect<A, E, PrimaryEnvironm
 export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner): void {
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
 }
+
+export const webRuntime = ManagedRuntime.make(
+  Layer.mergeAll(
+    webHttpClientLayer,
+    browserCryptoLayer,
+    webManagedRelayClientLayer(configuredRelayUrl()).pipe(
+      Layer.provide(Layer.mergeAll(webHttpClientLayer, browserCryptoLayer)),
+    ),
+  ),
+);

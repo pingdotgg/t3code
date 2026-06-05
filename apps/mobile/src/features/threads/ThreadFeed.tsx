@@ -55,8 +55,6 @@ export interface ThreadFeedProps {
   readonly bearerToken: string | null;
   readonly agentLabel: string;
   readonly contentBottomInset?: number;
-  readonly refreshing?: boolean;
-  readonly onRefresh?: () => void;
   readonly layoutVariant?: MobileLayoutVariant;
   readonly composerExpanded?: boolean;
 }
@@ -958,8 +956,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           on: { layout: true, itemLayout: true, dataChange: true },
         }}
         maintainScrollAtEndThreshold={0.1}
-        refreshing={props.refreshing ?? false}
-        onRefresh={props.onRefresh}
         safeAreaInsetBottom={insets.bottom}
         contentContainerStyle={{
           paddingTop: 12,

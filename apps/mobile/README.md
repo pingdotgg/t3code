@@ -16,6 +16,10 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
+T3 Cloud is optional and disabled in a fresh clone. Public configuration belongs in the
+repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
+[`../../.env.example`](../../.env.example).
+
 ## Development
 
 Start Metro for the dev client:
@@ -62,6 +66,10 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 ## EAS Builds
 
 CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.
+
+For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
+`T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
+as EAS environment variables. Expo config maps the canonical values into the mobile build.
 
 Create a PR preview dev-client build manually:
 

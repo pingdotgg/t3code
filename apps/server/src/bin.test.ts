@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli } from "./bin.ts";
+import { cli, makeCli } from "./bin.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
@@ -38,7 +38,11 @@ import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
-const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
+const cloudCli = makeCli({ cloudEnabled: true });
+const noCloudCli = makeCli({ cloudEnabled: false });
+const runCli = (args: ReadonlyArray<string>, command = cli) =>
+  Command.runWith(command, { version: "0.0.0" })(args);
+const runCloudCli = (args: ReadonlyArray<string>) => runCli(args, cloudCli);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
   runCli(args).pipe(Effect.provide(CliRuntimeLayer));
 
@@ -172,6 +176,121 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       }
       assert.equal(error.option, "log-level");
       assert.equal(error.value, "Debug");
+    }),
+  );
+
+  it.effect("rejects cloud commands when public cloud configuration is missing", () =>
+    Effect.gen(function* () {
+      const error = yield* runCli(["cloud", "status"], noCloudCli).pipe(Effect.flip);
+
+      if (!CliError.isCliError(error)) {
+        assert.fail(`Expected CliError, got ${String(error)}`);
+      }
+      if (error._tag !== "ShowHelp") {
+        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      }
+      assert.deepEqual(error.commandPath, ["t3", "cloud"]);
+      assert.include(error.errors[0]?.message ?? "", "missing T3 Cloud public configuration");
+
+      const output = (yield* TestConsole.errorLines).join("\n");
+      assert.include(output, "ERROR");
+      assert.include(output, "missing T3 Cloud public configuration");
+    }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
+  );
+
+  it.effect("reports fresh headless cloud state without requiring local configuration", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-status-test-"));
+      const { output } = yield* captureStdout(
+        runCloudCli(["cloud", "status", "--base-dir", baseDir, "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
+      const status = JSON.parse(output) as {
+        readonly desired: boolean;
+        readonly authenticated: boolean;
+        readonly linked: boolean;
+        readonly cloudUserId: string | null;
+        readonly relayUrl: string | null;
+      };
+
+      assert.equal(status.desired, false);
+      assert.equal(status.authenticated, false);
+      assert.equal(status.linked, false);
+      assert.equal(status.cloudUserId, null);
+      assert.equal(status.relayUrl, null);
+    }),
+  );
+
+  it.effect("reports actionable human-readable headless cloud state", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-status-human-test-"));
+      const { output } = yield* captureStdout(
+        runCloudCli(["cloud", "status", "--base-dir", baseDir]),
+      );
+
+      assert.include(output, "T3 Cloud\n  Exposure: disabled");
+      assert.include(output, "  Authorization: missing");
+      assert.include(output, "  Environment link: not provisioned");
+      assert.include(output, "Next: Run `t3 cloud link` to authorize and enable cloud exposure.");
+    }),
+  );
+
+  it.effect("logs in to headless cloud without enabling exposure", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-login-test-"));
+      const { secretsDir } = yield* deriveServerPaths(baseDir, undefined);
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(
+        join(secretsDir, "cloud-cli-oauth-token.bin"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
+        JSON.stringify({
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        }),
+      );
+
+      const login = yield* captureStdout(runCloudCli(["cloud", "login", "--base-dir", baseDir]));
+      const status = yield* captureStdout(
+        runCloudCli(["cloud", "status", "--base-dir", baseDir, "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
+      const decoded = JSON.parse(status.output) as {
+        readonly desired: boolean;
+        readonly authenticated: boolean;
+      };
+
+      assert.equal(login.output, "Signed in to T3 Cloud.");
+      assert.isFalse(decoded.desired);
+      assert.isTrue(decoded.authenticated);
+    }),
+  );
+
+  it.effect("disables headless cloud exposure without a running server", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-unlink-test-"));
+      const { output } = yield* captureStdout(
+        runCloudCli(["cloud", "unlink", "--base-dir", baseDir]),
+      );
+
+      assert.equal(output, "T3 Cloud exposure is disabled locally.");
+    }),
+  );
+
+  it.effect("logs out of headless cloud and removes the stored CLI authorization", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-logout-test-"));
+      const { secretsDir } = yield* deriveServerPaths(baseDir, undefined);
+      const tokenPath = join(secretsDir, "cloud-cli-oauth-token.bin");
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(tokenPath, "invalid persisted token");
+
+      const { output } = yield* captureStdout(
+        runCloudCli(["cloud", "logout", "--base-dir", baseDir]),
+      );
+
+      assert.equal(output, "Signed out of T3 Cloud locally.");
+      assert.isFalse(existsSync(tokenPath));
     }),
   );
 

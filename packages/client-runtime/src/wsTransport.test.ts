@@ -788,7 +788,7 @@ describe("WsTransport", () => {
       () =>
         Stream.suspend(() => {
           attempts += 1;
-          return Stream.fail(new Error("SocketCloseError: WebSocket closed"));
+          return Stream.fail(new Error("Socket is not connected"));
         }),
       vi.fn(),
       { retryDelay: 10 },
@@ -805,7 +805,7 @@ describe("WsTransport", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
-      error: "SocketCloseError: WebSocket closed",
+      error: "Socket is not connected",
     });
 
     unsubscribe();

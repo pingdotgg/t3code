@@ -59,7 +59,7 @@ index b0f61df..ead663e 100644
 \ No newline at end of file
 +//# sourceMappingURL=RpcClient.d.ts.map
 diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
-index 811a8a8..f9cf2eb 100644
+index a3161eb..0cb81f3 100644
 --- a/dist/unstable/rpc/RpcClient.js
 +++ b/dist/unstable/rpc/RpcClient.js
 @@ -46,6 +46,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
@@ -285,7 +285,7 @@ index 811a8a8..f9cf2eb 100644
 @@ -835,4 +869,4 @@ export const layerProtocolWorker = /*#__PURE__*/flow(makeProtocolWorker, /*#__PU
  export class ConnectionHooks extends /*#__PURE__*/Context.Service()("effect/rpc/RpcClient/ConnectionHooks") {}
  // internal
- const decodeDefect = /*#__PURE__*/Schema.decodeSync(Schema.Defect);
+ const decodeDefect = /*#__PURE__*/Schema.decodeSync(/*#__PURE__*/Schema.Defect());
 -//# sourceMappingURL=RpcClient.js.map
 \ No newline at end of file
 +//# sourceMappingURL=RpcClient.js.map
