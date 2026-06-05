@@ -457,7 +457,18 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             detail: `Unable to browse '${parentPath}': ${cause instanceof Error ? cause.message : String(cause)}`,
             cause,
           }),
-      });
+      }).pipe(
+        // The user can deny macOS TCC prompts for the target dir (Documents,
+        // Downloads, Music, etc.); surface an empty listing instead of an
+        // error so the caller doesn't retry-loop the prompt.
+        Effect.catchIf(
+          (error) => {
+            const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+            return code === "EACCES" || code === "EPERM";
+          },
+          () => Effect.succeed<Dirent[]>([]),
+        ),
+      );
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();

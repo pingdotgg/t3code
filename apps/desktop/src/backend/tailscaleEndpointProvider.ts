@@ -105,6 +105,11 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     readonly servePort?: number;
     readonly networkInterfaces: DesktopNetworkInterfaces;
     readonly statusJson?: string | null;
+    readonly readMagicDnsName?: Effect.Effect<
+      string | null,
+      never,
+      ChildProcessSpawner.ChildProcessSpawner
+    >;
     readonly probe?: (baseUrl: string) => Effect.Effect<boolean, never, HttpClient.HttpClient>;
   }): Effect.fn.Return<
     readonly AdvertisedEndpoint[],
@@ -112,12 +117,15 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient
   > {
     const ipEndpoints = resolveTailscaleIpAdvertisedEndpoints(input);
+    const readDnsName =
+      input.readMagicDnsName ??
+      readTailscaleStatus.pipe(
+        Effect.map((status) => status.magicDnsName),
+        Effect.catch(() => Effect.succeed<string | null>(null)),
+      );
     const dnsName =
       input.statusJson === undefined
-        ? yield* readTailscaleStatus.pipe(
-            Effect.map((status) => status.magicDnsName),
-            Effect.orElseSucceed(() => null),
-          )
+        ? yield* readDnsName
         : input.statusJson
           ? yield* parseTailscaleMagicDnsName(input.statusJson).pipe(
               Effect.orElseSucceed(() => null),

@@ -104,6 +104,25 @@ describe("tailscale endpoint provider", () => {
     }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
   );
 
+  it.effect("uses an injected magic DNS name reader instead of spawning tailscale", () =>
+    Effect.gen(function* () {
+      let readerCalls = 0;
+      const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
+        port: 3773,
+        networkInterfaces: {},
+        readMagicDnsName: Effect.sync(() => {
+          readerCalls += 1;
+          return "desktop.tail.ts.net";
+        }),
+      });
+      assert.equal(readerCalls, 1);
+      assert.deepEqual(
+        endpoints.map((endpoint) => endpoint.httpBaseUrl),
+        ["https://desktop.tail.ts.net/"],
+      );
+    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+  );
+
   it.effect(
     "marks the Tailscale HTTPS endpoint available after Serve is enabled and reachable",
     () =>
