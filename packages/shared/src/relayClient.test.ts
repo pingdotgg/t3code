@@ -80,11 +80,7 @@ const lockedFileInfo: FileSystem.File.Info = {
   blocks: Option.none(),
 };
 
-const fileSystemError = (
-  tag: "AlreadyExists" | "NotFound",
-  method: string,
-  path: string,
-) =>
+const fileSystemError = (tag: "AlreadyExists" | "NotFound", method: string, path: string) =>
   PlatformError.systemError({
     _tag: tag,
     module: "FileSystem",

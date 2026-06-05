@@ -395,15 +395,13 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         schedule: INSTALL_LOCK_RETRY_SCHEDULE,
         while: (error) => error instanceof RelayClientInstallLockUnavailable,
       }),
-      Effect.catchTag(
-        "RelayClientInstallLockUnavailable",
-        () =>
-          Effect.fail(
-            new RelayClientInstallError({
-              reason: "install_locked",
-              message: "Another relay client installation is still in progress.",
-            }),
-          ),
+      Effect.catchTag("RelayClientInstallLockUnavailable", () =>
+        Effect.fail(
+          new RelayClientInstallError({
+            reason: "install_locked",
+            message: "Another relay client installation is still in progress.",
+          }),
+        ),
       ),
     );
   });
