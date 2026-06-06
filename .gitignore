@@ -7,7 +7,6 @@ node_modules
 apps/*/dist
 .astro
 packages/*/dist
-packages/plugins/*/dist
 .env
 .env.local
 build/

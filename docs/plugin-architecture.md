@@ -26,7 +26,12 @@ packages/plugin-api/
   src/schema.ts
   src/package.ts
 
-packages/plugins/automations/
+~/dev/automations/
+  src/client/
+  src/server/
+  src/shared/
+
+~/dev/voice-input/
   src/client/
   src/server/
   src/shared/
@@ -34,8 +39,11 @@ packages/plugins/automations/
 
 Plugins are discovered from `<baseDir>/plugins`, where `baseDir` is the configured T3 home. In normal
 runtime that is `$T3CODE_HOME` or `~/.t3`; in monorepo dev it can be the dev home used by the server.
-The dev helper `pnpm run plugins:install-dev` builds known local plugin packages and symlinks them
-into `$T3CODE_HOME/plugins`.
+Plugin implementations are developed outside this repository, conventionally as sibling checkouts
+under `~/dev/<plugin_name>`. This repository keeps the plugin host, resolver, shared SDK, and setup
+contracts only; it does not vendor plugin implementations or provide a monorepo script that builds
+and symlinks development plugins. During development, build a plugin in its own checkout and install
+or symlink it into `$T3CODE_HOME/plugins/<plugin_id>`.
 
 ## Dependency Boundary
 
@@ -213,9 +221,10 @@ Settings placements route to:
 The default route id is `main`. Route rendering waits until the catalog and browser bundle are
 available, then calls the registered route component with the plugin UI context.
 
-## Automations Reference Plugin
+## External Reference Plugins
 
-Automations is the reference package for the expected plugin shell:
+Automations is the reference package for the expected plugin shell. Its source lives outside this
+monorepo as the `~/dev/automations` sibling checkout:
 
 ```text
 src/
@@ -255,12 +264,15 @@ The split is intentional:
 - `server/runtime.ts` owns execution, overlap policy, retention, and schedule ticks.
 - `server/schedule.ts` owns cron parsing and timezone validation.
 
-Use Automations as the best-practice template for new plugins.
+Use Automations as the best-practice template for new plugins. Voice Input is the companion Composer
+plugin example in `~/dev/voice-input`; its feature spec lives with that plugin source.
 
 ## Current Limits
 
 - Plugins are local and trusted; there is no sandboxing or permission prompt model.
 - Plugin installation is file-system based; there is no marketplace or remote installer.
+- Plugin development packages live outside this monorepo and are installed manually or through
+  plugin-local tooling.
 - Code reload requires a server restart.
 - Connector plugins are future work.
 - Plugin-owned dependencies are supported at package level, but the server imports plugin server code

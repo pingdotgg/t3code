@@ -1,7 +1,6 @@
 packages:
   - "apps/*"
   - "oxlint-plugin-t3code"
-  - "packages/plugins/*"
   - "packages/*"
   - "scripts"
 
