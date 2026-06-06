@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
+import { DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE } from "@t3tools/shared/webFeatureFlags";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import {
@@ -78,6 +79,10 @@ export const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
 export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
+  Flag.optional,
+);
+export const downloadableDiagnosticsFlag = Flag.boolean("downloadable-diagnostics").pipe(
+  Flag.withDescription("Enable the downloadable diagnostics web feature for this browser session."),
   Flag.optional,
 );
 
@@ -151,6 +156,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly downloadableDiagnostics?: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -185,6 +191,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  downloadableDiagnostics: downloadableDiagnosticsFlag,
 } as const;
 
 export const authLocationFlags = sharedServerLocationFlags;
@@ -233,6 +240,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      downloadableDiagnostics: flags.downloadableDiagnostics ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -335,6 +343,9 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const webFeatureFlags = Option.getOrElse(normalizedFlags.downloadableDiagnostics, () => false)
+      ? ([DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE] as const)
+      : undefined;
     const staticDir = devUrl ? undefined : yield* resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -381,6 +392,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(webFeatureFlags ? { webFeatureFlags } : {}),
     };
 
     return config;

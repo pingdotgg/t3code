@@ -14,6 +14,7 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import { DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE } from "@t3tools/shared/webFeatureFlags";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
@@ -694,6 +695,41 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });
+    }),
+  );
+
+  it.effect("enables the downloadable diagnostics web feature flag from CLI flags", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-downloadable-diagnostics");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+          downloadableDiagnostics: Option.some(true),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.webFeatureFlags).toEqual([DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE]);
     }),
   );
 });

@@ -393,6 +393,34 @@ describe("WorkspaceFilesPanel", () => {
     }
   });
 
+  it("mutes gitignored explorer entries", async () => {
+    __setEnvironmentApiOverrideForTests(
+      ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        rootEntries: [
+          { kind: "directory", path: "src" },
+          { kind: "file", path: "README.md" },
+          { kind: "file", path: "websocket-diagnostics1.md", ignored: true },
+        ],
+      }),
+    );
+    const mounted = await renderFilesPanel();
+    try {
+      await expect
+        .element(page.getByRole("button", { name: /^websocket-diagnostics1\.md$/ }))
+        .toBeVisible();
+      expect(
+        document.querySelector('button[title="websocket-diagnostics1.md"] span.truncate')
+          ?.className,
+      ).toContain("text-muted-foreground/55");
+      expect(
+        document.querySelector('button[title="README.md"] span.truncate')?.className,
+      ).toContain("text-foreground/88");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("refreshes git status and invalidates file queries when the explorer opens", async () => {
     __setEnvironmentApiOverrideForTests(ENVIRONMENT_ID, createMockEnvironmentApi());
     const invalidateQueriesSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");

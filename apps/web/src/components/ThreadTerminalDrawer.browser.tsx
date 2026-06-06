@@ -10,6 +10,7 @@ const {
   terminalDisposeSpy,
   terminalInstances,
   terminalLineTextByRow,
+  terminalWriteSpy,
   fitAddonFitSpy,
   fitAddonLoadSpy,
   environmentApiById,
@@ -22,11 +23,24 @@ const {
     clearSelection: ReturnType<typeof vi.fn>;
     scrollLines: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
+    emitData: (data: string) => void;
+    writes: string[];
   }>,
   terminalLineTextByRow: new Map<number, string>(),
+  terminalWriteSpy: vi.fn(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
-  environmentApiById: new Map<string, { terminal: { open: ReturnType<typeof vi.fn> } }>(),
+  environmentApiById: new Map<
+    string,
+    {
+      terminal: {
+        open: ReturnType<typeof vi.fn>;
+        resize: ReturnType<typeof vi.fn>;
+        restart: ReturnType<typeof vi.fn>;
+        write: ReturnType<typeof vi.fn>;
+      };
+    }
+  >(),
   readEnvironmentApiMock: vi.fn((environmentId: string) => environmentApiById.get(environmentId)),
   readLocalApiMock: vi.fn<
     () =>
@@ -54,6 +68,8 @@ vi.mock("@xterm/xterm", () => ({
     options: { theme?: unknown; wordSeparator?: string } = {};
     private selection: { column: number; length: number; row: number } | null = null;
     private selectionText = "";
+    private dataListeners = new Set<(data: string) => void>();
+    writes: string[] = [];
     buffer = {
       active: {
         viewportY: 0,
@@ -80,7 +96,10 @@ vi.mock("@xterm/xterm", () => ({
 
     open() {}
 
-    write() {}
+    write(data: string) {
+      this.writes.push(data);
+      terminalWriteSpy(data);
+    }
 
     clear() {}
 
@@ -136,8 +155,13 @@ vi.mock("@xterm/xterm", () => ({
       return { dispose: vi.fn() };
     }
 
-    onData() {
-      return { dispose: vi.fn() };
+    onData(callback: (data: string) => void) {
+      this.dataListeners.add(callback);
+      return {
+        dispose: vi.fn(() => {
+          this.dataListeners.delete(callback);
+        }),
+      };
     }
 
     onSelectionChange() {
@@ -147,10 +171,23 @@ vi.mock("@xterm/xterm", () => ({
     dispose() {
       terminalDisposeSpy();
     }
+
+    emitData(data: string) {
+      for (const listener of this.dataListeners) {
+        listener(data);
+      }
+    }
   },
 }));
 
 vi.mock("~/environmentApi", () => ({
+  ensureEnvironmentApi: vi.fn((environmentId: string) => {
+    const api = readEnvironmentApiMock(environmentId);
+    if (!api) {
+      throw new Error(`Environment API not found for environment ${environmentId}`);
+    }
+    return api;
+  }),
   readEnvironmentApi: readEnvironmentApiMock,
 }));
 
@@ -161,27 +198,55 @@ vi.mock("~/localApi", () => ({
   readLocalApi: readLocalApiMock,
 }));
 
-import { TERMINAL_WORD_SEPARATORS, TerminalViewport } from "./ThreadTerminalDrawer";
+import ThreadTerminalDrawer, {
+  TERMINAL_WORD_SEPARATORS,
+  TerminalViewport,
+} from "./ThreadTerminalDrawer";
+import { useTerminalStateStore } from "../terminalStateStore";
 
 const THREAD_ID = ThreadId.make("thread-terminal-browser");
+
+function createTerminalSnapshot(
+  overrides: Partial<{
+    threadId: typeof THREAD_ID;
+    terminalId: string;
+    cwd: string;
+    worktreePath: string | null;
+    status: "running";
+    pid: number;
+    history: string;
+    exitCode: number | null;
+    exitSignal: number | null;
+    updatedAt: string;
+  }> = {},
+) {
+  return {
+    threadId: THREAD_ID,
+    terminalId: "default",
+    cwd: "/repo/project",
+    worktreePath: null,
+    status: "running" as const,
+    pid: 123,
+    history: "",
+    exitCode: null,
+    exitSignal: null,
+    updatedAt: "2026-04-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function createEnvironmentApi() {
   return {
     terminal: {
-      open: vi.fn(async () => ({
-        threadId: THREAD_ID,
-        terminalId: "default",
-        cwd: "/repo/project",
-        worktreePath: null,
-        status: "running" as const,
-        pid: 123,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        updatedAt: "2026-04-07T00:00:00.000Z",
-      })),
+      open: vi.fn(async () => createTerminalSnapshot()),
       write: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
+      restart: vi.fn(async () =>
+        createTerminalSnapshot({
+          pid: 456,
+          updatedAt: "2026-04-07T00:00:01.000Z",
+        }),
+      ),
     },
   };
 }
@@ -190,7 +255,14 @@ async function mountTerminalViewport(props: {
   threadRef: ReturnType<typeof scopeThreadRef>;
   drawerBackgroundColor?: string;
   drawerTextColor?: string;
+  resyncRequestId?: number;
+  restartRequestId?: number;
 }) {
+  let currentProps = {
+    resyncRequestId: props.resyncRequestId ?? 0,
+    restartRequestId: props.restartRequestId ?? 0,
+    threadRef: props.threadRef,
+  };
   const drawer = document.createElement("div");
   drawer.className = "thread-terminal-drawer";
   if (props.drawerBackgroundColor) {
@@ -218,6 +290,8 @@ async function mountTerminalViewport(props: {
       focusRequestId={0}
       autoFocus={false}
       resizeEpoch={0}
+      resyncRequestId={currentProps.resyncRequestId}
+      restartRequestId={currentProps.restartRequestId}
       drawerHeight={320}
       keybindings={[]}
     />,
@@ -225,10 +299,17 @@ async function mountTerminalViewport(props: {
   );
 
   return {
-    rerender: async (nextProps: { threadRef: ReturnType<typeof scopeThreadRef> }) => {
+    rerender: async (
+      nextProps: Partial<{
+        threadRef: ReturnType<typeof scopeThreadRef>;
+        resyncRequestId: number;
+        restartRequestId: number;
+      }>,
+    ) => {
+      currentProps = { ...currentProps, ...nextProps };
       await screen.rerender(
         <TerminalViewport
-          threadRef={nextProps.threadRef}
+          threadRef={currentProps.threadRef}
           threadId={THREAD_ID}
           terminalId="default"
           terminalLabel="Terminal"
@@ -238,6 +319,8 @@ async function mountTerminalViewport(props: {
           focusRequestId={0}
           autoFocus={false}
           resizeEpoch={0}
+          resyncRequestId={currentProps.resyncRequestId}
+          restartRequestId={currentProps.restartRequestId}
           drawerHeight={320}
           keybindings={[]}
         />,
@@ -246,6 +329,43 @@ async function mountTerminalViewport(props: {
     cleanup: async () => {
       await screen.unmount();
       drawer.remove();
+    },
+  };
+}
+
+async function mountThreadTerminalDrawer(props: { threadRef: ReturnType<typeof scopeThreadRef> }) {
+  const host = document.createElement("div");
+  host.style.width = "900px";
+  host.style.height = "420px";
+  document.body.append(host);
+
+  const screen = await render(
+    <ThreadTerminalDrawer
+      threadRef={props.threadRef}
+      threadId={THREAD_ID}
+      cwd="/repo/project"
+      visible
+      height={320}
+      terminalIds={["default"]}
+      activeTerminalId="default"
+      terminalGroups={[]}
+      activeTerminalGroupId="group-default"
+      focusRequestId={0}
+      onSplitTerminal={() => undefined}
+      onNewTerminal={() => undefined}
+      onActiveTerminalChange={() => undefined}
+      onCloseTerminal={() => undefined}
+      onHeightChange={() => undefined}
+      onAddTerminalContext={() => undefined}
+      keybindings={[]}
+    />,
+    { container: host },
+  );
+
+  return {
+    cleanup: async () => {
+      await screen.unmount();
+      host.remove();
     },
   };
 }
@@ -300,13 +420,21 @@ function dispatchTouchEvent(
 
 describe("TerminalViewport", () => {
   afterEach(() => {
+    vi.useRealTimers();
     environmentApiById.clear();
     terminalInstances.length = 0;
     terminalLineTextByRow.clear();
     readEnvironmentApiMock.mockClear();
     readLocalApiMock.mockClear();
+    useTerminalStateStore.setState({
+      nextTerminalEventId: 1,
+      terminalEventEntriesByKey: {},
+      terminalLaunchContextByThreadKey: {},
+      terminalStateByThreadKey: {},
+    });
     terminalConstructorSpy.mockClear();
     terminalDisposeSpy.mockClear();
+    terminalWriteSpy.mockClear();
     fitAddonFitSpy.mockClear();
     fitAddonLoadSpy.mockClear();
   });
@@ -378,6 +506,232 @@ describe("TerminalViewport", () => {
       });
       expect(terminalDisposeSpy).not.toHaveBeenCalled();
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("retries a terminal open interrupted by websocket reconnect without writing the transient error", async () => {
+    vi.useFakeTimers();
+    const environment = createEnvironmentApi();
+    environment.terminal.open.mockRejectedValueOnce(
+      new Error("All fibers interrupted without error"),
+    );
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        terminalWriteSpy.mock.calls.some((call) =>
+          String(call[0]).includes("All fibers interrupted without error"),
+        ),
+      ).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(2);
+      });
+      expect(environment.terminal.resize).toHaveBeenCalledWith(
+        expect.objectContaining({ cols: 80, rows: 24 }),
+      );
+      expect(
+        terminalWriteSpy.mock.calls.some((call) =>
+          String(call[0]).includes("All fibers interrupted without error"),
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not resync the terminal snapshot when writes succeed but no output arrives", async () => {
+    vi.useFakeTimers();
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+      terminalInstances[0]?.emitData("a");
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.write).toHaveBeenCalledWith(
+          expect.objectContaining({ data: "a" }),
+        );
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not resync after arrow or control input succeeds without output", async () => {
+    vi.useFakeTimers();
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+      terminalInstances[0]?.emitData("\u001b[A");
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.write).toHaveBeenCalledWith(
+          expect.objectContaining({ data: "\u001b[A" }),
+        );
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+
+      terminalInstances[0]?.emitData("\u0003");
+      await vi.waitFor(() => {
+        expect(environment.terminal.write).toHaveBeenCalledWith(
+          expect.objectContaining({ data: "\u0003" }),
+        );
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("applies terminal output events without scheduling automatic resync", async () => {
+    vi.useFakeTimers();
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    const threadRef = scopeThreadRef("environment-a" as never, THREAD_ID);
+
+    const mounted = await mountTerminalViewport({ threadRef });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+      terminalInstances[0]?.emitData("a");
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.write).toHaveBeenCalledTimes(1);
+      });
+      useTerminalStateStore.getState().applyTerminalEvent(threadRef, {
+        createdAt: "2026-04-07T00:00:01.000Z",
+        data: "a",
+        terminalId: "default",
+        threadId: THREAD_ID,
+        type: "output",
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("manual resync request reopens and rehydrates the terminal", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+
+      await mounted.rerender({ resyncRequestId: 1 });
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(2);
+      });
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("manual restart request restarts without any automatic restart", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+      await mounted.rerender({ restartRequestId: 1 });
+      await vi.waitFor(() => {
+        expect(environment.terminal.restart).toHaveBeenCalledTimes(1);
+      });
+      expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("drawer toolbar resyncs and restarts only after confirmation", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const mounted = await mountThreadTerminalDrawer({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(1);
+      });
+
+      document.querySelector<HTMLButtonElement>("[aria-label='Resync Terminal']")?.click();
+      await vi.waitFor(() => {
+        expect(environment.terminal.open).toHaveBeenCalledTimes(2);
+      });
+
+      document.querySelector<HTMLButtonElement>("[aria-label='Restart Terminal']")?.click();
+      await vi.waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(environment.terminal.restart).not.toHaveBeenCalled();
+
+      confirmSpy.mockReturnValueOnce(true);
+      document.querySelector<HTMLButtonElement>("[aria-label='Restart Terminal']")?.click();
+
+      await vi.waitFor(() => {
+        expect(environment.terminal.restart).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      confirmSpy.mockRestore();
       await mounted.cleanup();
     }
   });

@@ -52,6 +52,10 @@ export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
   return getSlowRpcAckRequestsValue();
 }
 
+export function getPendingRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
+  return [...pendingRpcAckRequests.values()].map((pending) => pending.request);
+}
+
 export function trackRpcRequestSent(requestId: string, tag: string): void {
   if (!shouldTrackRpcAck(tag)) {
     return;

@@ -8,8 +8,8 @@ self.addEventListener("push", (event) => {
   const title = notificationTitle(payload.title);
   const notification = {
     body: payload.body || undefined,
-    icon: "/pwa-192.png",
-    badge: "/pwa-192.png",
+    icon: "/salchi-pwa-192.png",
+    badge: "/salchi-pwa-192.png",
     tag: payload.tag || "t3code",
     data: {
       url: payload.url || DEFAULT_NOTIFICATION_URL,

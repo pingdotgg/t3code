@@ -1,14 +1,21 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { forceRefreshApp, shouldShowOpenInPicker } from "./ChatHeader";
+import {
+  forceRefreshApp,
+  shouldShowDownloadableDiagnostics,
+  shouldShowOpenInPicker,
+} from "./ChatHeader";
 
 const originalWindow = globalThis.window;
 
 function installWindowStub(input: {
+  readonly href?: string;
   readonly forceReload?: () => Promise<void>;
   readonly reload?: () => void;
 }) {
+  const storage = new Map<string, string>();
+
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
@@ -20,7 +27,17 @@ function installWindowStub(input: {
           }
         : {}),
       location: {
+        href: input.href ?? "https://example.com/",
         reload: input.reload ?? vi.fn(),
+      },
+      sessionStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        removeItem: (key: string) => {
+          storage.delete(key);
+        },
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
       },
     },
   });
@@ -80,6 +97,30 @@ describe("shouldShowOpenInPicker", () => {
         primaryEnvironmentId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowDownloadableDiagnostics", () => {
+  it("shows downloadable diagnostics when the server feature flag is present", () => {
+    installWindowStub({});
+
+    expect(
+      shouldShowDownloadableDiagnostics({
+        serverWebFeatureFlags: ["downloadable-diagnostics"],
+      }),
+    ).toBe(true);
+  });
+
+  it("shows downloadable diagnostics when the feature flag is present", () => {
+    installWindowStub({ href: "https://example.com/?salchiFeature=downloadable-diagnostics" });
+
+    expect(shouldShowDownloadableDiagnostics()).toBe(true);
+  });
+
+  it("hides downloadable diagnostics without the feature flag", () => {
+    installWindowStub({});
+
+    expect(shouldShowDownloadableDiagnostics()).toBe(false);
   });
 });
 

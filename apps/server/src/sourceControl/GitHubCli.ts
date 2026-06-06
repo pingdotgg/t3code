@@ -53,12 +53,14 @@ export interface GitHubCliShape {
 
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
+    readonly repository?: string;
     readonly headSelector: string;
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
   readonly getPullRequest: (input: {
     readonly cwd: string;
+    readonly repository?: string;
     readonly reference: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
@@ -75,6 +77,7 @@ export interface GitHubCliShape {
 
   readonly createPullRequest: (input: {
     readonly cwd: string;
+    readonly repository?: string;
     readonly baseBranch: string;
     readonly headSelector: string;
     readonly title: string;
@@ -83,6 +86,7 @@ export interface GitHubCliShape {
 
   readonly getDefaultBranch: (input: {
     readonly cwd: string;
+    readonly repository?: string;
   }) => Effect.Effect<string | null, GitHubCliError>;
 
   readonly checkoutPullRequest: (input: {
@@ -95,6 +99,10 @@ export interface GitHubCliShape {
 export class GitHubCli extends Context.Service<GitHubCli, GitHubCliShape>()(
   "salchi/sourceControl/GitHubCli",
 ) {}
+
+function ghRepoArgs(repository: string | undefined): ReadonlyArray<string> {
+  return repository ? ["--repo", repository] : [];
+}
 
 function errorText(error: VcsError | unknown): string {
   if (typeof error === "object" && error !== null) {
@@ -248,6 +256,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
         args: [
           "pr",
           "list",
+          ...ghRepoArgs(input.repository),
           "--head",
           input.headSelector,
           "--state",
@@ -288,6 +297,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
           "pr",
           "view",
           input.reference,
+          ...ghRepoArgs(input.repository),
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
@@ -344,6 +354,7 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
         args: [
           "pr",
           "create",
+          ...ghRepoArgs(input.repository),
           "--base",
           input.baseBranch,
           "--head",
@@ -357,7 +368,15 @@ export const make = Effect.fn("makeGitHubCli")(function* () {
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+        args: [
+          "repo",
+          "view",
+          ...(input.repository ? [input.repository] : []),
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
+        ],
       }).pipe(
         Effect.map((value) => {
           const trimmed = value.stdout.trim();

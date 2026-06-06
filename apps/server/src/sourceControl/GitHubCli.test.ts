@@ -186,6 +186,40 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("scopes open pull request listing to an explicit repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.listOpenPullRequests({
+        cwd: "/repo",
+        repository: "JoseRFelix/salchi",
+        headSelector: "jose/websocket-improvements",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "list",
+          "--repo",
+          "JoseRFelix/salchi",
+          "--head",
+          "jose/websocket-improvements",
+          "--state",
+          "open",
+          "--limit",
+          "1",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -263,6 +297,72 @@ describe("GitHubCli.layer", () => {
         nameWithOwner: "octocat/codething-mvp",
         url: "https://github.com/octocat/codething-mvp",
         sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("scopes pull request creation to an explicit repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        repository: "JoseRFelix/salchi",
+        baseBranch: "main",
+        headSelector: "jose/websocket-improvements",
+        title: "Add gated WebSocket diagnostics and terminal recovery",
+        bodyFile: "/tmp/body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--repo",
+          "JoseRFelix/salchi",
+          "--base",
+          "main",
+          "--head",
+          "jose/websocket-improvements",
+          "--title",
+          "Add gated WebSocket diagnostics and terminal recovery",
+          "--body-file",
+          "/tmp/body.md",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("scopes default branch lookup to an explicit repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("main\n")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const branch = yield* gh.getDefaultBranch({
+        cwd: "/repo",
+        repository: "JoseRFelix/salchi",
+      });
+
+      assert.equal(branch, "main");
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "repo",
+          "view",
+          "JoseRFelix/salchi",
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );

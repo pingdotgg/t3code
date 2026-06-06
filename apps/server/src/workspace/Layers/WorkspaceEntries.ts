@@ -152,6 +152,32 @@ function isPathInIgnoredDirectory(relativePath: string): boolean {
   return IGNORED_DIRECTORY_NAMES.has(firstSegment);
 }
 
+function makeProjectEntry(
+  relativePath: string,
+  kind: ProjectEntry["kind"],
+  ignored: boolean,
+): ProjectEntry {
+  const parentPath = parentPathOf(relativePath);
+  return {
+    path: relativePath,
+    kind,
+    ...(parentPath ? { parentPath } : {}),
+    ...(ignored ? { ignored: true } : {}),
+  };
+}
+
+function projectEntryForOutput(entry: ProjectEntry): ProjectEntry {
+  if (entry.parentPath) {
+    return entry.ignored
+      ? { path: entry.path, kind: entry.kind, parentPath: entry.parentPath, ignored: true }
+      : { path: entry.path, kind: entry.kind, parentPath: entry.parentPath };
+  }
+
+  return entry.ignored
+    ? { path: entry.path, kind: entry.kind, ignored: true }
+    : { path: entry.path, kind: entry.kind };
+}
+
 function directoryAncestorsOf(relativePath: string): string[] {
   const segments = relativePath.split("/").filter((segment) => segment.length > 0);
   if (segments.length <= 1) return [];
@@ -283,38 +309,42 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         Effect.catch(() => filterVcsIgnoredPaths(cwd, listedPaths)),
       );
 
-      const directorySet = new Set<string>();
-      for (const filePath of filePaths) {
+      const ignoredFilePaths = [...new Set(listedFiles.ignoredPaths ?? [])]
+        .map(toPosixPath)
+        .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+      const entryByPath = new Map<string, ProjectEntry>();
+      const addEntry = (entry: ProjectEntry) => {
+        const existing = entryByPath.get(entry.path);
+        if (existing && !existing.ignored) {
+          return;
+        }
+        if (existing && existing.ignored && entry.ignored) {
+          return;
+        }
+        entryByPath.set(entry.path, entry);
+      };
+      const addFilePath = (filePath: string, ignored: boolean) => {
         for (const directoryPath of directoryAncestorsOf(filePath)) {
           if (!isPathInIgnoredDirectory(directoryPath)) {
-            directorySet.add(directoryPath);
+            addEntry(makeProjectEntry(directoryPath, "directory", ignored));
           }
         }
+        addEntry(makeProjectEntry(filePath, "file", ignored));
+      };
+
+      for (const filePath of [...new Set(filePaths)].toSorted((left, right) =>
+        left.localeCompare(right),
+      )) {
+        addFilePath(filePath, false);
+      }
+      for (const filePath of ignoredFilePaths.toSorted((left, right) =>
+        left.localeCompare(right),
+      )) {
+        addFilePath(filePath, true);
       }
 
-      const directoryEntries = [...directorySet]
-        .toSorted((left, right) => left.localeCompare(right))
-        .map(
-          (directoryPath): ProjectEntry => ({
-            path: directoryPath,
-            kind: "directory",
-            parentPath: parentPathOf(directoryPath),
-          }),
-        )
-        .map(toSearchableWorkspaceEntry);
-      const fileEntries = [...new Set(filePaths)]
-        .toSorted((left, right) => left.localeCompare(right))
-        .map(
-          (filePath): ProjectEntry => ({
-            path: filePath,
-            kind: "file",
-            parentPath: parentPathOf(filePath),
-          }),
-        )
-        .map(toSearchableWorkspaceEntry);
-
       const now = yield* DateTime.now;
-      const entries = [...directoryEntries, ...fileEntries];
+      const entries = [...entryByPath.values()].map(toSearchableWorkspaceEntry);
       return {
         scannedAt: now.epochMilliseconds,
         entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
@@ -545,19 +575,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       Effect.map((index) => {
         const entries = index.entries
           .filter((entry) => entry.parentPath === directoryPath)
-          .map(
-            (entry): ProjectEntry =>
-              entry.parentPath
-                ? {
-                    path: entry.path,
-                    kind: entry.kind,
-                    parentPath: entry.parentPath,
-                  }
-                : {
-                    path: entry.path,
-                    kind: entry.kind,
-                  },
-          )
+          .map(projectEntryForOutput)
           .toSorted(compareWorkspaceEntries);
 
         return {

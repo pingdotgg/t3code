@@ -1,4 +1,5 @@
 import { assert, expect, it } from "@effect/vitest";
+import { DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE } from "@t3tools/shared/webFeatureFlags";
 
 import {
   buildPairingUrl,
@@ -59,6 +60,14 @@ it("builds a pairing URL that embeds the token in the hash", () => {
   expect(buildPairingUrl("https://desktop.tail.ts.net/", "PAIRCODE")).toBe(
     "https://desktop.tail.ts.net/pair#token=PAIRCODE",
   );
+});
+
+it("builds a pairing URL with web feature flags before the token hash", () => {
+  expect(
+    buildPairingUrl("https://desktop.tail.ts.net/", "PAIRCODE", {
+      webFeatureFlags: [DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE],
+    }),
+  ).toBe("https://desktop.tail.ts.net/pair?salchiFeature=downloadable-diagnostics#token=PAIRCODE");
 });
 
 it("renders terminal QR codes as a multi-line unicode block grid", () => {

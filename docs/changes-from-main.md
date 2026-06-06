@@ -29,8 +29,8 @@ additional upstream changes that also show up in `git diff main...HEAD`.
 
 - Added PWA metadata and install assets for the web app:
   - `apps/web/public/manifest.webmanifest`
-  - `apps/web/public/pwa-192.png`
-  - `apps/web/public/pwa-512.png`
+  - `apps/web/public/salchi-pwa-192.png`
+  - `apps/web/public/salchi-pwa-512.png`
   - iOS and standalone web app meta tags in `apps/web/index.html`
 - Extended the brand asset pipeline so production, nightly, and development
   builds copy PWA icons into the web output.
@@ -299,8 +299,8 @@ M	apps/web/public/favicon-16x16.png
 M	apps/web/public/favicon-32x32.png
 M	apps/web/public/favicon.ico
 A	apps/web/public/manifest.webmanifest
-A	apps/web/public/pwa-192.png
-A	apps/web/public/pwa-512.png
+A	apps/web/public/salchi-pwa-192.png
+A	apps/web/public/salchi-pwa-512.png
 A	apps/web/src/codeHighlighting.test.ts
 A	apps/web/src/codeHighlighting.ts
 A	apps/web/src/components/BackNavigationBlocker.tsx
@@ -379,12 +379,8 @@ A	apps/web/src/workspaceFilePreview.ts
 M	apps/web/tsconfig.json
 M	apps/web/vercel.ts
 M	apps/web/vite.config.ts
-A	assets/dev/blueprint-web-pwa-192.png
-A	assets/dev/blueprint-web-pwa-512.png
-A	assets/nightly/blueprint-web-pwa-192.png
-A	assets/nightly/blueprint-web-pwa-512.png
-A	assets/prod/t3-black-web-pwa-192.png
-A	assets/prod/t3-black-web-pwa-512.png
+A	assets/salchi/salchi-web-pwa-192.png
+A	assets/salchi/salchi-web-pwa-512.png
 M	packages/contracts/src/ipc.ts
 M	packages/contracts/src/project.ts
 M	packages/contracts/src/providerRuntime.ts

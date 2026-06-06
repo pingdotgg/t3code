@@ -20,6 +20,7 @@ export {
   disconnectSavedEnvironment,
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
+  listEnvironmentConnections,
   readEnvironmentConnection,
   reconnectSavedEnvironment,
   removeSavedEnvironment,

@@ -157,3 +157,101 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
     });
   }),
 );
+
+it.effect("passes context-derived GitHub repository into PR creation", () =>
+  Effect.gen(function* () {
+    let createInput: Parameters<GitHubCli.GitHubCliShape["createPullRequest"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      createPullRequest: (input) => {
+        createInput = input;
+        return Effect.void;
+      },
+    });
+
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+        remoteName: "origin",
+        remoteUrl: "git@github.com:JoseRFelix/salchi.git",
+      },
+      baseRefName: "main",
+      headSelector: "jose/websocket-improvements",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+    });
+
+    assert.deepStrictEqual(createInput, {
+      cwd: "/repo",
+      repository: "JoseRFelix/salchi",
+      baseBranch: "main",
+      headSelector: "jose/websocket-improvements",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+    });
+  }),
+);
+
+it.effect("passes context-derived GitHub repository into PR listing", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitHubCli.GitHubCliShape["listOpenPullRequests"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+        remoteName: "origin",
+        remoteUrl: "https://github.com/JoseRFelix/salchi.git/",
+      },
+      headSelector: "jose/websocket-improvements",
+      state: "open",
+      limit: 1,
+    });
+
+    assert.deepStrictEqual(changeRequests, []);
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      repository: "JoseRFelix/salchi",
+      headSelector: "jose/websocket-improvements",
+      limit: 1,
+    });
+  }),
+);
+
+it.effect("passes context-derived GitHub Enterprise repository into default branch lookup", () =>
+  Effect.gen(function* () {
+    let defaultBranchInput: Parameters<GitHubCli.GitHubCliShape["getDefaultBranch"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      getDefaultBranch: (input) => {
+        defaultBranchInput = input;
+        return Effect.succeed("main");
+      },
+    });
+
+    const defaultBranch = yield* provider.getDefaultBranch({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub Self-Hosted",
+          baseUrl: "https://github.example.com",
+        },
+        remoteName: "origin",
+        remoteUrl: "ssh://git@github.example.com/JoseRFelix/salchi.git",
+      },
+    });
+
+    assert.equal(defaultBranch, "main");
+    assert.deepStrictEqual(defaultBranchInput, {
+      cwd: "/repo",
+      repository: "github.example.com/JoseRFelix/salchi",
+    });
+  }),
+);

@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
 const repoRoot = resolve(desktopDir, "..", "..");
 const defaultIconPath = join(desktopDir, "resources", "icon.icns");
-const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
+const developmentMacIconPngPath = join(repoRoot, "assets", "salchi", "salchi-icon-1024.png");
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {

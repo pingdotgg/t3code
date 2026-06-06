@@ -20,6 +20,7 @@ export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
   parentPath: Schema.optional(TrimmedNonEmptyString),
+  ignored: Schema.optional(Schema.Boolean),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 

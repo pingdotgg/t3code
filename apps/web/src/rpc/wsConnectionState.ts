@@ -5,6 +5,7 @@ import { appAtomRegistry } from "./atomRegistry";
 
 export type WsConnectionUiState = "connected" | "connecting" | "error" | "offline" | "reconnecting";
 export type WsReconnectPhase = "attempting" | "exhausted" | "idle" | "waiting";
+export type WsSocketReadyState = "closed" | "closing" | "connecting" | "open";
 
 export const WS_RECONNECT_INITIAL_DELAY_MS = 1_000;
 export const WS_RECONNECT_BACKOFF_FACTOR = 2;
@@ -20,14 +21,22 @@ export interface WsConnectionStatus {
   readonly connectedAt: string | null;
   readonly disconnectedAt: string | null;
   readonly hasConnected: boolean;
+  readonly heartbeatPingCount: number;
+  readonly heartbeatPongCount: number;
+  readonly heartbeatTimeoutCount: number;
+  readonly lastAttemptAt: string | null;
   readonly lastError: string | null;
   readonly lastErrorAt: string | null;
+  readonly lastHeartbeatPingAt: string | null;
+  readonly lastHeartbeatPongAt: string | null;
+  readonly lastHeartbeatTimeoutAt: string | null;
   readonly nextRetryAt: string | null;
   readonly online: boolean;
   readonly phase: "idle" | "connecting" | "connected" | "disconnected";
   readonly reconnectAttemptCount: number;
   readonly reconnectMaxAttempts: number;
   readonly reconnectPhase: WsReconnectPhase;
+  readonly socketReadyState: WsSocketReadyState | null;
   readonly socketUrl: string | null;
 }
 
@@ -39,14 +48,22 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   connectedAt: null,
   disconnectedAt: null,
   hasConnected: false,
+  heartbeatPingCount: 0,
+  heartbeatPongCount: 0,
+  heartbeatTimeoutCount: 0,
+  lastAttemptAt: null,
   lastError: null,
   lastErrorAt: null,
+  lastHeartbeatPingAt: null,
+  lastHeartbeatPongAt: null,
+  lastHeartbeatTimeoutAt: null,
   nextRetryAt: null,
   online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
   phase: "idle",
   reconnectAttemptCount: 0,
   reconnectMaxAttempts: WS_RECONNECT_MAX_ATTEMPTS,
   reconnectPhase: "idle",
+  socketReadyState: null,
   socketUrl: null,
 });
 
@@ -102,14 +119,17 @@ export function recordWsConnectionAttempt(
   metadata?: WsConnectionMetadata,
 ): WsConnectionStatus {
   const connectionLabel = normalizeConnectionLabel(metadata?.connectionLabel);
+  const now = isoNow();
   return updateWsConnectionStatus((current) => ({
     ...current,
     attemptCount: current.attemptCount + 1,
     connectionLabel: connectionLabel ?? current.connectionLabel,
+    lastAttemptAt: now,
     nextRetryAt: null,
     phase: "connecting",
     reconnectAttemptCount: current.phase === "connected" ? 1 : current.reconnectAttemptCount + 1,
     reconnectPhase: "attempting",
+    socketReadyState: "connecting",
     socketUrl,
   }));
 }
@@ -128,6 +148,7 @@ export function recordWsConnectionOpened(metadata?: WsConnectionMetadata): WsCon
     phase: "connected",
     reconnectAttemptCount: 0,
     reconnectPhase: "idle",
+    socketReadyState: "open",
   }));
 }
 
@@ -170,8 +191,45 @@ export function recordWsConnectionClosed(
         closeReason:
           appendHint(details?.reason, metadata?.versionMismatchHint) ??
           appendHint(current.closeReason, metadata?.versionMismatchHint),
+        socketReadyState: "closed",
       },
       connectionLabel === null ? undefined : { connectionLabel },
+    ),
+  );
+}
+
+export function recordWsHeartbeatPing(): WsConnectionStatus {
+  const now = isoNow();
+  return updateWsConnectionStatus((current) => ({
+    ...current,
+    heartbeatPingCount: current.heartbeatPingCount + 1,
+    lastHeartbeatPingAt: now,
+  }));
+}
+
+export function recordWsHeartbeatPong(): WsConnectionStatus {
+  const now = isoNow();
+  return updateWsConnectionStatus((current) => ({
+    ...current,
+    heartbeatPongCount: current.heartbeatPongCount + 1,
+    lastHeartbeatPongAt: now,
+  }));
+}
+
+export function recordWsHeartbeatTimeout(metadata?: WsConnectionMetadata): WsConnectionStatus {
+  const now = isoNow();
+  return updateWsConnectionStatus((current) =>
+    applyDisconnectState(
+      {
+        ...current,
+        heartbeatTimeoutCount: current.heartbeatTimeoutCount + 1,
+        lastHeartbeatTimeoutAt: now,
+      },
+      {
+        lastError: appendHint("WebSocket heartbeat timed out.", metadata?.versionMismatchHint),
+        lastErrorAt: now,
+      },
+      metadata,
     ),
   );
 }
@@ -214,7 +272,10 @@ export function getWsReconnectDelayMsForRetry(retryIndex: number): number | null
 function applyDisconnectState(
   current: WsConnectionStatus,
   updates: Partial<
-    Pick<WsConnectionStatus, "closeCode" | "closeReason" | "lastError" | "lastErrorAt">
+    Pick<
+      WsConnectionStatus,
+      "closeCode" | "closeReason" | "lastError" | "lastErrorAt" | "socketReadyState"
+    >
   >,
   metadata?: WsConnectionMetadata,
 ): WsConnectionStatus {

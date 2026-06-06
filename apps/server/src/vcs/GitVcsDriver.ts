@@ -427,8 +427,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     };
   });
 
-  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
-    gitCommand(
+  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = Effect.fn(
+    "listWorkspaceFiles",
+  )(function* (cwd) {
+    const listedResult = yield* gitCommand(
       vcsProcess,
       "GitVcsDriver.listWorkspaceFiles",
       cwd,
@@ -446,28 +448,56 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
       },
-    ).pipe(
-      Effect.flatMap((result) =>
-        result.exitCode === 0
-          ? Effect.gen(function* () {
-              const freshness = yield* nowFreshness();
-              return {
-                paths: splitNullSeparatedPaths(result.stdout, result.stdoutTruncated),
-                truncated: result.stdoutTruncated,
-                freshness,
-              };
-            })
-          : Effect.fail(
-              new VcsProcessExitError({
-                operation: "GitVcsDriver.listWorkspaceFiles",
-                command: "git ls-files",
-                cwd,
-                exitCode: result.exitCode,
-                detail: result.stderr.trim() || "git ls-files failed",
-              }),
-            ),
-      ),
     );
+
+    if (listedResult.exitCode !== 0) {
+      return yield* new VcsProcessExitError({
+        operation: "GitVcsDriver.listWorkspaceFiles",
+        command: "git ls-files",
+        cwd,
+        exitCode: listedResult.exitCode,
+        detail: listedResult.stderr.trim() || "git ls-files failed",
+      });
+    }
+
+    const ignoredResult = yield* gitCommand(
+      vcsProcess,
+      "GitVcsDriver.listWorkspaceFiles.ignored",
+      cwd,
+      [
+        ...WORKSPACE_GIT_HARDENED_CONFIG_ARGS,
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "-z",
+      ],
+      {
+        allowNonZeroExit: true,
+        timeoutMs: 20_000,
+        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        appendTruncationMarker: true,
+      },
+    );
+
+    if (ignoredResult.exitCode !== 0) {
+      return yield* new VcsProcessExitError({
+        operation: "GitVcsDriver.listWorkspaceFiles.ignored",
+        command: "git ls-files",
+        cwd,
+        exitCode: ignoredResult.exitCode,
+        detail: ignoredResult.stderr.trim() || "git ls-files ignored paths failed",
+      });
+    }
+
+    const freshness = yield* nowFreshness();
+    return {
+      paths: splitNullSeparatedPaths(listedResult.stdout, listedResult.stdoutTruncated),
+      ignoredPaths: splitNullSeparatedPaths(ignoredResult.stdout, ignoredResult.stdoutTruncated),
+      truncated: listedResult.stdoutTruncated || ignoredResult.stdoutTruncated,
+      freshness,
+    };
+  });
 
   const listRemotes: VcsDriver.VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(
     function* (cwd) {

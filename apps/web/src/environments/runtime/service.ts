@@ -1128,7 +1128,11 @@ function queueEnvironmentConnectionHealthRecoveryIfIdle(
   reason: string,
   cause?: unknown,
 ): void {
-  if (browserResumeReconciliationByEnvironment.has(connection.environmentId)) {
+  const environmentId = connection.environmentId;
+  if (
+    browserResumeReconciliationByEnvironment.has(environmentId) ||
+    browserResumeReconnectRetryByEnvironment.has(environmentId)
+  ) {
     return;
   }
   queueEnvironmentConnectionHealthRecovery(connection, reason, cause);
@@ -1319,6 +1323,10 @@ function refreshActiveThreadDetailsForEnvironment(
         threadId: entry.threadId,
         refCount: entry.refCount,
         activeRefCount: entry.activeRefCount,
+        latestDetailSequence: entry.latestDetailSequence,
+        verifiedDetailSequence: entry.verifiedDetailSequence,
+        reconcileInFlight: entry.reconcileInFlight,
+        reconcileOnNextActiveRetain: entry.reconcileOnNextActiveRetain,
         reconciled: shouldReconcile,
       },
     });

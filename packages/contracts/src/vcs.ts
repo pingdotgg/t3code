@@ -39,6 +39,7 @@ export type VcsRepositoryIdentity = typeof VcsRepositoryIdentity.Type;
 
 export const VcsListWorkspaceFilesResult = Schema.Struct({
   paths: Schema.Array(TrimmedNonEmptyString),
+  ignoredPaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   truncated: Schema.Boolean,
   freshness: VcsFreshness,
 });

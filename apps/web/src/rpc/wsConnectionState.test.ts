@@ -8,6 +8,9 @@ import {
   recordWsConnectionClosed,
   recordWsConnectionErrored,
   recordWsConnectionOpened,
+  recordWsHeartbeatPing,
+  recordWsHeartbeatPong,
+  recordWsHeartbeatTimeout,
   resetWsConnectionStateForTests,
   setBrowserOnlineStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
@@ -38,8 +41,10 @@ describe("wsConnectionState", () => {
 
     expect(getWsConnectionStatus()).toMatchObject({
       attemptCount: 1,
+      lastAttemptAt: "2026-04-03T20:30:00.000Z",
       hasConnected: false,
       phase: "connecting",
+      socketReadyState: "connecting",
     });
     expect(getWsConnectionUiState(getWsConnectionStatus())).toBe("connecting");
   });
@@ -102,6 +107,31 @@ describe("wsConnectionState", () => {
       nextRetryAt: null,
       reconnectAttemptCount: WS_RECONNECT_MAX_ATTEMPTS,
       reconnectPhase: "exhausted",
+    });
+  });
+
+  it("tracks websocket heartbeat activity and marks timeouts as disconnects", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+
+    vi.setSystemTime(new Date("2026-04-03T20:30:05.000Z"));
+    recordWsHeartbeatPing();
+    vi.setSystemTime(new Date("2026-04-03T20:30:06.000Z"));
+    recordWsHeartbeatPong();
+    vi.setSystemTime(new Date("2026-04-03T20:30:21.000Z"));
+    recordWsHeartbeatTimeout();
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      heartbeatPingCount: 1,
+      heartbeatPongCount: 1,
+      heartbeatTimeoutCount: 1,
+      lastError: "WebSocket heartbeat timed out.",
+      lastHeartbeatPingAt: "2026-04-03T20:30:05.000Z",
+      lastHeartbeatPongAt: "2026-04-03T20:30:06.000Z",
+      lastHeartbeatTimeoutAt: "2026-04-03T20:30:21.000Z",
+      phase: "disconnected",
+      reconnectPhase: "waiting",
+      socketReadyState: "open",
     });
   });
 });

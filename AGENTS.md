@@ -23,6 +23,45 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
+## Effect Safety Rules
+
+Effect lifecycle code is high risk in this repo. Treat changes to `ManagedRuntime`, `Scope`, stream subscriptions, RPC protocol layers, and WebSocket transport as infrastructure work, not ordinary app logic.
+
+Before changing Effect lifecycle code:
+
+- Inspect the installed Effect version in `node_modules/.bun/effect@.../node_modules/effect/dist/*.d.ts` or source. Do not rely on memory for `ManagedRuntime`, `Scope`, `Stream`, `Fiber`, or interruption semantics.
+- Identify the owner of every resource/fiber/scope being touched.
+- Confirm how cancellation happens: returned interruptor, scope close, runtime dispose, stream completion, or explicit unsubscribe.
+- Write or update a focused test that fails before the lifecycle change.
+- Prefer using existing local wrappers (`WsTransport`, `createEnvironmentConnection`, orchestration recovery helpers) over introducing new Effect patterns.
+
+Avoid unless explicitly required:
+
+- Changing `WsTransport` session lifecycle.
+- Changing `createWsRpcProtocolLayer`.
+- Closing scopes from new code paths.
+- Adding new detached fibers.
+- Changing stream retry/resubscribe behavior.
+- Converting non-blocking reconnect work into blocking work.
+
+For WebSocket/resume bugs, prefer this order:
+
+1. Reconcile or refresh using existing RPCs.
+2. Add diagnostics to prove state transitions.
+3. Coalesce duplicate recovery work.
+4. Only then consider transport/runtime lifecycle changes.
+
+Required verification for Effect lifecycle changes:
+
+- A focused regression test for the exact failure mode.
+- A cancellation/interruption test if scopes, fibers, streams, or `runCallback` are changed.
+- `bun fmt`
+- `bun lint`
+- `bun typecheck`
+- `bun run test` for the relevant package/test file.
+
+Never run `bun test`.
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.

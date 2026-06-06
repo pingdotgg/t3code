@@ -26,17 +26,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Salchi (Nightly)");
   });
 
-  it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
+  it("uses the Salchi icon for desktop packaging across channels", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
-      macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+      macIconPng: BRAND_ASSET_PATHS.salchiIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.salchiIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.salchiIconIco,
     });
 
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
-      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+      macIconPng: BRAND_ASSET_PATHS.salchiIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.salchiIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.salchiIconIco,
     });
   });
 

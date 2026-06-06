@@ -131,6 +131,8 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
           assert.include(result.paths, "included.ts");
           assert.notInclude(result.paths, "debug.log");
           assert.notInclude(result.paths, "nested/error.log");
+          assert.include(result.ignoredPaths ?? [], "debug.log");
+          assert.include(result.ignoredPaths ?? [], "nested/error.log");
         }),
       );
     });

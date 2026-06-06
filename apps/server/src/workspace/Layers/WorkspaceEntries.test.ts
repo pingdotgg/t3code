@@ -176,7 +176,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
-    it.effect("excludes gitignored paths for git repositories", () =>
+    it.effect("includes gitignored paths for git repositories and marks them ignored", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
         yield* writeTextFile(cwd, ".gitignore", ".convex/\nconvex/\nignored.txt\n");
@@ -190,9 +190,15 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
 
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
-        expect(paths).not.toContain("ignored.txt");
+        expect(paths).toContain("ignored.txt");
+        expect(result.entries.find((entry) => entry.path === "ignored.txt")?.ignored).toBe(true);
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
-        expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(true);
+        expect(
+          result.entries.find((entry) =>
+            entry.path.startsWith("convex/UOoS-l/convex_local_storage"),
+          )?.ignored,
+        ).toBe(true);
       }),
     );
 
@@ -339,6 +345,23 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           "file:README.md",
         ]);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("returns gitignored root children with ignored markers", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-gitignore-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", "websocket-diagnostics*\n");
+        yield* writeTextFile(cwd, "README.md", "# Readme\n");
+        yield* writeTextFile(cwd, "websocket-diagnostics1.md", "diagnostics\n");
+
+        const result = yield* listWorkspaceDirectoryEntries({ cwd, limit: 100 });
+
+        expect(result.entries).toEqual([
+          { kind: "file", path: ".gitignore" },
+          { kind: "file", path: "README.md" },
+          { kind: "file", path: "websocket-diagnostics1.md", ignored: true },
+        ]);
       }),
     );
 

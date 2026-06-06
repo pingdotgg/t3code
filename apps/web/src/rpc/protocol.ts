@@ -13,6 +13,9 @@ import {
 } from "./requestLatencyState";
 import {
   getWsReconnectDelayMsForRetry,
+  recordWsHeartbeatPing,
+  recordWsHeartbeatPong,
+  recordWsHeartbeatTimeout,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
   recordWsConnectionErrored,
@@ -297,21 +300,20 @@ export function createWsRpcProtocolLayer(
       onDisconnect: Effect.void,
       onPing: Effect.sync(() => {
         if (lifecycle.isActive()) {
+          recordWsHeartbeatPing();
           handlers?.onHeartbeatPing?.();
         }
       }),
       onPong: Effect.sync(() => {
         if (lifecycle.isActive()) {
+          recordWsHeartbeatPong();
           handlers?.onHeartbeatPong?.();
         }
       }),
       onPingTimeout: Effect.sync(() => {
         if (lifecycle.isActive()) {
           clearAllTrackedRpcRequests();
-          recordWsConnectionErrored(
-            "WebSocket heartbeat timed out.",
-            resolveConnectionMetadata(handlers),
-          );
+          recordWsHeartbeatTimeout(resolveConnectionMetadata(handlers));
           handlers?.onHeartbeatTimeout?.();
         }
       }),

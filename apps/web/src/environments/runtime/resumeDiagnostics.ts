@@ -176,3 +176,7 @@ export function flushResumeDiagnostics(): void {
     scheduleFlush();
   }
 }
+
+export function getResumeDiagnosticsEntries(): ReadonlyArray<ResumeDiagnosticEntry> {
+  return [...ensureEntries()];
+}

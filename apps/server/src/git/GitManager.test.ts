@@ -31,6 +31,7 @@ import { type TextGenerationShape, TextGeneration } from "../textGeneration/Text
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
+import * as SourceControlProvider from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../config.ts";
@@ -539,6 +540,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: [
             "pr",
             "list",
+            ...(input.repository ? ["--repo", input.repository] : []),
             "--head",
             input.headSelector,
             "--state",
@@ -562,6 +564,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: [
             "pr",
             "create",
+            ...(input.repository ? ["--repo", input.repository] : []),
             "--base",
             input.baseBranch,
             "--head",
@@ -575,7 +578,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       getDefaultBranch: (input) =>
         execute({
           cwd: input.cwd,
-          args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+          args: [
+            "repo",
+            "view",
+            ...(input.repository ? [input.repository] : []),
+            "--json",
+            "defaultBranchRef",
+            "--jq",
+            ".defaultBranchRef.name",
+          ],
         }).pipe(
           Effect.map((result) => {
             const value = result.stdout.trim();
@@ -589,6 +600,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "pr",
             "view",
             input.reference,
+            ...(input.repository ? ["--repo", input.repository] : []),
             "--json",
             "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
@@ -656,6 +668,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  sourceControlContext?: SourceControlProvider.SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunnerShape;
 }) {
@@ -675,14 +688,53 @@ function makeManager(input?: {
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make().pipe(
-      Effect.map((provider) =>
-        SourceControlProviderRegistry.SourceControlProviderRegistry.of({
-          get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+      Effect.map((provider) => {
+        const context = input?.sourceControlContext ?? null;
+        const resolvedProvider =
+          context === null
+            ? provider
+            : SourceControlProvider.SourceControlProvider.of({
+                kind: provider.kind,
+                listChangeRequests: (providerInput) =>
+                  provider.listChangeRequests({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+                getChangeRequest: (providerInput) =>
+                  provider.getChangeRequest({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+                createChangeRequest: (providerInput) =>
+                  provider.createChangeRequest({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+                getRepositoryCloneUrls: (providerInput) =>
+                  provider.getRepositoryCloneUrls({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+                createRepository: (providerInput) => provider.createRepository(providerInput),
+                getDefaultBranch: (providerInput) =>
+                  provider.getDefaultBranch({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+                checkoutChangeRequest: (providerInput) =>
+                  provider.checkoutChangeRequest({
+                    ...providerInput,
+                    context: providerInput.context ?? context,
+                  }),
+              });
+
+        return SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+          get: () => Effect.succeed(resolvedProvider),
+          resolveHandle: () => Effect.succeed({ provider: resolvedProvider, context }),
+          resolve: () => Effect.succeed(resolvedProvider),
           discover: Effect.succeed([]),
-        }),
-      ),
+        });
+      }),
       Effect.provide(Layer.succeed(GitHubCli, gitHubCli)),
     ),
   );
@@ -1954,6 +2006,88 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           call.includes("pr create --base main --head feature/create-pr-only"),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect("create_pr scopes fork-origin PR lookup and creation to origin by default", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkRemoteDir = yield* createBareRemote();
+      const upstreamRemoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkRemoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:JoseRFelix/salchi.git",
+        forkRemoteDir,
+      );
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamRemoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "upstream",
+        "git@github.com:pingdotgg/t3code.git",
+        upstreamRemoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "jose/websocket-improvements"]);
+      fs.writeFileSync(path.join(repoDir, "websocket-diagnostics.txt"), "diagnostics\n");
+      yield* runGit(repoDir, ["add", "websocket-diagnostics.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Improve WebSocket diagnostics"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "jose/websocket-improvements"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        sourceControlContext: {
+          provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+          remoteName: "origin",
+          remoteUrl: "git@github.com:JoseRFelix/salchi.git",
+        },
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 478,
+                title: "Add gated WebSocket diagnostics and terminal recovery",
+                url: "https://github.com/JoseRFelix/salchi/pull/478",
+                baseRefName: "main",
+                headRefName: "jose/websocket-improvements",
+                state: "OPEN",
+                isCrossRepository: false,
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(478);
+      expect(
+        ghCalls.some((call) =>
+          call.includes(
+            "pr list --repo JoseRFelix/salchi --head jose/websocket-improvements --state open",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        ghCalls.some((call) =>
+          call.includes("repo view JoseRFelix/salchi --json defaultBranchRef"),
+        ),
+      ).toBe(true);
+      expect(
+        ghCalls.some((call) =>
+          call.includes(
+            "pr create --repo JoseRFelix/salchi --base main --head jose/websocket-improvements",
+          ),
+        ),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.includes("--repo pingdotgg/t3code"))).toBe(false);
     }),
   );
 

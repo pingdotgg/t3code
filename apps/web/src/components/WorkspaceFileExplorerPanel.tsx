@@ -122,6 +122,7 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
   } = props;
   const depth = mode === "tree" ? entryDepth(entry) : 0;
   const isDirectory = entry.kind === "directory";
+  const isIgnored = entry.ignored === true;
   const label = basenameOfPath(entry.path);
   const title = mode === "tree" ? label : entry.path;
   const statusBadge = changeDecoration ? workspaceStatusBadge(changeDecoration.status) : null;
@@ -209,7 +210,12 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
         onPointerMoveCapture={handleLongPressPointerMoveCapture}
         onPointerUpCapture={handleLongPressPointerUpCapture}
       >
-        <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/65">
+        <span
+          className={cn(
+            "flex size-4 shrink-0 items-center justify-center",
+            isIgnored ? "text-muted-foreground/45" : "text-muted-foreground/65",
+          )}
+        >
           {isDirectory ? (
             <ChevronRightIcon
               className={cn(
@@ -223,12 +229,16 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
           pathValue={entry.path}
           kind={entry.kind}
           theme={resolvedTheme}
-          className="size-4 shrink-0"
+          className={cn("size-4 shrink-0", isIgnored && "opacity-45 grayscale")}
         />
         <span
           className={cn(
             "min-w-0 flex-1 truncate",
-            statusBadge ? statusBadge.className : "text-foreground/88",
+            isIgnored
+              ? "text-muted-foreground/55"
+              : statusBadge
+                ? statusBadge.className
+                : "text-foreground/88",
           )}
         >
           {title}

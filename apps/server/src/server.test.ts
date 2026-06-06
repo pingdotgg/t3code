@@ -27,6 +27,7 @@ import {
   EditorId,
 } from "@t3tools/contracts";
 import { computeOrchestrationThreadDetailFingerprint } from "@t3tools/shared/orchestrationThreadDetailFingerprint";
+import { DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE } from "@t3tools/shared/webFeatureFlags";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -2134,6 +2135,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          webFeatureFlags: [DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE],
         },
         layers: {
           keybindings: {
@@ -2170,6 +2172,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
         assert.equal(first.config.observability.otlpMetricsEnabled, true);
         assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
+        assert.deepEqual(first.config.webFeatureFlags, [DOWNLOADABLE_DIAGNOSTICS_WEB_FEATURE]);
       }
       assert.deepEqual(second, {
         version: 1,
@@ -2312,7 +2315,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
+  it.effect("routes websocket rpc projects.searchEntries marks gitignored files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2338,6 +2341,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             listWorkspaceFiles: () =>
               Effect.succeed({
                 paths: ["src/tracked.ts"],
+                ignoredPaths: [".venv/lib/ignored-search-target.ts"],
                 truncated: false,
                 freshness: {
                   source: "live-local",
@@ -2364,7 +2368,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.entries.length, 0);
+      assert.equal(response.entries.length, 1);
+      assert.equal(response.entries[0]?.path, ".venv/lib/ignored-search-target.ts");
+      assert.equal(response.entries[0]?.kind, "file");
+      assert.equal(response.entries[0]?.parentPath, ".venv/lib");
+      assert.equal(response.entries[0]?.ignored, true);
       assert.equal(response.truncated, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

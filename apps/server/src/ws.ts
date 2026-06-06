@@ -723,6 +723,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: ExternalLauncher.resolveAvailableEditors(),
+          webFeatureFlags: config.webFeatureFlags ?? [],
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
