@@ -9,7 +9,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import type { OtlpTracer } from "effect/unstable/observability";
 
-import { EnvironmentMintRequestFailed } from "./environments/EnvironmentConnector.ts";
+import { EnvironmentConnectNotAuthorized } from "./environments/EnvironmentConnector.ts";
 import { makeRelayTraceLayer } from "./observability.ts";
 
 interface ExportedRequest {
@@ -43,10 +43,10 @@ it.effect("exports schema error fields as span attributes", () =>
     );
 
     yield* Effect.fail(
-      new EnvironmentMintRequestFailed({
+      new EnvironmentConnectNotAuthorized({
         environmentId: "environment-1",
         operation: "connect",
-        cause: new Error("upstream unavailable"),
+        reason: "managed_endpoint_allocation_not_ready",
       }),
     ).pipe(
       Effect.withSpan("relay.test.schema_error"),
@@ -76,11 +76,10 @@ it.effect("exports schema error fields as span attributes", () =>
     expect(request.authorization).toBe("Bearer test-token");
     expect(request.dataset).toBe("relay-test-traces");
     expect(attributes).toMatchObject({
-      "error.type": "EnvironmentMintRequestFailed",
+      "error.type": "EnvironmentConnectNotAuthorized",
       "error.environmentId": "environment-1",
       "error.operation": "connect",
-      "error.cause.name": "Error",
-      "error.cause.message": "upstream unavailable",
+      "error.reason": "managed_endpoint_allocation_not_ready",
     });
   }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
 );

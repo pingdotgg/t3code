@@ -830,7 +830,7 @@ const currentTraceId = Effect.currentParentSpan.pipe(
   Effect.orElseSucceed(() => "unavailable"),
 );
 
-const COMMON_AUTH_INVALID_REASONS = [
+const RelayCommonPersistenceError = Schema.Union([
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
   Devices.DeviceListPersistenceError,
@@ -850,9 +850,9 @@ const COMMON_AUTH_INVALID_REASONS = [
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
-] as const;
-type RelayCommonPersistenceError = InstanceType<(typeof COMMON_AUTH_INVALID_REASONS)[number]>;
-const isRelayCommonPersistenceError = Schema.is(Schema.Union(COMMON_AUTH_INVALID_REASONS));
+]);
+type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
+const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);
 
 type MapRelayCommonApiError<E> =
   | Exclude<E, HttpApiError.Unauthorized | RelayCommonPersistenceError>
