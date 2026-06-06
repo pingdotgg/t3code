@@ -22,6 +22,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
@@ -49,6 +50,9 @@ const decodeHealthRequestBody = Schema.decodeUnknownSync(
 );
 const decodeMintRequestBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(RelayCloudMintCredentialRequest),
+);
+const isEnvironmentConnectNotAuthorized = Schema.is(
+  EnvironmentConnector.EnvironmentConnectNotAuthorized,
 );
 
 function requestBodyText(request: HttpClientRequest.HttpClientRequest): string {
@@ -280,7 +284,13 @@ describe("EnvironmentConnector", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {
-        expect(result.failure).toBeInstanceOf(EnvironmentConnector.EnvironmentConnectNotAuthorized);
+        expect(isEnvironmentConnectNotAuthorized(result.failure)).toBe(true);
+        if (isEnvironmentConnectNotAuthorized(result.failure)) {
+          expect(result.failure).toMatchObject({
+            operation: "status",
+            reason: "endpoint_provider_not_managed",
+          });
+        }
       }
       expect(requestCount).toBe(0);
     }).pipe(
@@ -300,6 +310,14 @@ describe("EnvironmentConnector", () => {
 
   it.effect("rejects stale managed endpoints before sending a mint request", () => {
     let requestCount = 0;
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
     const execute = () =>
       Effect.sync(() => {
         requestCount += 1;
@@ -318,8 +336,27 @@ describe("EnvironmentConnector", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {
-        expect(result.failure).toBeInstanceOf(EnvironmentConnector.EnvironmentConnectNotAuthorized);
+        expect(isEnvironmentConnectNotAuthorized(result.failure)).toBe(true);
+        if (isEnvironmentConnectNotAuthorized(result.failure)) {
+          expect(result.failure).toMatchObject({
+            operation: "connect",
+            reason: "managed_endpoint_mismatch",
+          });
+        }
       }
+      const resolutionSpan = spans.find(
+        (span) => span.name === "relay.environment_connector.resolve_managed_endpoint",
+      );
+      expect(Object.fromEntries(resolutionSpan?.attributes ?? [])).toMatchObject({
+        "relay.authorization.allocation_hostname": "env.example.test",
+        "relay.authorization.allocation_has_ready_at": true,
+        "relay.authorization.allocation_has_tunnel_id": true,
+        "relay.authorization.allocation_has_dns_record_id": true,
+        "relay.authorization.linked_http_base_url": "https://attacker.example.test/",
+        "relay.authorization.linked_ws_base_url": "wss://attacker.example.test/ws",
+        "relay.authorization.resolved_http_base_url": "https://env.example.test/",
+        "relay.authorization.resolved_ws_base_url": "wss://env.example.test/ws",
+      });
       expect(requestCount).toBe(0);
     }).pipe(
       Effect.provide(
@@ -333,6 +370,7 @@ describe("EnvironmentConnector", () => {
           }),
         }),
       ),
+      Effect.provideService(Tracer.Tracer, tracer),
     );
   });
 
@@ -355,7 +393,13 @@ describe("EnvironmentConnector", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {
-        expect(result.failure).toBeInstanceOf(EnvironmentConnector.EnvironmentConnectNotAuthorized);
+        expect(isEnvironmentConnectNotAuthorized(result.failure)).toBe(true);
+        if (isEnvironmentConnectNotAuthorized(result.failure)) {
+          expect(result.failure).toMatchObject({
+            operation: "status",
+            reason: "managed_endpoint_allocation_not_ready",
+          });
+        }
       }
       expect(requestCount).toBe(0);
     }).pipe(
