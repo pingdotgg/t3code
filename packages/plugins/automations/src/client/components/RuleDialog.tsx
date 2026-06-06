@@ -28,18 +28,17 @@ export function RuleDialog({
 }) {
   const React = ctx.react;
   const C = ctx.components;
-  void React;
 
   return (
     <C.Dialog
       description="Schedule a project-scoped prompt that starts a new agent thread."
       footer={
-        <>
+        <React.Fragment>
           <C.Button onClick={onClose}>Cancel</C.Button>
           <C.Button disabled={pendingAction === "form"} onClick={onSubmit} variant="primary">
             {editingRule ? "Save" : "Create"}
           </C.Button>
-        </>
+        </React.Fragment>
       }
       open={open}
       title={editingRule ? "Edit Automation" : "New Automation"}

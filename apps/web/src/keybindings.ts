@@ -3,11 +3,13 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
+  PLUGIN_KEYBINDING_COMMAND_PATTERN,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
@@ -47,6 +49,7 @@ const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
+const isPluginKeybindingCommandValue = Schema.is(PLUGIN_KEYBINDING_COMMAND_PATTERN);
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
@@ -206,6 +209,10 @@ export function resolveShortcutCommand(
     return binding.command;
   }
   return null;
+}
+
+export function isPluginKeybindingCommand(command: string | null): boolean {
+  return command !== null && isPluginKeybindingCommandValue(command);
 }
 
 function formatShortcutKeyLabel(key: string): string {

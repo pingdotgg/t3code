@@ -1,6 +1,7 @@
 import { PluginId, type PluginId as PluginIdType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import type * as PlatformError from "effect/PlatformError";
 
 import type { PluginRegistryShape } from "./PluginRegistry.ts";
 
@@ -44,7 +45,7 @@ export function parsePluginClientAssetPath(pathname: string): PluginClientAssetP
 export function resolvePluginClientAsset(input: {
   readonly pathname: string;
   readonly registry: Pick<PluginRegistryShape, "getClientAssetPath">;
-}): Effect.Effect<PluginClientAssetResolution, never, FileSystem.FileSystem> {
+}): Effect.Effect<PluginClientAssetResolution, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const assetPath = parsePluginClientAssetPath(input.pathname);
     if (assetPath.status !== "ok") {
@@ -53,18 +54,13 @@ export function resolvePluginClientAsset(input: {
 
     const clientEntryPath = yield* input.registry
       .getClientAssetPath(assetPath.pluginId)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(Effect.catchTag("PluginRpcError", () => Effect.succeed(null)));
     if (clientEntryPath === null) {
       return { status: "not-found" } as const;
     }
 
     const fileSystem = yield* FileSystem.FileSystem;
-    const script = yield* fileSystem
-      .readFileString(clientEntryPath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (script === null) {
-      return { status: "not-found" } as const;
-    }
+    const script = yield* fileSystem.readFileString(clientEntryPath);
 
     return {
       status: "ok",

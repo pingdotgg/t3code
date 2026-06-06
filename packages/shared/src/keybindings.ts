@@ -1,14 +1,18 @@
 import {
+  KeybindingCommand,
   type KeybindingRule,
   type KeybindingShortcut,
   type KeybindingWhenNode,
   MAX_KEYBINDINGS_COUNT,
   MAX_WHEN_EXPRESSION_DEPTH,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
+  type PluginId,
+  type PluginKeybindingCommandName,
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 type WhenToken =
   | { type: "identifier"; value: string }
@@ -17,6 +21,15 @@ type WhenToken =
   | { type: "or" }
   | { type: "lparen" }
   | { type: "rparen" };
+
+const decodeKeybindingCommandSync = Schema.decodeSync(KeybindingCommand);
+
+export function makePluginKeybindingCommand(
+  pluginId: PluginId,
+  commandName: PluginKeybindingCommandName,
+): KeybindingCommand {
+  return decodeKeybindingCommandSync(`plugin.${pluginId}.${commandName}`);
+}
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+j", command: "terminal.toggle" },

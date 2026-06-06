@@ -278,3 +278,30 @@ export function replaceTextRange(
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
 }
+
+export function insertComposerTextWithBoundaries(input: {
+  readonly value: string;
+  readonly rangeStart: number;
+  readonly rangeEnd: number;
+  readonly text: string;
+}): { readonly text: string; readonly cursor: number } {
+  const insertionText = input.text;
+  if (insertionText.length === 0) {
+    return { text: input.value, cursor: Math.max(0, Math.min(input.value.length, input.rangeEnd)) };
+  }
+
+  const rangeStart = Math.max(0, Math.min(input.value.length, input.rangeStart));
+  const rangeEnd = Math.max(rangeStart, Math.min(input.value.length, input.rangeEnd));
+  const before = input.value.slice(0, rangeStart);
+  const after = input.value.slice(rangeEnd);
+  const startsWithWhitespace = isWhitespace(insertionText[0] ?? "");
+  const endsWithWhitespace = isWhitespace(insertionText[insertionText.length - 1] ?? "");
+  const prefix =
+    before.length > 0 && !isWhitespace(before[before.length - 1] ?? "") && !startsWithWhitespace
+      ? " "
+      : "";
+  const suffix =
+    after.length > 0 && !isWhitespace(after[0] ?? "") && !endsWithWhitespace ? " " : "";
+
+  return replaceTextRange(input.value, rangeStart, rangeEnd, `${prefix}${insertionText}${suffix}`);
+}

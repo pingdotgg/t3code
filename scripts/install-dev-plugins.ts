@@ -16,6 +16,10 @@ const PLUGINS = [
     id: "t3.automations",
     packagePath: "packages/plugins/automations",
   },
+  {
+    id: "t3.voice-input",
+    packagePath: "packages/plugins/voice-input",
+  },
 ] as const;
 
 const execFileAsync = promisify(execFile);
@@ -31,8 +35,14 @@ function resolveT3Home(): string {
   return configured ? NodePath.resolve(configured) : NodePath.join(NodeOS.homedir(), ".t3");
 }
 
+function hasErrorCode(cause: unknown): cause is { readonly code: string } {
+  return (
+    typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
+  );
+}
+
 function toInstallError(message: string, cause: unknown): InstallDevPluginsError {
-  const code = (cause as NodeJS.ErrnoException).code;
+  const code = hasErrorCode(cause) ? cause.code : undefined;
   return new InstallDevPluginsError({
     message,
     ...(code === undefined ? {} : { code }),

@@ -103,6 +103,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { claimPluginKeybindingCommand, usePluginCatalog } from "../plugins/pluginHost";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
@@ -1837,6 +1838,7 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const gitStatusQuery = useVcsStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
+  const pluginCatalog = usePluginCatalog();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -2685,7 +2687,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || useCommandPaletteStore.getState().open || event.defaultPrevented) {
+      if (useCommandPaletteStore.getState().open || event.defaultPrevented) {
         return;
       }
       const shortcutContext = {
@@ -2698,6 +2700,22 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (
+        claimPluginKeybindingCommand(
+          pluginCatalog,
+          command,
+          composerRef.current?.getPluginComposerId(),
+        )
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (!activeThreadId) {
+        return;
+      }
 
       if (command === "terminal.toggle") {
         event.preventDefault();
@@ -2769,6 +2787,7 @@ export default function ChatView(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    pluginCatalog,
     onToggleDiff,
     toggleTerminalVisibility,
   ]);

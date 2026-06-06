@@ -3,9 +3,29 @@ import type {
   PluginUiBadgeTone,
   PluginUiButtonSize,
   PluginUiButtonVariant,
+  PluginUiBadgeProps,
+  PluginUiButtonProps,
   PluginUiComponents,
+  PluginUiDialogProps,
+  PluginUiEmptyStateProps,
+  PluginUiFieldProps,
   PluginUiGap,
+  PluginUiInlineProps,
+  PluginUiInputProps,
   PluginUiJustify,
+  PluginUiLinkProps,
+  PluginUiListProps,
+  PluginUiListRowProps,
+  PluginUiPageProps,
+  PluginUiSectionProps,
+  PluginUiSelectProps,
+  PluginUiSpinnerProps,
+  PluginUiStackProps,
+  PluginUiSurfaceProps,
+  PluginUiSwitchProps,
+  PluginUiTextAreaProps,
+  PluginUiTextProps,
+  PluginUiToolbarProps,
   PluginUiTextTone,
   PluginUiTextVariant,
 } from "@t3tools/plugin-api/ui";
@@ -113,12 +133,7 @@ const textVariantClassByName = {
   heading: "font-heading text-base font-semibold",
 } satisfies Record<PluginUiTextVariant, string>;
 
-function PluginPage({
-  title,
-  actions,
-  children,
-  style,
-}: Parameters<PluginUiComponents["Page"]>[0]) {
+function PluginPage({ title, actions, children, style }: PluginUiPageProps) {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -139,12 +154,7 @@ function PluginPage({
   );
 }
 
-function PluginSettingsPage({
-  title,
-  actions,
-  children,
-  style,
-}: Parameters<PluginUiComponents["Page"]>[0]) {
+function PluginSettingsPage({ title, actions, children, style }: PluginUiPageProps) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
       <header className="border-b border-border px-3 py-2 sm:px-5 sm:py-3">
@@ -162,11 +172,7 @@ function PluginSettingsPage({
   );
 }
 
-function PluginToolbar({
-  children,
-  trailing,
-  style,
-}: Parameters<PluginUiComponents["Toolbar"]>[0]) {
+function PluginToolbar({ children, trailing, style }: PluginUiToolbarProps) {
   return (
     <section
       className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-4"
@@ -178,13 +184,7 @@ function PluginToolbar({
   );
 }
 
-function PluginSection({
-  title,
-  description,
-  actions,
-  children,
-  style,
-}: Parameters<PluginUiComponents["Section"]>[0]) {
+function PluginSection({ title, description, actions, children, style }: PluginUiSectionProps) {
   return (
     <section className="min-w-0" style={style}>
       {title || description || actions ? (
@@ -207,7 +207,7 @@ function PluginSection({
   );
 }
 
-function PluginSurface({ children, style }: Parameters<PluginUiComponents["Surface"]>[0]) {
+function PluginSurface({ children, style }: PluginUiSurfaceProps) {
   return (
     <div
       className="min-w-0 overflow-hidden rounded-lg border border-border bg-background"
@@ -218,12 +218,7 @@ function PluginSurface({ children, style }: Parameters<PluginUiComponents["Surfa
   );
 }
 
-function PluginStack({
-  children,
-  gap = "md",
-  align = "stretch",
-  style,
-}: Parameters<PluginUiComponents["Stack"]>[0]) {
+function PluginStack({ children, gap = "md", align = "stretch", style }: PluginUiStackProps) {
   return (
     <div
       className={cn("flex min-w-0 flex-col", gapClassByName[gap], alignClassByName[align])}
@@ -241,7 +236,7 @@ function PluginInline({
   justify = "start",
   wrap = true,
   style,
-}: Parameters<PluginUiComponents["Inline"]>[0]) {
+}: PluginUiInlineProps) {
   return (
     <div
       className={cn(
@@ -265,7 +260,7 @@ function PluginText({
   truncate = false,
   title,
   style,
-}: Parameters<PluginUiComponents["Text"]>[0]) {
+}: PluginUiTextProps) {
   return (
     <span
       className={cn(
@@ -282,12 +277,7 @@ function PluginText({
   );
 }
 
-function PluginField({
-  label,
-  description,
-  children,
-  style,
-}: Parameters<PluginUiComponents["Field"]>[0]) {
+function PluginField({ label, description, children, style }: PluginUiFieldProps) {
   return (
     <div className="grid min-w-0 gap-1.5" style={style}>
       <Label render={<span />}>{label}</Label>
@@ -305,7 +295,7 @@ function PluginButton({
   title,
   onClick,
   style,
-}: Parameters<PluginUiComponents["Button"]>[0]) {
+}: PluginUiButtonProps) {
   return (
     <AppButton
       disabled={disabled}
@@ -320,13 +310,7 @@ function PluginButton({
   );
 }
 
-function PluginLink({
-  href,
-  children,
-  title,
-  onClick,
-  style,
-}: Parameters<PluginUiComponents["Link"]>[0]) {
+function PluginLink({ href, children, title, onClick, style }: PluginUiLinkProps) {
   return (
     <AppButton
       render={
@@ -357,7 +341,7 @@ function PluginInput({
   autoFocus,
   type = "text",
   onValueChange,
-}: Parameters<PluginUiComponents["Input"]>[0]) {
+}: PluginUiInputProps) {
   return (
     <AppInput
       autoFocus={autoFocus}
@@ -377,7 +361,7 @@ function PluginTextArea({
   disabled,
   rows,
   onValueChange,
-}: Parameters<PluginUiComponents["TextArea"]>[0]) {
+}: PluginUiTextAreaProps) {
   return (
     <AppTextArea
       disabled={disabled}
@@ -395,7 +379,7 @@ function PluginSelect({
   disabled,
   options,
   onValueChange,
-}: Parameters<PluginUiComponents["Select"]>[0]) {
+}: PluginUiSelectProps) {
   const items = options.map((option) => ({ label: option.label, value: option.value }));
 
   return (
@@ -424,12 +408,7 @@ function PluginSelect({
   );
 }
 
-function PluginSwitch({
-  checked,
-  disabled,
-  label,
-  onCheckedChange,
-}: Parameters<PluginUiComponents["Switch"]>[0]) {
+function PluginSwitch({ checked, disabled, label, onCheckedChange }: PluginUiSwitchProps) {
   const control = (
     <AppSwitch
       checked={checked}
@@ -450,11 +429,7 @@ function PluginSwitch({
   );
 }
 
-function PluginBadge({
-  children,
-  tone = "default",
-  style,
-}: Parameters<PluginUiComponents["Badge"]>[0]) {
+function PluginBadge({ children, tone = "default", style }: PluginUiBadgeProps) {
   return (
     <AppBadge size="sm" style={style} variant={badgeVariantByTone[tone]}>
       {children}
@@ -470,7 +445,7 @@ function PluginDialog({
   footer,
   onOpenChange,
   style,
-}: Parameters<PluginUiComponents["Dialog"]>[0]) {
+}: PluginUiDialogProps) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogPopup className="max-w-2xl overflow-hidden" style={style}>
@@ -485,11 +460,7 @@ function PluginDialog({
   );
 }
 
-function PluginEmptyState({
-  title,
-  description,
-  actions,
-}: Parameters<PluginUiComponents["EmptyState"]>[0]) {
+function PluginEmptyState({ title, description, actions }: PluginUiEmptyStateProps) {
   return (
     <Empty className="min-h-36">
       <EmptyHeader>
@@ -501,7 +472,7 @@ function PluginEmptyState({
   );
 }
 
-function PluginList({ children, empty, style }: Parameters<PluginUiComponents["List"]>[0]) {
+function PluginList({ children, empty, style }: PluginUiListProps) {
   return (
     <div
       className="min-w-0 overflow-hidden rounded-lg border border-border bg-background"
@@ -512,7 +483,7 @@ function PluginList({ children, empty, style }: Parameters<PluginUiComponents["L
   );
 }
 
-function PluginListRow({ children, actions, style }: Parameters<PluginUiComponents["ListRow"]>[0]) {
+function PluginListRow({ children, actions, style }: PluginUiListRowProps) {
   return (
     <div
       className={cn(
@@ -529,7 +500,7 @@ function PluginListRow({ children, actions, style }: Parameters<PluginUiComponen
   );
 }
 
-function PluginSpinner({ label }: Parameters<PluginUiComponents["Spinner"]>[0]) {
+function PluginSpinner({ label }: PluginUiSpinnerProps) {
   return (
     <span className="inline-flex items-center gap-2 text-muted-foreground text-sm">
       <AppSpinner className="size-4" />

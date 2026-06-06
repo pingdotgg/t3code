@@ -18,10 +18,9 @@ import {
   AutomationsRunsListRecentResult,
   type AutomationRule,
 } from "../shared/schema.ts";
-import { AutomationPluginError } from "./errors.ts";
 import { nextRuleId } from "./ids.ts";
 import { compareNewestRuns } from "./runs.ts";
-import type { AutomationCollections, AutomationsRuntime } from "./runtime.ts";
+import type { AutomationsRuntime } from "./runtime.ts";
 import { nowIso } from "./time.ts";
 
 export function commandName(name: AutomationCommandName) {
@@ -31,7 +30,6 @@ export function commandName(name: AutomationCommandName) {
 export const registerAutomationCommands = (
   ctx: PluginActivationContext,
   runtime: AutomationsRuntime,
-  collections: AutomationCollections,
 ) =>
   Effect.gen(function* () {
     yield* ctx.commands.register(commandName(AUTOMATIONS_COMMANDS.rulesList), {
@@ -57,18 +55,8 @@ export const registerAutomationCommands = (
             createdAt,
             updatedAt: createdAt,
           };
-          yield* runtime.persistRuleSchedule(rule);
-          yield* collections.rules
-            .upsert(rule.id, rule)
-            .pipe(
-              Effect.catch((error) =>
-                collections.scheduleState
-                  .delete(rule.id)
-                  .pipe(Effect.ignoreCause({ log: true }), Effect.andThen(Effect.fail(error))),
-              ),
-            );
-          yield* runtime.publishChanged({ ruleId: rule.id });
-          return { rule };
+          const persistedRule = yield* runtime.saveRule(rule);
+          return { rule: persistedRule };
         }),
     });
 
@@ -77,36 +65,8 @@ export const registerAutomationCommands = (
       output: AutomationsRulesUpdateResult,
       handler: (input) =>
         Effect.gen(function* () {
-          const existing = yield* collections.rules.get(input.ruleId);
-          if (existing === null) {
-            return yield* new AutomationPluginError({
-              message: `Automation rule ${input.ruleId} was not found.`,
-            });
-          }
-          const updatedAt = yield* nowIso;
-          const patch = input.patch;
-          const rule: AutomationRule = {
-            ...existing,
-            name: patch.name ?? existing.name,
-            enabled: patch.enabled ?? existing.enabled,
-            projectId: patch.projectId ?? existing.projectId,
-            cron: patch.cron ?? existing.cron,
-            timezone: patch.timezone ?? existing.timezone,
-            prompt: patch.prompt ?? existing.prompt,
-            updatedAt,
-          };
-          yield* runtime.persistRuleSchedule(rule);
-          yield* collections.rules
-            .upsert(rule.id, rule)
-            .pipe(
-              Effect.catch((error) =>
-                runtime
-                  .persistRuleSchedule(existing)
-                  .pipe(Effect.ignoreCause({ log: true }), Effect.andThen(Effect.fail(error))),
-              ),
-            );
-          yield* runtime.publishChanged({ ruleId: rule.id });
-          return { rule };
+          const persistedRule = yield* runtime.updateRule(input.ruleId, input.patch);
+          return { rule: persistedRule };
         }),
     });
 

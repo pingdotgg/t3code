@@ -5,6 +5,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  insertComposerTextWithBoundaries,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -139,6 +140,63 @@ describe("replaceTextRange", () => {
       text: "hello ",
       cursor: 6,
     });
+  });
+});
+
+describe("insertComposerTextWithBoundaries", () => {
+  it("inserts text at a cursor with whitespace boundaries", () => {
+    expect(
+      insertComposerTextWithBoundaries({
+        value: "hello world",
+        rangeStart: "hello".length,
+        rangeEnd: "hello".length,
+        text: "voice",
+      }),
+    ).toEqual({ text: "hello voice world", cursor: "hello voice".length });
+  });
+
+  it("replaces a selected range", () => {
+    expect(
+      insertComposerTextWithBoundaries({
+        value: "hello old world",
+        rangeStart: "hello ".length,
+        rangeEnd: "hello old".length,
+        text: "new",
+      }),
+    ).toEqual({ text: "hello new world", cursor: "hello new".length });
+  });
+
+  it("appends when cursor state falls at the end", () => {
+    expect(
+      insertComposerTextWithBoundaries({
+        value: "hello",
+        rangeStart: 5,
+        rangeEnd: 5,
+        text: "voice",
+      }),
+    ).toEqual({ text: "hello voice", cursor: "hello voice".length });
+  });
+
+  it("preserves intentional whitespace in inserted text", () => {
+    expect(
+      insertComposerTextWithBoundaries({
+        value: "hello",
+        rangeStart: 2,
+        rangeEnd: 2,
+        text: "  ",
+      }),
+    ).toEqual({ text: "he  llo", cursor: 4 });
+  });
+
+  it("ignores empty inserted text", () => {
+    expect(
+      insertComposerTextWithBoundaries({
+        value: "hello",
+        rangeStart: 2,
+        rangeEnd: 2,
+        text: "",
+      }),
+    ).toEqual({ text: "hello", cursor: 2 });
   });
 });
 

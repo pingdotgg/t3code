@@ -20,6 +20,12 @@ export const IanaTimezone = TrimmedNonEmptyString.check(
 );
 export type IanaTimezone = typeof IanaTimezone.Type;
 
+export const AutomationRuleScheduleState = Schema.Struct({
+  nextRunAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type AutomationRuleScheduleState = typeof AutomationRuleScheduleState.Type;
+
 export const AutomationRule = Schema.Struct({
   id: AutomationRuleId,
   name: TrimmedNonEmptyString,
@@ -30,6 +36,7 @@ export const AutomationRule = Schema.Struct({
   prompt: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  scheduleState: Schema.optional(AutomationRuleScheduleState),
 });
 export type AutomationRule = typeof AutomationRule.Type;
 
@@ -52,6 +59,7 @@ export const AutomationRun = Schema.Struct({
   reason: Schema.optional(AutomationRunReason),
   threadId: Schema.optional(ThreadId),
   scheduledFor: IsoDateTime,
+  ruleUpdatedAt: Schema.optional(IsoDateTime),
   startedAt: Schema.optional(IsoDateTime),
   completedAt: Schema.optional(IsoDateTime),
   error: Schema.optional(TrimmedNonEmptyString),

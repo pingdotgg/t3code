@@ -3,30 +3,48 @@ import type { WsRpcClient } from "@t3tools/client-runtime";
 import type { PluginUiFactory } from "@t3tools/plugin-api/ui";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolvePluginRouteReadiness, type PluginNavigationHostState } from "./pluginNavigation";
+import {
+  pluginAssetFactoryKey,
+  resolvePluginRouteReadiness,
+  type PluginAssetLifecycle,
+  type PluginNavigationHostState,
+} from "./pluginNavigation";
 import { makePluginCatalogEntry } from "./testing/pluginPlacementFixtures";
 
 const pluginId = PluginId.make("t3.navigation-test");
 const routeId = PluginRouteId.make("main");
+const hostScope = "primary";
+const generation = 1;
 const client = {} as WsRpcClient;
 const factory = (() => ({
   routes: {},
 })) satisfies PluginUiFactory;
 
+const activeCatalogEntry = makePluginCatalogEntry({
+  pluginId,
+  name: "Navigation Test",
+  placementId: "main",
+  placementLabel: "Navigation Test",
+  placementPosition: "sidebar.primary",
+});
+
 function hostState(patch: Partial<PluginNavigationHostState> = {}): PluginNavigationHostState {
   return {
-    catalog: [
-      makePluginCatalogEntry({
-        pluginId,
-        name: "Navigation Test",
-        placementId: "main",
-        placementLabel: "Navigation Test",
-        placementPosition: "sidebar.primary",
-      }),
-    ],
-    factories: new Map<string, PluginUiFactory>([[pluginId, factory]]),
-    loadErrors: new Map<string, string>(),
+    catalog: [activeCatalogEntry],
+    catalogStatus: "ready",
+    assets: new Map<string, PluginAssetLifecycle>([
+      [
+        pluginAssetFactoryKey(hostScope, generation, activeCatalogEntry),
+        {
+          status: "registered",
+          pluginId,
+          factory,
+        },
+      ],
+    ]),
     client,
+    hostScope,
+    generation,
     ...patch,
   };
 }
@@ -35,7 +53,7 @@ describe("pluginNavigation", () => {
   it("reports loading before the catalog or client is available", () => {
     expect(
       resolvePluginRouteReadiness({
-        hostState: hostState({ catalog: [] }),
+        hostState: hostState({ catalog: [], catalogStatus: "loading" }),
         pluginId,
         routeId,
         surface: "app",
@@ -50,6 +68,34 @@ describe("pluginNavigation", () => {
         surface: "app",
       }),
     ).toEqual({ status: "loading" });
+  });
+
+  it("reports missing after an empty catalog has loaded", () => {
+    expect(
+      resolvePluginRouteReadiness({
+        hostState: hostState({ catalog: [], catalogStatus: "ready" }),
+        pluginId,
+        routeId,
+        surface: "app",
+      }),
+    ).toEqual({
+      status: "missing",
+      message: "Plugin t3.navigation-test was not found.",
+    });
+  });
+
+  it("reports missing after catalog load failure", () => {
+    expect(
+      resolvePluginRouteReadiness({
+        hostState: hostState({ catalog: [], catalogStatus: "failed" }),
+        pluginId,
+        routeId,
+        surface: "app",
+      }),
+    ).toEqual({
+      status: "missing",
+      message: "Plugin catalog could not be loaded.",
+    });
   });
 
   it("reports failed, disabled, missing, and wrong-surface routes", () => {
@@ -125,8 +171,16 @@ describe("pluginNavigation", () => {
     expect(
       resolvePluginRouteReadiness({
         hostState: hostState({
-          factories: new Map<string, PluginUiFactory>(),
-          loadErrors: new Map<string, string>([[pluginId, "boom"]]),
+          assets: new Map<string, PluginAssetLifecycle>([
+            [
+              pluginAssetFactoryKey(hostScope, generation, activeCatalogEntry),
+              {
+                status: "failed",
+                pluginId,
+                message: "boom",
+              },
+            ],
+          ]),
         }),
         pluginId,
         routeId,
@@ -151,5 +205,49 @@ describe("pluginNavigation", () => {
       expect(readiness.factory).toBe(factory);
       expect(readiness.client).toBe(client);
     }
+  });
+
+  it("does not use factories registered for a stale scope", () => {
+    expect(
+      resolvePluginRouteReadiness({
+        hostState: hostState({
+          assets: new Map<string, PluginAssetLifecycle>([
+            [
+              pluginAssetFactoryKey("old-scope", generation, activeCatalogEntry),
+              {
+                status: "registered",
+                pluginId,
+                factory,
+              },
+            ],
+          ]),
+        }),
+        pluginId,
+        routeId,
+        surface: "app",
+      }),
+    ).toEqual({ status: "loading" });
+  });
+
+  it("does not use factories registered for a stale generation", () => {
+    expect(
+      resolvePluginRouteReadiness({
+        hostState: hostState({
+          assets: new Map<string, PluginAssetLifecycle>([
+            [
+              pluginAssetFactoryKey(hostScope, generation - 1, activeCatalogEntry),
+              {
+                status: "registered",
+                pluginId,
+                factory,
+              },
+            ],
+          ]),
+        }),
+        pluginId,
+        routeId,
+        surface: "app",
+      }),
+    ).toEqual({ status: "loading" });
   });
 });

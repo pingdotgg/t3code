@@ -1,8 +1,9 @@
-import { memo, type PointerEventHandler } from "react";
+import { memo, type PointerEventHandler, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface PendingActionState {
   questionIndex: number;
@@ -23,6 +24,7 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  sendBlockingReason?: string | null | undefined;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -62,6 +64,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  sendBlockingReason = null,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -70,6 +73,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
+  const isSendBlocked = sendBlockingReason !== null;
+
+  const maybeWrapBlockedSubmit = (button: ReactNode) =>
+    isSendBlocked ? (
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex">{button}</span>} />
+        <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+          {sendBlockingReason}
+        </TooltipPopup>
+      </Tooltip>
+    ) : (
+      button
+    );
 
   if (pendingAction) {
     return (
@@ -100,24 +116,28 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             </Button>
           )
         ) : null}
-        <Button
-          type="submit"
-          size="sm"
-          className={cn("rounded-full", compact ? "px-3" : "px-4")}
-          {...pointerFocusProps}
-          disabled={
-            isEnvironmentUnavailable ||
-            pendingAction.isResponding ||
-            (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
-          }
-        >
-          {formatPendingPrimaryActionLabel({
-            compact,
-            isLastQuestion: pendingAction.isLastQuestion,
-            isResponding: pendingAction.isResponding,
-            questionIndex: pendingAction.questionIndex,
-          })}
-        </Button>
+        {maybeWrapBlockedSubmit(
+          <Button
+            type="submit"
+            size="sm"
+            className={cn("rounded-full", compact ? "px-3" : "px-4")}
+            {...pointerFocusProps}
+            disabled={
+              isEnvironmentUnavailable ||
+              isSendBlocked ||
+              pendingAction.isResponding ||
+              (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
+            }
+            aria-label={sendBlockingReason ?? undefined}
+          >
+            {formatPendingPrimaryActionLabel({
+              compact,
+              isLastQuestion: pendingAction.isLastQuestion,
+              isResponding: pendingAction.isResponding,
+              questionIndex: pendingAction.questionIndex,
+            })}
+          </Button>,
+        )}
       </div>
     );
   }
@@ -140,30 +160,34 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (showPlanFollowUpPrompt) {
     if (promptHasText) {
-      return (
+      return maybeWrapBlockedSubmit(
         <Button
           type="submit"
           size="sm"
           className={cn("rounded-full", compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8")}
           {...pointerFocusProps}
-          disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+          disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || isSendBlocked}
+          aria-label={sendBlockingReason ?? undefined}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
-        </Button>
+        </Button>,
       );
     }
 
     return (
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
-        <Button
-          type="submit"
-          size="sm"
-          className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-          {...pointerFocusProps}
-          disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
-        >
-          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
-        </Button>
+        {maybeWrapBlockedSubmit(
+          <Button
+            type="submit"
+            size="sm"
+            className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+            {...pointerFocusProps}
+            disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || isSendBlocked}
+            aria-label={sendBlockingReason ?? undefined}
+          >
+            {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+          </Button>,
+        )}
         <Menu>
           <MenuTrigger
             render={
@@ -173,7 +197,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                 aria-label="Implementation actions"
                 {...pointerFocusProps}
-                disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+                disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || isSendBlocked}
               />
             }
           >
@@ -181,7 +205,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuTrigger>
           <MenuPopup align="end" side="top">
             <MenuItem
-              disabled={isSendBusy || isConnecting || isEnvironmentUnavailable}
+              disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || isSendBlocked}
               onClick={() => void onImplementPlanInNewThread()}
             >
               Implement in a new thread
@@ -192,14 +216,21 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  return (
+  return maybeWrapBlockedSubmit(
     <button
       type="submit"
       className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
       {...pointerFocusProps}
-      disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
+      disabled={
+        isSendBusy ||
+        isConnecting ||
+        isEnvironmentUnavailable ||
+        isSendBlocked ||
+        !hasSendableContent
+      }
       aria-label={
-        isEnvironmentUnavailable
+        sendBlockingReason ??
+        (isEnvironmentUnavailable
           ? "Environment disconnected"
           : isConnecting
             ? "Connecting"
@@ -207,7 +238,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               ? "Preparing worktree"
               : isSendBusy
                 ? "Sending"
-                : "Send message"
+                : "Send message")
       }
     >
       {isConnecting || isSendBusy ? (
@@ -240,6 +271,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           />
         </svg>
       )}
-    </button>
+    </button>,
   );
 });

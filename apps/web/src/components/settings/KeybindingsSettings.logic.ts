@@ -254,10 +254,14 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  pluginCommands: ReadonlyArray<KeybindingCommand> = [],
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>();
   for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
     commands.add(binding.command);
+  }
+  for (const command of pluginCommands) {
+    commands.add(command);
   }
   for (const binding of keybindings) {
     commands.add(binding.command);

@@ -152,6 +152,20 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
   });
 
+  it("builds command options from plugin keybinding command metadata", () => {
+    const options = buildKeybindingCommandOptions(
+      [],
+      ["plugin.t3.voice-input.toggleRecording", "plugin.t3.voice-input.cancelRecording"],
+    );
+
+    expect(options).toEqual(
+      expect.arrayContaining([
+        "plugin.t3.voice-input.toggleRecording",
+        "plugin.t3.voice-input.cancelRecording",
+      ]),
+    );
+  });
+
   it("reports unknown when variables without rejecting parseable expressions", () => {
     const parsed = parseWhenExpressionDraft("!terminalFocus && terminalFoc");
 

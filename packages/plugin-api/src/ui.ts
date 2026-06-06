@@ -1,8 +1,11 @@
 import type {
   EnvironmentId,
-  PluginCatalogEntry,
+  PluginComposerActionId,
+  PluginComposerActionPosition,
   PluginCommandName,
   PluginId,
+  PluginManifestCatalogEntry,
+  PluginSubscriptionEvent,
   PluginRouteId,
   PluginRouteSurface,
   ProjectId,
@@ -10,7 +13,9 @@ import type {
 } from "@t3tools/contracts";
 import type * as React from "react";
 
-export type PluginComponent<Props> = (props: Props) => React.ReactNode;
+export type { PluginSubscriptionEvent } from "@t3tools/contracts";
+
+export type PluginComponent<Props> = React.JSXElementConstructor<Props>;
 export type PluginUiReact = typeof React;
 export type PluginUiNode = React.ReactNode;
 export type PluginUiStyle = React.CSSProperties;
@@ -23,6 +28,13 @@ export type PluginUiTextVariant = "body" | "caption" | "label" | "heading";
 export type PluginUiGap = "none" | "xs" | "sm" | "md" | "lg";
 export type PluginUiAlign = "start" | "center" | "end" | "stretch";
 export type PluginUiJustify = "start" | "center" | "end" | "between";
+
+export const PLUGIN_KEYBINDING_COMMAND_EVENT_TYPE = "t3:plugin-keybinding-command";
+
+export interface PluginKeybindingCommandEventDetail {
+  readonly command: string;
+  readonly composerId?: string;
+}
 
 export interface PluginUiBaseProps {
   readonly children?: PluginUiNode;
@@ -183,6 +195,10 @@ export interface PluginUiProject {
 
 export interface PluginUiApi {
   readonly invoke: <O = unknown>(command: PluginCommandName | string, input: unknown) => Promise<O>;
+  readonly subscribe: (
+    callback: (event: PluginSubscriptionEvent) => void,
+    options?: { readonly onResubscribe?: () => void },
+  ) => () => void;
 }
 
 export interface PluginUiNavigation {
@@ -203,30 +219,79 @@ export interface PluginUiHostServices {
   }) => string;
 }
 
-export interface PluginUiContext {
+export interface PluginUiBaseContext {
   readonly pluginId: PluginId;
-  readonly catalogEntry: PluginCatalogEntry;
+  readonly catalogEntry: PluginManifestCatalogEntry;
   readonly uiApiVersion: 1;
-  readonly route: {
-    readonly id: PluginRouteId;
-    readonly surface: PluginRouteSurface;
-  };
   readonly react: PluginUiReact;
   readonly api: PluginUiApi;
   readonly host: PluginUiHostServices;
   readonly navigation: PluginUiNavigation;
   readonly toast: PluginUiToasts;
+}
+
+export interface PluginUiContext extends PluginUiBaseContext {
+  readonly route: {
+    readonly id: PluginRouteId;
+    readonly surface: PluginRouteSurface;
+  };
+  readonly components: PluginUiComponents;
+}
+
+export interface ComposerPluginActionState {
+  readonly blocksSend: boolean;
+  readonly label?: string;
+  readonly blockingReason?: string;
+}
+
+export interface PluginComposerSnapshot {
+  readonly value: string;
+  readonly cursor: number;
+  readonly expandedCursor: number;
+}
+
+export interface PluginComposerApi {
+  readonly composerId: string;
+  readonly insertText: (text: string) => boolean;
+  readonly focus: () => void;
+  readonly readSnapshot: () => PluginComposerSnapshot;
+  readonly setActionState: (state: ComposerPluginActionState) => void;
+}
+
+export interface PluginComposerActionContext extends PluginUiBaseContext {
+  readonly composerAction: {
+    readonly id: PluginComposerActionId;
+    readonly position: PluginComposerActionPosition;
+  };
+  readonly composer: PluginComposerApi;
   readonly components: PluginUiComponents;
 }
 
 export interface PluginUiRegistration {
   readonly routes: Record<string, PluginComponent<{ ctx: PluginUiContext }>>;
+  readonly composerActions?: Record<string, PluginComponent<{ ctx: PluginComposerActionContext }>>;
 }
 
-export type PluginUiFactory = (ctx: PluginUiContext) => PluginUiRegistration;
+export type PluginUiFactory = () => PluginUiRegistration;
+
+export interface PluginUiRegistrationOptions {
+  readonly assetKey?: string;
+}
 
 export interface T3PluginHostGlobal {
-  readonly register: (pluginId: PluginId | string, factory: PluginUiFactory) => void;
+  readonly register: (
+    pluginId: PluginId | string,
+    factory: PluginUiFactory,
+    options?: PluginUiRegistrationOptions,
+  ) => void;
+}
+
+function currentPluginAssetKey(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const currentScript = document.currentScript;
+  return currentScript instanceof HTMLScriptElement
+    ? currentScript.dataset.t3PluginAssetKey
+    : undefined;
 }
 
 export function registerPluginUi(
@@ -234,5 +299,6 @@ export function registerPluginUi(
   pluginId: PluginId | string,
   factory: PluginUiFactory,
 ): void {
-  host.register(pluginId, factory);
+  const assetKey = currentPluginAssetKey();
+  host.register(pluginId, factory, assetKey === undefined ? undefined : { assetKey });
 }

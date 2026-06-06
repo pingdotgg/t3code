@@ -9,3 +9,7 @@ export function nextRuleId(): AutomationRuleId {
 export function nextRunId(): AutomationRunId {
   return AutomationRunId.make(`run-${randomUUID()}`);
 }
+
+export function scheduledRunId(ruleId: AutomationRuleId, scheduledFor: string): AutomationRunId {
+  return AutomationRunId.make(`run-schedule:${ruleId}:${scheduledFor}`);
+}

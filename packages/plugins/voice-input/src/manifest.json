@@ -1,0 +1,80 @@
+{
+  "id": "t3.voice-input",
+  "name": "Voice Input",
+  "version": "0.1.0",
+  "routes": [
+    {
+      "id": "main",
+      "label": "Voice Input",
+      "surface": "settings"
+    }
+  ],
+  "ui": {
+    "placements": [
+      {
+        "id": "settings-sidebar",
+        "position": "settings.sidebar",
+        "label": "Voice Input",
+        "routeId": "main",
+        "order": 120
+      }
+    ],
+    "composerActions": [
+      {
+        "id": "voice-input",
+        "position": "composer.footer.left",
+        "label": "Voice input",
+        "order": 100
+      }
+    ]
+  },
+  "commands": [
+    {
+      "name": "toggleRecording",
+      "target": "client",
+      "label": "Toggle voice recording",
+      "keybinding": true
+    },
+    {
+      "name": "cancelRecording",
+      "target": "client",
+      "label": "Cancel voice recording",
+      "keybinding": true
+    },
+    {
+      "name": "voiceInput.settings.get",
+      "target": "server",
+      "label": "Get voice input settings"
+    },
+    {
+      "name": "voiceInput.settings.update",
+      "target": "server",
+      "label": "Update voice input settings"
+    },
+    {
+      "name": "voiceInput.dependencies.status",
+      "target": "server",
+      "label": "Check voice input dependencies"
+    },
+    {
+      "name": "voiceInput.clientState.get",
+      "target": "server",
+      "label": "Get voice input client state"
+    },
+    {
+      "name": "voiceInput.model.download",
+      "target": "server",
+      "label": "Download Whisper model"
+    },
+    {
+      "name": "voiceInput.transcribe",
+      "target": "server",
+      "label": "Transcribe voice input"
+    },
+    {
+      "name": "voiceInput.transcription.test",
+      "target": "server",
+      "label": "Test Local Whisper transcription"
+    }
+  ]
+}

@@ -181,3 +181,44 @@ export function resolveElectronPath() {
 
   return buildMacLauncher(electronBinaryPath);
 }
+
+function shouldDisableLinuxSandbox(electronBinaryPath, env) {
+  if (process.platform !== "linux") {
+    return false;
+  }
+
+  if (env.T3CODE_ELECTRON_ENABLE_SANDBOX === "1") {
+    return false;
+  }
+
+  const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
+
+  try {
+    const sandboxStats = statSync(sandboxPath);
+    const ownedByRoot = sandboxStats.uid === 0;
+    const hasSetuidBit = (sandboxStats.mode & 0o4000) !== 0;
+    return !(ownedByRoot && hasSetuidBit);
+  } catch {
+    return true;
+  }
+}
+
+export function resolveElectronLaunch(appArgs, env = process.env) {
+  const electronPath = resolveElectronPath();
+  const childEnv = { ...env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+
+  const args = [];
+  if (shouldDisableLinuxSandbox(electronPath, childEnv)) {
+    childEnv.ELECTRON_DISABLE_SANDBOX = childEnv.ELECTRON_DISABLE_SANDBOX ?? "1";
+    args.push("--no-sandbox");
+  }
+
+  args.push(...appArgs);
+
+  return {
+    args,
+    env: childEnv,
+    electronPath,
+  };
+}

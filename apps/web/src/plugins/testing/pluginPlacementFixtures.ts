@@ -2,11 +2,12 @@ import {
   PluginId,
   PluginRouteId,
   PluginUiPlacementId,
-  type PluginCatalogEntry,
+  type PluginCommandContribution,
   type PluginRouteSurface,
   type PluginUiPlacementPosition,
 } from "@t3tools/contracts";
 
+import type { PluginCatalogManifestEntry } from "../pluginCatalogEntry";
 import type { PluginPlacementEntry } from "../pluginPlacements";
 
 export function makePluginCatalogEntry(input: {
@@ -22,7 +23,8 @@ export function makePluginCatalogEntry(input: {
   readonly order?: number;
   readonly badgeCount?: number;
   readonly status?: "active" | "failed" | "disabled";
-}): PluginCatalogEntry {
+  readonly commands?: ReadonlyArray<PluginCommandContribution>;
+}): PluginCatalogManifestEntry {
   const pluginId = PluginId.make(input.pluginId);
   const routeId = PluginRouteId.make(input.routeId ?? "main");
   const placementId = PluginUiPlacementId.make(input.placementId);
@@ -54,7 +56,7 @@ export function makePluginCatalogEntry(input: {
           },
         ],
       },
-      commands: [],
+      commands: input.commands ?? [],
     },
     status: {
       pluginId,

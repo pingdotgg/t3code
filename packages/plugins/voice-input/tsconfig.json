@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "jsxFactory": "React.createElement",
+    "jsxFragmentFactory": "React.Fragment",
+    "types": ["node", "react"]
+  },
+  "include": ["src", "vite.client.config.ts"]
+}

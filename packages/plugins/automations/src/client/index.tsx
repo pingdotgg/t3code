@@ -1,4 +1,4 @@
-import type { T3PluginHostGlobal } from "@t3tools/plugin-api/ui";
+import { registerPluginUi, type T3PluginHostGlobal } from "@t3tools/plugin-api/ui";
 
 import { AUTOMATIONS_PLUGIN_ID } from "../shared/constants.ts";
 import { AutomationsPage } from "./AutomationsPage.tsx";
@@ -14,12 +14,10 @@ if (!host) {
   throw new Error("T3PluginHost is not available.");
 }
 
-host.register(AUTOMATIONS_PLUGIN_ID, (ctx) => ({
+registerPluginUi(host, AUTOMATIONS_PLUGIN_ID, () => ({
   routes: {
-    main: () => {
-      const React = ctx.react;
-      void React;
-      return <AutomationsPage ctx={ctx} />;
+    main: ({ ctx: routeCtx }) => {
+      return routeCtx.react.createElement(AutomationsPage, { ctx: routeCtx });
     },
   },
 }));

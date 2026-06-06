@@ -22,31 +22,32 @@ export function FilterBar({
 }) {
   const React = ctx.react;
   const C = ctx.components;
-  void React;
 
   return (
-    <C.Toolbar trailing={`${visibleRuleCount} rule${visibleRuleCount === 1 ? "" : "s"}`}>
-      <div style={filterGridStyle}>
-        <C.Select
-          options={[
-            { value: "all", label: "All projects" },
-            ...projects.map((project) => ({ value: project.id, label: project.name })),
-          ]}
-          value={projectFilter}
-          onValueChange={(value) => setProjectFilter(value || "all")}
-        />
-        <C.Select
-          options={[
-            { value: "all", label: "All statuses" },
-            { value: "enabled", label: "Enabled" },
-            { value: "disabled", label: "Disabled" },
-          ]}
-          value={statusFilter}
-          onValueChange={(value) => {
-            setStatusFilter(value === "enabled" || value === "disabled" ? value : "all");
-          }}
-        />
-      </div>
-    </C.Toolbar>
+    <React.Fragment>
+      <C.Toolbar trailing={`${visibleRuleCount} rule${visibleRuleCount === 1 ? "" : "s"}`}>
+        <div style={filterGridStyle}>
+          <C.Select
+            options={[
+              { value: "all", label: "All projects" },
+              ...projects.map((project) => ({ value: project.id, label: project.name })),
+            ]}
+            value={projectFilter}
+            onValueChange={(value) => setProjectFilter(value || "all")}
+          />
+          <C.Select
+            options={[
+              { value: "all", label: "All statuses" },
+              { value: "enabled", label: "Enabled" },
+              { value: "disabled", label: "Disabled" },
+            ]}
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value === "enabled" || value === "disabled" ? value : "all");
+            }}
+          />
+        </div>
+      </C.Toolbar>
+    </React.Fragment>
   );
 }

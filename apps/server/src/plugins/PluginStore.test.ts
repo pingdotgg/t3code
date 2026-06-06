@@ -17,24 +17,16 @@ const Widget = Schema.Struct({
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
 layer("PluginStore", (it) => {
-  it.effect("persists JSON documents and validates collection schemas on write and read", () =>
+  it.effect("persists JSON documents and validates collection schemas on read", () =>
     Effect.gen(function* () {
       const store = yield* PluginStore;
       const sql = yield* SqlClient.SqlClient;
 
-      yield* store.registerCollection(pluginId, "widgets", Widget);
-      yield* store.upsert(pluginId, "widgets", "widget-1", { id: "widget-1", count: 3 });
+      const widgets = yield* store.registerCollection(pluginId, "widgets", Widget);
+      yield* widgets.upsert("widget-1", { id: "widget-1", count: 3 });
 
-      const stored = yield* store.get(pluginId, "widgets", "widget-1");
+      const stored = yield* widgets.get("widget-1");
       assert.deepEqual(stored, { id: "widget-1", count: 3 });
-
-      const writeFailure = yield* Effect.flip(
-        store.upsert(pluginId, "widgets", "widget-invalid", {
-          id: "widget-invalid",
-          count: "not-a-number",
-        }),
-      );
-      assert.instanceOf(writeFailure, PluginStoreError);
 
       const invalidDocumentJson = yield* encodeUnknownJsonString({
         id: "widget-bad-row",
@@ -59,7 +51,7 @@ layer("PluginStore", (it) => {
         )
       `;
 
-      const readFailure = yield* Effect.result(store.get(pluginId, "widgets", "widget-bad-row"));
+      const readFailure = yield* Effect.result(widgets.get("widget-bad-row"));
       assert.equal(readFailure._tag, "Failure");
       if (readFailure._tag === "Failure") {
         assert.instanceOf(readFailure.failure, PluginStoreError);

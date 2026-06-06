@@ -10,12 +10,11 @@ export function AutomationsPage({ ctx }: { readonly ctx: PluginUiContext }) {
   const React = ctx.react;
   const C = ctx.components;
   const controller = useAutomationsController(ctx);
-  void React;
 
   return (
     <C.Page
       actions={
-        <>
+        <React.Fragment>
           <C.Button
             disabled={controller.loading}
             onClick={() => {
@@ -31,7 +30,7 @@ export function AutomationsPage({ ctx }: { readonly ctx: PluginUiContext }) {
           >
             New
           </C.Button>
-        </>
+        </React.Fragment>
       }
       title="Automations"
     >

@@ -56,6 +56,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { launchThreadBootstrap } from "./orchestration/threadBootstrapLauncher.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -513,24 +514,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         Effect.gen(function* () {
           const bootstrap = command.bootstrap;
           const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
-          let createdThread = false;
-          let targetProjectId = bootstrap?.createThread?.projectId;
-          let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
-          let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
-
-          const cleanupCreatedThread = () =>
-            createdThread
-              ? serverCommandId("bootstrap-thread-delete").pipe(
-                  Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
-                  ),
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void;
+          const targetProjectId = bootstrap?.createThread?.projectId;
+          const targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
 
           const recordSetupScriptLaunchFailure = (input: {
             readonly error: unknown;
@@ -610,93 +595,80 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               );
             });
 
-          const runSetupProgram = () =>
-            Effect.gen(function* () {
-              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
-                return;
-              }
-              const worktreePath = targetWorktreePath;
-              const requestedAt = yield* nowIso;
-              yield* projectSetupScriptRunner
-                .runForThread({
-                  threadId: command.threadId,
-                  ...(targetProjectId ? { projectId: targetProjectId } : {}),
-                  ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
-                  worktreePath,
-                })
-                .pipe(
-                  Effect.matchEffect({
-                    onFailure: (error) =>
+          const setupScriptRequestedAt = yield* nowIso;
+
+          return yield* launchThreadBootstrap({
+            threadId: command.threadId,
+            orchestration: orchestrationEngine,
+            gitWorkflow,
+            terminalManager,
+            setupScripts: projectSetupScriptRunner,
+            nextCommandId: serverCommandId,
+            commandTags: {
+              createThread: "bootstrap-thread-create",
+              deleteThread: "bootstrap-thread-delete",
+              metaUpdate: "bootstrap-thread-meta-update",
+            },
+            ...(bootstrap?.createThread
+              ? {
+                  createThread: {
+                    threadId: command.threadId,
+                    projectId: bootstrap.createThread.projectId,
+                    title: bootstrap.createThread.title,
+                    modelSelection: bootstrap.createThread.modelSelection,
+                    runtimeMode: bootstrap.createThread.runtimeMode,
+                    interactionMode: bootstrap.createThread.interactionMode,
+                    branch: bootstrap.createThread.branch,
+                    worktreePath: bootstrap.createThread.worktreePath,
+                    createdAt: bootstrap.createThread.createdAt,
+                  },
+                }
+              : {}),
+            ...(bootstrap?.prepareWorktree
+              ? {
+                  prepareWorktree: {
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    create: gitWorkflow
+                      .createWorktree({
+                        cwd: bootstrap.prepareWorktree.projectCwd,
+                        refName: bootstrap.prepareWorktree.baseBranch,
+                        newRefName: bootstrap.prepareWorktree.branch,
+                        path: null,
+                      })
+                      .pipe(Effect.map((result) => result.worktree)),
+                    afterMetadataUpdated: ({ worktree }) => refreshGitStatus(worktree.path),
+                  },
+                }
+              : {}),
+            ...(bootstrap?.runSetupScript
+              ? {
+                  setupScript: {
+                    input: (worktreePath) => ({
+                      threadId: command.threadId,
+                      ...(targetProjectId ? { projectId: targetProjectId } : {}),
+                      ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
+                      worktreePath,
+                    }),
+                    onFailure: ({ error, worktreePath }) =>
                       recordSetupScriptLaunchFailure({
                         error,
-                        requestedAt,
+                        requestedAt: setupScriptRequestedAt,
                         worktreePath,
                       }),
-                    onSuccess: (setupResult) => {
-                      if (setupResult.status !== "started") {
-                        return Effect.void;
-                      }
-                      return recordSetupScriptStarted({
-                        requestedAt,
+                    onStarted: ({ result, worktreePath }) =>
+                      recordSetupScriptStarted({
+                        requestedAt: setupScriptRequestedAt,
                         worktreePath,
-                        scriptId: setupResult.scriptId,
-                        scriptName: setupResult.scriptName,
-                        terminalId: setupResult.terminalId,
-                      });
-                    },
-                  }),
-                );
-            });
-
-          const bootstrapProgram = Effect.gen(function* () {
-            if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
-              createdThread = true;
-            }
-
-            if (bootstrap?.prepareWorktree) {
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: bootstrap.prepareWorktree.baseBranch,
-                newRefName: bootstrap.prepareWorktree.branch,
-                path: null,
-              });
-              targetWorktreePath = worktree.worktree.path;
-              yield* orchestrationEngine.dispatch({
-                type: "thread.meta.update",
-                commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
-                threadId: command.threadId,
-                branch: worktree.worktree.refName,
-                worktreePath: targetWorktreePath,
-              });
-              yield* refreshGitStatus(targetWorktreePath);
-            }
-
-            yield* runSetupProgram();
-
-            return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
-          });
-
-          return yield* bootstrapProgram.pipe(
-            Effect.catchCause((cause) => {
-              const dispatchError = toBootstrapDispatchCommandCauseError(cause);
-              if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
-              }
-              return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
-            }),
+                        scriptId: result.scriptId,
+                        scriptName: result.scriptName,
+                        terminalId: result.terminalId,
+                      }),
+                  },
+                }
+              : {}),
+            turnStart: finalTurnStartCommand,
+          }).pipe(
+            Effect.catchCause((cause) => Effect.fail(toBootstrapDispatchCommandCauseError(cause))),
           );
         });
 

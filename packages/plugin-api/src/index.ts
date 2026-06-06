@@ -6,7 +6,9 @@ export {
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
+  PluginComposerActionId,
   ProjectId,
+  PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./schema.ts";

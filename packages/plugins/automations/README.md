@@ -56,7 +56,7 @@ src/
   command registration.
 - `src/server/commands.ts` owns RPC command handlers.
 - `src/server/runtime.ts` owns rule execution, overlap handling, retention, and schedule ticks.
-- `src/server/schedule.ts` owns cron parsing, timezone validation, and schedule state schema.
+- `src/server/schedule.ts` owns cron parsing, timezone validation, and schedule helpers.
 
 Plugins should import host UI through `ctx.components`, not from `apps/web`. This keeps plugin UI
 self-contained while still inheriting the web app's visual system.

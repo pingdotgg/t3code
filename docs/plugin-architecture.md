@@ -96,7 +96,8 @@ diagnostics so the UI can surface the problem.
 A plugin activation context exposes:
 
 - `store`: core-owned, plugin-namespaced JSON document storage with schemas registered at runtime.
-- `commands`: plugin command registration with input and output schema validation.
+- `commands`: server-target command registration with input/output schema validation. Client-target
+  commands are UI actions that may opt into keybindings but are not server RPC handlers.
 - `ui`: badge provider registration for plugin UI placements.
 - `runtime`: host runtime actions, currently `createAndSendThread`.
 - `events`: plugin event publication for catalog refreshes and subscriptions.
@@ -109,14 +110,14 @@ the store validates all reads and writes through those schemas.
 
 The Automations plugin currently registers:
 
-| Collection      | Owner       | Purpose                      |
-| --------------- | ----------- | ---------------------------- |
-| `rules`         | Automations | Scheduled prompt definitions |
-| `runs`          | Automations | Recent execution history     |
-| `scheduleState` | Automations | Next cron fire time per rule |
+| Collection | Owner       | Purpose                      |
+| ---------- | ----------- | ---------------------------- |
+| `rules`    | Automations | Scheduled prompt definitions |
+| `runs`     | Automations | Recent execution history     |
 
-Keeping `scheduleState` in the plugin is deliberate: cron parsing and scheduling policy are
-Automations-specific. The host provides persistence and runtime primitives, not a generic scheduler
+Automations keeps next-run schedule state embedded in each rule document so rule edits and schedule
+state advance through a single persisted rule write. Cron parsing and scheduling policy remain
+Automations-specific; the host provides persistence and runtime primitives, not a generic scheduler
 service.
 
 ## RPC And Events
@@ -144,9 +145,11 @@ The web app loads active plugin bundles from authenticated server routes:
 The browser bundle is an IIFE. It registers routes through the global host:
 
 ```ts
-window.T3PluginHost.register("t3.automations", (ctx) => ({
+import { registerPluginUi } from "@t3tools/plugin-api/ui";
+
+registerPluginUi(window.T3PluginHost, "t3.automations", () => ({
   routes: {
-    main: () => <AutomationsPage ctx={ctx} />,
+    main: ({ ctx }) => <AutomationsPage ctx={ctx} />,
   },
 }));
 ```
@@ -154,7 +157,7 @@ window.T3PluginHost.register("t3.automations", (ctx) => ({
 The browser host injects:
 
 - React through `ctx.react`.
-- Host UI primitives through `ctx.components`.
+- Host UI primitives through `ctx.components` on route and composer render contexts.
 - Command invocation through `ctx.api.invoke`.
 - Navigation and thread-link helpers through `ctx.navigation` and `ctx.host`.
 - Toast and confirmation helpers.

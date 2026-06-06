@@ -27,12 +27,15 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
+import { makePluginKeybindingCommand } from "@t3tools/shared/keybindings";
 
 import { isElectron } from "../../env";
 import { openInPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
+import { hasPluginManifest } from "../../plugins/pluginCatalogEntry";
+import { usePluginCatalog } from "../../plugins/pluginHost";
 import { useServerKeybindings, useServerKeybindingsConfigPath } from "../../rpc/serverState";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1061,13 +1064,27 @@ function NewKeybindingTableRow({
 export function KeybindingsSettingsPanel() {
   const keybindings = useServerKeybindings();
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
+  const pluginCatalog = usePluginCatalog();
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
-  const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
+  const pluginCommandOptions = useMemo(
+    () =>
+      pluginCatalog.flatMap((entry) => {
+        if (!hasPluginManifest(entry) || entry.status.status !== "active") return [];
+        return entry.manifest.commands
+          .filter((command) => command.target === "client" && command.keybinding === true)
+          .map((command) => makePluginKeybindingCommand(entry.manifest.id, command.name));
+      }),
+    [pluginCatalog],
+  );
+  const commandOptions = useMemo(
+    () => buildKeybindingCommandOptions(keybindings, pluginCommandOptions),
+    [keybindings, pluginCommandOptions],
+  );
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
 
   useEffect(() => {

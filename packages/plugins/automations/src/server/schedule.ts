@@ -1,15 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
-import * as Schema from "effect/Schema";
 
-import { AutomationRuleId } from "../shared/schema.ts";
 import { AutomationPluginError } from "./errors.ts";
-
-export const AutomationScheduleState = Schema.Struct({
-  ruleId: AutomationRuleId,
-  nextRunAt: Schema.String,
-  updatedAt: Schema.String,
-});
-export type AutomationScheduleState = typeof AutomationScheduleState.Type;
 
 export function validateIanaTimezone(timezone: string): boolean {
   try {
@@ -48,24 +39,13 @@ export function computeNextRunAt(input: {
     tz: input.timezone,
   })
     .next()
+    .toDate()
     .toISOString();
-  if (nextRunAt === null) {
-    throw new AutomationPluginError({
-      message: "Cron parser did not return a next run time.",
-    });
-  }
   return nextRunAt;
 }
 
 export function floorIsoToMinute(iso: string): string {
   return `${iso.slice(0, 16)}:00.000Z`;
-}
-
-export function shouldFireSchedule(input: {
-  readonly nextRunAt: string;
-  readonly nowIso: string;
-}): boolean {
-  return input.nextRunAt <= input.nowIso && input.nextRunAt >= floorIsoToMinute(input.nowIso);
 }
 
 export function isMissedRun(input: { readonly nextRunAt: string; readonly nowIso: string }) {

@@ -1,4 +1,3 @@
-import type { PluginUiPlacementPosition } from "@t3tools/contracts";
 import { Link, useLocation } from "@tanstack/react-router";
 import { WorkflowIcon } from "lucide-react";
 
@@ -11,23 +10,18 @@ import {
 import {
   getActivePluginPlacementEntries,
   isPluginPlacementPathActive,
+  type PluginPlacementEntry,
   pluginPlacementKey,
   resolvePluginPlacementRouteTarget,
 } from "./pluginPlacements";
 import { usePluginCatalog } from "./pluginHost";
 
 function PluginSidebarPlacementMenu({
-  position,
+  placements,
 }: {
-  readonly position: PluginUiPlacementPosition;
+  readonly placements: ReadonlyArray<PluginPlacementEntry>;
 }) {
   const pathname = useLocation({ select: (location) => location.pathname });
-  const catalog = usePluginCatalog();
-  const placements = getActivePluginPlacementEntries(catalog, position);
-
-  if (placements.length === 0) {
-    return null;
-  }
 
   return (
     <SidebarMenu>
@@ -65,11 +59,18 @@ export function PluginSidebarPrimaryPlacements() {
 
   return (
     <SidebarGroup className="px-2 py-1">
-      <PluginSidebarPlacementMenu position="sidebar.primary" />
+      <PluginSidebarPlacementMenu placements={placements} />
     </SidebarGroup>
   );
 }
 
 export function PluginSidebarFooterPlacements() {
-  return <PluginSidebarPlacementMenu position="sidebar.footer" />;
+  const catalog = usePluginCatalog();
+  const placements = getActivePluginPlacementEntries(catalog, "sidebar.footer");
+
+  if (placements.length === 0) {
+    return null;
+  }
+
+  return <PluginSidebarPlacementMenu placements={placements} />;
 }

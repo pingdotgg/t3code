@@ -11,6 +11,8 @@ import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+export { PLUGIN_CATALOG_INVALIDATED_EVENT_TYPE } from "@t3tools/contracts";
+
 export interface PluginCollection<A> {
   readonly list: () => Effect.Effect<ReadonlyArray<A>, PluginStoreError>;
   readonly get: (documentId: string) => Effect.Effect<A | null, PluginStoreError>;
@@ -35,14 +37,14 @@ export interface PluginCommandRegistryApi {
   readonly register: <I, O>(
     command: PluginCommandName,
     registration: PluginCommandRegistration<I, O>,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, Error>;
 }
 
 export interface PluginUiContributionApi {
   readonly setPlacementBadgeProvider: (
     placementId: PluginUiPlacementId,
     provider: () => Effect.Effect<number, Error>,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, Error>;
 }
 
 export interface PluginRuntimeApi {
@@ -53,6 +55,12 @@ export interface PluginRuntimeApi {
   }) => Effect.Effect<{ readonly threadId: ThreadId }, PluginRuntimeError>;
 }
 
+export interface PluginActivationPaths {
+  readonly dataDir: string;
+  readonly cacheDir: string;
+  readonly tempDir: string;
+}
+
 export interface PluginEventApi {
   readonly publish: (
     event: Omit<PluginSubscriptionEvent, "pluginId" | "createdAt">,
@@ -61,6 +69,7 @@ export interface PluginEventApi {
 
 export interface PluginActivationContext {
   readonly pluginId: PluginId;
+  readonly paths: PluginActivationPaths;
   readonly store: PluginDocumentStore;
   readonly commands: PluginCommandRegistryApi;
   readonly ui: PluginUiContributionApi;

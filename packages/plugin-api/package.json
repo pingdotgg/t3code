@@ -27,6 +27,10 @@
     "./package": {
       "types": "./src/package.ts",
       "import": "./src/package.ts"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "import": "./src/testing.ts"
     }
   },
   "scripts": {

@@ -7,8 +7,10 @@ import type {
   PluginUiPlacementPosition,
 } from "@t3tools/contracts";
 
+import { hasPluginManifest, type PluginCatalogManifestEntry } from "./pluginCatalogEntry";
+
 export interface PluginPlacementEntry {
-  readonly catalogEntry: PluginCatalogEntry;
+  readonly catalogEntry: PluginCatalogManifestEntry;
   readonly placement: PluginUiPlacementContribution;
   readonly route: PluginRouteContribution;
 }
@@ -38,7 +40,7 @@ export function getActivePluginPlacementEntries(
 ): PluginPlacementEntry[] {
   return catalog
     .flatMap((catalogEntry) => {
-      if (catalogEntry.status.status !== "active") {
+      if (!hasPluginManifest(catalogEntry) || catalogEntry.status.status !== "active") {
         return [];
       }
 

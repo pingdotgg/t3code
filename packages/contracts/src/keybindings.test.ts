@@ -95,6 +95,32 @@ it.effect("accepts dynamic script run commands", () =>
   }),
 );
 
+it.effect("accepts namespaced plugin commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingRule, {
+      key: "mod+shift+v",
+      command: "plugin.t3.voice-input.toggleRecording",
+    });
+    assert.strictEqual(parsed.command, "plugin.t3.voice-input.toggleRecording");
+
+    const invalidPluginId = yield* Effect.exit(
+      decode(KeybindingRule, {
+        key: "mod+shift+v",
+        command: "plugin.not allowed.toggleRecording",
+      }),
+    );
+    assert.strictEqual(invalidPluginId._tag, "Failure");
+
+    const invalidCommandName = yield* Effect.exit(
+      decode(KeybindingRule, {
+        key: "mod+shift+v",
+        command: "plugin.t3.voice-input.toggle recording",
+      }),
+    );
+    assert.strictEqual(invalidCommandName._tag, "Failure");
+  }),
+);
+
 it.effect("parses keybindings array payload", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(KeybindingsConfig, [

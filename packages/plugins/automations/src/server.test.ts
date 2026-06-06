@@ -6,17 +6,16 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/plugin-api/schema";
+import { PluginStoreError } from "@t3tools/plugin-api/server";
 import {
-  PluginRuntimeError,
-  PluginStoreError,
-  type PluginActivationContext,
-} from "@t3tools/plugin-api/server";
+  PluginActivationHarnessError,
+  makePluginActivationTestHarness,
+  type PluginActivationTestHarness,
+} from "@t3tools/plugin-api/testing";
 import { assert, it } from "@effect/vitest";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Schema from "effect/Schema";
 
 import {
   AUTOMATIONS_COMMANDS,
@@ -24,205 +23,38 @@ import {
   automationsPlugin,
   computeNextRunAt,
   isMissedRun,
-  runAutomationScheduleTick,
-  shouldFireSchedule,
   validateFiveFieldCron,
 } from "./server/index.ts";
+import { registerAutomationCommands } from "./server/commands.ts";
+import { PLACEMENT_MAIN_SIDEBAR } from "./server/constants.ts";
+import { scheduledRunId } from "./server/ids.ts";
+import {
+  type AutomationsRuntime,
+  makeAutomationsRuntime,
+  registerAutomationCollections,
+} from "./server/runtime.ts";
 import { AutomationRunId, type AutomationRule, type AutomationRun } from "./shared/schema.ts";
 
-class HarnessError extends Data.TaggedError("HarnessError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-interface StoredCommand {
-  readonly invoke: (input: unknown) => Effect.Effect<unknown, Error>;
-  readonly decodeOutput: (output: unknown) => Effect.Effect<unknown, HarnessError>;
-}
-
-interface Harness {
-  readonly ctx: PluginActivationContext;
-  readonly documents: HarnessDocuments;
-  readonly collections: Set<string>;
-  readonly commands: Map<string, StoredCommand>;
-  readonly launchedThreads: Array<{
-    readonly projectId: ProjectId;
-    readonly title: string;
-    readonly prompt: string;
-  }>;
-  readonly publishedEvents: Array<unknown>;
-  readonly badgeProviders: Map<string, () => Effect.Effect<number, Error>>;
-}
-
-interface HarnessDocuments {
-  readonly list: <A>(collection: string) => Effect.Effect<ReadonlyArray<A>, PluginStoreError>;
-  readonly get: <A>(
-    collection: string,
-    documentId: string,
-  ) => Effect.Effect<A | null, PluginStoreError>;
-  readonly upsert: <A>(
-    collection: string,
-    documentId: string,
-    document: A,
-  ) => Effect.Effect<void, PluginStoreError>;
-  readonly delete: (
-    collection: string,
-    documentId: string,
-  ) => Effect.Effect<void, PluginStoreError>;
-}
+type Harness = PluginActivationTestHarness;
 
 function makeHarness(options?: {
-  readonly createAndSendThread?: PluginActivationContext["runtime"]["createAndSendThread"];
+  readonly createAndSendThread?: Harness["ctx"]["runtime"]["createAndSendThread"];
+  readonly beforeDocumentUpsert?: (input: {
+    readonly collection: string;
+    readonly documentId: string;
+    readonly document: unknown;
+  }) => Effect.Effect<void, PluginStoreError>;
 }): Harness {
-  const schemas = new Map<string, Schema.Codec<unknown, unknown>>();
-  const documents = new Map<string, Map<string, unknown>>();
-  const collections = new Set<string>();
-  const commands = new Map<string, StoredCommand>();
-  const launchedThreads: Harness["launchedThreads"] = [];
-  const publishedEvents: Array<unknown> = [];
-  const badgeProviders = new Map<string, () => Effect.Effect<number, Error>>();
-
-  const requireSchema = (collection: string) =>
-    Effect.sync(() => schemas.get(collection)).pipe(
-      Effect.flatMap((schema) =>
-        schema
-          ? Effect.succeed(schema)
-          : Effect.fail(new PluginStoreError(`Collection ${collection} is not registered.`)),
-      ),
-    );
-
-  const decode = (collection: string, value: unknown) =>
-    requireSchema(collection).pipe(
-      Effect.flatMap((schema) => Schema.decodeUnknownEffect(schema)(value)),
-      Effect.mapError((cause) => new PluginStoreError(`Invalid ${collection} document.`, cause)),
-    );
-
-  const collectionMap = (collection: string) => {
-    let values = documents.get(collection);
-    if (!values) {
-      values = new Map<string, unknown>();
-      documents.set(collection, values);
-    }
-    return values;
-  };
-
-  const documentStore: HarnessDocuments = {
-    list: <A>(collection: string) =>
-      Effect.gen(function* () {
-        yield* requireSchema(collection);
-        const values = Array.from(collectionMap(collection).values());
-        return yield* Effect.forEach(values, (value) => decode(collection, value), {
-          concurrency: 1,
-        });
-      }).pipe(Effect.map((values) => values as ReadonlyArray<A>)),
-    get: <A>(collection: string, documentId: string) =>
-      Effect.gen(function* () {
-        yield* requireSchema(collection);
-        const value = collectionMap(collection).get(documentId);
-        if (value === undefined) {
-          return null;
-        }
-        return (yield* decode(collection, value)) as A;
-      }),
-    upsert: (collection, documentId, document) =>
-      decode(collection, document).pipe(
-        Effect.flatMap((decoded) =>
-          Effect.sync(() => {
-            collectionMap(collection).set(documentId, decoded);
-          }),
-        ),
-      ),
-    delete: (collection, documentId) =>
-      Effect.sync(() => {
-        collectionMap(collection).delete(documentId);
-      }),
-  };
-
-  const defaultCreateAndSendThread: PluginActivationContext["runtime"]["createAndSendThread"] = (
-    input,
-  ) =>
-    Effect.sync(() => {
-      launchedThreads.push(input);
-      return { threadId: ThreadId.make(`thread-${launchedThreads.length}`) };
-    });
-
-  const ctx: PluginActivationContext = {
+  return makePluginActivationTestHarness({
     pluginId: PluginId.make(AUTOMATIONS_PLUGIN_ID),
-    store: {
-      registerCollection: <A, I>(collection: string, schema: Schema.Codec<A, I>) =>
-        Effect.sync(() => {
-          collections.add(collection);
-          schemas.set(collection, schema as Schema.Codec<unknown, unknown>);
-          return {
-            list: () => documentStore.list<A>(collection),
-            get: (documentId: string) => documentStore.get<A>(collection, documentId),
-            upsert: (documentId: string, document: A) =>
-              documentStore.upsert<A>(collection, documentId, document),
-            delete: (documentId: string) => documentStore.delete(collection, documentId),
-          };
-        }),
+    paths: {
+      dataDir: "/tmp/t3-automations-test/data",
+      cacheDir: "/tmp/t3-automations-test/cache",
+      tempDir: "/tmp/t3-automations-test/tmp",
     },
-    commands: {
-      register: (command, registration) =>
-        Effect.sync(() => {
-          const decodeInput = Schema.decodeUnknownEffect(registration.input);
-          const decodeOutput = Schema.decodeUnknownEffect(registration.output);
-          commands.set(command, {
-            invoke: (value) =>
-              decodeInput(value).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new HarnessError({
-                      message: "Invalid command input.",
-                      cause,
-                    }),
-                ),
-                Effect.flatMap(registration.handler),
-              ),
-            decodeOutput: (value) =>
-              decodeOutput(value).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new HarnessError({
-                      message: "Invalid command output.",
-                      cause,
-                    }),
-                ),
-              ),
-          });
-        }),
-    },
-    ui: {
-      setPlacementBadgeProvider: (placementId, provider) =>
-        Effect.sync(() => {
-          badgeProviders.set(placementId, provider);
-        }),
-    },
-    runtime: {
-      createAndSendThread:
-        options?.createAndSendThread ??
-        ((input) =>
-          defaultCreateAndSendThread(input).pipe(
-            Effect.mapError((cause) => new PluginRuntimeError("Thread launch failed.", cause)),
-          )),
-    },
-    events: {
-      publish: (event) =>
-        Effect.sync(() => {
-          publishedEvents.push(event);
-        }),
-    },
-  };
-
-  return {
-    ctx,
-    documents: documentStore,
-    collections,
-    commands,
-    launchedThreads,
-    publishedEvents,
-    badgeProviders,
-  };
+    createAndSendThread: options?.createAndSendThread,
+    beforeDocumentUpsert: options?.beforeDocumentUpsert,
+  });
 }
 
 function commandName(command: (typeof AUTOMATIONS_COMMANDS)[keyof typeof AUTOMATIONS_COMMANDS]) {
@@ -237,7 +69,7 @@ function invoke<T>(
   return Effect.gen(function* () {
     const registration = harness.commands.get(commandName(command));
     if (!registration) {
-      return yield* new HarnessError({
+      return yield* new PluginActivationHarnessError({
         message: `Command ${command} was not registered.`,
       });
     }
@@ -256,6 +88,24 @@ const createRuleInput = {
   timezone: "UTC",
   prompt: "Summarize the repo state.",
 };
+
+function runDueSchedulesNow(runtime: AutomationsRuntime, triggeredAt: string) {
+  return runtime.runDueScheduledRuns(triggeredAt);
+}
+
+function activateHarnessRuntime(harness: Harness): Effect.Effect<AutomationsRuntime, Error> {
+  return Effect.gen(function* () {
+    const collections = yield* registerAutomationCollections(harness.ctx);
+    const runtime = yield* makeAutomationsRuntime(harness.ctx, collections);
+    yield* runtime.markInterruptedRunsFailed;
+    yield* harness.ctx.ui.setPlacementBadgeProvider(
+      PLACEMENT_MAIN_SIDEBAR,
+      runtime.countFailedOrSkippedRuns,
+    );
+    yield* registerAutomationCommands(harness.ctx, runtime);
+    return runtime;
+  });
+}
 
 it("Automations cron policy helpers", () => {
   assert.equal(
@@ -276,19 +126,7 @@ it("Automations cron policy helpers", () => {
   assert.instanceOf(cronError, Error);
 
   assert.isTrue(
-    shouldFireSchedule({
-      nextRunAt: "2026-01-01T14:00:00.000Z",
-      nowIso: "2026-01-01T14:00:42.000Z",
-    }),
-  );
-  assert.isTrue(
     isMissedRun({
-      nextRunAt: "2026-01-01T14:00:00.000Z",
-      nowIso: "2026-01-01T14:05:00.000Z",
-    }),
-  );
-  assert.isFalse(
-    shouldFireSchedule({
       nextRunAt: "2026-01-01T14:00:00.000Z",
       nowIso: "2026-01-01T14:05:00.000Z",
     }),
@@ -307,7 +145,6 @@ it.effect(
       assert.equal(automationsPlugin.manifest.routes[0]?.id, PluginRouteId.make("main"));
       assert.isTrue(harness.collections.has("rules"));
       assert.isTrue(harness.collections.has("runs"));
-      assert.isTrue(harness.collections.has("scheduleState"));
       assert.equal(harness.commands.size, automationsPlugin.manifest.commands.length);
       assert.isFunction(harness.badgeProviders.get(PluginUiPlacementId.make("main-sidebar")));
     }),
@@ -316,21 +153,22 @@ it.effect(
 it.effect("Automations rule CRUD persists schedule state and hard deletes run history", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
       AUTOMATIONS_COMMANDS.rulesCreate,
       createRuleInput,
     );
-    const scheduleState = yield* harness.documents.get<{ readonly nextRunAt: string }>(
-      "scheduleState",
-      created.rule.id,
-    );
-    assert.isString(scheduleState?.nextRunAt);
+    assert.isString(created.rule.scheduleState?.nextRunAt);
+    assert.equal(created.rule.scheduleState?.updatedAt, created.rule.updatedAt);
 
     const updated = yield* invoke<{
-      readonly rule: { readonly name: string; readonly enabled: boolean };
+      readonly rule: {
+        readonly name: string;
+        readonly enabled: boolean;
+        readonly scheduleState?: unknown;
+      };
     }>(harness, AUTOMATIONS_COMMANDS.rulesUpdate, {
       ruleId: created.rule.id,
       patch: {
@@ -340,7 +178,7 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
     });
     assert.equal(updated.rule.name, "Daily disabled check");
     assert.isFalse(updated.rule.enabled);
-    assert.isNull(yield* harness.documents.get("scheduleState", created.rule.id));
+    assert.isUndefined(updated.rule.scheduleState);
 
     yield* invoke(harness, AUTOMATIONS_COMMANDS.rulesRunNow, {
       ruleId: created.rule.id,
@@ -356,7 +194,6 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
     yield* invoke(harness, AUTOMATIONS_COMMANDS.rulesDelete, {
       ruleId: created.rule.id,
     });
-    assert.isNull(yield* harness.documents.get("scheduleState", created.rule.id));
 
     const afterDeleteRules = yield* invoke<{
       readonly rules: ReadonlyArray<unknown>;
@@ -372,10 +209,60 @@ it.effect("Automations rule CRUD persists schedule state and hard deletes run hi
   }),
 );
 
+it.effect("Automations concurrent rule updates patch the latest persisted rule", () =>
+  Effect.gen(function* () {
+    const firstUpdateReady = yield* Deferred.make<void>();
+    const releaseFirstUpdate = yield* Deferred.make<void>();
+    let pausedFirstUpdate = false;
+    const harness = makeHarness({
+      beforeDocumentUpsert: ({ collection, document }) =>
+        Effect.gen(function* () {
+          if (collection !== "rules" || pausedFirstUpdate) return;
+          const rule = document as AutomationRule;
+          if (rule.name !== "Renamed check") return;
+          pausedFirstUpdate = true;
+          yield* Deferred.succeed(firstUpdateReady, undefined);
+          yield* Deferred.await(releaseFirstUpdate);
+        }),
+    });
+    yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const firstUpdate = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesUpdate,
+      {
+        ruleId: created.rule.id,
+        patch: { name: "Renamed check" },
+      },
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(firstUpdateReady);
+    const secondUpdate = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesUpdate,
+      {
+        ruleId: created.rule.id,
+        patch: { prompt: "Use the latest repo state." },
+      },
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.succeed(releaseFirstUpdate, undefined);
+
+    yield* Fiber.join(firstUpdate);
+    const updated = yield* Fiber.join(secondUpdate);
+
+    assert.equal(updated.rule.name, "Renamed check");
+    assert.equal(updated.rule.prompt, "Use the latest repo state.");
+  }),
+);
+
 it.effect("Automations run-now creates a new thread and records a completed manual run", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
@@ -400,19 +287,21 @@ it.effect("Automations run-now creates a new thread and records a completed manu
 it.effect("Automations scheduled tick creates a schedule run and thread", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
-    yield* automationsPlugin.activate(harness.ctx);
+    const runtime = yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
       AUTOMATIONS_COMMANDS.rulesCreate,
       createRuleInput,
     );
-    yield* harness.documents.upsert("scheduleState", created.rule.id, {
-      ruleId: created.rule.id,
-      nextRunAt: "2026-01-01T09:00:00.000Z",
-      updatedAt: "2026-01-01T08:59:00.000Z",
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-01T09:00:00.000Z",
+        updatedAt: created.rule.updatedAt,
+      },
     });
-    yield* runAutomationScheduleTick(harness.ctx, "2026-01-01T09:00:10.000Z");
+    yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z");
 
     const runs = yield* invoke<{
       readonly runs: ReadonlyArray<AutomationRun>;
@@ -426,10 +315,349 @@ it.effect("Automations scheduled tick creates a schedule run and thread", () =>
   }),
 );
 
+it.effect("Automations scheduled tick repairs stale rule schedule state before firing", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-01T09:00:00.000Z",
+        updatedAt: "2025-12-31T00:00:00.000Z",
+      },
+    });
+
+    yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z");
+
+    const repairedRule = yield* harness.documents.get<AutomationRule>("rules", created.rule.id);
+    assert.equal(repairedRule?.scheduleState?.updatedAt, created.rule.updatedAt);
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    assert.deepEqual(runs.runs, []);
+    assert.equal(harness.launchedThreads.length, 0);
+  }),
+);
+
+it.effect("Automations overlapping scheduler ticks do not run the same due state twice", () =>
+  Effect.gen(function* () {
+    const firstAdvanceReady = yield* Deferred.make<void>();
+    const releaseFirstAdvance = yield* Deferred.make<void>();
+    let advanceWrites = 0;
+    const harness = makeHarness({
+      beforeDocumentUpsert: ({ collection, document }) =>
+        Effect.gen(function* () {
+          if (collection !== "rules") return;
+          const rule = document as AutomationRule;
+          if (rule.scheduleState?.nextRunAt !== "2026-01-02T09:00:00.000Z") return;
+          advanceWrites += 1;
+          if (advanceWrites === 1) {
+            yield* Deferred.succeed(firstAdvanceReady, undefined);
+            yield* Deferred.await(releaseFirstAdvance);
+          }
+        }),
+    });
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-01T09:00:00.000Z",
+        updatedAt: created.rule.updatedAt,
+      },
+    });
+    const firstTick = yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z").pipe(
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(firstAdvanceReady);
+    const secondTick = yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z").pipe(
+      Effect.forkScoped,
+    );
+    yield* Deferred.succeed(releaseFirstAdvance, undefined);
+
+    yield* Fiber.join(firstTick);
+    yield* Fiber.join(secondTick);
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    assert.equal(advanceWrites, 1);
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0]?.scheduledFor, "2026-01-01T09:00:00.000Z");
+    assert.equal(harness.launchedThreads.length, 1);
+  }),
+);
+
+it.effect("Automations scheduled tick resumes queued deterministic runs after claim failure", () =>
+  Effect.gen(function* () {
+    let failScheduleAdvance = true;
+    const harness = makeHarness({
+      beforeDocumentUpsert: ({ collection, document }) =>
+        Effect.gen(function* () {
+          if (collection !== "rules" || !failScheduleAdvance) return;
+          const rule = document as AutomationRule;
+          if (rule.scheduleState?.nextRunAt !== "2026-01-02T09:00:00.000Z") return;
+          failScheduleAdvance = false;
+          return yield* Effect.fail(new PluginStoreError("Failed to advance schedule."));
+        }),
+    });
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-01T09:00:00.000Z",
+        updatedAt: created.rule.updatedAt,
+      },
+    });
+
+    const failedTick = yield* Effect.result(
+      runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z"),
+    );
+    assert.equal(failedTick._tag, "Failure");
+
+    yield* runtime.markInterruptedRunsFailed;
+    yield* runtime.recoverQueuedScheduledRuns();
+
+    yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z");
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0]?.status, "completed");
+    assert.equal(runs.runs[0]?.scheduledFor, "2026-01-01T09:00:00.000Z");
+    assert.equal(harness.launchedThreads.length, 1);
+  }),
+);
+
+it.effect("Automations startup recovers queued deterministic runs after schedule advancement", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const scheduledFor = "2026-01-01T09:00:00.000Z";
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-02T09:00:00.000Z",
+        updatedAt: created.rule.updatedAt,
+      },
+    });
+    yield* harness.documents.upsert<AutomationRun>(
+      "runs",
+      scheduledRunId(created.rule.id, scheduledFor),
+      {
+        id: scheduledRunId(created.rule.id, scheduledFor),
+        ruleId: created.rule.id,
+        status: "queued",
+        reason: "schedule",
+        scheduledFor,
+        ruleUpdatedAt: created.rule.updatedAt,
+      },
+    );
+
+    yield* runtime.markInterruptedRunsFailed;
+    yield* runtime.recoverQueuedScheduledRuns();
+    yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z");
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0]?.status, "completed");
+    assert.equal(runs.runs[0]?.scheduledFor, scheduledFor);
+    assert.equal(harness.launchedThreads.length, 1);
+  }),
+);
+
+it.effect("Automations startup fails stale queued deterministic runs after rule edits", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const scheduledFor = "2026-01-01T09:00:00.000Z";
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      prompt: "mutated prompt",
+      updatedAt: "2026-01-01T09:30:00.000Z",
+      scheduleState: {
+        nextRunAt: "2026-01-02T09:00:00.000Z",
+        updatedAt: "2026-01-01T09:30:00.000Z",
+      },
+    });
+    yield* harness.documents.upsert<AutomationRun>(
+      "runs",
+      scheduledRunId(created.rule.id, scheduledFor),
+      {
+        id: scheduledRunId(created.rule.id, scheduledFor),
+        ruleId: created.rule.id,
+        status: "queued",
+        reason: "schedule",
+        scheduledFor,
+        ruleUpdatedAt: created.rule.updatedAt,
+      },
+    );
+
+    yield* runtime.markInterruptedRunsFailed;
+    yield* runtime.recoverQueuedScheduledRuns();
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0]?.status, "failed");
+    assert.equal(harness.launchedThreads.length, 0);
+  }),
+);
+
+it.effect("Automations scheduled tick applies overlap policy to existing queued runs", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const scheduledFor = "2026-01-01T09:00:00.000Z";
+    const runId = scheduledRunId(created.rule.id, scheduledFor);
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: scheduledFor,
+        updatedAt: created.rule.updatedAt,
+      },
+    });
+    yield* harness.documents.upsert<AutomationRun>("runs", "run-active", {
+      id: AutomationRunId.make("run-active"),
+      ruleId: created.rule.id,
+      status: "running",
+      reason: "manual",
+      scheduledFor: "2026-01-01T08:59:00.000Z",
+      startedAt: "2026-01-01T08:59:01.000Z",
+    });
+    yield* harness.documents.upsert<AutomationRun>("runs", runId, {
+      id: runId,
+      ruleId: created.rule.id,
+      status: "queued",
+      reason: "schedule",
+      scheduledFor,
+      ruleUpdatedAt: created.rule.updatedAt,
+    });
+
+    yield* runDueSchedulesNow(runtime, "2026-01-01T09:00:10.000Z");
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    const scheduledRun = runs.runs.find((run) => run.id === runId);
+    assert.equal(scheduledRun?.status, "skipped");
+    assert.equal(scheduledRun?.reason, "previous-run-active");
+    assert.equal(harness.launchedThreads.length, 0);
+  }),
+);
+
+it.effect("Automations recovery applies overlap policy to queued deterministic runs", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    const runtime = yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const scheduledFor = "2026-01-01T09:00:00.000Z";
+    const runId = scheduledRunId(created.rule.id, scheduledFor);
+    yield* harness.documents.upsert<AutomationRule>("rules", created.rule.id, {
+      ...created.rule,
+      scheduleState: {
+        nextRunAt: "2026-01-02T09:00:00.000Z",
+        updatedAt: created.rule.updatedAt,
+      },
+    });
+    yield* harness.documents.upsert<AutomationRun>("runs", "run-active", {
+      id: AutomationRunId.make("run-active"),
+      ruleId: created.rule.id,
+      status: "running",
+      reason: "manual",
+      scheduledFor: "2026-01-01T08:59:00.000Z",
+      startedAt: "2026-01-01T08:59:01.000Z",
+    });
+    yield* harness.documents.upsert<AutomationRun>("runs", runId, {
+      id: runId,
+      ruleId: created.rule.id,
+      status: "queued",
+      reason: "schedule",
+      scheduledFor,
+      ruleUpdatedAt: created.rule.updatedAt,
+    });
+
+    yield* runtime.recoverQueuedScheduledRuns();
+
+    const runs = yield* invoke<{
+      readonly runs: ReadonlyArray<AutomationRun>;
+    }>(harness, AUTOMATIONS_COMMANDS.runsListRecent, {
+      ruleId: created.rule.id,
+      limit: 10,
+    });
+    const scheduledRun = runs.runs.find((run) => run.id === runId);
+    assert.equal(scheduledRun?.status, "skipped");
+    assert.equal(scheduledRun?.reason, "previous-run-active");
+    assert.equal(harness.launchedThreads.length, 0);
+  }),
+);
+
 it.effect("Automations overlap policy records skipped runs without launching a thread", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
@@ -471,7 +699,7 @@ it.effect("Automations concurrent run-now requests use the overlap policy", () =
           return { threadId: ThreadId.make(`thread-${launchedThreadCount}`) };
         }),
     });
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
@@ -501,6 +729,48 @@ it.effect("Automations concurrent run-now requests use the overlap policy", () =
   }),
 );
 
+it.effect("Automations interrupted post-launch runs retain the launched thread id", () =>
+  Effect.gen(function* () {
+    const completingWriteStarted = yield* Deferred.make<void>();
+    const releaseCompletingWrite = yield* Deferred.make<void>();
+    let pausedCompletingWrite = false;
+    const harness = makeHarness({
+      createAndSendThread: () => Effect.succeed({ threadId: ThreadId.make("thread-launched") }),
+      beforeDocumentUpsert: ({ collection, document }) =>
+        Effect.gen(function* () {
+          if (collection !== "runs" || pausedCompletingWrite) return;
+          const run = document as AutomationRun;
+          if (run.status !== "completed") return;
+          pausedCompletingWrite = true;
+          yield* Deferred.succeed(completingWriteStarted, undefined);
+          yield* Deferred.await(releaseCompletingWrite);
+        }),
+    });
+    yield* activateHarnessRuntime(harness);
+
+    const created = yield* invoke<{ readonly rule: AutomationRule }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesCreate,
+      createRuleInput,
+    );
+    const running = yield* invoke<{ readonly run: AutomationRun }>(
+      harness,
+      AUTOMATIONS_COMMANDS.rulesRunNow,
+      { ruleId: created.rule.id },
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(completingWriteStarted);
+    yield* Fiber.interrupt(running);
+
+    const runs = yield* invoke<{ readonly runs: ReadonlyArray<AutomationRun> }>(
+      harness,
+      AUTOMATIONS_COMMANDS.runsListRecent,
+      { ruleId: created.rule.id, limit: 10 },
+    );
+    assert.equal(runs.runs[0]?.status, "failed");
+    assert.equal(runs.runs[0]?.threadId, ThreadId.make("thread-launched"));
+  }),
+);
+
 it.effect("Automations deleting an active rule does not recreate run history", () =>
   Effect.gen(function* () {
     const firstThreadStarted = yield* Deferred.make<void>();
@@ -512,7 +782,7 @@ it.effect("Automations deleting an active rule does not recreate run history", (
           Effect.as({ threadId: ThreadId.make("thread-active-delete") }),
         ),
     });
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,
@@ -545,7 +815,7 @@ it.effect("Automations deleting an active rule does not recreate run history", (
 it.effect("Automations retains only the last 100 runs per rule", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
-    yield* automationsPlugin.activate(harness.ctx);
+    yield* activateHarnessRuntime(harness);
 
     const created = yield* invoke<{ readonly rule: AutomationRule }>(
       harness,

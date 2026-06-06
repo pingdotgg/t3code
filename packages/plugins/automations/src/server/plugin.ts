@@ -8,6 +8,7 @@ import { registerAutomationCommands } from "./commands.ts";
 import { PLACEMENT_MAIN_SIDEBAR } from "./constants.ts";
 import {
   makeAutomationsRuntime,
+  startAutomationRecovery,
   registerAutomationCollections,
   startAutomationScheduleLoop,
 } from "./runtime.ts";
@@ -21,12 +22,13 @@ export const automationsPlugin = defineServerPlugin({
       const collections = yield* registerAutomationCollections(ctx);
       const runtime = yield* makeAutomationsRuntime(ctx, collections);
       yield* runtime.markInterruptedRunsFailed;
+      yield* startAutomationRecovery(runtime);
       yield* startAutomationScheduleLoop(runtime);
 
       yield* ctx.ui.setPlacementBadgeProvider(
         PLACEMENT_MAIN_SIDEBAR,
         runtime.countFailedOrSkippedRuns,
       );
-      yield* registerAutomationCommands(ctx, runtime, collections);
+      yield* registerAutomationCommands(ctx, runtime);
     }),
 });

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm run build:client",
-    "build:client": "vite build --config vite.client.config.ts",
+    "build:client": "vp build --config vite.client.config.ts",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"
   },

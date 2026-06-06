@@ -49,38 +49,26 @@ const PluginDocumentUpsert = Schema.Struct({
   now: Schema.String,
 });
 
-type CollectionSchema = Schema.Codec<unknown, unknown>;
+type CollectionSchema<A, I> = Schema.Codec<A, I>;
 
-function collectionSchemaKey(pluginId: PluginId, collection: string): string {
-  return `${pluginId}\0${collection}`;
-}
-
-export interface PluginStoreShape {
-  readonly registerCollection: (
-    pluginId: PluginId,
-    collection: string,
-    schema: CollectionSchema,
-  ) => Effect.Effect<void>;
-  readonly list: <A>(
-    pluginId: PluginId,
-    collection: string,
-  ) => Effect.Effect<ReadonlyArray<A>, PluginStoreError | PersistenceSqlError>;
-  readonly get: <A>(
-    pluginId: PluginId,
-    collection: string,
+export interface PluginStoreCollection<A> {
+  readonly list: () => Effect.Effect<ReadonlyArray<A>, PluginStoreError | PersistenceSqlError>;
+  readonly get: (
     documentId: string,
   ) => Effect.Effect<A | null, PluginStoreError | PersistenceSqlError>;
-  readonly upsert: <A>(
-    pluginId: PluginId,
-    collection: string,
+  readonly upsert: (
     documentId: string,
     document: A,
   ) => Effect.Effect<void, PluginStoreError | PersistenceSqlError>;
-  readonly delete: (
+  readonly delete: (documentId: string) => Effect.Effect<void, PersistenceSqlError>;
+}
+
+export interface PluginStoreShape {
+  readonly registerCollection: <A, I>(
     pluginId: PluginId,
     collection: string,
-    documentId: string,
-  ) => Effect.Effect<void, PersistenceSqlError>;
+    schema: CollectionSchema<A, I>,
+  ) => Effect.Effect<PluginStoreCollection<A>>;
   readonly deleteCollection: (
     pluginId: PluginId,
     collection: string,
@@ -93,7 +81,6 @@ export class PluginStore extends Context.Service<PluginStore, PluginStoreShape>(
 
 const makePluginStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const schemas = new Map<string, CollectionSchema>();
 
   const listRows = SqlSchema.findAll({
     Request: PluginCollectionKey,
@@ -181,20 +168,7 @@ const makePluginStore = Effect.gen(function* () {
       `,
   });
 
-  const requireSchema = (pluginId: PluginId, collection: string) =>
-    Effect.sync(() => schemas.get(collectionSchemaKey(pluginId, collection))).pipe(
-      Effect.flatMap((schema) =>
-        schema
-          ? Effect.succeed(schema)
-          : Effect.fail(
-              new PluginStoreError(
-                `Plugin ${pluginId} has not registered collection '${collection}'.`,
-              ),
-            ),
-      ),
-    );
-
-  const decodeDocument = (schema: CollectionSchema, row: PluginDocumentRow) =>
+  const decodeDocument = <A, I>(schema: CollectionSchema<A, I>, row: PluginDocumentRow) =>
     Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(row.documentJson).pipe(
       Effect.mapError(
         (detail) =>
@@ -205,50 +179,23 @@ const makePluginStore = Effect.gen(function* () {
       ),
     );
 
-  return PluginStore.of({
-    registerCollection: (pluginId, collection, schema) =>
-      Effect.sync(() => {
-        schemas.set(collectionSchemaKey(pluginId, collection), schema);
-      }),
-
-    list: <A>(pluginId: PluginId, collection: string) =>
-      Effect.gen(function* () {
-        const schema = yield* requireSchema(pluginId, collection);
-        const rows = yield* listRows({ pluginId, collection }).pipe(
-          Effect.mapError(toPersistenceSqlError("PluginStore.list:query")),
-        );
-        return yield* Effect.forEach(rows, (row) => decodeDocument(schema, row), {
-          concurrency: 1,
-        });
-      }).pipe(Effect.map((documents) => documents as ReadonlyArray<A>)),
-
-    get: <A>(pluginId: PluginId, collection: string, documentId: string) =>
-      Effect.gen(function* () {
-        const schema = yield* requireSchema(pluginId, collection);
-        const row = yield* getRow({ pluginId, collection, documentId }).pipe(
-          Effect.mapError(toPersistenceSqlError("PluginStore.get:query")),
-        );
-        if (Option.isNone(row)) {
-          return null;
-        }
-        return yield* decodeDocument(schema, row.value);
-      }).pipe(Effect.map((document) => document as A | null)),
-
-    upsert: <A>(pluginId: PluginId, collection: string, documentId: string, document: A) =>
-      Effect.gen(function* () {
-        const schema = yield* requireSchema(pluginId, collection);
-        const decoded = yield* Schema.decodeUnknownEffect(schema)(document).pipe(
-          Effect.mapError(
-            (detail) =>
-              new PluginStoreError(
-                `Plugin document ${pluginId}/${collection}/${documentId} failed schema validation.`,
-                detail,
-              ),
+  const encodeDocument = <A, I>(
+    pluginId: PluginId,
+    collection: string,
+    documentId: string,
+    schema: CollectionSchema<A, I>,
+    document: A,
+  ) =>
+    Schema.decodeUnknownEffect(schema)(document).pipe(
+      Effect.mapError(
+        (detail) =>
+          new PluginStoreError(
+            `Plugin document ${pluginId}/${collection}/${documentId} failed schema validation.`,
+            detail,
           ),
-        );
-        const documentJson = yield* Schema.encodeEffect(Schema.fromJsonString(schema))(
-          decoded,
-        ).pipe(
+      ),
+      Effect.flatMap((decoded) =>
+        Schema.encodeEffect(Schema.fromJsonString(schema))(decoded).pipe(
           Effect.mapError(
             (detail) =>
               new PluginStoreError(
@@ -256,6 +203,42 @@ const makePluginStore = Effect.gen(function* () {
                 detail,
               ),
           ),
+        ),
+      ),
+    );
+
+  const makeCollection = <A, I>(
+    pluginId: PluginId,
+    collection: string,
+    schema: CollectionSchema<A, I>,
+  ): PluginStoreCollection<A> => ({
+    list: () =>
+      Effect.gen(function* () {
+        const rows = yield* listRows({ pluginId, collection }).pipe(
+          Effect.mapError(toPersistenceSqlError("PluginStore.list:query")),
+        );
+        return yield* Effect.forEach(rows, (row) => decodeDocument(schema, row), {
+          concurrency: 1,
+        });
+      }),
+    get: (documentId) =>
+      Effect.gen(function* () {
+        const row = yield* getRow({ pluginId, collection, documentId }).pipe(
+          Effect.mapError(toPersistenceSqlError("PluginStore.get:query")),
+        );
+        if (Option.isNone(row)) {
+          return null;
+        }
+        return yield* decodeDocument(schema, row.value);
+      }),
+    upsert: (documentId, document) =>
+      Effect.gen(function* () {
+        const documentJson = yield* encodeDocument(
+          pluginId,
+          collection,
+          documentId,
+          schema,
+          document,
         );
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* upsertRow({
@@ -266,11 +249,17 @@ const makePluginStore = Effect.gen(function* () {
           now,
         }).pipe(Effect.mapError(toPersistenceSqlError("PluginStore.upsert:query")));
       }),
-
-    delete: (pluginId, collection, documentId) =>
+    delete: (documentId) =>
       deleteRow({ pluginId, collection, documentId }).pipe(
         Effect.mapError(toPersistenceSqlError("PluginStore.delete:query")),
       ),
+  });
+
+  return PluginStore.of({
+    registerCollection: (pluginId, collection, schema) =>
+      Effect.sync(() => {
+        return makeCollection(pluginId, collection, schema);
+      }),
 
     deleteCollection: (pluginId, collection) =>
       deleteCollectionRows({ pluginId, collection }).pipe(

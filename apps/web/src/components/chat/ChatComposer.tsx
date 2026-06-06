@@ -34,6 +34,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  insertComposerTextWithBoundaries,
   replaceTextRange,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -65,6 +66,11 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import {
+  PluginComposerBridge,
+  usePluginComposerApi,
+  usePluginComposerBridge,
+} from "./PluginComposerBridge";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -297,6 +303,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  sendBlockingReason?: string | null | undefined;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -319,6 +326,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        sendBlockingReason={props.sendBlockingReason}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -342,8 +350,14 @@ export interface ChatComposerHandle {
     value: string;
     cursor: number;
     expandedCursor: number;
+    selectionStart: number;
+    selectionEnd: number;
+    expandedSelectionStart: number;
+    expandedSelectionEnd: number;
     terminalContextIds: string[];
   };
+  insertText: (text: string) => boolean;
+  getPluginComposerId: () => string;
   /** Reset composer cursor/trigger/highlight after external prompt mutations (e.g. onSend). */
   resetCursorState: (options?: {
     cursor?: number;
@@ -798,6 +812,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
+  const composerId = useMemo(() => {
+    if (routeKind === "draft" && draftId) {
+      return `draft:${draftId}`;
+    }
+    return `thread:${environmentId}:${activeThreadId ?? "new"}`;
+  }, [activeThreadId, draftId, environmentId, routeKind]);
+  const pluginComposerBridge = usePluginComposerBridge(composerId);
+  const composerPluginBlockingReason = pluginComposerBridge.blockingReason;
 
   // ------------------------------------------------------------------
   // Refs
@@ -1040,8 +1062,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    composerPluginBlockingReason !== null ||
+    !composerSendState.hasSendableContent;
+  const collapsedComposerPrimaryActionLabel = composerPluginBlockingReason ?? "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1436,19 +1462,93 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     value: string;
     cursor: number;
     expandedCursor: number;
+    selectionStart: number;
+    selectionEnd: number;
+    expandedSelectionStart: number;
+    expandedSelectionEnd: number;
     terminalContextIds: string[];
   } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
       return editorSnapshot;
     }
+    const expandedCursor = expandCollapsedComposerCursor(promptRef.current, composerCursor);
     return {
       value: promptRef.current,
       cursor: composerCursor,
-      expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+      expandedCursor,
+      selectionStart: composerCursor,
+      selectionEnd: composerCursor,
+      expandedSelectionStart: expandedCursor,
+      expandedSelectionEnd: expandedCursor,
       terminalContextIds: composerTerminalContexts.map((context) => context.id),
     };
   }, [composerCursor, composerTerminalContexts, promptRef]);
+
+  const insertTextIntoComposer = useCallback(
+    (text: string): boolean => {
+      const snapshot = readComposerSnapshot();
+      const inserted = insertComposerTextWithBoundaries({
+        value: snapshot.value,
+        rangeStart: snapshot.selectionStart,
+        rangeEnd: snapshot.selectionEnd,
+        text,
+      });
+      if (inserted.text === snapshot.value) {
+        composerEditorRef.current?.focusAt(snapshot.cursor);
+        return false;
+      }
+
+      const nextCursor = inserted.cursor;
+      const nextExpandedCursor = expandCollapsedComposerCursor(inserted.text, nextCursor);
+      promptRef.current = inserted.text;
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && activePendingUserInput) {
+        onChangeActivePendingUserInputCustomAnswer(
+          activePendingQuestion.id,
+          inserted.text,
+          nextCursor,
+          nextExpandedCursor,
+          false,
+        );
+      } else {
+        setPrompt(inserted.text);
+      }
+      setComposerCursor(nextCursor);
+      setComposerTrigger(detectComposerTrigger(inserted.text, nextExpandedCursor));
+      composerEditorRef.current?.replaceValue(inserted.text, nextCursor);
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(nextCursor);
+      });
+      return true;
+    },
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      onChangeActivePendingUserInputCustomAnswer,
+      promptRef,
+      readComposerSnapshot,
+      setPrompt,
+    ],
+  );
+
+  const pluginComposerFocus = useCallback(() => {
+    composerEditorRef.current?.focus();
+  }, []);
+  const pluginComposerReadSnapshot = useCallback(() => {
+    const snapshot = readComposerSnapshot();
+    return {
+      value: snapshot.value,
+      cursor: snapshot.cursor,
+      expandedCursor: snapshot.expandedCursor,
+    };
+  }, [readComposerSnapshot]);
+  const pluginComposerApi = usePluginComposerApi({
+    composerId,
+    insertText: insertTextIntoComposer,
+    focus: pluginComposerFocus,
+    readSnapshot: pluginComposerReadSnapshot,
+  });
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -1607,12 +1707,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      if (composerPluginBlockingReason !== null) {
+        event?.preventDefault();
+        toastManager.add({
+          type: "error",
+          title: composerPluginBlockingReason,
+        });
+        return;
+      }
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
-    [blurMobileComposerAfterSend, onSend, shouldBlurMobileComposerOnSubmit],
+    [
+      blurMobileComposerAfterSend,
+      composerPluginBlockingReason,
+      onSend,
+      shouldBlurMobileComposerOnSubmit,
+    ],
   );
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -1844,6 +1957,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readSnapshot: () => {
         return readComposerSnapshot();
       },
+      insertText: (text: string) => {
+        return insertTextIntoComposer(text);
+      },
+      getPluginComposerId: () => composerId,
       resetCursorState: (options?: {
         cursor?: number;
         prompt?: string;
@@ -1864,12 +1981,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       addTerminalContext: (selection: TerminalContextSelection) => {
         if (!activeThread) return;
-        const snapshot = composerEditorRef.current?.readSnapshot() ?? {
-          value: promptRef.current,
-          cursor: composerCursor,
-          expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
-          terminalContextIds: composerTerminalContexts.map((context) => context.id),
-        };
+        const snapshot = readComposerSnapshot();
         const insertion = insertInlineTerminalContextPlaceholder(
           snapshot.value,
           snapshot.expandedCursor,
@@ -1913,8 +2025,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread,
       composerDraftTarget,
       composerCursor,
+      composerId,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
+      insertTextIntoComposer,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,
@@ -2069,6 +2183,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isEnvironmentUnavailable={environmentUnavailable !== null}
                       isPreparingWorktree={false}
                       hasSendableContent={false}
+                      sendBlockingReason={composerPluginBlockingReason}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
@@ -2278,6 +2393,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isEnvironmentUnavailable={environmentUnavailable !== null}
                     isPreparingWorktree={false}
                     hasSendableContent={false}
+                    sendBlockingReason={composerPluginBlockingReason}
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
@@ -2328,6 +2444,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     setIsComposerModelPickerOpen(open);
                   }}
                   onInstanceModelChange={onProviderModelSelect}
+                />
+
+                <PluginComposerBridge
+                  position="composer.footer.left"
+                  composer={pluginComposerApi}
+                  onActionStateChange={pluginComposerBridge.onActionStateChange}
                 />
 
                 {isComposerFooterCompact ? (
@@ -2386,6 +2508,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
                   hasSendableContent={composerSendState.hasSendableContent}
+                  sendBlockingReason={composerPluginBlockingReason}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

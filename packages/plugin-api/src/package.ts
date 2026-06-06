@@ -1,6 +1,7 @@
 import {
   PluginId,
   PluginManifest,
+  type PluginDiscoveryFailure as PluginDiscoveryFailureType,
   TrimmedNonEmptyString,
   type PluginId as PluginIdType,
   type PluginManifest as PluginManifestType,
@@ -42,6 +43,15 @@ export interface LoadedServerPlugin {
   readonly descriptor: PluginPackageDescriptor;
   readonly manifest: PluginManifestType;
   readonly serverPlugin: ServerPlugin;
+}
+
+export interface FailedServerPlugin {
+  readonly descriptor: PluginPackageDescriptor;
+  readonly manifest: PluginManifestType;
+}
+
+export interface FailedPluginDiscovery {
+  readonly discovery: PluginDiscoveryFailureType;
 }
 
 export function isPluginApiVersionCompatible(apiVersion: string): boolean {

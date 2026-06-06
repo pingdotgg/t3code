@@ -12,4 +12,8 @@ export const AUTOMATIONS_COMMANDS = {
 export type AutomationCommandName =
   (typeof AUTOMATIONS_COMMANDS)[keyof typeof AUTOMATIONS_COMMANDS];
 
+export const AUTOMATIONS_EVENTS = {
+  changed: "automations.changed",
+} as const;
+
 export const DEFAULT_CRON = "0 9 * * 1";

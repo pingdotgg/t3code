@@ -1,11 +1,14 @@
 import {
   PluginManifest,
+  type PluginId,
   type PluginManifest as PluginManifestType,
   type PluginRouteSurface,
   type PluginUiPlacementPosition,
 } from "@t3tools/contracts";
 import {
   isPluginApiVersionCompatible,
+  type FailedPluginDiscovery,
+  type FailedServerPlugin,
   PluginPackageJson,
   type LoadedServerPlugin,
   type PluginPackageDescriptor,
@@ -40,10 +43,10 @@ class PluginPackageResolverError extends Data.TaggedError("PluginPackageResolver
 }> {}
 
 export interface PluginPackageResolverShape {
-  readonly discover: Effect.Effect<ReadonlyArray<LoadedServerPlugin>>;
+  readonly discover: Effect.Effect<ReadonlyArray<PluginDiscoveryResult>>;
   readonly discoverFromDirectory: (
     pluginsDir: string,
-  ) => Effect.Effect<ReadonlyArray<LoadedServerPlugin>>;
+  ) => Effect.Effect<ReadonlyArray<PluginDiscoveryResult>>;
 }
 
 export class PluginPackageResolver extends Context.Service<
@@ -51,13 +54,107 @@ export class PluginPackageResolver extends Context.Service<
   PluginPackageResolverShape
 >()("t3/plugins/PluginPackageResolver") {}
 
-function parseJson(text: string, packageRoot: string) {
-  return decodeUnknownJsonString(text).pipe(
+export type PluginDiscoveryResult =
+  | { readonly status: "loaded"; readonly plugin: LoadedServerPlugin }
+  | {
+      readonly status: "failed";
+      readonly plugin: FailedServerPlugin;
+      readonly diagnostic: string;
+    }
+  | {
+      readonly status: "discovery-failed";
+      readonly plugin: FailedPluginDiscovery;
+      readonly diagnostic: string;
+    };
+
+export interface PluginPackageMetadata {
+  readonly descriptor: PluginPackageDescriptor;
+  readonly manifest: PluginManifestType;
+}
+
+export interface PluginPackageDescriptorMetadata {
+  readonly descriptor: PluginPackageDescriptor;
+}
+
+const failedDiscoveryFromPackageRoot = (packageRoot: string): FailedPluginDiscovery => ({
+  discovery: { packageRoot },
+});
+
+const failedDiscoveryFromDescriptor = (
+  descriptor: PluginPackageDescriptor,
+): FailedPluginDiscovery => ({
+  discovery: {
+    pluginId: descriptor.pluginId,
+    packageName: descriptor.packageName,
+    packageVersion: descriptor.packageVersion,
+    packageRoot: descriptor.packageRoot,
+  },
+});
+
+function discoveredPluginId(result: PluginDiscoveryResult): PluginId | undefined {
+  return result.status === "discovery-failed"
+    ? result.plugin.discovery.pluginId
+    : result.plugin.manifest.id;
+}
+
+function failedDiscoveryFromResult(result: PluginDiscoveryResult): FailedPluginDiscovery {
+  if (result.status === "discovery-failed") {
+    return result.plugin;
+  }
+  return failedDiscoveryFromDescriptor(result.plugin.descriptor);
+}
+
+function duplicatePluginIds(results: ReadonlyArray<PluginDiscoveryResult>): ReadonlySet<PluginId> {
+  const seen = new Set<PluginId>();
+  const duplicates = new Set<PluginId>();
+  for (const result of results) {
+    const pluginId = discoveredPluginId(result);
+    if (pluginId === undefined) {
+      continue;
+    }
+    if (seen.has(pluginId)) {
+      duplicates.add(pluginId);
+    } else {
+      seen.add(pluginId);
+    }
+  }
+  return duplicates;
+}
+
+function normalizeDuplicatePluginDiscoveryResults(
+  results: ReadonlyArray<PluginDiscoveryResult>,
+): ReadonlyArray<PluginDiscoveryResult> {
+  const duplicateIds = duplicatePluginIds(results);
+  if (duplicateIds.size === 0) {
+    return results;
+  }
+  return results.map((result) => {
+    const pluginId = discoveredPluginId(result);
+    if (pluginId === undefined || !duplicateIds.has(pluginId)) {
+      return result;
+    }
+    return {
+      status: "discovery-failed",
+      plugin: failedDiscoveryFromResult(result),
+      diagnostic: `Duplicate plugin id ${pluginId} was discovered; plugin was not activated.`,
+    };
+  });
+}
+
+function parseJson(input: {
+  readonly text: string;
+  readonly packageRoot: string;
+  readonly label: "package" | "manifest";
+}) {
+  return decodeUnknownJsonString(input.text).pipe(
     Effect.mapError(
       (cause) =>
         new PluginPackageResolverError({
-          message: "Plugin package JSON could not be parsed.",
-          packageRoot,
+          message:
+            input.label === "package"
+              ? "Plugin package JSON could not be parsed."
+              : "Plugin manifest JSON could not be parsed.",
+          packageRoot: input.packageRoot,
           cause,
         }),
     ),
@@ -149,6 +246,16 @@ function validateManifestReferences(
         ids: manifest.ui.placements.map((placement) => placement.id),
         packageRoot,
       });
+      assertUniqueIds({
+        label: "composer action",
+        ids: (manifest.ui.composerActions ?? []).map((action) => action.id),
+        packageRoot,
+      });
+      assertUniqueIds({
+        label: "command",
+        ids: manifest.commands.map((command) => command.name),
+        packageRoot,
+      });
 
       const routeById = new Map(manifest.routes.map((route) => [route.id, route]));
       for (const placement of manifest.ui.placements) {
@@ -224,10 +331,35 @@ const resolveInsidePackage = (
     return resolved;
   });
 
-export const loadPluginPackage = (
+const requireFile = (
+  filePath: string,
+  message: string,
+  packageRoot: string,
+): Effect.Effect<void, PluginPackageResolverError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const stat = yield* fs.stat(filePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PluginPackageResolverError({
+            message,
+            packageRoot,
+            cause,
+          }),
+      ),
+    );
+    if (stat.type !== "File") {
+      return yield* new PluginPackageResolverError({
+        message,
+        packageRoot,
+      });
+    }
+  });
+
+export const loadPluginPackageDescriptor = (
   packageRoot: string,
 ): Effect.Effect<
-  LoadedServerPlugin,
+  PluginPackageDescriptorMetadata,
   PluginPackageResolverError,
   FileSystem.FileSystem | Path.Path
 > =>
@@ -244,7 +376,7 @@ export const loadPluginPackage = (
             cause,
           }),
       ),
-      Effect.flatMap((text) => parseJson(text, packageRoot)),
+      Effect.flatMap((text) => parseJson({ text, packageRoot, label: "package" })),
       Effect.flatMap((json) =>
         decodePluginPackageJson(json).pipe(
           Effect.mapError(
@@ -270,7 +402,38 @@ export const loadPluginPackage = (
     const serverEntryPath = yield* resolveInsidePackage(packageRoot, packageJson.t3Plugin.server);
     const clientEntryPath = yield* resolveInsidePackage(packageRoot, packageJson.t3Plugin.client);
 
-    const manifest = yield* fs.readFileString(manifestPath).pipe(
+    const descriptor: PluginPackageDescriptor = {
+      pluginId: packageJson.t3Plugin.id,
+      packageName: packageJson.name,
+      packageVersion: packageJson.version,
+      packageRoot,
+      apiVersion: packageJson.t3Plugin.apiVersion,
+      manifestPath,
+      serverEntryPath,
+      clientEntryPath,
+    };
+
+    return { descriptor };
+  });
+
+export const loadPluginPackageMetadata = (
+  packageRoot: string,
+): Effect.Effect<
+  PluginPackageMetadata,
+  PluginPackageResolverError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  loadPluginPackageDescriptor(packageRoot).pipe(
+    Effect.flatMap(({ descriptor }) => loadPluginPackageMetadataFromDescriptor(descriptor)),
+  );
+
+export const loadPluginPackageMetadataFromDescriptor = (
+  descriptor: PluginPackageDescriptor,
+): Effect.Effect<PluginPackageMetadata, PluginPackageResolverError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const packageRoot = descriptor.packageRoot;
+    const manifest = yield* fs.readFileString(descriptor.manifestPath).pipe(
       Effect.mapError(
         (cause) =>
           new PluginPackageResolverError({
@@ -279,7 +442,7 @@ export const loadPluginPackage = (
             cause,
           }),
       ),
-      Effect.flatMap((text) => parseJson(text, packageRoot)),
+      Effect.flatMap((text) => parseJson({ text, packageRoot, label: "manifest" })),
       Effect.flatMap((json) =>
         rejectLegacyPluginNav(json, packageRoot).pipe(
           Effect.flatMap(() =>
@@ -299,26 +462,43 @@ export const loadPluginPackage = (
       Effect.tap((manifest) => validateManifestReferences(manifest, packageRoot)),
     );
 
-    if (manifest.id !== packageJson.t3Plugin.id) {
+    if (manifest.id !== descriptor.pluginId) {
       return yield* new PluginPackageResolverError({
-        message: `Plugin manifest id ${manifest.id} does not match package id ${packageJson.t3Plugin.id}.`,
+        message: `Plugin manifest id ${manifest.id} does not match package id ${descriptor.pluginId}.`,
         packageRoot,
       });
     }
 
-    const descriptor: PluginPackageDescriptor = {
-      pluginId: manifest.id,
-      packageName: packageJson.name,
-      packageVersion: packageJson.version,
-      packageRoot,
-      apiVersion: packageJson.t3Plugin.apiVersion,
-      manifestPath,
-      serverEntryPath,
-      clientEntryPath,
-    };
+    return { descriptor, manifest };
+  });
 
+const validateDeclaredPluginFiles = (
+  metadata: PluginPackageMetadata,
+): Effect.Effect<void, PluginPackageResolverError, FileSystem.FileSystem> =>
+  Effect.all(
+    [
+      requireFile(
+        metadata.descriptor.serverEntryPath,
+        "Plugin server entry file could not be found.",
+        metadata.descriptor.packageRoot,
+      ),
+      requireFile(
+        metadata.descriptor.clientEntryPath,
+        "Plugin client bundle could not be found.",
+        metadata.descriptor.packageRoot,
+      ),
+    ],
+    { concurrency: 1, discard: true },
+  );
+
+const loadServerPluginFromMetadata = (
+  metadata: PluginPackageMetadata,
+): Effect.Effect<LoadedServerPlugin, PluginPackageResolverError> =>
+  Effect.gen(function* () {
+    const { descriptor, manifest } = metadata;
+    const packageRoot = descriptor.packageRoot;
     const module = yield* Effect.tryPromise({
-      try: () => import(pathToFileURL(serverEntryPath).href) as Promise<unknown>,
+      try: () => import(pathToFileURL(descriptor.serverEntryPath).href) as Promise<unknown>,
       catch: (cause) =>
         new PluginPackageResolverError({
           message: "Plugin server entry could not be imported.",
@@ -352,13 +532,70 @@ export const loadPluginPackage = (
     };
   });
 
+const loadPluginPackageFromMetadata = (
+  metadata: PluginPackageMetadata,
+): Effect.Effect<LoadedServerPlugin, PluginPackageResolverError, FileSystem.FileSystem> =>
+  validateDeclaredPluginFiles(metadata).pipe(
+    Effect.andThen(loadServerPluginFromMetadata(metadata)),
+  );
+
+export const loadPluginPackage = (
+  packageRoot: string,
+): Effect.Effect<
+  LoadedServerPlugin,
+  PluginPackageResolverError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  loadPluginPackageMetadata(packageRoot).pipe(
+    Effect.flatMap((metadata) => loadPluginPackageFromMetadata(metadata)),
+  );
+
+export const discoverPluginPackage = (
+  packageRoot: string,
+): Effect.Effect<PluginDiscoveryResult, never, FileSystem.FileSystem | Path.Path> =>
+  loadPluginPackageDescriptor(packageRoot).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        Effect.succeed({
+          status: "discovery-failed",
+          plugin: failedDiscoveryFromPackageRoot(packageRoot),
+          diagnostic: cause.message,
+        }),
+      onSuccess: ({ descriptor }) =>
+        loadPluginPackageMetadataFromDescriptor(descriptor).pipe(
+          Effect.matchEffect({
+            onFailure: (cause) =>
+              Effect.succeed({
+                status: "discovery-failed",
+                plugin: failedDiscoveryFromDescriptor(descriptor),
+                diagnostic: cause.message,
+              }),
+            onSuccess: (metadata) =>
+              loadPluginPackageFromMetadata(metadata).pipe(
+                Effect.match({
+                  onFailure: (cause): PluginDiscoveryResult => ({
+                    status: "failed",
+                    plugin: metadata,
+                    diagnostic: cause.message,
+                  }),
+                  onSuccess: (plugin): PluginDiscoveryResult => ({
+                    status: "loaded",
+                    plugin,
+                  }),
+                }),
+              ),
+          }),
+        ),
+    }),
+  );
+
 const makePluginPackageResolver = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig;
 
-  const loadPackageWithServices = (packageRoot: string) =>
-    loadPluginPackage(packageRoot).pipe(
+  const discoverPluginPackageWithServices = (packageRoot: string) =>
+    discoverPluginPackage(packageRoot).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
@@ -378,7 +615,7 @@ const makePluginPackageResolver = Effect.gen(function* () {
           }).pipe(Effect.as([])),
         ),
       );
-      const loaded: Array<LoadedServerPlugin> = [];
+      const discovered: Array<PluginDiscoveryResult> = [];
       for (const entry of entries.toSorted()) {
         const discoveredPackageRoot = path.join(pluginsDir, entry);
         const stat = yield* fs
@@ -390,20 +627,21 @@ const makePluginPackageResolver = Effect.gen(function* () {
         const packageRoot = yield* fs
           .realPath(discoveredPackageRoot)
           .pipe(Effect.catch(() => Effect.succeed(discoveredPackageRoot)));
-        const plugin = yield* loadPackageWithServices(packageRoot).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Plugin package could not be loaded", {
+        const result = yield* discoverPluginPackageWithServices(packageRoot);
+        if (result.status !== "loaded") {
+          yield* Effect.logWarning(
+            result.status === "discovery-failed"
+              ? "Plugin package discovery failed"
+              : "Plugin package could not be loaded",
+            {
               packageRoot: discoveredPackageRoot,
-              message: cause.message,
-              cause,
-            }).pipe(Effect.as(null)),
-          ),
-        );
-        if (plugin !== null) {
-          loaded.push(plugin);
+              message: result.diagnostic,
+            },
+          );
         }
+        discovered.push(result);
       }
-      return loaded;
+      return normalizeDuplicatePluginDiscoveryResults(discovered);
     });
 
   return PluginPackageResolver.of({

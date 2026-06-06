@@ -23,12 +23,22 @@ it.effect("PluginManifest validates stable plugin ids, routes, UI placements, an
             badgeCount: 1,
           },
         ],
+        composerActions: [
+          {
+            id: "voice-input",
+            position: "composer.footer.left",
+            label: "Voice input",
+            order: 100,
+          },
+        ],
       },
-      commands: [{ name: "automations.rules.list", label: "List rules" }],
+      commands: [{ name: "automations.rules.list", target: "server", label: "List rules" }],
     });
 
     assert.equal(manifest.id, "t3.automations");
     assert.equal(manifest.ui.placements[0]?.badgeCount, 1);
+    assert.equal(manifest.ui.composerActions?.[0]?.position, "composer.footer.left");
+    assert.equal(manifest.commands[0]?.target, "server");
 
     const invalid = yield* Effect.flip(
       decodePluginManifest({
@@ -41,6 +51,54 @@ it.effect("PluginManifest validates stable plugin ids, routes, UI placements, an
       }),
     );
     assert.include(String(invalid), "not allowed");
+  }),
+);
+
+it.effect("PluginManifest rejects invalid composer action positions", () =>
+  Effect.gen(function* () {
+    const invalidPosition = yield* Effect.flip(
+      decodePluginManifest({
+        id: "t3.invalid-composer-action",
+        name: "Invalid Composer Action",
+        version: "0.1.0",
+        routes: [],
+        ui: {
+          placements: [],
+          composerActions: [
+            {
+              id: "voice-input",
+              position: "thread.toolbar",
+              label: "Voice input",
+            },
+          ],
+        },
+        commands: [],
+      }),
+    );
+    assert.include(String(invalidPosition), "thread.toolbar");
+  }),
+);
+
+it.effect("PluginManifest rejects dotted client keybinding command names", () =>
+  Effect.gen(function* () {
+    const invalidCommand = yield* Effect.flip(
+      decodePluginManifest({
+        id: "t3.invalid-keybinding-command",
+        name: "Invalid Keybinding Command",
+        version: "0.1.0",
+        routes: [],
+        ui: { placements: [] },
+        commands: [
+          {
+            name: "voice.toggle",
+            target: "client",
+            label: "Toggle voice input",
+            keybinding: true,
+          },
+        ],
+      }),
+    );
+    assert.include(String(invalidCommand), "^[^.]+$");
   }),
 );
 

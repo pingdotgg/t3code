@@ -70,9 +70,14 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
+export const PLUGIN_KEYBINDING_COMMAND_PATTERN = TrimmedString.check(
+  Schema.isPattern(/^plugin\.[a-zA-Z][a-zA-Z0-9_.-]*\.[a-zA-Z][a-zA-Z0-9_-]*$/),
+);
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
+  PLUGIN_KEYBINDING_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
