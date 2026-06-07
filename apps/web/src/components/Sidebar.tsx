@@ -154,7 +154,6 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarSeparator,
-  SidebarTrigger,
   useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -2516,7 +2515,6 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const wordmark = (
     <div className="flex items-center gap-2">
-      <SidebarTrigger className="shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
           render={
@@ -2547,7 +2545,9 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
       {wordmark}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
+    <SidebarHeader className="gap-3 py-2 pr-3 pl-12 sm:gap-2.5 sm:py-3 sm:pr-4">
+      {wordmark}
+    </SidebarHeader>
   );
 });
 

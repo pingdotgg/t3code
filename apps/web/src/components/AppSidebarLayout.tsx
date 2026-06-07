@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
-import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger } from "./ui/sidebar";
 import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
@@ -69,6 +69,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <ThreadSidebar />
         <SidebarRail />
       </Sidebar>
+      <div className="fixed left-[calc(env(safe-area-inset-left)+0.75rem)] top-2 z-40">
+        <SidebarTrigger className="size-7 shrink-0" />
+      </div>
       {children}
     </SidebarProvider>
   );

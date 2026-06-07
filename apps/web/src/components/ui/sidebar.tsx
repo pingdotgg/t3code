@@ -184,7 +184,8 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
 }) {
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, openMobile, setOpen, setOpenMobile } = useSidebar();
+  const [previewOpen, setPreviewOpen] = React.useState(false);
   const resolvedResizable = React.useMemo<SidebarResolvedResizableOptions | null>(() => {
     if (isMobile || collapsible === "none" || !resizable) {
       return null;
@@ -203,6 +204,28 @@ function Sidebar({
     () => ({ side, resizable: resolvedResizable }),
     [resolvedResizable, side],
   );
+  const canPreviewOffcanvas = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+
+  React.useEffect(() => {
+    if (!canPreviewOffcanvas && previewOpen) {
+      setPreviewOpen(false);
+    }
+  }, [canPreviewOffcanvas, previewOpen]);
+
+  React.useEffect(() => {
+    if (!previewOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreviewOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [previewOpen]);
 
   if (collapsible === "none") {
     return (
@@ -264,10 +287,21 @@ function Sidebar({
       <div
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-preview={previewOpen ? "open" : "closed"}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
         data-variant={variant}
+        onMouseLeave={() => {
+          if (canPreviewOffcanvas) {
+            setPreviewOpen(false);
+          }
+        }}
+        onPointerLeave={() => {
+          if (canPreviewOffcanvas) {
+            setPreviewOpen(false);
+          }
+        }}
       >
         {/* This is what handles the sidebar gap on desktop */}
         <div
@@ -285,8 +319,8 @@ function Sidebar({
           className={cn(
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
             side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] group-data-[preview=open]:left-0"
+              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] group-data-[preview=open]:right-0",
             // Adjust the padding for floating and inset variants.
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
@@ -294,6 +328,26 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar-container"
+          onMouseEnter={() => {
+            if (canPreviewOffcanvas) {
+              setPreviewOpen(true);
+            }
+          }}
+          onMouseMove={() => {
+            if (canPreviewOffcanvas) {
+              setPreviewOpen(true);
+            }
+          }}
+          onPointerEnter={() => {
+            if (canPreviewOffcanvas) {
+              setPreviewOpen(true);
+            }
+          }}
+          onPointerMove={() => {
+            if (canPreviewOffcanvas) {
+              setPreviewOpen(true);
+            }
+          }}
           {...props}
         >
           <div
@@ -304,13 +358,41 @@ function Sidebar({
             {children}
           </div>
         </div>
+        {canPreviewOffcanvas ? (
+          <button
+            aria-label="Preview Sidebar"
+            className={cn(
+              "fixed inset-y-0 z-20 hidden w-3 cursor-default bg-transparent md:block",
+              side === "left" ? "left-0" : "right-0",
+            )}
+            data-slot="sidebar-preview-trigger"
+            onClick={() => {
+              setOpen(true);
+            }}
+            onMouseEnter={() => {
+              setPreviewOpen(true);
+            }}
+            onMouseMove={() => {
+              setPreviewOpen(true);
+            }}
+            onPointerEnter={() => {
+              setPreviewOpen(true);
+            }}
+            onPointerMove={() => {
+              setPreviewOpen(true);
+            }}
+            tabIndex={-1}
+            type="button"
+          />
+        ) : null}
       </div>
     </SidebarInstanceContext>
   );
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar, openMobile } = useSidebar();
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar();
+  const sidebarOpen = isMobile ? openMobile : open;
 
   return (
     <Button
@@ -325,7 +407,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
