@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vite-plus/test/browser";
@@ -44,6 +44,14 @@ vi.mock("@legendapp/list/react", async () => {
   return { LegendList };
 });
 
+vi.mock("../../lib/checkpointDiffState", () => ({
+  useCheckpointDiff: () => ({
+    data: null,
+    error: null,
+    isPending: false,
+  }),
+}));
+
 import { MessagesTimeline } from "./MessagesTimeline";
 
 const MESSAGE_CREATED_AT = "2026-04-13T12:00:00.000Z";
@@ -58,6 +66,7 @@ function buildProps() {
     completionDividerBeforeEntryId: null,
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaryByTurnId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: vi.fn(),
     revertTurnCountByUserMessageId: new Map(),
@@ -65,6 +74,7 @@ function buildProps() {
     isRevertingCheckpoint: false,
     onImageExpand: vi.fn(),
     activeThreadEnvironmentId: EnvironmentId.make("environment-local"),
+    activeThreadId: ThreadId.make("thread-1"),
     markdownCwd: undefined,
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,

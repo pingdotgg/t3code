@@ -13,6 +13,8 @@ import {
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  setThreadWorkActivityExpanded,
+  setThreadWorkGroupExpanded,
   syncProjects,
   syncThreads,
   type UiState,
@@ -24,6 +26,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadWorkGroupExpandedById: {},
+    threadWorkActivityExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -408,12 +412,24 @@ describe("uiStateStore pure functions", () => {
           "turn-1": false,
         },
       },
+      threadWorkGroupExpandedById: {
+        [thread1]: {
+          "work-group-1": true,
+        },
+      },
+      threadWorkActivityExpandedById: {
+        [thread1]: {
+          "work-activity-1": true,
+        },
+      },
     });
 
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
     expect(next.threadChangedFilesExpandedById).toEqual({});
+    expect(next.threadWorkGroupExpandedById).toEqual({});
+    expect(next.threadWorkActivityExpandedById).toEqual({});
   });
 
   it("setThreadChangedFilesExpanded stores collapsed turns per thread", () => {
@@ -442,6 +458,35 @@ describe("uiStateStore pure functions", () => {
     const next = setThreadChangedFilesExpanded(initialState, thread1, "turn-1", true);
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+
+  it("stores work group and activity expansion per thread", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const withGroupExpanded = setThreadWorkGroupExpanded(
+      initialState,
+      thread1,
+      "work-group-1",
+      true,
+    );
+    const withActivityExpanded = setThreadWorkActivityExpanded(
+      withGroupExpanded,
+      thread1,
+      "work-activity-1",
+      true,
+    );
+
+    expect(withActivityExpanded.threadWorkGroupExpandedById).toEqual({
+      [thread1]: {
+        "work-group-1": true,
+      },
+    });
+    expect(withActivityExpanded.threadWorkActivityExpandedById).toEqual({
+      [thread1]: {
+        "work-activity-1": true,
+      },
+    });
   });
 });
 

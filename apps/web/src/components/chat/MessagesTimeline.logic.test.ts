@@ -511,6 +511,151 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("preserves completed prior-turn work while a newer turn is active", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-one-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "First turn",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-one-progress-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-one-progress" as never,
+            role: "assistant",
+            text: "I am checking the repo.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-one-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:06Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:06Z",
+            turnId: "turn-1" as never,
+            label: "Read package.json",
+            tone: "tool",
+          },
+        },
+        {
+          id: "assistant-one-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-one-final" as never,
+            role: "assistant",
+            text: "First turn done.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            completedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "user-two-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "user-2" as never,
+            role: "user",
+            text: "Second turn",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-two-progress-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:05Z",
+          message: {
+            id: "assistant-two-progress" as never,
+            role: "assistant",
+            text: "I am checking more files.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:01:05Z",
+            streaming: true,
+          },
+        },
+        {
+          id: "work-two-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:01:06Z",
+          entry: {
+            id: "work-2",
+            createdAt: "2026-01-01T00:01:06Z",
+            turnId: "turn-2" as never,
+            label: "Read src/index.ts",
+            tone: "tool",
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnInProgress: true,
+      activeTurnId: "turn-2" as never,
+      activeTurnStartedAt: "2026-01-01T00:01:04Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const workRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "work" }> => row.kind === "work",
+    );
+    const finalAssistantRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.id === "assistant-one-final",
+    );
+
+    expect(finalAssistantRow?.message.text).toBe("First turn done.");
+    expect(workRows).toHaveLength(2);
+    expect(workRows[0]?.activeStartedAt).toBeNull();
+    expect(workRows[0]?.groupedEntries).toMatchObject([
+      {
+        kind: "assistant-message",
+        message: {
+          text: "I am checking the repo.",
+        },
+      },
+      {
+        kind: "work",
+        workEntry: {
+          id: "work-1",
+        },
+      },
+    ]);
+    expect(workRows[1]?.activeStartedAt).toBe("2026-01-01T00:01:04Z");
+    expect(workRows[1]?.groupedEntries).toMatchObject([
+      {
+        kind: "assistant-message",
+        message: {
+          text: "I am checking more files.",
+        },
+      },
+      {
+        kind: "work",
+        workEntry: {
+          id: "work-2",
+        },
+      },
+    ]);
+  });
+
   it("moves the active assistant turn into the active work group", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

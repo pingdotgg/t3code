@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import {
@@ -17,29 +18,29 @@ import {
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
+import { type FileDiffMetadata } from "@pierre/diffs/types";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
+  buildFileDiffRenderKey,
   getRenderablePatch,
+  INLINE_DIFF_RENDER_UNSAFE_CSS,
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
+import { useCheckpointDiff } from "../../lib/checkpointDiffState";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   IconAlertCircle as CircleAlertIcon,
   IconArrowBackUp as Undo2Icon,
-  IconBolt as ZapIcon,
   IconCheck as CheckIcon,
   IconChevronDown as ChevronDownIcon,
   IconChevronRight as ChevronRightIcon,
-  IconEye as EyeIcon,
-  IconHammer as HammerIcon,
   IconPencil as SquarePenIcon,
-  IconRobot as BotIcon,
+  IconSearch as SearchIcon,
   IconTerminal2 as TerminalIcon,
   IconTool as WrenchIcon,
-  IconWorld as GlobeIcon,
   type Icon as TablerIcon,
 } from "@tabler/icons-react";
 import { Button } from "../ui/button";
@@ -51,7 +52,6 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
-  normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
@@ -80,6 +80,11 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import {
+  deriveWorkActivityDisplayEntries,
+  type WorkActivityCategory,
+  type WorkActivitySummary,
+} from "./workActivitySummary";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -96,6 +101,8 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  activeThreadId: ThreadId;
+  turnDiffSummaryByTurnId: Map<TurnId, TurnDiffSummary>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -111,6 +118,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+type DiffThemeType = "light" | "dark";
 
 function TimelineMessageCopyButton({ text }: { text: string }) {
   return (
@@ -140,6 +148,7 @@ interface MessagesTimelineProps {
   completionSummaryStartedAt?: string | null;
   completionSummaryCompletedAt?: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByTurnId: Map<TurnId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
@@ -147,6 +156,7 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
+  activeThreadId: ThreadId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
@@ -172,6 +182,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionSummaryStartedAt,
   completionSummaryCompletedAt,
   turnDiffSummaryByAssistantMessageId,
+  turnDiffSummaryByTurnId,
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
@@ -179,6 +190,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
+  activeThreadId,
   markdownCwd,
   resolvedTheme,
   timestampFormat,
@@ -253,6 +265,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      activeThreadId,
+      turnDiffSummaryByTurnId,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -265,6 +279,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      activeThreadId,
+      turnDiffSummaryByTurnId,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -332,7 +348,6 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
-type TimelineWorkEntry = Extract<TimelineActivityEntry, { kind: "work" }>["workEntry"];
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
@@ -349,6 +364,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     >
       {row.kind === "work" ? (
         <WorkGroupSection
+          rowId={row.id}
           groupedEntries={row.groupedEntries}
           completionSummary={row.completionSummary}
           activeStartedAt={row.activeStartedAt}
@@ -593,24 +609,34 @@ function LiveMessageMeta({
 /** Owns its own expand/collapse state so toggling re-renders only this row.
  *  State resets on unmount which is fine — work groups start collapsed. */
 const WorkGroupSection = memo(function WorkGroupSection({
+  rowId,
   groupedEntries,
   completionSummary,
   activeStartedAt,
 }: {
+  rowId: string;
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
   completionSummary: string | null;
   activeStartedAt: string | null;
 }) {
-  const { workspaceRoot } = use(TimelineRowCtx);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const { routeThreadKey, workspaceRoot } = use(TimelineRowCtx);
+  const isExpanded = useUiStateStore(
+    (store) => store.threadWorkGroupExpandedById[routeThreadKey]?.[rowId] ?? false,
+  );
+  const setWorkGroupExpanded = useUiStateStore((store) => store.setThreadWorkGroupExpanded);
   const groupLabel = formatWorkGroupSummary(groupedEntries, completionSummary);
   const isActive = activeStartedAt !== null;
   const visibleEntries = groupedEntries.filter(
     (entry) => entry.kind !== "work" || entry.workEntry.hidden !== true,
   );
+  const displayEntries = useMemo(
+    () => deriveWorkActivityDisplayEntries(visibleEntries, workspaceRoot),
+    [visibleEntries, workspaceRoot],
+  );
+  const showExpandedEntries = isActive || isExpanded;
 
   return (
-    <div className="my-2" data-work-group-expanded={isExpanded ? "true" : "false"}>
+    <div className="my-2" data-work-group-expanded={showExpandedEntries ? "true" : "false"}>
       {isActive ? (
         <div className="flex w-full items-center gap-2 py-1 text-left">
           <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground/70">
@@ -630,7 +656,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           aria-expanded={isExpanded}
           className="group flex w-full cursor-pointer items-center gap-2 py-1 text-left"
           data-scroll-anchor-ignore
-          onClick={() => setIsExpanded((value) => !value)}
+          onClick={() => setWorkGroupExpanded(routeThreadKey, rowId, !isExpanded)}
         >
           <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground/70 transition-colors group-hover:text-muted-foreground">
             {groupLabel}
@@ -644,14 +670,10 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <span className="h-px min-w-8 flex-1 bg-border/65" />
         </button>
       )}
-      {(isActive || isExpanded) && visibleEntries.length > 0 ? (
-        <div className="mt-1 space-y-2">
-          {visibleEntries.map((entry) => (
-            <ActivityGroupEntryRow
-              key={`activity-row:${entry.id}`}
-              entry={entry}
-              workspaceRoot={workspaceRoot}
-            />
+      {showExpandedEntries && displayEntries.length > 0 ? (
+        <div className="mt-2.5 space-y-2">
+          {displayEntries.map((entry) => (
+            <ActivityGroupEntryRow key={`activity-row:${entry.id}`} entry={entry} />
           ))}
         </div>
       ) : null}
@@ -661,29 +683,305 @@ const WorkGroupSection = memo(function WorkGroupSection({
 
 const ActivityGroupEntryRow = memo(function ActivityGroupEntryRow({
   entry,
-  workspaceRoot,
 }: {
-  entry: TimelineActivityEntry;
-  workspaceRoot: string | undefined;
+  entry: ReturnType<typeof deriveWorkActivityDisplayEntries>[number];
 }) {
   const ctx = use(TimelineRowCtx);
 
-  if (entry.kind === "work") {
-    return <SimpleWorkEntryRow workEntry={entry.workEntry} workspaceRoot={workspaceRoot} />;
+  if (entry.kind === "work-summary") {
+    return <WorkActivitySummaryRow summary={entry.summary} />;
   }
 
-  const messageText = entry.message.text || "(empty response)";
+  const messageText = entry.entry.message.text || "(empty response)";
   return (
-    <div className="min-w-0 px-1 py-0.5">
+    <div className="min-w-0 py-0.5">
       <ChatMarkdown
         text={messageText}
         cwd={ctx.markdownCwd}
-        isStreaming={Boolean(entry.message.streaming)}
+        isStreaming={Boolean(entry.entry.message.streaming)}
         skills={ctx.skills}
       />
     </div>
   );
 });
+
+const WorkActivitySummaryRow = memo(function WorkActivitySummaryRow({
+  summary,
+}: {
+  summary: WorkActivitySummary;
+}) {
+  const { routeThreadKey } = use(TimelineRowCtx);
+  const expanded = useUiStateStore(
+    (store) => store.threadWorkActivityExpandedById[routeThreadKey]?.[summary.id] ?? true,
+  );
+  const setWorkActivityExpanded = useUiStateStore((store) => store.setThreadWorkActivityExpanded);
+  const ActivityIcon = workActivityIcon(summary.category);
+  const canExpand = summary.items.length > 0;
+  const summaryButton = (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      disabled={!canExpand}
+      data-scroll-anchor-ignore
+      onClick={() => setWorkActivityExpanded(routeThreadKey, summary.id, !expanded)}
+      className={cn(
+        "group/activity inline-flex h-5 max-w-full items-center gap-1.5 text-left text-sm leading-5",
+        canExpand ? "cursor-pointer" : "cursor-default",
+      )}
+    >
+      <span className="inline-flex size-4 shrink-0 items-center justify-center">
+        <ActivityIcon
+          className={cn(
+            "size-4",
+            summary.category === "error" ? "text-rose-300/60" : "text-muted-foreground/70",
+          )}
+        />
+      </span>
+      <span
+        className={cn(
+          "truncate",
+          expanded ? "text-foreground/90" : "text-muted-foreground/70",
+          canExpand ? "group-hover/activity:text-foreground/85" : null,
+        )}
+      >
+        {summary.label}
+      </span>
+      {canExpand ? (
+        <ChevronRightIcon
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground/65 opacity-0 transition-[opacity,transform,color] duration-150 group-hover/activity:opacity-100 group-focus-visible/activity:opacity-100",
+            expanded ? "rotate-90" : null,
+            expanded ? "opacity-100" : null,
+          )}
+        />
+      ) : null}
+    </button>
+  );
+
+  return (
+    <div className="min-w-0 py-0.5" data-work-activity-category={summary.category}>
+      {import.meta.env.DEV && summary.debugText ? (
+        <Tooltip>
+          <TooltipTrigger render={summaryButton} />
+          <TooltipPopup align="start" className="max-w-[min(56rem,calc(100vw-2rem))]" side="top">
+            <p className="whitespace-pre-wrap wrap-break-word font-mono text-[11px] leading-4">
+              {summary.debugText}
+            </p>
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        summaryButton
+      )}
+      {expanded && summary.items.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {summary.items.map((item) => (
+            <WorkActivitySummaryItemRow key={item.id} item={item} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+function WorkActivitySummaryItemRow({ item }: { item: WorkActivitySummary["items"][number] }) {
+  const ctx = use(TimelineRowCtx);
+  const turnSummary = item.turnId ? ctx.turnDiffSummaryByTurnId.get(item.turnId) : undefined;
+  const canShowInlineDiff = Boolean(turnSummary && item.changedFilePath);
+  const inlineDiffExpanded = useUiStateStore(
+    (store) =>
+      store.threadWorkActivityExpandedById[ctx.routeThreadKey]?.[
+        workActivityItemDiffExpansionKey(item.id)
+      ] ?? false,
+  );
+  const setWorkActivityExpanded = useUiStateStore((store) => store.setThreadWorkActivityExpanded);
+  const debugText = import.meta.env.DEV ? (item.debugText ?? item.title) : item.title;
+  const labelClassName =
+    "min-w-0 truncate text-left text-sm text-muted-foreground/65 transition-colors hover:text-foreground/85";
+  const label = canShowInlineDiff ? (
+    <button
+      type="button"
+      className="group/item inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5"
+      data-scroll-anchor-ignore
+      aria-expanded={inlineDiffExpanded}
+      onClick={() =>
+        setWorkActivityExpanded(
+          ctx.routeThreadKey,
+          workActivityItemDiffExpansionKey(item.id),
+          !inlineDiffExpanded,
+        )
+      }
+      title={item.title ?? item.label}
+    >
+      <span className={labelClassName}>{item.label}</span>
+      <ChevronRightIcon
+        className={cn(
+          "size-4 shrink-0 text-muted-foreground/60 opacity-0 transition-[opacity,transform,color] duration-150 group-hover/item:opacity-100 group-hover/item:text-foreground/80 group-focus-visible/item:opacity-100",
+          inlineDiffExpanded ? "rotate-90" : null,
+          inlineDiffExpanded ? "opacity-100" : null,
+        )}
+      />
+    </button>
+  ) : (
+    <p className={labelClassName} title={item.title ?? item.label}>
+      {item.label}
+    </p>
+  );
+
+  const labelWithTooltip =
+    !debugText || debugText === item.label ? (
+      label
+    ) : (
+      <Tooltip>
+        <TooltipTrigger className="block min-w-0 w-full text-left" render={label} />
+        <TooltipPopup align="start" className="max-w-[min(56rem,calc(100vw-2rem))]" side="top">
+          <p className="whitespace-pre-wrap wrap-break-word font-mono text-[11px] leading-4">
+            {debugText}
+          </p>
+        </TooltipPopup>
+      </Tooltip>
+    );
+
+  return (
+    <div className="min-w-0">
+      {labelWithTooltip}
+      {canShowInlineDiff && inlineDiffExpanded && turnSummary && item.changedFilePath ? (
+        <InlineWorkActivityFileDiff turnSummary={turnSummary} filePath={item.changedFilePath} />
+      ) : null}
+    </div>
+  );
+}
+
+function workActivityItemDiffExpansionKey(itemId: string): string {
+  return `work-activity-item-diff:${itemId}`;
+}
+
+function InlineWorkActivityFileDiff({
+  turnSummary,
+  filePath,
+}: {
+  turnSummary: TurnDiffSummary;
+  filePath: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const checkpointTurnCount = turnSummary.checkpointTurnCount;
+  const checkpointRange =
+    typeof checkpointTurnCount === "number"
+      ? {
+          fromTurnCount: Math.max(0, checkpointTurnCount - 1),
+          toTurnCount: checkpointTurnCount,
+        }
+      : null;
+  const checkpointDiff = useCheckpointDiff(
+    {
+      environmentId: ctx.activeThreadEnvironmentId,
+      threadId: ctx.activeThreadId,
+      fromTurnCount: checkpointRange?.fromTurnCount ?? null,
+      toTurnCount: checkpointRange?.toTurnCount ?? null,
+      ignoreWhitespace: false,
+      cacheScope: `timeline-inline:${turnSummary.turnId}`,
+    },
+    { enabled: checkpointRange !== null },
+  );
+  const patch = checkpointDiff.data?.diff;
+  const renderablePatch = useMemo(
+    () => getRenderablePatch(patch, `timeline-inline:${turnSummary.turnId}:${ctx.resolvedTheme}`),
+    [ctx.resolvedTheme, patch, turnSummary.turnId],
+  );
+  const fileDiff = useMemo(() => {
+    if (!renderablePatch || renderablePatch.kind !== "files") {
+      return undefined;
+    }
+    return findRenderableFileDiff(renderablePatch.files, filePath, ctx.workspaceRoot);
+  }, [ctx.workspaceRoot, filePath, renderablePatch]);
+
+  return (
+    <div className="mt-2 max-w-full overflow-hidden rounded-[10px] border border-border/70 bg-background">
+      {checkpointDiff.error && !renderablePatch ? (
+        <p className="px-3 py-2 text-[11px] text-rose-300/80">{checkpointDiff.error}</p>
+      ) : checkpointRange === null ? (
+        <p className="px-3 py-2 text-[11px] text-muted-foreground/65">
+          Diff unavailable for this turn.
+        </p>
+      ) : checkpointDiff.isPending && !renderablePatch ? (
+        <p className="px-3 py-2 text-[11px] text-muted-foreground/65">Loading diff...</p>
+      ) : renderablePatch?.kind === "raw" ? (
+        <div className="p-2">
+          <p className="mb-1 text-[11px] text-muted-foreground/65">{renderablePatch.reason}</p>
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md bg-background/70 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
+            {renderablePatch.text}
+          </pre>
+        </div>
+      ) : fileDiff ? (
+        <div className="max-h-[28rem] overflow-auto">
+          <FileDiff
+            key={buildFileDiffRenderKey(fileDiff)}
+            fileDiff={fileDiff}
+            options={{
+              collapsed: false,
+              diffIndicators: "bars",
+              diffStyle: "unified",
+              lineDiffType: "word-alt",
+              overflow: "scroll",
+              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              themeType: ctx.resolvedTheme as DiffThemeType,
+              unsafeCSS: INLINE_DIFF_RENDER_UNSAFE_CSS,
+            }}
+          />
+        </div>
+      ) : (
+        <p className="px-3 py-2 text-[11px] text-muted-foreground/65">
+          No diff found for {filePath}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function findRenderableFileDiff(
+  files: ReadonlyArray<FileDiffMetadata>,
+  filePath: string,
+  workspaceRoot: string | undefined,
+) {
+  const targetPath = normalizeComparableDiffPath(filePath, workspaceRoot);
+  return files.find((file) => {
+    const diffPath = normalizeComparableDiffPath(resolveFileDiffPath(file), workspaceRoot);
+    return diffPath === targetPath;
+  });
+}
+
+function normalizeComparableDiffPath(path: string, workspaceRoot: string | undefined): string {
+  const normalizedPath = path.replaceAll("\\", "/").replace(/^"(.*)"$/u, "$1");
+  const withoutPrefixes = normalizedPath.replace(/^(?:[ab]\/|\.\/)+/u, "");
+  if (!workspaceRoot) {
+    return withoutPrefixes.replace(/^\/+/u, "").toLowerCase();
+  }
+  const normalizedWorkspaceRoot = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/u, "");
+  const pathForCompare = withoutPrefixes.toLowerCase();
+  const workspaceForCompare = normalizedWorkspaceRoot.toLowerCase();
+  if (pathForCompare.startsWith(`${workspaceForCompare}/`)) {
+    return withoutPrefixes.slice(normalizedWorkspaceRoot.length + 1).toLowerCase();
+  }
+  return withoutPrefixes.replace(/^\/+/u, "").toLowerCase();
+}
+
+function workActivityIcon(category: WorkActivityCategory): TablerIcon {
+  switch (category) {
+    case "search":
+      return SearchIcon;
+    case "file":
+      return TerminalIcon;
+    case "edit":
+      return SquarePenIcon;
+    case "command":
+      return TerminalIcon;
+    case "tool":
+      return WrenchIcon;
+    case "info":
+      return CheckIcon;
+    case "error":
+      return CircleAlertIcon;
+  }
+}
 
 /** Subscribes directly to the UI state store for expand/collapse state,
  *  so toggling re-renders only this component — not the entire list. */
@@ -1109,224 +1407,3 @@ function formatWorkGroupSummary(
 
   return `Worked for ${elapsed}`;
 }
-
-function workToneIcon(tone: TimelineWorkEntry["tone"]): {
-  icon: TablerIcon;
-  className: string;
-} {
-  if (tone === "error") {
-    return {
-      icon: CircleAlertIcon,
-      className: "text-foreground/92",
-    };
-  }
-  if (tone === "thinking") {
-    return {
-      icon: BotIcon,
-      className: "text-foreground/92",
-    };
-  }
-  if (tone === "info") {
-    return {
-      icon: CheckIcon,
-      className: "text-foreground/92",
-    };
-  }
-  return {
-    icon: ZapIcon,
-    className: "text-foreground/92",
-  };
-}
-
-function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
-  if (tone === "tool") return "text-muted-foreground/70";
-  if (tone === "thinking") return "text-muted-foreground/50";
-  return "text-muted-foreground/40";
-}
-
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
-function workEntryIcon(workEntry: TimelineWorkEntry): TablerIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
-  if (workEntry.requestKind === "file-read") return EyeIcon;
-  if (workEntry.requestKind === "file-change") return SquarePenIcon;
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
-  }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return SquarePenIcon;
-  }
-  if (workEntry.itemType === "web_search") return GlobeIcon;
-  if (workEntry.itemType === "image_view") return EyeIcon;
-
-  switch (workEntry.itemType) {
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-      return HammerIcon;
-  }
-
-  return workToneIcon(workEntry.tone).icon;
-}
-
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
-const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
-  workEntry: TimelineWorkEntry;
-  workspaceRoot: string | undefined;
-}) {
-  const { workEntry, workspaceRoot } = props;
-  const iconConfig = workToneIcon(workEntry.tone);
-  const EntryIcon = workEntryIcon(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const rawCommand = workEntryRawCommand(workEntry);
-  const displayText = preview ? `${heading} - ${preview}` : heading;
-  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
-
-  return (
-    <div className="rounded-lg px-1 py-1">
-      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
-        <span
-          className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
-        >
-          <EntryIcon className="size-3" />
-        </span>
-        <div className="min-w-0 flex-1 overflow-hidden">
-          {rawCommand ? (
-            <div className="max-w-full">
-              <p
-                className={cn(
-                  "truncate text-xs leading-5",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
-              >
-                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
-                </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
-                    >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
-              </p>
-            </div>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                className="block min-w-0 w-full text-left"
-                title={displayText}
-                aria-label={displayText}
-              >
-                <p
-                  className={cn(
-                    "truncate text-[11px] leading-5",
-                    workToneClass(workEntry.tone),
-                    preview ? "text-muted-foreground/70" : "",
-                  )}
-                >
-                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                    {heading}
-                  </span>
-                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
-                </p>
-              </TooltipTrigger>
-              <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
-                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
-                  {displayText}
-                </p>
-              </TooltipPopup>
-            </Tooltip>
-          )}
-        </div>
-      </div>
-      {hasChangedFiles && !previewIsChangedFiles && (
-        <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
-            const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
-            return (
-              <span
-                key={`${workEntry.id}:${filePath}`}
-                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
-                title={displayPath}
-              >
-                {displayPath}
-              </span>
-            );
-          })}
-          {(workEntry.changedFiles?.length ?? 0) > 4 && (
-            <span className="px-1 text-[10px] text-muted-foreground/55">
-              +{(workEntry.changedFiles?.length ?? 0) - 4}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-});

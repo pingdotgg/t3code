@@ -31,6 +31,8 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  threadWorkGroupExpandedById: Record<string, Record<string, boolean>>;
+  threadWorkActivityExpandedById: Record<string, Record<string, boolean>>;
 }
 
 export interface UiEndpointState {
@@ -57,6 +59,8 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadWorkGroupExpandedById: {},
+  threadWorkActivityExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -427,11 +431,26 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextThreadWorkGroupExpandedById = Object.fromEntries(
+    Object.entries(state.threadWorkGroupExpandedById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
+  const nextThreadWorkActivityExpandedById = Object.fromEntries(
+    Object.entries(state.threadWorkActivityExpandedById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
+    ) &&
+    nestedBooleanRecordsEqual(state.threadWorkGroupExpandedById, nextThreadWorkGroupExpandedById) &&
+    nestedBooleanRecordsEqual(
+      state.threadWorkActivityExpandedById,
+      nextThreadWorkActivityExpandedById,
     )
   ) {
     return state;
@@ -440,6 +459,8 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadWorkGroupExpandedById: nextThreadWorkGroupExpandedById,
+    threadWorkActivityExpandedById: nextThreadWorkActivityExpandedById,
   };
 }
 
@@ -492,18 +513,75 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const hasWorkGroupState = threadId in state.threadWorkGroupExpandedById;
+  const hasWorkActivityState = threadId in state.threadWorkActivityExpandedById;
+  if (!hasVisitedState && !hasChangedFilesState && !hasWorkGroupState && !hasWorkActivityState) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextThreadWorkGroupExpandedById = { ...state.threadWorkGroupExpandedById };
+  const nextThreadWorkActivityExpandedById = { ...state.threadWorkActivityExpandedById };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  delete nextThreadWorkGroupExpandedById[threadId];
+  delete nextThreadWorkActivityExpandedById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadWorkGroupExpandedById: nextThreadWorkGroupExpandedById,
+    threadWorkActivityExpandedById: nextThreadWorkActivityExpandedById,
   };
+}
+
+function setNestedBooleanState(
+  state: UiState,
+  stateKey: "threadWorkGroupExpandedById" | "threadWorkActivityExpandedById",
+  threadId: string,
+  itemId: string,
+  expanded: boolean,
+): UiState {
+  const byThread = state[stateKey];
+  const currentThreadState = byThread[threadId] ?? {};
+  if (currentThreadState[itemId] === expanded) {
+    return state;
+  }
+
+  return {
+    ...state,
+    [stateKey]: {
+      ...byThread,
+      [threadId]: {
+        ...currentThreadState,
+        [itemId]: expanded,
+      },
+    },
+  };
+}
+
+export function setThreadWorkGroupExpanded(
+  state: UiState,
+  threadId: string,
+  groupId: string,
+  expanded: boolean,
+): UiState {
+  return setNestedBooleanState(state, "threadWorkGroupExpandedById", threadId, groupId, expanded);
+}
+
+export function setThreadWorkActivityExpanded(
+  state: UiState,
+  threadId: string,
+  activityId: string,
+  expanded: boolean,
+): UiState {
+  return setNestedBooleanState(
+    state,
+    "threadWorkActivityExpandedById",
+    threadId,
+    activityId,
+    expanded,
+  );
 }
 
 export function setThreadChangedFilesExpanded(
@@ -640,6 +718,8 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setThreadWorkGroupExpanded: (threadId: string, groupId: string, expanded: boolean) => void;
+  setThreadWorkActivityExpanded: (threadId: string, activityId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
@@ -660,6 +740,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setThreadWorkGroupExpanded: (threadId, groupId, expanded) =>
+    set((state) => setThreadWorkGroupExpanded(state, threadId, groupId, expanded)),
+  setThreadWorkActivityExpanded: (threadId, activityId, expanded) =>
+    set((state) => setThreadWorkActivityExpanded(state, threadId, activityId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
