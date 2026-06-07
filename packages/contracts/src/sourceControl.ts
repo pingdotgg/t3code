@@ -30,6 +30,8 @@ export const ChangeRequest = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: ChangeRequestState,
   updatedAt: Schema.Option(Schema.DateTimeUtc),
+  isDraft: Schema.optional(Schema.Boolean),
+  hasConflicts: Schema.optional(Schema.Boolean),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

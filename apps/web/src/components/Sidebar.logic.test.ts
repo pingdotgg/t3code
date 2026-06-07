@@ -489,9 +489,22 @@ describe("groupSidebarThreadsByWorktree", () => {
       thread("thread-older", "/repo/.worktrees/feature", "feature"),
     ]);
 
-    expect(groups[0]?.threads.map((item) => item.id)).toEqual([
+    const featureGroup = groups.find((group) => group.worktreePath === "/repo/.worktrees/feature");
+    expect(featureGroup?.threads.map((item) => item.id)).toEqual([
       ThreadId.make("thread-newest"),
       ThreadId.make("thread-older"),
+    ]);
+  });
+
+  it("orders local threads before worktree groups", () => {
+    const groups = groupSidebarThreadsByWorktree([
+      thread("thread-worktree", "/repo/.worktrees/feature", "feature"),
+      thread("thread-local", null, "main"),
+    ]);
+
+    expect(groups.map((group) => group.key)).toEqual([
+      "local",
+      "worktree:/repo/.worktrees/feature",
     ]);
   });
 

@@ -820,6 +820,37 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     () => groupSidebarThreadsByWorktree(renderedThreads),
     [renderedThreads],
   );
+  const renderThreadRow = (thread: SidebarThreadSummary) => {
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    return (
+      <SidebarThreadRow
+        key={threadKey}
+        thread={thread}
+        projectCwd={projectCwd}
+        orderedProjectThreadKeys={orderedProjectThreadKeys}
+        isActive={activeRouteThreadKey === threadKey}
+        jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
+        appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
+        renamingThreadKey={renamingThreadKey}
+        renamingTitle={renamingTitle}
+        setRenamingTitle={setRenamingTitle}
+        renamingInputRef={renamingInputRef}
+        renamingCommittedRef={renamingCommittedRef}
+        confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+        setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+        confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+        handleThreadClick={handleThreadClick}
+        navigateToThread={navigateToThread}
+        handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+        handleThreadContextMenu={handleThreadContextMenu}
+        clearSelection={clearSelection}
+        commitRename={commitRename}
+        cancelRename={cancelRename}
+        attemptArchiveThread={attemptArchiveThread}
+        openPrLink={openPrLink}
+      />
+    );
+  };
 
   return (
     <SidebarMenuSub
@@ -837,78 +868,56 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         </SidebarMenuSubItem>
       ) : null}
       {shouldShowThreadPanel &&
-        worktreeGroups.map((group, index) => (
-          <React.Fragment key={group.key}>
-            <SidebarMenuSubItem
-              className={index === 0 ? "w-full" : "mt-1 border-t border-sidebar-border/70 pt-1"}
-              data-thread-selection-safe
-            >
-              <div
+        worktreeGroups.map((group, index) => {
+          if (group.worktreePath === null) {
+            return (
+              <React.Fragment key={group.key}>{group.threads.map(renderThreadRow)}</React.Fragment>
+            );
+          }
+
+          return (
+            <React.Fragment key={group.key}>
+              <SidebarMenuSubItem
+                className={index === 0 ? "w-full" : "mt-1 border-t border-sidebar-border/70 pt-1"}
                 data-thread-selection-safe
-                className="group/worktree-header flex h-6 w-full min-w-0 translate-x-0 items-center gap-1.5 px-2 text-left text-[10px] text-muted-foreground/70"
-                title={group.detail ?? "Local project checkout"}
               >
-                <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground/85">
-                  {group.label}
-                </span>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label={`New thread in ${group.label}`}
-                        className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 opacity-70 hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring group-hover/worktree-header:opacity-100 group-focus-within/worktree-header:opacity-100"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          handleNewThreadInWorktree({
-                            ...group.seedThread,
-                            branch: group.branch,
-                            worktreePath: group.worktreePath,
-                          });
-                        }}
-                      >
-                        <PlusIcon className="size-3" />
-                      </button>
-                    }
-                  />
-                  <TooltipPopup side="right">New thread in this worktree</TooltipPopup>
-                </Tooltip>
-              </div>
-            </SidebarMenuSubItem>
-            {group.threads.map((thread) => {
-              const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-              return (
-                <SidebarThreadRow
-                  key={threadKey}
-                  thread={thread}
-                  projectCwd={projectCwd}
-                  orderedProjectThreadKeys={orderedProjectThreadKeys}
-                  isActive={activeRouteThreadKey === threadKey}
-                  jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
-                  appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
-                  renamingThreadKey={renamingThreadKey}
-                  renamingTitle={renamingTitle}
-                  setRenamingTitle={setRenamingTitle}
-                  renamingInputRef={renamingInputRef}
-                  renamingCommittedRef={renamingCommittedRef}
-                  confirmingArchiveThreadKey={confirmingArchiveThreadKey}
-                  setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
-                  confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-                  handleThreadClick={handleThreadClick}
-                  navigateToThread={navigateToThread}
-                  handleMultiSelectContextMenu={handleMultiSelectContextMenu}
-                  handleThreadContextMenu={handleThreadContextMenu}
-                  clearSelection={clearSelection}
-                  commitRename={commitRename}
-                  cancelRename={cancelRename}
-                  attemptArchiveThread={attemptArchiveThread}
-                  openPrLink={openPrLink}
-                />
-              );
-            })}
-          </React.Fragment>
-        ))}
+                <div
+                  data-thread-selection-safe
+                  className="group/worktree-header flex h-6 w-full min-w-0 translate-x-0 items-center gap-1.5 px-2 text-left text-[10px] text-muted-foreground/70"
+                  title={group.detail ?? "Local project checkout"}
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground/85">
+                    {group.label}
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={`New thread in ${group.label}`}
+                          className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 opacity-70 hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring group-hover/worktree-header:opacity-100 group-focus-within/worktree-header:opacity-100"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleNewThreadInWorktree({
+                              ...group.seedThread,
+                              branch: group.branch,
+                              worktreePath: group.worktreePath,
+                            });
+                          }}
+                        >
+                          <PlusIcon className="size-3" />
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="right">New thread in this worktree</TooltipPopup>
+                  </Tooltip>
+                </div>
+              </SidebarMenuSubItem>
+              {group.threads.map(renderThreadRow)}
+            </React.Fragment>
+          );
+        })}
 
       {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
         <SidebarMenuSubItem className="w-full">

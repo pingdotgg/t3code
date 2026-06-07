@@ -15,6 +15,8 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly updatedAt: Option.Option<DateTime.Utc>;
+  readonly isDraft?: boolean;
+  readonly hasConflicts?: boolean;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -29,6 +31,9 @@ const GitHubPullRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
+  isDraft: Schema.optional(Schema.Boolean),
+  mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -68,6 +73,20 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
+function normalizeGitHubPullRequestHasConflicts(input: {
+  mergeable?: string | null | undefined;
+  mergeStateStatus?: string | null | undefined;
+}): boolean | undefined {
+  const mergeable = input.mergeable?.trim().toUpperCase();
+  if (mergeable === "CONFLICTING") return true;
+  if (mergeable === "MERGEABLE") return false;
+
+  const mergeStateStatus = input.mergeStateStatus?.trim().toUpperCase();
+  if (mergeStateStatus === "DIRTY") return true;
+
+  return undefined;
+}
+
 function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
@@ -86,6 +105,11 @@ function normalizeGitHubPullRequestRecord(
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
     updatedAt: raw.updatedAt ?? Option.none(),
+    ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
+    ...(() => {
+      const hasConflicts = normalizeGitHubPullRequestHasConflicts(raw);
+      return hasConflicts === undefined ? {} : { hasConflicts };
+    })(),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

@@ -195,6 +195,8 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
+  isDraft: Schema.optional(Schema.Boolean),
+  hasConflicts: Schema.optional(Schema.Boolean),
 });
 
 const VcsStatusLocalShape = {

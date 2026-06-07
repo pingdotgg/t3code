@@ -115,6 +115,8 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
   updatedAt: Option.Option<DateTime.Utc>;
+  isDraft?: boolean;
+  hasConflicts?: boolean;
 }
 
 const pullRequestUpdatedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInput(
@@ -322,6 +324,8 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
     updatedAt: summary.updatedAt,
+    ...(summary.isDraft !== undefined ? { isDraft: summary.isDraft } : {}),
+    ...(summary.hasConflicts !== undefined ? { hasConflicts: summary.hasConflicts } : {}),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
       : {}),
@@ -512,6 +516,8 @@ function toStatusPr(pr: PullRequestInfo): {
   baseRef: string;
   headRef: string;
   state: "open" | "closed" | "merged";
+  isDraft?: boolean;
+  hasConflicts?: boolean;
 } {
   return {
     number: pr.number,
@@ -520,6 +526,8 @@ function toStatusPr(pr: PullRequestInfo): {
     baseRef: pr.baseRefName,
     headRef: pr.headRefName,
     state: pr.state,
+    ...(pr.isDraft !== undefined ? { isDraft: pr.isDraft } : {}),
+    ...(pr.hasConflicts !== undefined ? { hasConflicts: pr.hasConflicts } : {}),
   };
 }
 

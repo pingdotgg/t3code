@@ -574,7 +574,11 @@ export function groupSidebarThreadsByWorktree<
     });
   }
 
-  return [...groups.values()];
+  return [...groups.values()].sort((left, right) => {
+    if (left.worktreePath === null && right.worktreePath !== null) return -1;
+    if (left.worktreePath !== null && right.worktreePath === null) return 1;
+    return 0;
+  });
 }
 
 export function getFallbackThreadIdAfterDelete<

@@ -148,6 +148,15 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
           ? "closed"
           : "merged"
       : undefined;
+  const isDraft = typeof record.isDraft === "boolean" ? record.isDraft : undefined;
+  const hasConflicts =
+    typeof record.hasConflicts === "boolean"
+      ? record.hasConflicts
+      : record.mergeable === "CONFLICTING" || record.mergeStateStatus === "DIRTY"
+        ? true
+        : record.mergeable === "MERGEABLE"
+          ? false
+          : undefined;
   const isCrossRepository =
     typeof record.isCrossRepository === "boolean" ? record.isCrossRepository : undefined;
   const headRepositoryNameWithOwner =
@@ -170,6 +179,8 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
     baseRefName,
     headRefName,
     ...(state ? { state } : {}),
+    ...(isDraft !== undefined ? { isDraft } : {}),
+    ...(hasConflicts !== undefined ? { hasConflicts } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
@@ -551,7 +562,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--limit",
             String(input.limit ?? 1),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,mergeable,mergeStateStatus,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
@@ -596,7 +607,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "view",
             input.reference,
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,mergeable,mergeStateStatus,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary)),
       getRepositoryCloneUrls: (input) =>
