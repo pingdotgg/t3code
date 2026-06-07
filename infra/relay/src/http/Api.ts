@@ -68,13 +68,7 @@ import { withSpanAttributes } from "../observability.ts";
 import { RelayDb } from "../db.ts";
 
 const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
-export const RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS = 30 * 60;
-
-export function relayDpopAccessTokenExpiresAt(now: DateTime.DateTime): DateTime.DateTime {
-  return DateTime.add(now, {
-    seconds: RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS,
-  });
-}
+const RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS = 30 * 60;
 const relayCorsAllowedHeaders = [
   "authorization",
   "b3",
@@ -604,7 +598,7 @@ export const tokenApi = HttpApiBuilder.group(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
         const now = yield* DateTime.now;
-        const expiresAt = relayDpopAccessTokenExpiresAt(now);
+        const expiresAt = DateTime.addDuration(now, "30 minutes");
         const jti = yield* crypto.randomUUIDv4.pipe(
           Effect.catch(() => relayInternalErrorResponse("internal_error")),
         );
