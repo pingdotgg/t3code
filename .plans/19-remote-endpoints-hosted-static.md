@@ -324,7 +324,7 @@ Future tunnel provider responsibilities:
 - use existing backend pairing/session auth
 - never bypass server auth
 
-The tunnel fabric can later be Pipenet-derived, Tailscale-derived, or another reverse tunnel implementation. The rest of T3 Code should only see an `AdvertisedEndpoint`.
+The tunnel fabric can later be Pipenet-derived, Tailscale-derived, or another reverse tunnel implementation. The rest of more Code should only see an `AdvertisedEndpoint`.
 
 ## Security Checklist
 

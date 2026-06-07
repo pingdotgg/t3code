@@ -21,7 +21,7 @@ vi.mock("expo-widgets", () => ({
 import { AgentActivity, type AgentActivityProps } from "./AgentActivity";
 
 const props = {
-  title: "T3 Code",
+  title: "more Code",
   subtitle: "Agent work in progress",
   activeCount: 1,
   updatedAt: "2026-05-25T13:07:00.000Z",

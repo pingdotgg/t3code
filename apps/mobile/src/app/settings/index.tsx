@@ -218,7 +218,7 @@ function ConfiguredSettingsRouteScreen() {
 
       Alert.alert(
         "Disable notifications",
-        "Notification permission is controlled by iOS. Open Settings to disable notifications for T3 Code.",
+        "Notification permission is controlled by iOS. Open Settings to disable notifications for more Code.",
         [
           { text: "Cancel", style: "cancel" },
           { text: "Open Settings", onPress: () => void Linking.openSettings() },
@@ -300,7 +300,7 @@ function ConfiguredSettingsRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-[13px] leading-[18px] text-foreground-muted">
-            T3 Code works locally without signing in. Cloud features are optional.
+            more Code works locally without signing in. Cloud features are optional.
           </Text>
         </View>
 

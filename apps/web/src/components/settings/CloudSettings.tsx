@@ -178,7 +178,7 @@ function CloudSettingsPanelInner() {
             <SettingsRow
               key={device.deviceId}
               title={device.label}
-              description={`iOS ${device.iosMajorVersion}${device.appVersion ? ` · T3 Code ${device.appVersion}` : ""}`}
+              description={`iOS ${device.iosMajorVersion}${device.appVersion ? ` · more Code ${device.appVersion}` : ""}`}
               status={
                 device.notifications.enabled
                   ? device.liveActivities.enabled

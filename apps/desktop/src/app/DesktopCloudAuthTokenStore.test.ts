@@ -44,7 +44,10 @@ function makeLayer(baseDir: string, input?: { readonly encryptionAvailable?: boo
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({ MORECODE_T3CODE_HOME: baseDir }),
+      ),
     ),
   );
 

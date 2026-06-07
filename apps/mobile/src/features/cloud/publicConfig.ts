@@ -35,7 +35,7 @@ export function hasCloudPublicConfig(): boolean {
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
-    throw new Error("T3CODE_CLERK_JWT_TEMPLATE is not configured.");
+    throw new Error("MORECODE_T3CODE_CLERK_JWT_TEMPLATE is not configured.");
   }
   return relayClerkTokenOptions(clerkJwtTemplate);
 }

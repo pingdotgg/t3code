@@ -51,7 +51,7 @@ export function DesktopClerkSignInCard({
       }
     >
       <DesktopClerkHeader
-        title="Sign in to T3 Code"
+        title="Sign in to more Code"
         subtitle="Welcome back! Please sign in to continue"
       />
       {oauthOptions.length === 0 ? (

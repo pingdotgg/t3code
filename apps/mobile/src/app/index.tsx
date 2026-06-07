@@ -50,7 +50,7 @@ export default function HomeRouteScreen() {
                 letterSpacing: -0.4,
               }}
             >
-              T3 Code
+              more Code
             </RNText>
             <View
               style={{

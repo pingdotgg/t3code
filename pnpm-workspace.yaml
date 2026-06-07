@@ -39,7 +39,7 @@ catalog:
   vite-plus: 0.1.24
   yaml: ^2.9.0
 overrides:
-  # Clerk publishes wallet auth integrations as required dependencies. T3 Code does
+  # Clerk publishes wallet auth integrations as required dependencies. more Code does
   # not support wallet auth, so keep that unused dependency tree out of installs.
   "@clerk/clerk-js>@base-org/account": "-"
   "@clerk/clerk-js>@coinbase/wallet-sdk": "-"

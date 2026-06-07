@@ -142,7 +142,7 @@ describe("web cloud link environment client", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     createProofMock.mockClear();
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
+    vi.stubEnv("VITE_MORECODE_T3CODE_RELAY_URL", "https://relay.example.test");
     getSavedEnvironmentSecretMock.mockResolvedValue("local-bearer");
     relayClientInstallDialogHarness.requestConfirmation.mockResolvedValue(true);
     getRelayClientStatusMock.mockResolvedValue(availableRelayClient());

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>T3 Code Cloud Architecture</title>
+    <title>more Code Cloud Architecture</title>
     <style>
       :root {
         color-scheme: light;
@@ -253,7 +253,7 @@
     <main class="shell">
       <header>
         <div class="eyebrow">Implemented architecture</div>
-        <h1>T3 Code Cloud Control Plane and Managed Endpoint Flow</h1>
+        <h1>more Code Cloud Control Plane and Managed Endpoint Flow</h1>
         <p class="lede">
           T3 Cloud links a locally authorized T3 environment to a signed-in cloud user, provisions a
           managed HTTPS/WSS endpoint for that environment, and brokers proof-bound remote
@@ -353,7 +353,7 @@ flowchart LR
 
   Clerk["Clerk<br/>user identity and OAuth"]
 
-  subgraph Relay["T3 Code Relay on Cloudflare"]
+  subgraph Relay["more Code Relay on Cloudflare"]
     Worker["Relay Worker<br/>HTTP API"]
     Queue["APNs delivery queue<br/>with dead-letter queue"]
     Hyperdrive["Hyperdrive"]
@@ -1047,8 +1047,9 @@ sequenceDiagram
             <tr>
               <td>Source-built desktop/server cloud features</td>
               <td>
-                Optional <code>T3CODE_RELAY_URL</code>, <code>T3CODE_CLERK_PUBLISHABLE_KEY</code>,
-                and <code>T3CODE_CLERK_CLI_OAUTH_CLIENT_ID</code>. Release builds inject public
+                Optional <code>MORECODE_T3CODE_RELAY_URL</code>,
+                <code>MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY</code>, and
+                <code>MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID</code>. Release builds inject public
                 values at build time.
               </td>
             </tr>

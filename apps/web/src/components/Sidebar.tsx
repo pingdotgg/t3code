@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  ListTodoIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -178,6 +179,7 @@ import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
+import { isThreadAgentRunActive } from "../runs";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import {
@@ -2489,7 +2491,16 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const runs = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const activeRunCount = runs.filter(isThreadAgentRunActive).length;
   const { isMobile, setOpenMobile } = useSidebar();
+  const handleRunsClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/runs" });
+  }, [isMobile, navigate, setOpenMobile]);
   const handleSettingsClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -2502,6 +2513,22 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            isActive={pathname === "/runs"}
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleRunsClick}
+          >
+            <ListTodoIcon className="size-3.5" />
+            <span className="text-xs">Runs</span>
+            {activeRunCount > 0 ? (
+              <span className="ml-auto rounded-full bg-info/12 px-1.5 text-[10px] font-medium text-info-foreground">
+                {activeRunCount}
+              </span>
+            ) : null}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"

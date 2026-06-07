@@ -75,7 +75,7 @@ describe("RelayClient", () => {
           ConfigProvider.fromEnv({
             env: {
               PATH: "",
-              T3CODE_CLOUDFLARED_PATH: overridePath,
+              MORECODE_T3CODE_CLOUDFLARED_PATH: overridePath,
             },
           }),
       });

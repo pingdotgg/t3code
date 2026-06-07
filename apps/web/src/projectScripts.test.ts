@@ -55,8 +55,8 @@ describe("projectScripts helpers", () => {
     });
 
     expect(env).toMatchObject({
-      T3CODE_PROJECT_ROOT: "/repo",
-      T3CODE_WORKTREE_PATH: "/repo/worktree-a",
+      MORECODE_T3CODE_PROJECT_ROOT: "/repo",
+      MORECODE_T3CODE_WORKTREE_PATH: "/repo/worktree-a",
     });
   });
 
@@ -64,14 +64,14 @@ describe("projectScripts helpers", () => {
     const env = projectScriptRuntimeEnv({
       project: { cwd: "/repo" },
       extraEnv: {
-        T3CODE_PROJECT_ROOT: "/custom-root",
+        MORECODE_T3CODE_PROJECT_ROOT: "/custom-root",
         CUSTOM_FLAG: "1",
       },
     });
 
-    expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.MORECODE_T3CODE_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
-    expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
+    expect(env.MORECODE_T3CODE_WORKTREE_PATH).toBeUndefined();
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

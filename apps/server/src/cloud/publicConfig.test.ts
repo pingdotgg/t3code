@@ -20,7 +20,7 @@ it.effect("uses the statically injected relay URL when no runtime override exist
 it.effect("prefers a runtime relay URL override over the statically injected value", () =>
   Effect.gen(function* () {
     const relayUrl = yield* makeRelayUrlConfig("https://embedded.example.test").pipe(
-      provideEnv({ T3CODE_RELAY_URL: "https://runtime.example.test///" }),
+      provideEnv({ MORECODE_T3CODE_RELAY_URL: "https://runtime.example.test///" }),
     );
 
     assert.equal(relayUrl, "https://runtime.example.test");
@@ -33,7 +33,7 @@ it.effect("requires a relay URL when the server bundle has no injected value", (
 
 it.effect("rejects an insecure runtime relay URL override", () =>
   makeRelayUrlConfig("https://embedded.example.test").pipe(
-    provideEnv({ T3CODE_RELAY_URL: "http://runtime.example.test" }),
+    provideEnv({ MORECODE_T3CODE_RELAY_URL: "http://runtime.example.test" }),
     Effect.flip,
   ),
 );
@@ -66,8 +66,8 @@ it.effect("prefers runtime Clerk OAuth config overrides over statically injected
       clerkCliOAuthClientIdFallback: "oauth_client_embedded",
     }).pipe(
       provideEnv({
-        T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_cnVudGltZS5leGFtcGxlLnRlc3Qk",
-        T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_runtime",
+        MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_cnVudGltZS5leGFtcGxlLnRlc3Qk",
+        MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_runtime",
       }),
     );
 

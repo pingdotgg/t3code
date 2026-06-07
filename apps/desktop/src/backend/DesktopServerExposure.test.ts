@@ -84,7 +84,10 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir, ...env })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({ MORECODE_T3CODE_HOME: baseDir, ...env }),
+      ),
     ),
   );
 }
@@ -95,7 +98,7 @@ function makeLayer(input: {
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
 }) {
-  const env = { T3CODE_HOME: input.baseDir, ...input.env };
+  const env = { MORECODE_T3CODE_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
   const networkLayer = Layer.succeed(DesktopServerExposure.DesktopNetworkInterfacesService, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
@@ -296,8 +299,8 @@ describe("DesktopServerExposure", () => {
         );
       }),
       {
-        T3CODE_DESKTOP_LAN_HOST: "10.0.0.7",
-        T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
+        MORECODE_T3CODE_DESKTOP_LAN_HOST: "10.0.0.7",
+        MORECODE_T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
       },
     ),
   );
@@ -396,7 +399,7 @@ describe("DesktopServerExposure", () => {
         ]);
       }),
       {
-        T3CODE_DESKTOP_HTTPS_ENDPOINTS:
+        MORECODE_T3CODE_DESKTOP_HTTPS_ENDPOINTS:
           "https://desktop.example.ts.net,http://desktop.example.test:3773,not-a-url",
       },
     ),

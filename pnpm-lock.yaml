@@ -144,22 +144,6 @@ importers:
         specifier: 'catalog:'
         version: 0.1.24(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
-  apps/marketing:
-    dependencies:
-      astro:
-        specifier: ^6.0.4
-        version: 6.4.2(@types/node@24.12.4)(aws4fetch@1.0.20)(idb-keyval@6.2.1)(ioredis@5.11.0)(jiti@2.7.0)(rollup@4.61.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)
-    devDependencies:
-      '@astrojs/check':
-        specifier: ^0.9.7
-        version: 0.9.9(prettier@3.8.3)(typescript@6.0.3)
-      '@vercel/config':
-        specifier: ^0.3.0
-        version: 0.3.0
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
   apps/mobile:
     dependencies:
       '@callstack/liquid-glass':

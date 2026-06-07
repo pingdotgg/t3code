@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "more Code (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -25,7 +25,7 @@ const repoRoot = resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+export const APP_DISPLAY_NAME = isDevelopment ? "more Code (Dev)" : "more Code (Alpha)";
 export const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
@@ -35,7 +35,7 @@ const defaultIconPath = join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
 
 function resolveDevelopmentProtocolCallbackPort() {
-  const configuredPort = Number.parseInt(process.env.T3CODE_PORT ?? "", 10);
+  const configuredPort = Number.parseInt(process.env.MORECODE_T3CODE_PORT ?? "", 10);
   if (Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort < 65535) {
     return configuredPort + 1;
   }
@@ -100,14 +100,17 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
   const protocolCallbackUrl = `http://127.0.0.1:${resolveDevelopmentProtocolCallbackPort()}/auth/callback`;
   const envEntries = [
     ["VITE_DEV_SERVER_URL", process.env.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", process.env.T3CODE_PORT],
-    ["T3CODE_HOME", process.env.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", process.env.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", process.env.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", process.env.T3CODE_OTLP_EXPORT_INTERVAL_MS],
-    ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
-    ["T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED", "1"],
-    ["T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL", protocolCallbackUrl],
+    ["MORECODE_T3CODE_PORT", process.env.MORECODE_T3CODE_PORT],
+    ["MORECODE_T3CODE_HOME", process.env.MORECODE_T3CODE_HOME],
+    ["MORECODE_T3CODE_COMMIT_HASH", process.env.MORECODE_T3CODE_COMMIT_HASH],
+    ["MORECODE_T3CODE_OTLP_TRACES_URL", process.env.MORECODE_T3CODE_OTLP_TRACES_URL],
+    [
+      "MORECODE_T3CODE_OTLP_EXPORT_INTERVAL_MS",
+      process.env.MORECODE_T3CODE_OTLP_EXPORT_INTERVAL_MS,
+    ],
+    ["MORECODE_T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
+    ["MORECODE_T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED", "1"],
+    ["MORECODE_T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL", protocolCallbackUrl],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   writeFileSync(
     targetBinaryPath,
@@ -117,8 +120,8 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
       'for arg in "$@"; do',
       '  case "$arg" in',
       "    t3code-dev://auth/callback*)",
-      '      if [ -n "$T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" ]; then',
-      '        /usr/bin/curl -fsS --max-time 2 -X POST --data-binary "$arg" "$T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" >/dev/null 2>&1 && exit 0',
+      '      if [ -n "$MORECODE_T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" ]; then',
+      '        /usr/bin/curl -fsS --max-time 2 -X POST --data-binary "$arg" "$MORECODE_T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" >/dev/null 2>&1 && exit 0',
       "      fi",
       "      ;;",
       "  esac",

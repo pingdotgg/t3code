@@ -32,7 +32,7 @@ export class DesktopCloudAuthFetchError extends Data.TaggedError("DesktopCloudAu
 
 function configuredClerkFrontendApiHostname(): string | null {
   const publishableKey =
-    process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ||
+    process.env.MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ||
     (typeof __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
       ? ""
       : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__.trim());

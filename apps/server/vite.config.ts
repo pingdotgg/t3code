@@ -42,12 +42,12 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
-        __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
+        __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.MORECODE_T3CODE_RELAY_URL?.trim() ?? ""),
         __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+          repoEnv.MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
         ),
         __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
+          repoEnv.MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
         ),
       },
     },

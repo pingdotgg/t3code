@@ -44,7 +44,7 @@ function makeHarness(input: { readonly isDevelopment: boolean }): CloudAuthHarne
       resourcesPath: "/tmp/t3-code-test/resources",
       runningUnderArm64Translation: false,
     }),
-    name: Effect.succeed("T3 Code"),
+    name: Effect.succeed("more Code"),
     whenReady: Effect.void,
     quit: Effect.void,
     exit: () => Effect.void,

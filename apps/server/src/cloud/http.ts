@@ -105,7 +105,7 @@ const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     () =>
       new EnvironmentHttpInternalServerError({
-        message: "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+        message: "MORECODE_T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
       }),
   ),
 );

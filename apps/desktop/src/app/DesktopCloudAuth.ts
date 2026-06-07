@@ -113,12 +113,12 @@ function resolveConfiguredProtocolClient(): {
   readonly path: string;
   readonly args: readonly string[];
 } | null {
-  const path = process.env.T3CODE_DESKTOP_PROTOCOL_CLIENT_PATH?.trim();
+  const path = process.env.MORECODE_T3CODE_DESKTOP_PROTOCOL_CLIENT_PATH?.trim();
   if (!path) return null;
 
   return {
     path,
-    args: (process.env.T3CODE_DESKTOP_PROTOCOL_CLIENT_ARGS ?? "")
+    args: (process.env.MORECODE_T3CODE_DESKTOP_PROTOCOL_CLIENT_ARGS ?? "")
       .split("\n")
       .map((arg) => arg.trim())
       .filter((arg) => arg.length > 0),
@@ -126,11 +126,11 @@ function resolveConfiguredProtocolClient(): {
 }
 
 function isProtocolRegistrationManagedExternally(): boolean {
-  return process.env.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED?.trim() === "1";
+  return process.env.MORECODE_T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED?.trim() === "1";
 }
 
 function resolveProtocolCallbackForwardUrl(): URL | null {
-  const rawUrl = process.env.T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL?.trim();
+  const rawUrl = process.env.MORECODE_T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL?.trim();
   if (!rawUrl) return null;
 
   try {

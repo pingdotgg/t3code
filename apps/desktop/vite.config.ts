@@ -3,10 +3,10 @@ import { defineConfig } from "vite-plus";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
-const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+const shouldLaunchElectronAfterPack = process.env.MORECODE_T3CODE_DESKTOP_DEV === "1";
 const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+    repoEnv.MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
 };
 
@@ -19,7 +19,7 @@ export default defineConfig({
         cache: false,
       },
       dev: {
-        command: "cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
+        command: "cross-env MORECODE_T3CODE_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["t3#build"],
         cache: false,
       },

@@ -23,12 +23,12 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 
 const BitbucketApiEnvConfig = Config.all({
-  baseUrl: Config.string("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+  baseUrl: Config.string("MORECODE_T3CODE_BITBUCKET_API_BASE_URL").pipe(
     Config.withDefault(DEFAULT_API_BASE_URL),
   ),
-  accessToken: Config.string("T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
-  email: Config.string("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
-  apiToken: Config.string("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
+  accessToken: Config.string("MORECODE_T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
+  email: Config.string("MORECODE_T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
+  apiToken: Config.string("MORECODE_T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
 export class BitbucketApiError extends Schema.TaggedErrorClass<BitbucketApiError>()(
@@ -337,7 +337,7 @@ function authFromConfig(
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+      "Set MORECODE_T3CODE_BITBUCKET_EMAIL and MORECODE_T3CODE_BITBUCKET_API_TOKEN, or MORECODE_T3CODE_BITBUCKET_ACCESS_TOKEN.",
     ),
   };
 }

@@ -139,9 +139,9 @@ function makeLayer(input: {
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
-            T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
-            T3CODE_BITBUCKET_EMAIL: "user@example.com",
-            T3CODE_BITBUCKET_API_TOKEN: "token",
+            MORECODE_T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
+            MORECODE_T3CODE_BITBUCKET_EMAIL: "user@example.com",
+            MORECODE_T3CODE_BITBUCKET_API_TOKEN: "token",
           },
         }),
       ),

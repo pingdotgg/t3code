@@ -10,10 +10,10 @@ T3 Cloud is disabled in a fresh clone. To enable it for source builds, add a rep
 or `.env.local` file:
 
 ```dotenv
-T3CODE_CLERK_PUBLISHABLE_KEY=<publishable key>
-T3CODE_CLERK_JWT_TEMPLATE=<JWT template name>
-T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=<public OAuth application client ID>
-T3CODE_RELAY_URL=https://relay.example.com
+MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY=<publishable key>
+MORECODE_T3CODE_CLERK_JWT_TEMPLATE=<JWT template name>
+MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=<public OAuth application client ID>
+MORECODE_T3CODE_RELAY_URL=https://relay.example.com
 ```
 
 The shared client loader projects these canonical values into framework-specific `VITE_*` and
@@ -30,8 +30,8 @@ The Clerk publishable key, JWT template name, CLI OAuth client ID, and relay URL
 identifiers, not secrets.
 Web, desktop, mobile, and bundled server builds statically inject the values they consume during
 their build step. A built artifact does not need an environment file at runtime. CI release builds
-should set `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`,
-`T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `T3CODE_RELAY_URL` before building. EAS preview and
+should set `MORECODE_T3CODE_CLERK_PUBLISHABLE_KEY`, `MORECODE_T3CODE_CLERK_JWT_TEMPLATE`,
+`MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `MORECODE_T3CODE_RELAY_URL` before building. EAS preview and
 production builds only need the Clerk publishable key, JWT template name, and relay URL in their EAS
 environment.
 
@@ -65,7 +65,7 @@ In **Clerk Dashboard > OAuth applications**:
 2. Enable the **Public** option so authorization-code exchange uses PKCE.
 3. Add `http://127.0.0.1:34338/callback` as an allowed redirect URI.
 4. Enable the `openid`, `profile`, and `email` scopes.
-5. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
+5. Set `MORECODE_T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
    environment to the generated public client ID.
 
 The CLI derives Clerk's frontend API URL from the publishable key and calls Clerk's
@@ -111,10 +111,10 @@ In **Clerk Dashboard > JWT templates**, create a template with:
 | Name    | `t3-relay`                   |
 | Claims  | `{ "aud": "t3-code-relay" }` |
 
-Set `T3CODE_CLERK_JWT_TEMPLATE=t3-relay` in the repository-root `.env`, and set
+Set `MORECODE_T3CODE_CLERK_JWT_TEMPLATE=t3-relay` in the repository-root `.env`, and set
 `CLERK_JWT_AUDIENCE=t3-code-relay` in `infra/relay/.env`. Define `CLERK_JWT_TEMPLATE` and
 `CLERK_JWT_AUDIENCE` in the production relay deployment environment as well. The stable `aud` value
-is shared by production and non-production relay stages. The client-facing `T3CODE_RELAY_URL` still
+is shared by production and non-production relay stages. The client-facing `MORECODE_T3CODE_RELAY_URL` still
 selects the concrete relay deployment, but changing that URL does not require a JWT template change.
 
 ## Desktop OAuth Redirect Allowlist

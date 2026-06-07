@@ -29,7 +29,7 @@ export const RelayObservability = Effect.gen(function* () {
   const traces = yield* Axiom.Dataset("RelayTracesDataset", {
     name: relayResourceNameForStage("t3-code-relay-traces", stage),
     kind: "otel:traces:v1",
-    description: "T3 Code relay Worker HTTP request spans.",
+    description: "more Code relay Worker HTTP request spans.",
     retentionDays: 30,
     useRetentionPeriod: true,
   });

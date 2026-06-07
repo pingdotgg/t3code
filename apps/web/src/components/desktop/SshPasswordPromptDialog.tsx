@@ -161,7 +161,7 @@ export function SshPasswordPromptDialog() {
           <DialogDescription>
             T3 needs your SSH password to connect to{" "}
             {target ? <code>{target}</code> : "the remote host"}. The password is passed to the
-            local SSH process for this connection attempt and is not saved by T3 Code.
+            local SSH process for this connection attempt and is not saved by more Code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3" scrollFade={false}>

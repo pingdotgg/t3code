@@ -8,7 +8,7 @@ bun run dev
 bun run dev:desktop
 
 # Desktop development on an isolated port set
-T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
+MORECODE_T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
 
 # Production
 bun run build

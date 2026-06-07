@@ -147,7 +147,7 @@ describe("remote", () => {
         credential: "one-time-credential",
         dpopProof: "token-proof",
         clientMetadata: {
-          label: "T3 Code Mobile",
+          label: "more Code Mobile",
           deviceType: "mobile",
           os: "iOS",
         },
@@ -195,7 +195,7 @@ describe("remote", () => {
         httpBaseUrl: "https://remote.example.com/",
         credential: "pairing-token",
         clientMetadata: {
-          label: "T3 Code Mobile",
+          label: "more Code Mobile",
           deviceType: "mobile",
           os: "iOS",
         },

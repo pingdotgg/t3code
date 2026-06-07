@@ -1,6 +1,6 @@
 # Encyclopedia
 
-This is a living glossary for T3 Code. It explains what common terms mean in this codebase.
+This is a living glossary for more Code. It explains what common terms mean in this codebase.
 
 ## Table of contents
 

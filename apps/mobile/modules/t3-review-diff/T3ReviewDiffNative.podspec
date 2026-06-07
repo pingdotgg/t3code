@@ -5,7 +5,7 @@ package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 Pod::Spec.new do |s|
   s.name = 'T3ReviewDiffNative'
   s.version = package['version']
-  s.summary = 'Native review diff debug surface for T3 Code mobile.'
+  s.summary = 'Native review diff debug surface for more Code mobile.'
   s.description = 'Native iOS review diff renderer used to prototype fast mobile review scrolling.'
   s.homepage = 'https://t3tools.com'
   s.license = { :type => 'UNLICENSED' }

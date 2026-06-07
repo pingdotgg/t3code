@@ -43,9 +43,9 @@ export interface RelayDeployOptions {
 }
 
 export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): string {
-  const entry = `T3CODE_RELAY_URL=${relayUrl}`;
-  if (/^T3CODE_RELAY_URL=.*$/mu.test(contents)) {
-    return contents.replace(/^T3CODE_RELAY_URL=.*$/mu, entry);
+  const entry = `MORECODE_T3CODE_RELAY_URL=${relayUrl}`;
+  if (/^MORECODE_T3CODE_RELAY_URL=.*$/mu.test(contents)) {
+    return contents.replace(/^MORECODE_T3CODE_RELAY_URL=.*$/mu, entry);
   }
   if (!contents) {
     return `${entry}\n`;
@@ -114,7 +114,7 @@ const reconcileRootEnv = Effect.fn("relay.deploy.reconcileRootEnv")(function* (r
   const contents = (yield* fs.exists(rootEnvPath)) ? yield* fs.readFileString(rootEnvPath) : "";
 
   yield* fs.writeFileString(rootEnvPath, reconcileRootEnvRelayUrl(contents, relayUrl));
-  yield* Console.log(`Updated ${rootEnvPath} with T3CODE_RELAY_URL=${relayUrl}`);
+  yield* Console.log(`Updated ${rootEnvPath} with MORECODE_T3CODE_RELAY_URL=${relayUrl}`);
 });
 
 const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* (
@@ -259,7 +259,7 @@ export const relayDeployCommand = Command.make(
     ),
   },
   deploy,
-).pipe(Command.withDescription("Deploy the T3 Code relay through Alchemy."));
+).pipe(Command.withDescription("Deploy the more Code relay through Alchemy."));
 
 if (import.meta.main) {
   Command.run(relayDeployCommand, { version: "0.0.0" }).pipe(
