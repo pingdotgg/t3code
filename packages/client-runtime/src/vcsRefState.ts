@@ -229,7 +229,12 @@ export function createVcsRefManager(config: VcsRefManagerConfig) {
             : options?.preserveLoadedRefs && current && current.refs.length > result.refs.length
               ? {
                   ...result,
-                  refs: mergeRefs(result.refs, current.refs),
+                  // Fresh server refs must win over previously-loaded ones for
+                  // overlapping names; otherwise a stale `current: true` (e.g. the
+                  // branch you were on before an external checkout) survives and
+                  // you get two refs both badged "current". `mergeRefs` lets the
+                  // second arg overwrite the first, so pass fresh refs last.
+                  refs: mergeRefs(current.refs, result.refs),
                   nextCursor: current.nextCursor,
                   totalCount: Math.max(result.totalCount, current.totalCount),
                 }
