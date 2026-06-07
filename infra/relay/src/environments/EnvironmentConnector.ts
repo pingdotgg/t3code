@@ -295,9 +295,9 @@ const make = Effect.gen(function* () {
     );
   const resolveManagedEndpoint = Effect.fn("relay.environment_connector.resolve_managed_endpoint")(
     function* (input: {
-      readonly userId: string;
       readonly operation: "connect" | "status";
       readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
+      readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
     }) {
       if (input.link.endpoint.providerKind !== "cloudflare_tunnel") {
         yield* Effect.annotateCurrentSpan({
@@ -309,11 +309,7 @@ const make = Effect.gen(function* () {
           reason: "endpoint_provider_not_managed",
         });
       }
-      const allocation = yield* allocations.get({
-        userId: input.userId,
-        environmentId: input.link.environmentId,
-      });
-      if (!allocation) {
+      if (!input.allocation) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.link.environmentId,
           operation: input.operation,
@@ -321,10 +317,10 @@ const make = Effect.gen(function* () {
         });
       }
       const allocationAttributes = {
-        "relay.authorization.allocation_hostname": allocation.hostname,
-        "relay.authorization.allocation_has_ready_at": allocation.readyAt !== null,
-        "relay.authorization.allocation_has_tunnel_id": allocation.tunnelId !== null,
-        "relay.authorization.allocation_has_dns_record_id": allocation.dnsRecordId !== null,
+        "relay.authorization.allocation_hostname": input.allocation.hostname,
+        "relay.authorization.allocation_has_ready_at": input.allocation.readyAt !== null,
+        "relay.authorization.allocation_has_tunnel_id": input.allocation.tunnelId !== null,
+        "relay.authorization.allocation_has_dns_record_id": input.allocation.dnsRecordId !== null,
       } as const;
       if (!settings.managedEndpointBaseDomain) {
         yield* Effect.annotateCurrentSpan(allocationAttributes);
@@ -335,9 +331,9 @@ const make = Effect.gen(function* () {
         });
       }
       if (
-        allocation.readyAt === null ||
-        allocation.tunnelId === null ||
-        allocation.dnsRecordId === null
+        input.allocation.readyAt === null ||
+        input.allocation.tunnelId === null ||
+        input.allocation.dnsRecordId === null
       ) {
         yield* Effect.annotateCurrentSpan(allocationAttributes);
         return yield* new EnvironmentConnectNotAuthorized({
@@ -346,7 +342,9 @@ const make = Effect.gen(function* () {
           reason: "managed_endpoint_allocation_not_ready",
         });
       }
-      if (!isManagedEndpointHostname(allocation.hostname, settings.managedEndpointBaseDomain)) {
+      if (
+        !isManagedEndpointHostname(input.allocation.hostname, settings.managedEndpointBaseDomain)
+      ) {
         yield* Effect.annotateCurrentSpan({
           ...allocationAttributes,
           "relay.authorization.managed_endpoint_base_domain": settings.managedEndpointBaseDomain,
@@ -358,7 +356,7 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = ManagedEndpointAllocations.resolveReadyManagedEndpoint({
-        allocation,
+        allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
       });
       if (
@@ -393,7 +391,13 @@ const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
         "relay.operation": "status",
       });
-      const link = yield* links.getForUser(input);
+      const { link, allocation } = yield* Effect.all(
+        {
+          link: links.getForUser(input),
+          allocation: allocations.get(input),
+        },
+        { concurrency: 2 },
+      );
       if (!link) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.environmentId,
@@ -402,9 +406,9 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = yield* resolveManagedEndpoint({
-        userId: input.userId,
         operation: "status",
         link,
+        allocation,
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
@@ -518,7 +522,13 @@ const make = Effect.gen(function* () {
           reason: "client_proof_key_thumbprint_missing",
         });
       }
-      const link = yield* links.getForUser(input);
+      const { link, allocation } = yield* Effect.all(
+        {
+          link: links.getForUser(input),
+          allocation: allocations.get(input),
+        },
+        { concurrency: 2 },
+      );
       if (!link) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.environmentId,
@@ -527,9 +537,9 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = yield* resolveManagedEndpoint({
-        userId: input.userId,
         operation: "connect",
         link,
+        allocation,
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });

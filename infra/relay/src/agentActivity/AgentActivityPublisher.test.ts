@@ -1,7 +1,10 @@
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
@@ -125,6 +128,59 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("loads replay state and delivery targets concurrently", () =>
+    Effect.gen(function* () {
+      const started = yield* Ref.make(0);
+      const bothStarted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const waitForPeer = Effect.gen(function* () {
+        const count = yield* Ref.updateAndGet(started, (value) => value + 1);
+        if (count === 2) {
+          yield* Deferred.succeed(bothStarted, undefined);
+        }
+        yield* Deferred.await(release);
+      });
+
+      const replay = Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        return yield* publisher.replayForLiveActivityRegistration({
+          userId: "dev:julius",
+          deviceId: "device-1",
+        });
+      }).pipe(
+        Effect.provide(
+          AgentActivityPublisher.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(
+                  AgentActivityRows.AgentActivityRows,
+                  makeAgentActivityRows({
+                    listForUser: () => waitForPeer.pipe(Effect.as([state])),
+                  }),
+                ),
+                Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+                Layer.succeed(
+                  LiveActivities.LiveActivities,
+                  makeLiveActivities({
+                    listTargets: () => waitForPeer.pipe(Effect.as([target("device-1")])),
+                  }),
+                ),
+                Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries()),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(replay);
+      yield* Deferred.await(bothStarted);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(fiber);
+
+      expect(yield* Ref.get(started)).toBe(2);
+    }),
+  );
+
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
       ...target("device-1"),

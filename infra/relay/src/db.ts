@@ -16,6 +16,8 @@ export interface RelayDatabase extends EffectPgDatabase {
 
 export class RelayDb extends Context.Service<RelayDb, RelayDatabase>()("t3code-relay/db/RelayDb") {}
 
+export const relayHyperdriveOriginConnectionLimit = 20;
+
 export const PlanetscaleDatabase = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const schema = yield* Drizzle.Schema("RelaySchema", {
@@ -63,6 +65,6 @@ export const RelayHyperdrive = Effect.gen(function* () {
     caching: {
       disabled: true,
     },
-    originConnectionLimit: 5,
+    originConnectionLimit: relayHyperdriveOriginConnectionLimit,
   });
 });

@@ -18,6 +18,7 @@ import * as HttpTraceContext from "effect/unstable/http/HttpTraceContext";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 
 import {
   RelayApi,
@@ -67,6 +68,13 @@ import { withSpanAttributes } from "../observability.ts";
 import { RelayDb } from "../db.ts";
 
 const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
+export const RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS = 30 * 60;
+
+export function relayDpopAccessTokenExpiresAt(now: DateTime.DateTime): DateTime.DateTime {
+  return DateTime.add(now, {
+    seconds: RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS,
+  });
+}
 const relayCorsAllowedHeaders = [
   "authorization",
   "b3",
@@ -74,11 +82,7 @@ const relayCorsAllowedHeaders = [
   "content-type",
   "dpop",
 ] as const;
-const relayCorsExposedHeaders = [
-  "traceparent",
-  "x-t3-relay-auth-failure",
-  "www-authenticate",
-] as const;
+const relayCorsExposedHeaders = ["traceparent", "www-authenticate"] as const;
 
 const relayCorsHeaders = {
   "access-control-allow-origin": "*",
@@ -176,7 +180,10 @@ export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(
     HttpServerRequest.HttpServerRequest | R
   >,
   tracerLayer: Layer.Layer<never, LayerError, LayerRequirements>,
-) => traceRelayHttpRequest(httpEffect).pipe(Effect.provide(tracerLayer));
+) =>
+  traceRelayHttpRequest(httpEffect).pipe(
+    Effect.provide(Layer.merge(tracerLayer, httpHeaderRedactionLayer)),
+  );
 
 export const withoutCapturedParentSpan = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -351,12 +358,7 @@ export const healthApi = HttpApiBuilder.group(
       "health",
       Effect.fn("relay.api.health")(
         function* () {
-          const startedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
           yield* db.execute(drizzleSql`SELECT 1`);
-          const completedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-          yield* Effect.logInfo("relay health db probe completed", {
-            durationMs: completedAt - startedAt,
-          });
           return { ok: true, service: "relay" as const };
         },
         Effect.catch(() => relayInternalErrorResponse("database_unavailable")),
@@ -602,7 +604,7 @@ export const tokenApi = HttpApiBuilder.group(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
         const now = yield* DateTime.now;
-        const expiresAt = DateTime.add(now, { minutes: 5 });
+        const expiresAt = relayDpopAccessTokenExpiresAt(now);
         const jti = yield* crypto.randomUUIDv4.pipe(
           Effect.catch(() => relayInternalErrorResponse("internal_error")),
         );
@@ -620,7 +622,7 @@ export const tokenApi = HttpApiBuilder.group(
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
           issued_token_type: RelayAccessTokenType,
           token_type: "DPoP" as const,
-          expires_in: 300,
+          expires_in: RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS,
           scope: encodeOAuthScope(requestedScopes),
         };
       }, mapRelayCommonApiErrors("invalid_dpop")),

@@ -2,6 +2,7 @@ import { createClerkClient, verifyToken } from "@clerk/backend";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,9 +16,11 @@ import { RelayEnvironmentAuth } from "@t3tools/contracts/relay";
 
 import {
   relayCors,
+  relayDpopAccessTokenExpiresAt,
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
+  RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS,
   traceRelayHttpRequestWith,
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
@@ -48,6 +51,17 @@ const relaySettings: RelayConfiguration.RelayConfigurationShape = {
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 };
+
+describe("relay DPoP access token lifetime", () => {
+  it("keeps issued client access tokens reusable for 30 minutes", () => {
+    const issuedAt = DateTime.makeUnsafe("2026-06-05T20:00:00.000Z");
+
+    expect(RELAY_DPOP_ACCESS_TOKEN_TTL_SECONDS).toBe(1_800);
+    expect(DateTime.formatIso(relayDpopAccessTokenExpiresAt(issuedAt))).toBe(
+      "2026-06-05T20:30:00.000Z",
+    );
+  });
+});
 
 describe("relay client authentication", () => {
   it.effect("preserves the existing Clerk session JWT path", () =>
@@ -181,6 +195,10 @@ describe("relay request tracing", () => {
         const request = HttpServerRequest.fromWeb(
           new Request("https://relay.test/v1/mobile/devices?client=mobile", {
             method: "POST",
+            headers: {
+              authorization: "Bearer secret",
+              dpop: "signed-proof",
+            },
           }),
         );
 
@@ -192,6 +210,8 @@ describe("relay request tracing", () => {
         expect(spans[0]?.kind).toBe("server");
         expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
         expect(spans[0]?.attributes.get("http.response.status_code")).toBe(204);
+        expect(spans[0]?.attributes.get("http.request.header.authorization")).toBe("<redacted>");
+        expect(spans[0]?.attributes.get("http.request.header.dpop")).toBe("<redacted>");
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),
