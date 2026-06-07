@@ -9,7 +9,7 @@ import { resolveCloudPublicConfig } from "../features/cloud/publicConfig";
 import { mobileTracingLayer } from "../features/observability/mobileTracing";
 
 function configuredRelayUrl(): string {
-  return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
+  return resolveCloudPublicConfig().relay.url ?? "http://relay.invalid";
 }
 
 const mobileHttpClientLayer = remoteHttpClientLayer(fetch);

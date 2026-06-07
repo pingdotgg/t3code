@@ -13,9 +13,13 @@ vi.mock("expo-constants", () => ({
 describe("resolveCloudPublicConfig", () => {
   it("returns no cloud configuration for an unconfigured build", () => {
     expect(resolveCloudPublicConfig({})).toEqual({
-      clerkPublishableKey: null,
-      clerkJwtTemplate: null,
-      relayUrl: null,
+      clerk: {
+        publishableKey: null,
+        jwtTemplate: null,
+      },
+      relay: {
+        url: null,
+      },
       observability: {
         tracesUrl: null,
         tracesDataset: null,
@@ -36,9 +40,13 @@ describe("resolveCloudPublicConfig", () => {
         },
       }),
     ).toEqual({
-      clerkPublishableKey: "pk_test_example",
-      clerkJwtTemplate: "t3-relay",
-      relayUrl: "https://relay.example.test",
+      clerk: {
+        publishableKey: "pk_test_example",
+        jwtTemplate: "t3-relay",
+      },
+      relay: {
+        url: "https://relay.example.test",
+      },
       observability: {
         tracesUrl: "https://api.axiom.co/v1/traces",
         tracesDataset: "mobile-traces",
@@ -54,9 +62,13 @@ describe("resolveCloudPublicConfig", () => {
         relay: { url: "http://relay.example.test" },
       }),
     ).toEqual({
-      clerkPublishableKey: "pk_test_example",
-      clerkJwtTemplate: "t3-relay",
-      relayUrl: null,
+      clerk: {
+        publishableKey: "pk_test_example",
+        jwtTemplate: "t3-relay",
+      },
+      relay: {
+        url: null,
+      },
       observability: {
         tracesUrl: null,
         tracesDataset: null,
