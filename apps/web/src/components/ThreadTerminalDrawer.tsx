@@ -268,7 +268,7 @@ interface TerminalViewportProps {
   keybindings: ResolvedKeybindingsConfig;
 }
 
-interface TerminalLaunchLocation {
+export interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
   readonly runtimeEnv?: Record<string, string>;
@@ -796,6 +796,12 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
+  /**
+   * When true, the drawer fills its container instead of managing its own
+   * fixed height + drag-to-resize handle. Used when hosted inside a generic
+   * dock slot whose size is controlled by the surrounding panel group.
+   */
+  embedded?: boolean;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
@@ -854,11 +860,13 @@ export default function ThreadTerminalDrawer({
   onHeightChange,
   onAddTerminalContext,
   keybindings,
+  embedded = false,
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
   const onHeightChangeRef = useRef(onHeightChange);
@@ -1113,25 +1121,62 @@ export default function ThreadTerminalDrawer({
     setResizeEpoch((value) => value + 1);
   }, [visible]);
 
+  // When embedded in a generic dock slot, the surrounding panel group owns the
+  // height. Observe the container so the terminal refits (and reports its
+  // measured height for fit math) whenever the panel is resized.
   useEffect(() => {
+    if (!embedded || !visible) {
+      return;
+    }
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextHeight = Math.round(entry.contentRect.height);
+      if (nextHeight > 0 && nextHeight !== drawerHeightRef.current) {
+        drawerHeightRef.current = nextHeight;
+        setDrawerHeight(nextHeight);
+      }
+      setResizeEpoch((value) => value + 1);
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+    };
+  }, [embedded, visible]);
+
+  useEffect(() => {
+    if (embedded) {
+      return;
+    }
     return () => {
       syncHeight(drawerHeightRef.current);
     };
-  }, [syncHeight]);
+  }, [embedded, syncHeight]);
 
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
-        className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-        style={{ height: `${drawerHeight}px` }}
+        ref={containerRef}
+        className={
+          embedded
+            ? "thread-terminal-drawer relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+            : "thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
+        }
+        style={embedded ? undefined : { height: `${drawerHeight}px` }}
       >
-        <div
-          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
-          onPointerDown={handleResizePointerDown}
-          onPointerMove={handleResizePointerMove}
-          onPointerUp={handleResizePointerEnd}
-          onPointerCancel={handleResizePointerEnd}
-        />
+        {!embedded && (
+          <div
+            className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={handleResizePointerEnd}
+            onPointerCancel={handleResizePointerEnd}
+          />
+        )}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>No terminal sessions for this thread yet.</p>
           <button
@@ -1150,17 +1195,23 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: `${drawerHeight}px` }}
+      ref={containerRef}
+      className={
+        embedded
+          ? "thread-terminal-drawer relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+          : "thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
+      }
+      style={embedded ? undefined : { height: `${drawerHeight}px` }}
     >
-      <div
-        className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
-        onPointerDown={handleResizePointerDown}
-        onPointerMove={handleResizePointerMove}
-        onPointerUp={handleResizePointerEnd}
-        onPointerCancel={handleResizePointerEnd}
-      />
-
+      {!embedded && (
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+      )}
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">

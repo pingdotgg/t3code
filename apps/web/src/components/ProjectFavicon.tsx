@@ -26,7 +26,7 @@ export function ProjectFavicon(input: {
     <ResolvedProjectFavicon
       environmentId={input.environmentId}
       cwd={input.cwd}
-      className={input.className}
+      {...(input.className !== undefined ? { className: input.className } : {})}
     />
   );
 }

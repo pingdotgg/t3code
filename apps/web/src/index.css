@@ -508,6 +508,17 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--card) 92%, var(--background));
 }
 
+/* Center our slotted file-diff header controls (collapse chevron + open icon).
+ * These wrapper divs are light-DOM nodes created by @pierre/diffs for the
+ * header-prefix / header-metadata slots; the diff theme leaves them as block
+ * boxes with the header line-height, which mis-aligns our icon buttons. */
+.diff-render-surface [slot="header-prefix"],
+.diff-render-surface [slot="header-metadata"] {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
 @keyframes ultrathink-rainbow {
   0% {
     background-position: 0% 50%;

@@ -27,6 +27,9 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+// Dragging the rail more than this many pixels past the minimum size closes
+// the panel (a quick drag-to-dismiss gesture, matching all dock surfaces).
+const SIDEBAR_RESIZE_CLOSE_OVERSHOOT = 64;
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
@@ -175,6 +178,7 @@ function Sidebar({
   variant = "sidebar",
   collapsible = "offcanvas",
   resizable = false,
+  disableHoverPreview = false,
   className,
   children,
   ...props
@@ -183,6 +187,7 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
+  disableHoverPreview?: boolean;
 }) {
   const { isMobile, state, openMobile, setOpen, setOpenMobile } = useSidebar();
   const [previewOpen, setPreviewOpen] = React.useState(false);
@@ -204,7 +209,8 @@ function Sidebar({
     () => ({ side, resizable: resolvedResizable }),
     [resolvedResizable, side],
   );
-  const canPreviewOffcanvas = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+  const canPreviewOffcanvas =
+    !disableHoverPreview && !isMobile && collapsible === "offcanvas" && state === "collapsed";
 
   React.useEffect(() => {
     if (!canPreviewOffcanvas && previewOpen) {
@@ -426,7 +432,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar } = useSidebar();
+  const { open, setOpen, toggleSidebar } = useSidebar();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const railRef = React.useRef<HTMLButtonElement | null>(null);
   const suppressClickRef = React.useRef(false);
@@ -442,6 +448,7 @@ function SidebarRail({
     startX: number;
     transitionTargets: HTMLElement[];
     width: number;
+    willClose: boolean;
     wrapper: HTMLElement;
   } | null>(null);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
@@ -461,10 +468,17 @@ function SidebarRail({
       resizeState.transitionTargets.forEach((element) => {
         element.style.removeProperty("transition-duration");
       });
-      if (resolvedResizable?.storageKey && typeof window !== "undefined") {
-        setLocalStorageItem(resolvedResizable.storageKey, resizeState.width, Schema.Finite);
+      if (resizeState.willClose) {
+        // Restore the pre-drag width so the panel reopens at a sensible size,
+        // then close it instead of persisting the tiny dragged width.
+        resizeState.wrapper.style.setProperty("--sidebar-width", `${resizeState.startWidth}px`);
+        setOpen(false);
+      } else {
+        if (resolvedResizable?.storageKey && typeof window !== "undefined") {
+          setLocalStorageItem(resolvedResizable.storageKey, resizeState.width, Schema.Finite);
+        }
+        resolvedResizable?.onResize?.(resizeState.width);
       }
-      resolvedResizable?.onResize?.(resizeState.width);
       resizeStateRef.current = null;
       if (resizeState.rail.hasPointerCapture(pointerId)) {
         resizeState.rail.releasePointerCapture(pointerId);
@@ -472,7 +486,7 @@ function SidebarRail({
       document.body.style.removeProperty("cursor");
       document.body.style.removeProperty("user-select");
     },
-    [resolvedResizable],
+    [resolvedResizable, setOpen],
   );
 
   const handlePointerDown = React.useCallback(
@@ -518,6 +532,7 @@ function SidebarRail({
         startX: event.clientX,
         transitionTargets,
         width: initialWidth,
+        willClose: false,
         wrapper,
       };
       wrapper.style.setProperty("--sidebar-width", `${initialWidth}px`);
@@ -526,6 +541,18 @@ function SidebarRail({
       document.body.style.userSelect = "none";
     },
     [onPointerDown, open, resolvedResizable, sidebarInstance?.side],
+  );
+
+  const endResizeInteraction = React.useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+
+      event.preventDefault();
+      suppressClickRef.current = resizeState.moved;
+      stopResize(event.pointerId);
+    },
+    [stopResize],
   );
 
   const handlePointerMove = React.useCallback(
@@ -543,10 +570,20 @@ function SidebarRail({
       if (Math.abs(delta) > 2) {
         resizeState.moved = true;
       }
-      resizeState.pendingWidth = clampSidebarWidth(
-        resizeState.startWidth + delta,
-        resolvedResizable,
-      );
+      const rawWidth = resizeState.startWidth + delta;
+      // Collapse live the moment the drag crosses the close threshold, like
+      // Codex — don't wait for pointer-up.
+      if (rawWidth < resolvedResizable.minWidth - SIDEBAR_RESIZE_CLOSE_OVERSHOOT) {
+        resizeState.willClose = true;
+        resizeState.wrapper.style.setProperty("--sidebar-width", `${resizeState.startWidth}px`);
+        if (resizeState.rafId !== null) {
+          window.cancelAnimationFrame(resizeState.rafId);
+          resizeState.rafId = null;
+        }
+        endResizeInteraction(event);
+        return;
+      }
+      resizeState.pendingWidth = clampSidebarWidth(rawWidth, resolvedResizable);
       if (resizeState.rafId !== null) {
         return;
       }
@@ -574,19 +611,7 @@ function SidebarRail({
         activeResizeState.width = nextWidth;
       });
     },
-    [onPointerMove, resolvedResizable],
-  );
-
-  const endResizeInteraction = React.useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-
-      event.preventDefault();
-      suppressClickRef.current = resizeState.moved;
-      stopResize(event.pointerId);
-    },
-    [stopResize],
+    [endResizeInteraction, onPointerMove, resolvedResizable],
   );
 
   const handlePointerUp = React.useCallback(

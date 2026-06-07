@@ -1,5 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
@@ -50,23 +49,39 @@ export const DIFF_RENDER_UNSAFE_CSS = `
   position: sticky !important;
   top: 0;
   z-index: 4;
+  min-height: 32px !important;
+  padding-block: 0 !important;
+  padding-inline: 6px !important;
+  gap: 6px !important;
+  align-items: center !important;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
 }
 
-[data-title] {
-  cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
+[data-diffs-header] [data-header-content] {
+  align-items: center !important;
+  gap: 6px !important;
 }
 
-[data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
+[data-diffs-header] [data-title] {
+  font-size: 12px !important;
+}
+
+[data-diffs-header] [data-change-icon] {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+[data-diffs-header] [data-metadata] {
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+[data-diffs-header] [data-additions-count],
+[data-diffs-header] [data-deletions-count] {
+  font-size: 12px !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums;
 }
 `;
 

@@ -14,9 +14,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  selectedFilePath?: string | null;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId, selectedFilePath } =
+    props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -94,11 +96,16 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       );
     }
 
+    const isSelected = selectedFilePath != null && node.path === selectedFilePath;
     return (
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+        aria-current={isSelected ? "true" : undefined}
+        className={cn(
+          "group flex w-full cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80",
+          isSelected && "bg-accent text-accent-foreground hover:bg-accent",
+        )}
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path)}
       >
@@ -109,7 +116,12 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
+        <span
+          className={cn(
+            "truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90",
+            isSelected && "text-accent-foreground",
+          )}
+        >
           {node.name}
         </span>
         {node.stat && (

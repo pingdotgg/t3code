@@ -28,7 +28,7 @@ catalog:
   "@effect/tsgo": 0.13.2
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.1.20
+  "@pierre/diffs": 1.2.7
   "@vitest/runner": 4.1.8
   "@types/node": 24.12.4
   "@typescript/native-preview": 7.0.0-dev.20260604.1
@@ -81,6 +81,5 @@ packageExtensions:
 patchedDependencies:
   "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
   "@expo/metro-config@56.0.13": patches/@expo%2Fmetro-config@56.0.13.patch
-  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
