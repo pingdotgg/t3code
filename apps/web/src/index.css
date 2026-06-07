@@ -573,6 +573,23 @@ label:has(> select#reasoning-effort) select {
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
+/* Show sidebar action buttons on touch devices that lack hover capability.
+   iPad Safari and other tablets report viewport widths >640px but cannot
+   hover, so the hover-only reveal pattern breaks. */
+@media (hover: none) {
+  .sidebar-touch-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar-touch-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar-touch-timestamp {
+    padding-right: 1.5rem;
+  }
+}
+
 /* Thin scrollbar for model picker */
 .model-picker-list::-webkit-scrollbar {
   width: 4px;
