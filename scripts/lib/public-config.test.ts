@@ -30,6 +30,9 @@ describe("loadRepoEnv", () => {
     expect(env.T3CODE_MOBILE_OTLP_TRACES_URL).toBeUndefined();
     expect(env.T3CODE_MOBILE_OTLP_TRACES_DATASET).toBeUndefined();
     expect(env.T3CODE_MOBILE_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_TOKEN).toBeUndefined();
   });
 
   it("applies process, root local, and root precedence in that order", () => {
@@ -76,9 +79,9 @@ describe("loadRepoEnv", () => {
         VITE_CLERK_JWT_TEMPLATE: "template_legacy",
         T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
         VITE_T3CODE_RELAY_URL: "https://legacy.example.test",
-        T3CODE_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
-        T3CODE_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
-        T3CODE_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
+        EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+        EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
+        EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
       }),
     ).toEqual({
       clerkPublishableKey: "pk_legacy",
@@ -91,7 +94,7 @@ describe("loadRepoEnv", () => {
     });
   });
 
-  it("keeps configured mobile tracing values under their canonical names", () => {
+  it("projects canonical mobile tracing values to Expo public aliases", () => {
     expect(
       loadRepoEnv({
         baseEnv: {
@@ -108,6 +111,9 @@ describe("loadRepoEnv", () => {
       T3CODE_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
       T3CODE_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
       T3CODE_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
+      EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
+      EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
     });
   });
 });

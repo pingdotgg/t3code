@@ -162,9 +162,9 @@ const config: ExpoConfig = {
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },
     observability: {
-      tracesUrl: repoEnv.T3CODE_MOBILE_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
-      tracesDataset: repoEnv.T3CODE_MOBILE_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.T3CODE_MOBILE_OTLP_TRACES_TOKEN ?? null,
+      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
+      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
+      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",

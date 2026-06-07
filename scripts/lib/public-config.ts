@@ -63,16 +63,19 @@ export function loadRepoEnv({
     ...(config.mobileOtlpTracesUrl
       ? {
           T3CODE_MOBILE_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
+          EXPO_PUBLIC_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
         }
       : {}),
     ...(config.mobileOtlpTracesDataset
       ? {
           T3CODE_MOBILE_OTLP_TRACES_DATASET: config.mobileOtlpTracesDataset,
+          EXPO_PUBLIC_OTLP_TRACES_DATASET: config.mobileOtlpTracesDataset,
         }
       : {}),
     ...(config.mobileOtlpTracesToken
       ? {
           T3CODE_MOBILE_OTLP_TRACES_TOKEN: config.mobileOtlpTracesToken,
+          EXPO_PUBLIC_OTLP_TRACES_TOKEN: config.mobileOtlpTracesToken,
         }
       : {}),
   };
@@ -94,9 +97,21 @@ export function resolvePublicConfig(...sources: readonly Environment[]): T3CodeP
     ),
     clerkCliOAuthClientId: firstNonEmpty(sources, "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID"),
     relayUrl: firstNonEmpty(sources, "T3CODE_RELAY_URL", "VITE_T3CODE_RELAY_URL"),
-    mobileOtlpTracesUrl: firstNonEmpty(sources, "T3CODE_MOBILE_OTLP_TRACES_URL"),
-    mobileOtlpTracesDataset: firstNonEmpty(sources, "T3CODE_MOBILE_OTLP_TRACES_DATASET"),
-    mobileOtlpTracesToken: firstNonEmpty(sources, "T3CODE_MOBILE_OTLP_TRACES_TOKEN"),
+    mobileOtlpTracesUrl: firstNonEmpty(
+      sources,
+      "T3CODE_MOBILE_OTLP_TRACES_URL",
+      "EXPO_PUBLIC_OTLP_TRACES_URL",
+    ),
+    mobileOtlpTracesDataset: firstNonEmpty(
+      sources,
+      "T3CODE_MOBILE_OTLP_TRACES_DATASET",
+      "EXPO_PUBLIC_OTLP_TRACES_DATASET",
+    ),
+    mobileOtlpTracesToken: firstNonEmpty(
+      sources,
+      "T3CODE_MOBILE_OTLP_TRACES_TOKEN",
+      "EXPO_PUBLIC_OTLP_TRACES_TOKEN",
+    ),
   };
 }
 
