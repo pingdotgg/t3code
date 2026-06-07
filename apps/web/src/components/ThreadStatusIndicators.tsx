@@ -1,11 +1,15 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { EnvironmentId, VcsStatusResult } from "@t3tools/contracts";
 import {
   IconCloud as CloudIcon,
-  IconGitPullRequest as GitPullRequestIcon,
+  IconGitMerge,
+  IconGitPullRequest,
+  IconGitPullRequestClosed,
+  IconGitPullRequestConflict,
+  IconGitPullRequestDraft,
   IconTerminal2 as TerminalIcon,
 } from "@tabler/icons-react";
-import { useMemo } from "react";
+import { type MouseEvent as ReactMouseEvent, type ReactElement, useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
@@ -20,11 +24,14 @@ import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic"
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+export type PrStatusIcon = "open" | "draft" | "conflict" | "closed" | "merged";
+
 export interface PrStatusIndicator {
   label: string;
   colorClass: string;
   tooltip: string;
   url: string;
+  icon: PrStatusIcon;
 }
 
 export interface TerminalStatusIndicator {
@@ -41,36 +48,78 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
+  const titleSuffix = `#${pr.number} ${presentation.shortName}`;
 
   if (pr.state === "open") {
+    // Conflicts are the most urgent signal, then draft status, then a plain
+    // open PR. We surface conflict/draft state regardless of provider so the
+    // worktree-level icon stays informative.
+    if (pr.hasConflicts) {
+      return {
+        label: `${presentation.shortName} has conflicts`,
+        colorClass: "text-red-600 dark:text-red-400/90",
+        tooltip: `${titleSuffix} has merge conflicts: ${pr.title}`,
+        url: pr.url,
+        icon: "conflict",
+      };
+    }
+    if (pr.isDraft) {
+      return {
+        label: `${presentation.shortName} draft`,
+        colorClass: "text-zinc-500 dark:text-zinc-400/80",
+        tooltip: `${titleSuffix} draft: ${pr.title}`,
+        url: pr.url,
+        icon: "draft",
+      };
+    }
     return {
       label: `${presentation.shortName} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} open: ${pr.title}`,
+      tooltip: `${titleSuffix} open: ${pr.title}`,
       url: pr.url,
+      icon: "open",
     };
   }
   if (pr.state === "closed") {
     return {
       label: `${presentation.shortName} closed`,
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} ${presentation.shortName} closed: ${pr.title}`,
+      colorClass: "text-red-600 dark:text-red-400/90",
+      tooltip: `${titleSuffix} closed: ${pr.title}`,
       url: pr.url,
+      icon: "closed",
     };
   }
   if (pr.state === "merged") {
     return {
       label: `${presentation.shortName} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} merged: ${pr.title}`,
+      tooltip: `${titleSuffix} merged: ${pr.title}`,
       url: pr.url,
+      icon: "merged",
     };
   }
   return null;
 }
 
-export function ChangeRequestStatusIcon({ className }: { className?: string }) {
-  return <GitPullRequestIcon className={className} />;
+const PR_STATUS_ICON_BY_KIND: Record<
+  PrStatusIcon,
+  (props: { className?: string | undefined }) => ReactElement
+> = {
+  open: (props) => <IconGitPullRequest {...props} />,
+  draft: (props) => <IconGitPullRequestDraft {...props} />,
+  conflict: (props) => <IconGitPullRequestConflict {...props} />,
+  closed: (props) => <IconGitPullRequestClosed {...props} />,
+  merged: (props) => <IconGitMerge {...props} />,
+};
+
+export function ChangeRequestStatusIcon({
+  className,
+  icon = "open",
+}: {
+  className?: string;
+  icon?: PrStatusIcon;
+}) {
+  return PR_STATUS_ICON_BY_KIND[icon]({ className });
 }
 
 export function resolveThreadPr(
@@ -183,13 +232,66 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon className="size-3" />
+            <ChangeRequestStatusIcon className="size-3" icon={prStatus.icon} />
           </TooltipTrigger>
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
     </span>
+  );
+}
+
+/**
+ * Worktree-level PR status icon shown to the left of a worktree group label in
+ * the sidebar. PR status is resolved once per worktree (all threads in a group
+ * share the same branch/worktree) rather than per thread. Clicking opens the PR.
+ */
+export function SidebarWorktreePrStatus({
+  environmentId,
+  branch,
+  worktreePath,
+  projectCwd,
+  onOpenPr,
+}: {
+  environmentId: EnvironmentId;
+  branch: string | null;
+  worktreePath: string | null;
+  projectCwd: string | null;
+  onOpenPr: (event: ReactMouseEvent<HTMLElement>, prUrl: string) => void;
+}) {
+  const gitCwd = worktreePath ?? projectCwd;
+  const gitStatus = useVcsStatus({
+    environmentId,
+    cwd: branch != null ? gitCwd : null,
+  });
+  const pr = resolveThreadPr(branch, gitStatus.data);
+  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+
+  if (!prStatus) {
+    return null;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={prStatus.tooltip}
+            className={`inline-flex size-4 shrink-0 items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenPr(event, prStatus.url);
+            }}
+          >
+            <ChangeRequestStatusIcon className="size-3" icon={prStatus.icon} />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+    </Tooltip>
   );
 }
 
