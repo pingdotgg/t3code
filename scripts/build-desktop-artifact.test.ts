@@ -166,6 +166,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
+  it("keeps the GitHub Copilot CLI as an explicit staged runtime dependency", () => {
+    assert.deepStrictEqual(
+      resolveDesktopRuntimeDependencies(
+        {
+          "@github/copilot": "1.0.60",
+          "@github/copilot-sdk": "^0.2.2",
+          "@t3tools/contracts": "workspace:*",
+        },
+        {},
+      ),
+      {
+        "@github/copilot": "1.0.60",
+        "@github/copilot-sdk": "^0.2.2",
+      },
+    );
+  });
+
   it("carries only staged dependency patch metadata into staged desktop installs", () => {
     assert.deepStrictEqual(
       createStagePnpmConfig(
