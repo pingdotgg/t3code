@@ -322,6 +322,11 @@ function detailFromCause(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
 }
 
+function isCopilotSessionNotFoundError(error: ProviderAdapterProcessError, sessionId: string) {
+  const detail = error.detail.toLowerCase();
+  return detail.includes("session not found") && detail.includes(sessionId.toLowerCase());
+}
+
 function requireSessionContext(
   sessions: ReadonlyMap<ThreadId, CopilotSessionContext>,
   threadId: ThreadId,
@@ -2241,22 +2246,36 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         | "onEvent"
       >;
 
-      const sdkSession = yield* Effect.gen(function* () {
-        yield* copilotSdk.startClient(input.threadId, client);
-        const resume = parseCopilotResumeCursor(input.resumeCursor);
-        if (resume) {
-          return yield* copilotSdk.resumeSession(input.threadId, client, resume.sessionId, {
-            ...baseSessionConfig,
-            onPermissionRequest: onSessionPermissionRequest,
-            onUserInputRequest: onSessionUserInputRequest,
-          });
-        }
-        return yield* copilotSdk.createSession(input.threadId, client, {
+      const createFreshSdkSession = () =>
+        copilotSdk.createSession(input.threadId, client, {
           ...baseSessionConfig,
           sessionId: input.threadId,
           onPermissionRequest: onSessionPermissionRequest,
           onUserInputRequest: onSessionUserInputRequest,
         });
+
+      const sdkSession = yield* Effect.gen(function* () {
+        yield* copilotSdk.startClient(input.threadId, client);
+        const resume = parseCopilotResumeCursor(input.resumeCursor);
+        if (resume) {
+          return yield* copilotSdk
+            .resumeSession(input.threadId, client, resume.sessionId, {
+              ...baseSessionConfig,
+              onPermissionRequest: onSessionPermissionRequest,
+              onUserInputRequest: onSessionUserInputRequest,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                isCopilotSessionNotFoundError(error, resume.sessionId)
+                  ? Effect.logInfo("copilot resume cursor is stale; starting a fresh session", {
+                      threadId: input.threadId,
+                      sessionId: resume.sessionId,
+                    }).pipe(Effect.andThen(createFreshSdkSession()))
+                  : Effect.fail(error),
+              ),
+            );
+        }
+        return yield* createFreshSdkSession();
       }).pipe(
         Effect.tapError(() => copilotSdk.stopClient(input.threadId, client).pipe(Effect.ignore)),
       );
