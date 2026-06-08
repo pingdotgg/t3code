@@ -577,6 +577,115 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("emits command metadata separately from command output", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-command-metadata");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "check git status",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-command-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-command",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-command",
+          toolName: "bash",
+          arguments: {
+            command: "git status --short",
+          },
+        },
+      } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "item.started" && String(event.itemId) === "copilot-tool-tool-command",
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      emit({
+        id: "evt-copilot-command-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-command",
+          success: true,
+          result: {
+            content: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
+          },
+        },
+      } as SessionEvent);
+
+      let completed: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && completed === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        completed = runtimeEvents.find(
+          (event) =>
+            event.type === "item.completed" && String(event.itemId) === "copilot-tool-tool-command",
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.itemType, "command_execution");
+        assert.equal(completed.payload.title, "Ran command");
+        assert.equal(
+          completed.payload.detail,
+          "M apps/server/src/provider/Layers/CopilotAdapter.ts",
+        );
+        assert.deepStrictEqual(completed.payload.data, {
+          toolCallId: "tool-command",
+          toolName: "bash",
+          command: "git status --short",
+          result: {
+            content: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
+          },
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("ignores empty SDK tool progress messages without failing the session", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

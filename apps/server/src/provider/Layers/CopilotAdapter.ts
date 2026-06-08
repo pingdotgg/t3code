@@ -112,6 +112,7 @@ interface ToolMeta {
     | "collab_agent_tool_call"
     | "web_search"
     | "image_view";
+  readonly command?: string;
 }
 
 interface CopilotToolExecutionItem {
@@ -606,6 +607,61 @@ function toolStreamKind(
     return "file_change_output";
   }
   return "unknown";
+}
+
+function isStringRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringRecord(value: unknown): Record<string, unknown> | undefined {
+  return isStringRecord(value) ? value : undefined;
+}
+
+function commandFromToolArguments(arguments_: unknown): string | undefined {
+  const args = stringRecord(arguments_);
+  if (!args) {
+    return undefined;
+  }
+
+  const candidates = [
+    args.command,
+    args.cmd,
+    args.fullCommandText,
+    args.commandText,
+    stringRecord(args.input)?.command,
+  ];
+  for (const candidate of candidates) {
+    const command = trimOrUndefined(typeof candidate === "string" ? candidate : undefined);
+    if (command) {
+      return command;
+    }
+  }
+  return undefined;
+}
+
+function toolLifecycleTitle(toolMeta: ToolMeta | undefined): string {
+  return toolMeta?.itemType === "command_execution"
+    ? "Ran command"
+    : (toolMeta?.toolName ?? "tool");
+}
+
+function toolLifecycleData(input: {
+  readonly toolCallId: string;
+  readonly toolMeta: ToolMeta | undefined;
+  readonly arguments?: Record<string, unknown> | undefined;
+  readonly result?: unknown;
+  readonly error?: unknown;
+  readonly toolTelemetry?: unknown;
+}): Record<string, unknown> {
+  return {
+    ...input.arguments,
+    toolCallId: input.toolCallId,
+    ...(input.toolMeta?.toolName ? { toolName: input.toolMeta.toolName } : {}),
+    ...(input.toolMeta?.command ? { command: input.toolMeta.command } : {}),
+    ...(input.result ? { result: input.result } : {}),
+    ...(input.error ? { error: input.error } : {}),
+    ...(input.toolTelemetry ? { toolTelemetry: input.toolTelemetry } : {}),
+  };
 }
 
 function usageSnapshotFromAssistantUsage(
@@ -1871,9 +1927,17 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
         const itemType = toolItemType(event.data.toolName, event.data.mcpServerName);
-        context.toolMetaById.set(event.data.toolCallId, {
+        const command =
+          itemType === "command_execution"
+            ? commandFromToolArguments(event.data.arguments)
+            : undefined;
+        const toolMeta: ToolMeta = {
           toolName: event.data.toolName,
           itemType,
+          ...(command ? { command } : {}),
+        };
+        context.toolMetaById.set(event.data.toolCallId, {
+          ...toolMeta,
         });
         context.turnIdByProviderItemId.set(event.data.toolCallId, turnId);
         context.startedItemIds.add(itemId);
@@ -1888,8 +1952,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           payload: {
             itemType,
             status: "inProgress",
-            title: event.data.toolName,
-            ...(event.data.arguments ? { data: event.data.arguments } : {}),
+            title: toolLifecycleTitle(toolMeta),
+            data: toolLifecycleData({
+              toolCallId: event.data.toolCallId,
+              toolMeta,
+              ...(event.data.arguments ? { arguments: event.data.arguments } : {}),
+            }),
           },
         });
         return;
@@ -1971,19 +2039,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           payload: {
             itemType: toolMeta?.itemType ?? "dynamic_tool_call",
             status: event.data.success ? "completed" : "failed",
-            title: toolMeta?.toolName ?? "tool",
+            title: toolLifecycleTitle(toolMeta),
             ...(detail ? { detail } : {}),
-            ...(event.data.toolTelemetry || event.data.result || event.data.error
-              ? {
-                  data: {
-                    ...(event.data.result ? { result: event.data.result } : {}),
-                    ...(event.data.error ? { error: event.data.error } : {}),
-                    ...(event.data.toolTelemetry
-                      ? { toolTelemetry: event.data.toolTelemetry }
-                      : {}),
-                  },
-                }
-              : {}),
+            data: toolLifecycleData({
+              toolCallId: event.data.toolCallId,
+              toolMeta,
+              ...(event.data.result ? { result: event.data.result } : {}),
+              ...(event.data.error ? { error: event.data.error } : {}),
+              ...(event.data.toolTelemetry ? { toolTelemetry: event.data.toolTelemetry } : {}),
+            }),
           },
         });
         const toolItem: CopilotToolExecutionItem = {
