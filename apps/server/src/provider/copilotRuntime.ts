@@ -36,6 +36,7 @@ const COPILOT_REASONING_LABELS: Readonly<Record<string, string>> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
+  max: "Max",
 } as const;
 
 const GENERIC_EFFECT_TRY_PROMISE_MESSAGES = new Set([
