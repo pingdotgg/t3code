@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import {
   CopilotClient,
   type CopilotClientOptions,
@@ -5,6 +6,8 @@ import {
   type GetStatusResponse,
   type ModelInfo,
 } from "@github/copilot-sdk";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   CopilotSettings,
   ModelCapabilities,
@@ -36,6 +39,7 @@ const GENERIC_EFFECT_TRY_PROMISE_MESSAGES = new Set([
   "An error occurred in Effect.try",
 ]);
 const COPILOT_CLI_PATH_ENV = "COPILOT_CLI_PATH";
+const COPILOT_CLI_COMMAND = "copilot";
 
 export class CopilotProbePromiseError extends Error {
   override readonly cause: unknown;
@@ -136,6 +140,49 @@ function validateConfiguredCopilotCliPath(input: {
   return resolvedCommandPath;
 }
 
+function candidateDirectoryAncestors(directory: string): ReadonlyArray<string> {
+  const directories: string[] = [];
+  let current = directory;
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    directories.push(current);
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return directories;
+}
+
+export function resolveBundledCopilotCliPath(input: {
+  readonly cwd?: string;
+  readonly env?: Record<string, string | undefined>;
+}): string | undefined {
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const candidateRoots = new Set<string>();
+
+  if (input.cwd) {
+    candidateRoots.add(input.cwd);
+  }
+  candidateRoots.add(process.cwd());
+
+  for (const directory of candidateDirectoryAncestors(moduleDirectory)) {
+    candidateRoots.add(directory);
+  }
+
+  for (const root of candidateRoots) {
+    const candidate = join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
+    const resolved = resolveCommandPath(candidate, input.env ? { env: input.env } : {});
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return undefined;
+}
+
 export function buildCopilotClientOptions(input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
@@ -143,10 +190,6 @@ export function buildCopilotClientOptions(input: {
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
 }): CopilotClientOptions {
-  const cliPath = validateConfiguredCopilotCliPath({
-    settings: input.settings,
-    ...(input.env ? { env: input.env } : {}),
-  });
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
   const env = { ...process.env };
 
@@ -155,6 +198,16 @@ export function buildCopilotClientOptions(input: {
   }
 
   delete env[COPILOT_CLI_PATH_ENV];
+
+  const configuredCliPath = validateConfiguredCopilotCliPath({
+    settings: input.settings,
+    env,
+  });
+  const bundledCliPath =
+    !cliUrl && !configuredCliPath
+      ? resolveBundledCopilotCliPath({ ...(input.cwd ? { cwd: input.cwd } : {}), env })
+      : undefined;
+  const cliPath = configuredCliPath ?? bundledCliPath;
 
   return {
     ...(cliUrl ? { cliUrl } : {}),
