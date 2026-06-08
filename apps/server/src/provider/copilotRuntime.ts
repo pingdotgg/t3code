@@ -126,7 +126,7 @@ function validateConfiguredCopilotCliPath(input: {
 
   const env = {
     ...process.env,
-    ...(input.env ?? {}),
+    ...input.env,
   };
   const resolvedCommandPath = resolveCommandPath(cliPath, { env });
   if (!resolvedCommandPath) {

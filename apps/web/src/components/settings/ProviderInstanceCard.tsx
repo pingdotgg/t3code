@@ -164,22 +164,35 @@ function ProviderAuthLabel(props: {
       .split(" - ")
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
+    const keyedParts: Array<{
+      readonly key: string;
+      readonly part: string;
+      readonly separator: boolean;
+    }> = [];
+    for (const part of parts) {
+      const previous = keyedParts.at(-1);
+      keyedParts.push({
+        key: previous ? `${previous.key} - ${part}` : part,
+        part,
+        separator: keyedParts.length > 0,
+      });
+    }
 
     return (
       <span className="inline-flex min-w-0 items-center gap-1.5">
         {props.separator ? <span aria-hidden>·</span> : null}
-        {parts.map((part, index) => (
-          <span key={`${part}:${index}`} className="inline-flex min-w-0 items-center gap-1.5">
-            {index > 0 ? <span aria-hidden>-</span> : null}
-            {part.startsWith("@") ? (
+        {keyedParts.map((part) => (
+          <span key={part.key} className="inline-flex min-w-0 items-center gap-1.5">
+            {part.separator ? <span aria-hidden>-</span> : null}
+            {part.part.startsWith("@") ? (
               <RedactedSensitiveText
-                value={part}
+                value={part.part}
                 ariaLabel="Toggle account username visibility"
                 revealTooltip="Click to reveal account username"
                 hideTooltip="Click to hide account username"
               />
             ) : (
-              <span>{part}</span>
+              <span>{part.part}</span>
             )}
           </span>
         ))}
