@@ -24,6 +24,7 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
+import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
@@ -52,6 +53,8 @@ const runtimeMock = vi.hoisted(() => {
   const state = {
     startCalls: 0,
     stopCalls: 0,
+    nativeWriteCalls: 0,
+    nativeWriteGate: null as Promise<void> | null,
     createSessionConfigs: [] as SessionConfig[],
     createSessionImpl: null as ((config: SessionConfig) => Promise<CopilotSession>) | null,
     lastSession: makeSession(),
@@ -62,6 +65,8 @@ const runtimeMock = vi.hoisted(() => {
     reset() {
       state.startCalls = 0;
       state.stopCalls = 0;
+      state.nativeWriteCalls = 0;
+      state.nativeWriteGate = null;
       state.createSessionConfigs.length = 0;
       state.lastSession = makeSession();
       state.createSessionImpl = async () => state.lastSession as unknown as CopilotSession;
@@ -102,7 +107,21 @@ beforeEach(() => {
   runtimeMock.reset();
 });
 
-const CopilotAdapterTestLayer = makeCopilotAdapterLive().pipe(
+const nativeEventLogger = {
+  filePath: "memory://copilot-native-events.ndjson",
+  write: vi.fn(() =>
+    Effect.promise(async () => {
+      runtimeMock.state.nativeWriteCalls += 1;
+      const gate = runtimeMock.state.nativeWriteGate;
+      if (gate) {
+        await gate;
+      }
+    }),
+  ),
+  close: vi.fn(() => Effect.succeed(undefined)),
+} satisfies EventNdjsonLogger;
+
+const CopilotAdapterTestLayer = makeCopilotAdapterLive({ nativeEventLogger }).pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-copilot-adapter-test-",
@@ -641,6 +660,93 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("drains queued SDK events before disconnecting on stop", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-stop-drains-event-chain");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "finish while stop is requested",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      let releaseNativeWrite: () => void = () => undefined;
+      runtimeMock.state.nativeWriteGate = new Promise<void>((resolve) => {
+        releaseNativeWrite = resolve;
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-stop-drain-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-stop-drain",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-stop-drain-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+
+      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      for (let attempt = 0; attempt < 20 && runtimeMock.state.nativeWriteCalls === 0; attempt += 1) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const disconnectsBeforeDrain = runtimeMock.state.lastSession.disconnect.mock.calls.length;
+      releaseNativeWrite();
+      yield* Fiber.join(stopFiber);
+
+      for (
+        let attempt = 0;
+        attempt < 20 && !runtimeEvents.some((event) => event.type === "turn.completed");
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(runtimeMock.state.nativeWriteCalls > 0, true);
+      assert.equal(disconnectsBeforeDrain, 0);
+      assert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
+      assert.equal(runtimeMock.state.stopCalls, 1);
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(String(completed.turnId), String(turn.turnId));
+        assert.equal(completed.payload.state, "completed");
+      }
+    }),
+  );
+
   it.effect("completes the turn as failed when Copilot send rejects", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
