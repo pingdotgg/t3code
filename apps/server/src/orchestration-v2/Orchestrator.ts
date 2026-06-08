@@ -1706,18 +1706,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (candidate) => candidate.id === sourceRun.activeAttemptId,
             )?.providerTurnId ??
             undefined);
+      const canResolveForkNatively =
+        pendingForkTransfer !== undefined &&
+        pendingForkTransfer.sourceProvider === modelSelection.instanceId &&
+        sourceProviderThread?.nativeThreadRef?.strength === "strong";
+      const requiresPortableFork = pendingForkTransfer !== undefined && !canResolveForkNatively;
 
       if (pendingForkTransfer !== undefined) {
-        if (
-          pendingForkTransfer.sourceProvider === null ||
-          pendingForkTransfer.sourceProvider !== modelSelection.provider
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Pending fork transfer ${pendingForkTransfer.id} requires portable context for provider ${modelSelection.provider}, which is not implemented yet.`,
-          });
-        }
         if (sourceRun === null || sourceProviderThread === undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -1725,11 +1720,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Pending fork transfer ${pendingForkTransfer.id} has no resolvable source provider thread.`,
           });
         }
-        if (sourceProviderThread.nativeThreadRef?.strength !== "strong") {
+        if (pendingForkTransfer.sourceProvider === null) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Pending fork transfer ${pendingForkTransfer.id} cannot resolve natively without a strong source native thread ref.`,
+            cause: `Pending fork transfer ${pendingForkTransfer.id} has no source provider.`,
           });
         }
       }
@@ -1791,7 +1786,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-      if (pendingForkTransfer !== undefined) {
+      if (canResolveForkNatively) {
         yield* enforceCommandPolicy(command)(
           commandPolicy.ensureNativeFork({
             commandId: command.commandId,
@@ -1804,7 +1799,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const ensuredProviderThread =
-        pendingForkTransfer !== undefined && sourceProviderThread !== undefined
+        canResolveForkNatively && sourceProviderThread !== undefined
           ? yield* session
               .forkThread({
                 sourceProviderThread,
@@ -1860,6 +1855,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         }),
                     ),
                   );
+      const portableForkItems =
+        !requiresPortableFork || sourceProjection === null || sourceRun === null
+          ? []
+          : sourceProjection.turnItems.filter((item) => {
+              if (item.runId === null) {
+                return false;
+              }
+              const itemRun = sourceProjection.runs.find(
+                (candidate) => candidate.id === item.runId,
+              );
+              return itemRun !== undefined && itemRun.ordinal <= sourceRun.ordinal;
+            });
+      if (requiresPortableFork) {
+        yield* enforceCommandPolicy(command)(
+          commandPolicy.ensureContextHandoff({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            provider: modelSelection.instanceId,
+            capabilities: session.providerSession.capabilities,
+            strategy: "full_thread_summary",
+          }),
+        );
+      }
+      const portableForkHandoff =
+        !requiresPortableFork ||
+        pendingForkTransfer === undefined ||
+        sourceProjection === null ||
+        sourceRun === null
+          ? null
+          : yield* contextHandoffService
+              .prepareProviderHandoff({
+                threadId: command.threadId,
+                targetRunId: runId,
+                transferId: pendingForkTransfer.id,
+                fromProviderThreadIds:
+                  sourceProviderThread === undefined ? [] : [sourceProviderThread.id],
+                toProviderThreadId: ensuredProviderThread.id,
+                fromProvider: sourceRun.provider,
+                toProvider: modelSelection.instanceId,
+                coveredRunOrdinals: visibleDeltaRunOrdinals(sourceProjection, portableForkItems),
+                strategy: "full_thread_summary",
+                items: portableForkItems,
+                createdAt: now,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+                ),
+              );
       const providerSwitchCoveredRuns =
         !isProviderSwitch || latestCompletedRun === undefined
           ? []
@@ -1942,10 +1991,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "active",
         firstRunOrdinal: ensuredProviderThread.firstRunOrdinal ?? ordinal,
         lastRunOrdinal: ordinal,
-        handoffIds:
-          providerSwitchHandoff === null
-            ? ensuredProviderThread.handoffIds
-            : [...ensuredProviderThread.handoffIds, providerSwitchHandoff.id],
+        handoffIds: [
+          ...ensuredProviderThread.handoffIds,
+          ...[portableForkHandoff, providerSwitchHandoff].flatMap((handoff) =>
+            handoff === null ? [] : [handoff.id],
+          ),
+        ],
         updatedAt: now,
       };
 
@@ -2082,7 +2133,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: now,
         completedAt: null,
         checkpointId: null,
-        contextHandoffId: providerSwitchHandoff?.id ?? mergeBackHandoff?.id ?? null,
+        contextHandoffId:
+          portableForkHandoff?.id ?? providerSwitchHandoff?.id ?? mergeBackHandoff?.id ?? null,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -2147,13 +2199,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.text,
         attachments: command.attachments,
       };
+      const activeHandoff = portableForkHandoff ?? providerSwitchHandoff ?? mergeBackHandoff;
       const handoffTurnItem: OrchestrationV2TurnItem | null =
-        providerSwitchHandoff === null && mergeBackHandoff === null
+        activeHandoff === null
           ? null
           : {
               id: idAllocator.derive.runSignalTurnItem({
                 runId,
-                signal: `context-handoff:${(providerSwitchHandoff ?? mergeBackHandoff)!.id}`,
+                signal: `context-handoff:${activeHandoff.id}`,
               }),
               threadId: command.threadId,
               runId,
@@ -2164,31 +2217,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               parentItemId: null,
               ordinal: ordinal * 100 - 1,
               status: "completed",
-              title: providerSwitchHandoff === null ? "Merge-back context" : "Provider handoff",
+              title:
+                portableForkHandoff !== null
+                  ? "Fork context"
+                  : providerSwitchHandoff !== null
+                    ? "Provider handoff"
+                    : "Merge-back context",
               startedAt: now,
               completedAt: now,
               updatedAt: now,
               type: "handoff",
-              contextHandoffId: (providerSwitchHandoff ?? mergeBackHandoff)!.id,
-              fromProviderThreadIds: (providerSwitchHandoff ?? mergeBackHandoff)!
-                .fromProviderThreadIds,
-              toProviderThreadId: (providerSwitchHandoff ?? mergeBackHandoff)!.toProviderThreadId,
+              contextHandoffId: activeHandoff.id,
+              fromProviderThreadIds: activeHandoff.fromProviderThreadIds,
+              toProviderThreadId: activeHandoff.toProviderThreadId,
               fromProviders:
-                providerSwitchHandoff === null
-                  ? mergeBackSourceRun === null
+                portableForkHandoff !== null
+                  ? sourceRun === null
                     ? []
-                    : [mergeBackSourceRun.provider]
-                  : Array.from(new Set(providerSwitchCoveredRuns.map((run) => run.provider))),
+                    : [sourceRun.provider]
+                  : providerSwitchHandoff === null
+                    ? mergeBackSourceRun === null
+                      ? []
+                      : [mergeBackSourceRun.provider]
+                    : Array.from(new Set(providerSwitchCoveredRuns.map((run) => run.provider))),
               toProvider: modelSelection.instanceId,
-              strategy: (providerSwitchHandoff ?? mergeBackHandoff)!.strategy,
-              summary: (providerSwitchHandoff ?? mergeBackHandoff)!.summaryText,
+              strategy: activeHandoff.strategy,
+              summary: activeHandoff.summaryText,
             };
       const nativeForkResolution: OrchestrationV2ContextTransferResolution | null =
-        pendingForkTransfer === undefined || providerThread.nativeThreadRef === null
+        !canResolveForkNatively || providerThread.nativeThreadRef === null
           ? null
           : {
               strategy: "native_fork",
               providerThreadRef: providerThread.nativeThreadRef,
+            };
+      const portableForkResolution: OrchestrationV2ContextTransferResolution | null =
+        pendingForkTransfer === undefined || portableForkHandoff === null
+          ? null
+          : {
+              strategy: "portable_context",
+              contextHandoffId: portableForkHandoff.id,
             };
       const mergeBackResolution: OrchestrationV2ContextTransferResolution | null =
         pendingMergeBackTransfer === undefined || mergeBackHandoff === null
@@ -2216,6 +2284,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
+      if (pendingForkTransfer !== undefined && portableForkResolution !== null) {
+        yield* emitEvent({
+          type: "context-transfer.updated",
+          threadId: command.threadId,
+          runId,
+          provider: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...pendingForkTransfer,
+            targetProvider: modelSelection.instanceId,
+            targetRunId: runId,
+            status: "resolved_portable",
+            resolution: portableForkResolution,
+            error: null,
+            updatedAt: now,
+          },
+        });
+      }
       yield* emitEvent({
         type: "provider-session.updated",
         threadId: command.threadId,
@@ -2230,6 +2316,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: providerThread,
       });
+      if (portableForkHandoff !== null) {
+        yield* emitEvent({
+          type: "context-handoff.updated",
+          threadId: command.threadId,
+          runId,
+          provider: modelSelection.instanceId,
+          occurredAt: now,
+          payload: portableForkHandoff,
+        });
+      }
       if (
         providerSwitchTransferId !== null &&
         providerSwitchHandoff !== null &&
@@ -2408,7 +2504,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: turnItem,
       });
-      if (pendingForkTransfer !== undefined && nativeForkResolution !== null) {
+      const forkResolution = nativeForkResolution ?? portableForkResolution;
+      if (pendingForkTransfer !== undefined && forkResolution !== null) {
         yield* emitEvent({
           type: "context-transfer.updated",
           threadId: command.threadId,
@@ -2420,7 +2517,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             targetProvider: modelSelection.provider,
             targetRunId: runId,
             status: "consumed",
-            resolution: nativeForkResolution,
+            resolution: forkResolution,
             error: null,
             updatedAt: now,
             consumedAt: now,
@@ -2429,10 +2526,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const providerMessageText =
-        providerSwitchHandoff === null && mergeBackHandoff === null
+        activeHandoff === null
           ? command.text
           : providerMessageWithContextHandoff({
-              handoff: (providerSwitchHandoff ?? mergeBackHandoff)!,
+              handoff: activeHandoff,
               userText: command.text,
             });
       yield* runExecution
