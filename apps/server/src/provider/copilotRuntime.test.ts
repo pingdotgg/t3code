@@ -39,7 +39,7 @@ describe("buildCopilotClientOptions", () => {
             longContext: { contextMax: 922_000 },
           },
         },
-        supportedReasoningEfforts: ["none", "low", "medium", "high"],
+        supportedReasoningEfforts: ["none", "low", "medium", "high", "max"],
         defaultReasoningEffort: "medium",
       });
 
@@ -53,6 +53,7 @@ describe("buildCopilotClientOptions", () => {
             { id: "low", label: "Low" },
             { id: "medium", label: "Medium", isDefault: true },
             { id: "high", label: "High" },
+            { id: "max", label: "Max" },
           ],
           currentValue: "medium",
         },
