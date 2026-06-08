@@ -479,62 +479,86 @@ function buildMessageSlice(thread: Thread): {
   ids: MessageId[];
   byId: Record<MessageId, ChatMessage>;
 } {
-  return {
-    ids: thread.messages.map((message) => message.id),
-    byId: Object.fromEntries(
-      thread.messages.map((message) => [message.id, message] as const),
-    ) as Record<MessageId, ChatMessage>,
-  };
+  const ids: MessageId[] = [];
+  const byId = {} as Record<MessageId, ChatMessage>;
+
+  for (const message of thread.messages) {
+    ids.push(message.id);
+    byId[message.id] = message;
+  }
+
+  return { ids, byId };
 }
 
 function buildActivitySlice(thread: Thread): {
   ids: string[];
   byId: Record<string, OrchestrationThreadActivity>;
 } {
-  return {
-    ids: thread.activities.map((activity) => activity.id),
-    byId: Object.fromEntries(
-      thread.activities.map((activity) => [activity.id, activity] as const),
-    ) as Record<string, OrchestrationThreadActivity>,
-  };
+  const ids: string[] = [];
+  const byId: Record<string, OrchestrationThreadActivity> = {};
+
+  for (const activity of thread.activities) {
+    ids.push(activity.id);
+    byId[activity.id] = activity;
+  }
+
+  return { ids, byId };
 }
 
 function buildProposedPlanSlice(thread: Thread): {
   ids: string[];
   byId: Record<string, ProposedPlan>;
 } {
-  return {
-    ids: thread.proposedPlans.map((plan) => plan.id),
-    byId: Object.fromEntries(
-      thread.proposedPlans.map((plan) => [plan.id, plan] as const),
-    ) as Record<string, ProposedPlan>,
-  };
+  const ids: string[] = [];
+  const byId: Record<string, ProposedPlan> = {};
+
+  for (const plan of thread.proposedPlans) {
+    ids.push(plan.id);
+    byId[plan.id] = plan;
+  }
+
+  return { ids, byId };
 }
 
 function buildTurnDiffSlice(thread: Thread): {
   ids: TurnId[];
   byId: Record<TurnId, TurnDiffSummary>;
 } {
-  return {
-    ids: thread.turnDiffSummaries.map((summary) => summary.turnId),
-    byId: Object.fromEntries(
-      thread.turnDiffSummaries.map((summary) => [summary.turnId, summary] as const),
-    ) as Record<TurnId, TurnDiffSummary>,
-  };
+  const ids: TurnId[] = [];
+  const byId = {} as Record<TurnId, TurnDiffSummary>;
+
+  for (const summary of thread.turnDiffSummaries) {
+    ids.push(summary.turnId);
+    byId[summary.turnId] = summary;
+  }
+
+  return { ids, byId };
 }
 
 function getProjects(state: EnvironmentState): Project[] {
-  return state.projectIds.flatMap((projectId) => {
+  const projects: Project[] = [];
+
+  for (const projectId of state.projectIds) {
     const project = state.projectById[projectId];
-    return project ? [project] : [];
-  });
+    if (project) {
+      projects.push(project);
+    }
+  }
+
+  return projects;
 }
 
 function getThreads(state: EnvironmentState): Thread[] {
-  return state.threadIds.flatMap((threadId) => {
+  const threads: Thread[] = [];
+
+  for (const threadId of state.threadIds) {
     const thread = getThreadFromEnvironmentState(state, threadId);
-    return thread ? [thread] : [];
-  });
+    if (thread) {
+      threads.push(thread);
+    }
+  }
+
+  return threads;
 }
 
 /**
