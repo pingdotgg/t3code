@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { authSnapshotFromCopilotSdk, buildCopilotClientOptions } from "./copilotRuntime.ts";
+import {
+  authSnapshotFromCopilotSdk,
+  buildCopilotClientOptions,
+  resolveBundledCopilotCliPath,
+} from "./copilotRuntime.ts";
 
 describe("buildCopilotClientOptions", () => {
-  it("strips inherited COPILOT_CLI_PATH so the SDK uses the bundled CLI by default", () => {
+  it("strips inherited COPILOT_CLI_PATH and uses the local Copilot CLI shim by default", () => {
     const options = buildCopilotClientOptions({
       settings: {
         enabled: true,
@@ -22,11 +26,20 @@ describe("buildCopilotClientOptions", () => {
       logLevel: "error",
     });
 
-    assert.equal(options.cliPath, undefined);
+    assert.ok(options.cliPath?.includes("node_modules/.bin/copilot"));
     assert.equal(options.cwd, "/tmp/project");
     assert.equal(options.logLevel, "error");
     assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
     assert.equal(options.env?.GITHUB_TOKEN, "github-token");
+  });
+
+  it("resolves the bundled Copilot CLI shim without relying on PATH", () => {
+    const cliPath = resolveBundledCopilotCliPath({
+      cwd: "/tmp/project",
+      env: { PATH: "/usr/bin" },
+    });
+
+    assert.ok(cliPath?.includes("node_modules/.bin/copilot"));
   });
 
   it("prefers the configured binary path over any inherited CLI path override", () => {
