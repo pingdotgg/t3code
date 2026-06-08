@@ -44,6 +44,7 @@ const returnPrompt = "Respond with exactly: codex after return";
 
 interface CapturedTurn {
   readonly provider: ProviderKind;
+  readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly text: string;
 }
@@ -120,6 +121,7 @@ function makeTestAdapter(input: {
                 ...turns,
                 {
                   provider: input.provider,
+                  threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
                   text: turnInput.message.text,
                 },
@@ -204,10 +206,12 @@ function makeTestAdapter(input: {
   };
 }
 
-const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* () {
+const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
+  targetThreadId: ThreadId,
+) {
   const orchestrator = yield* OrchestratorV2;
   for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const projection = yield* orchestrator.getThreadProjection(targetThreadId);
     if (
       projection.runs.every(
         (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
@@ -296,11 +300,11 @@ describe("orchestration v2 provider switching", () => {
           const orchestrator = yield* OrchestratorV2;
           yield* orchestrator.dispatch(commands[0]!);
           yield* orchestrator.dispatch(commands[1]!);
-          yield* waitForIdle();
+          yield* waitForIdle(threadId);
           yield* orchestrator.dispatch(commands[2]!);
-          yield* waitForIdle();
+          yield* waitForIdle(threadId);
           yield* orchestrator.dispatch(commands[3]!);
-          return yield* waitForIdle();
+          return yield* waitForIdle(threadId);
         }).pipe(
           Effect.provide(
             makeOrchestratorV2ReplayLayerWithRegistry(
@@ -375,6 +379,144 @@ describe("orchestration v2 provider switching", () => {
       assert.include(turns[2]?.text ?? "", returnPrompt);
       assert.notInclude(turns[2]?.text ?? "", "codex before switch");
       assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
+    } finally {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.remove(cwd, { recursive: true, force: true });
+        }).pipe(Effect.provide(NodeServices.layer)),
+      );
+    }
+  });
+
+  it("resolves a Claude fork into portable Codex context on first dispatch", async () => {
+    const sourceThreadId = ThreadId.make("thread:cross-provider-fork:source");
+    const targetThreadId = ThreadId.make("thread:cross-provider-fork:target");
+    const sourcePrompt = "Remember that the release color is violet.";
+    const targetPrompt = "What release color did we choose?";
+    const cwd = await makeCheckpointWorkspace("cross-provider-fork");
+    const capturedTurns = await Effect.runPromise(Ref.make<ReadonlyArray<CapturedTurn>>([]));
+    const registryLayer = makeProviderAdapterRegistryLayer([
+      makeTestAdapter({
+        instanceId: ProviderInstanceId.make("codex"),
+        provider: "codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "The release color is violet." },
+        capturedTurns,
+      }),
+      makeTestAdapter({
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        provider: "claudeAgent",
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "I will remember violet." },
+        capturedTurns,
+      }),
+    ]);
+    const commands = [
+      {
+        type: "thread.create",
+        commandId: CommandId.make("command:cross-provider-fork:create"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Cross-provider fork source",
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-fork:source"),
+        threadId: sourceThreadId,
+        messageId: MessageId.make("message:cross-provider-fork:source"),
+        text: sourcePrompt,
+        attachments: [],
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "thread.fork",
+        commandId: CommandId.make("command:cross-provider-fork:fork"),
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "latest_stable" },
+        title: "Cross-provider fork target",
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-fork:target"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("message:cross-provider-fork:target"),
+        text: targetPrompt,
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+    ] satisfies ReadonlyArray<OrchestrationV2Command>;
+
+    try {
+      const targetProjection = await Effect.runPromise(
+        Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          yield* orchestrator.dispatch(commands[0]!);
+          yield* orchestrator.dispatch(commands[1]!);
+          yield* waitForIdle(sourceThreadId);
+          yield* orchestrator.dispatch(commands[2]!);
+          yield* orchestrator.dispatch(commands[3]!);
+          return yield* waitForIdle(targetThreadId);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "cross-provider-fork",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        ),
+      );
+      const turns = await Effect.runPromise(Ref.get(capturedTurns));
+      const targetTurn = turns.find((turn) => turn.threadId === targetThreadId);
+
+      assert.deepEqual(
+        targetProjection.runs.map((run) => [run.provider, run.status]),
+        [["codex", "completed"]],
+      );
+      assert.lengthOf(targetProjection.providerThreads, 1);
+      assert.equal(targetProjection.providerThreads[0]?.provider, "codex");
+      assert.isNull(targetProjection.providerThreads[0]?.forkedFrom);
+      assert.deepEqual(
+        targetProjection.contextTransfers.map((transfer) => [
+          transfer.type,
+          transfer.status,
+          transfer.resolution?.strategy,
+        ]),
+        [["fork", "consumed", "portable_context"]],
+      );
+      assert.deepEqual(
+        targetProjection.contextHandoffs.map((handoff) => handoff.strategy),
+        ["full_thread_summary"],
+      );
+      assert.equal(
+        targetProjection.runs[0]?.contextHandoffId,
+        targetProjection.contextHandoffs[0]?.id,
+      );
+      assert.include(targetTurn?.text ?? "", "Context handoff (full_thread_summary):");
+      assert.include(targetTurn?.text ?? "", sourcePrompt);
+      assert.include(targetTurn?.text ?? "", "I will remember violet.");
+      assert.include(targetTurn?.text ?? "", targetPrompt);
     } finally {
       await Effect.runPromise(
         Effect.gen(function* () {

@@ -270,10 +270,12 @@ The first backend slice implements lazy same-provider fork resolution:
 - `thread.fork` creates a target app thread with fork lineage and a pending `ContextTransfer`.
 - `thread.fork` does not create a provider session, provider thread, provider turn, or portable context artifact.
 - The first dispatch on the fork resolves the pending transfer. For Codex-to-Codex forks with strong native refs and `thread/fork` support, the orchestrator uses the provider-native fork path and records `resolved_native` then `consumed`.
-- Cross-provider or otherwise portable transfers fail explicitly before provider side effects. Portable `ContextHandoff` materialization is still future work.
+- Cross-provider or otherwise non-native fork transfers materialize a portable `ContextHandoff`
+  lazily on the target thread's first dispatch.
 - Active source runs are rejected for explicit run/checkpoint forks; `latest_stable` resolves to the latest completed checkpointed run.
 
-This keeps the current runtime aligned with the architecture without shipping compatibility shims or placeholder prompt concatenation for context handoff.
+This keeps the runtime aligned with the architecture while making portable context explicit and
+auditable through `ContextTransfer` and `ContextHandoff` records.
 
 ## Relationship To Provider Switching
 
