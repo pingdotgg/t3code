@@ -1432,7 +1432,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const syncSessionMode = (
     context: CopilotSessionContext,
     mode: CopilotMode,
-  ): Effect.Effect<void, ProviderAdapterRequestError> =>
+  ): Effect.Effect<void> =>
     copilotSdk.setMode(context, mode).pipe(
       Effect.flatMap(() =>
         emit({
@@ -1444,6 +1444,18 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             config: {
               mode,
             },
+          },
+        }),
+      ),
+      Effect.catch((cause) =>
+        emit({
+          ...createBaseEvent({
+            threadId: context.threadId,
+          }),
+          type: "runtime.warning",
+          payload: {
+            message: "Failed to synchronize Copilot mode with the requested runtime mode.",
+            detail: cause,
           },
         }),
       ),
@@ -2388,19 +2400,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         requestedCopilotMode({
           runtimeMode: input.runtimeMode,
         }),
-      ).pipe(
-        Effect.catch((cause) =>
-          emit({
-            ...createBaseEvent({
-              threadId: input.threadId,
-            }),
-            type: "runtime.warning",
-            payload: {
-              message: "Failed to synchronize Copilot mode with the requested runtime mode.",
-              detail: cause,
-            },
-          }),
-        ),
       );
 
       for (const event of earlyEvents) {
