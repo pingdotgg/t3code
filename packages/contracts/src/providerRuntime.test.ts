@@ -130,6 +130,27 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.answers.sandbox_mode).toBe("workspace-write");
   });
 
+  it("accepts Pi RPC raw event source subcategories", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "runtime.warning",
+      eventId: "event-pi-raw-1",
+      provider: "pi",
+      providerInstanceId: "pi",
+      createdAt: "2026-02-28T00:00:02.000Z",
+      threadId: "thread-2",
+      raw: {
+        source: "pi.rpc.response",
+        method: "get_state",
+        payload: { type: "response", command: "get_state", success: true },
+      },
+      payload: {
+        message: "Pi RPC state refreshed.",
+      },
+    });
+
+    expect(parsed.raw?.source).toBe("pi.rpc.response");
+  });
+
   it("rejects legacy message.delta type", () => {
     expect(() =>
       decodeRuntimeEvent({

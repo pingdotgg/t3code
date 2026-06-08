@@ -131,6 +131,7 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
@@ -202,4 +203,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [PI_DRIVER_KIND]: "Pi",
 };

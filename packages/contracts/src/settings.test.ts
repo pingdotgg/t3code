@@ -64,6 +64,44 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings.providers.pi", () => {
+  it("defaults Pi legacy settings to disabled without requiring an on-disk key", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.providers.pi).toEqual({
+      enabled: false,
+      binaryPath: "pi",
+      customModels: [],
+    });
+  });
+
+  it("decodes empty and enabled Pi provider settings", () => {
+    expect(
+      decodeServerSettings({
+        providers: {
+          pi: {},
+        },
+      }).providers.pi,
+    ).toEqual({
+      enabled: false,
+      binaryPath: "pi",
+      customModels: [],
+    });
+
+    expect(
+      decodeServerSettings({
+        providers: {
+          pi: { enabled: true },
+        },
+      }).providers.pi,
+    ).toEqual({
+      enabled: true,
+      binaryPath: "pi",
+      customModels: [],
+    });
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});
@@ -107,6 +145,9 @@ describe("ServerSettingsPatch string normalization", () => {
           binaryPath: "  /opt/homebrew/bin/codex  ",
           homePath: "  ~/.codex  ",
         },
+        pi: {
+          binaryPath: "  /usr/local/bin/pi  ",
+        },
       },
       providerInstances: {
         codex_personal: {
@@ -122,6 +163,7 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(patch.providers?.codex?.homePath).toBe("~/.codex");
+    expect(patch.providers?.pi?.binaryPath).toBe("/usr/local/bin/pi");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
       "codex",
     );
@@ -144,10 +186,15 @@ describe("ServerSettingsPatch string normalization", () => {
           ...defaultSettings.providers.codex,
           binaryPath: "  /opt/homebrew/bin/codex  ",
         },
+        pi: {
+          ...defaultSettings.providers.pi,
+          binaryPath: "  /usr/local/bin/pi  ",
+        },
       },
     });
 
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
+    expect(encoded.providers?.pi?.binaryPath).toBe("/usr/local/bin/pi");
   });
 });

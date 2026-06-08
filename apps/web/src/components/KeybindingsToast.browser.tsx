@@ -165,6 +165,11 @@ function createBaseServerConfig(): ServerConfig {
           serverPassword: "",
           customModels: [],
         },
+        pi: {
+          enabled: false,
+          binaryPath: "pi",
+          customModels: [],
+        },
       },
     },
   };
