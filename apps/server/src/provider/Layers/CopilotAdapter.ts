@@ -2490,6 +2490,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
 
       context.stopped = true;
+      yield* Effect.promise(() => context.eventChain).pipe(
+        Effect.mapError((cause) =>
+          processError(
+            threadId,
+            detailFromCause(cause, "Failed to process Copilot session events."),
+            cause,
+          ),
+        ),
+      );
       yield* settlePendingPermissionHandlers(context);
       yield* settlePendingUserInputs(context);
       yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
