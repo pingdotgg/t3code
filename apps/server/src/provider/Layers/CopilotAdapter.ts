@@ -150,8 +150,10 @@ interface CopilotSessionContext {
   readonly toolMetaById: Map<string, ToolMeta>;
   readonly turnIdByProviderItemId: Map<string, TurnId>;
   readonly emittedTextByItemId: Map<string, string>;
+  readonly assistantItemIdByTurnId: Map<TurnId, string>;
   readonly pendingTaskCompletionTextByTurnId: Map<TurnId, string>;
   readonly turnIdsWithAssistantText: Set<TurnId>;
+  readonly turnDiffEmittedTurnIds: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   activeTurnId: TurnId | undefined;
   activeSdkTurnId: string | undefined;
@@ -281,6 +283,32 @@ function toolOnlyCompletionText(
     return "Done. I completed the requested task.";
   }
   return "Done. I completed the requested tool work.";
+}
+
+function turnHasSuccessfulFileChange(context: CopilotSessionContext, turnId: TurnId): boolean {
+  const turn = context.turns.find((entry) => entry.id === turnId);
+  return (
+    turn?.items.some(
+      (item): item is CopilotToolExecutionItem =>
+        isCopilotToolExecutionItem(item) && item.success && item.itemType === "file_change",
+    ) ?? false
+  );
+}
+
+function assistantItemIdsForContext(context: CopilotSessionContext): Map<TurnId, string> {
+  const mutable = context as CopilotSessionContext & {
+    assistantItemIdByTurnId?: Map<TurnId, string>;
+  };
+  mutable.assistantItemIdByTurnId ??= new Map();
+  return mutable.assistantItemIdByTurnId;
+}
+
+function turnDiffEmittedTurnIdsForContext(context: CopilotSessionContext): Set<TurnId> {
+  const mutable = context as CopilotSessionContext & {
+    turnDiffEmittedTurnIds?: Set<TurnId>;
+  };
+  mutable.turnDiffEmittedTurnIds ??= new Set();
+  return mutable.turnDiffEmittedTurnIds;
 }
 
 function processError(
@@ -1066,6 +1094,31 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
   };
 
+  const emitTurnDiffUpdatedForFileChanges = async (
+    context: CopilotSessionContext,
+    turnId: TurnId,
+    raw: SessionEvent,
+  ) => {
+    const turnDiffEmittedTurnIds = turnDiffEmittedTurnIdsForContext(context);
+    if (turnDiffEmittedTurnIds.has(turnId) || !turnHasSuccessfulFileChange(context, turnId)) {
+      return;
+    }
+
+    turnDiffEmittedTurnIds.add(turnId);
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        turnId,
+        itemId: assistantItemIdsForContext(context).get(turnId),
+        raw,
+      }),
+      type: "turn.diff.updated",
+      payload: {
+        unifiedDiff: "",
+      },
+    });
+  };
+
   const emitTextDelta = async (input: {
     readonly context: CopilotSessionContext;
     readonly turnId: TurnId;
@@ -1100,6 +1153,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
     if (input.itemType === "assistant_message" && input.streamKind === "assistant_text") {
       input.context.turnIdsWithAssistantText.add(input.turnId);
+      assistantItemIdsForContext(input.context).set(input.turnId, input.itemId);
     }
     await emitAsync({
       ...createBaseEvent({
@@ -1147,6 +1201,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       messageId: itemId,
       content,
     });
+    assistantItemIdsForContext(context).set(turnId, itemId);
     context.turnIdsWithAssistantText.add(turnId);
   };
 
@@ -1180,6 +1235,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       messageId: itemId,
       content,
     });
+    assistantItemIdsForContext(context).set(turnId, itemId);
     context.turnIdsWithAssistantText.add(turnId);
   };
 
@@ -1578,19 +1634,16 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "session.idle": {
         if (context.activeTurnId) {
+          const turnId = context.activeTurnId;
           if (!event.data.aborted) {
-            await emitPendingTaskCompletionAsAssistantMessage(context, context.activeTurnId, event);
-            await emitToolOnlyCompletionAsAssistantMessage(context, context.activeTurnId, event);
+            await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
+            await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
+            await emitTurnDiffUpdatedForFileChanges(context, turnId, event);
           }
-          await emitTurnCompleted(
-            context,
-            context.activeTurnId,
-            event.data.aborted ? "cancelled" : "completed",
-            {
-              raw: event,
-              stopReason: event.data.aborted ? "aborted" : null,
-            },
-          );
+          await emitTurnCompleted(context, turnId, event.data.aborted ? "cancelled" : "completed", {
+            raw: event,
+            stopReason: event.data.aborted ? "aborted" : null,
+          });
         }
         updateProviderSession(context, {
           status: context.stopped ? "closed" : "ready",
@@ -1784,6 +1837,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
+        assistantItemIdsForContext(context).set(turnId, itemId);
         await emitTextDelta({
           context,
           turnId,
@@ -1806,6 +1860,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
+        assistantItemIdsForContext(context).set(turnId, itemId);
         await emitTextDelta({
           context,
           turnId,
@@ -1867,6 +1922,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
         await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
+        await emitTurnDiffUpdatedForFileChanges(context, turnId, event);
         await emitTurnCompleted(context, turnId, "completed", {
           raw: event,
           stopReason: null,
@@ -2311,8 +2367,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         toolMetaById: new Map(),
         turnIdByProviderItemId: new Map(),
         emittedTextByItemId: new Map(),
+        assistantItemIdByTurnId: new Map(),
         pendingTaskCompletionTextByTurnId: new Map(),
         turnIdsWithAssistantText: new Set(),
+        turnDiffEmittedTurnIds: new Set(),
         startedItemIds: new Set(),
         activeTurnId: undefined,
         activeSdkTurnId: undefined,
