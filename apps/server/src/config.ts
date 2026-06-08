@@ -64,6 +64,10 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly host: string | undefined;
   readonly cwd: string;
   readonly baseDir: string;
+  // Optional friendly instance name from `t3 start --instance <name>` (multi-instance, contract C2).
+  // Optional so existing `satisfies ServerConfigShape` literals keep compiling; left `undefined`
+  // when the flag is absent so strict `toEqual` config assertions are unaffected.
+  readonly instanceName?: string;
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;
   readonly noBrowser: boolean;

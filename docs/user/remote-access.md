@@ -2,6 +2,13 @@
 
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
+> **Not what you are looking for?**
+> If you want to drive a Claude session from the **Claude iPhone or web app**, that is
+> [Remote Control](./remote-control.md) — a separate feature that launches the `claude` CLI in
+> remote-control mode. Remote Access and Remote Control are unrelated despite the similar names:
+> Remote Access is about connecting *another device to your T3 server*; Remote Control is about
+> using the Claude app as a control interface for a local `claude` process.
+
 ## Recommended Setup
 
 Use a trusted private network that meshes your devices together, such as a tailnet.

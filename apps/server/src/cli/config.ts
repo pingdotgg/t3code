@@ -42,6 +42,15 @@ export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription("Base directory path (equivalent to T3CODE_HOME)."),
   Flag.optional,
 );
+// Multi-instance convenience (contract C2): a friendly name that maps to a deterministic
+// per-instance base directory under the well-known root, so isolated instances need no manual
+// `--base-dir`. An explicit `--base-dir`/`T3CODE_HOME` still wins (see `resolveServerConfig`).
+export const instanceFlag = Flag.string("instance").pipe(
+  Flag.withDescription(
+    "Named instance. Derives an isolated per-instance base directory (overridden by --base-dir/T3CODE_HOME).",
+  ),
+  Flag.optional,
+);
 export const devUrlFlag = Flag.string("dev-url").pipe(
   Flag.withSchema(Schema.URLFromString),
   Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
@@ -143,6 +152,7 @@ export interface CliServerFlags {
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
   readonly baseDir: Option.Option<string>;
+  readonly instance?: Option.Option<string>;
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
@@ -172,6 +182,7 @@ export const sharedServerCommandFlags = {
   port: portFlag,
   host: hostFlag,
   baseDir: baseDirFlag,
+  instance: instanceFlag,
   cwd: Argument.string("cwd").pipe(
     Argument.withDescription(
       "Working directory for provider sessions (defaults to the current directory).",
@@ -204,6 +215,30 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   return parsePersistedServerObservabilitySettings(raw);
 });
 
+/**
+ * Sanitize an instance name into a deterministic, filesystem-safe directory segment.
+ * Lowercases, collapses any run of disallowed characters to a single `-`, and trims
+ * leading/trailing separators. Empty/whitespace-only input is treated as absent.
+ */
+const sanitizeInstanceName = (name: string): string | undefined => {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-_.]+|[-_.]+$/g, "");
+  return slug.length > 0 ? slug : undefined;
+};
+
+/**
+ * Deterministic per-instance base directory under the well-known root (contract C2):
+ * `<defaultBaseRoot>/instances-data/<sanitized-name>`.
+ */
+export const deriveInstanceBaseDir = (
+  defaultBaseRoot: string,
+  instanceSlug: string,
+  join: (...parts: ReadonlyArray<string>) => string,
+): string => join(defaultBaseRoot, "instances-data", instanceSlug);
+
 export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
@@ -222,6 +257,7 @@ export const resolveServerConfig = (
       port: flags.port ?? Option.none(),
       host: flags.host ?? Option.none(),
       baseDir: flags.baseDir ?? Option.none(),
+      instance: flags.instance ?? Option.none(),
       cwd: flags.cwd ?? Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: flags.noBrowser ?? Option.none(),
@@ -267,15 +303,30 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
       () => undefined,
     );
-    const baseDir = yield* resolveBaseDir(
-      Option.getOrUndefined(
-        resolveOptionPrecedence(
-          normalizedFlags.baseDir,
-          Option.fromUndefinedOr(env.t3Home),
-          Option.fromUndefinedOr(bootstrap?.t3Home),
-        ),
-      ),
+    // Explicit base directory precedence is preserved exactly: `--base-dir` > `T3CODE_HOME`
+    // > bootstrap `t3Home`. `--instance <name>` only influences the base directory when NO
+    // explicit override is present (contract C2), so explicit base-dir/env always wins.
+    const explicitBaseDir = resolveOptionPrecedence(
+      normalizedFlags.baseDir,
+      Option.fromUndefinedOr(env.t3Home),
+      Option.fromUndefinedOr(bootstrap?.t3Home),
     );
+    const instanceName = Option.getOrUndefined(normalizedFlags.instance);
+    const instanceSlug =
+      instanceName !== undefined ? sanitizeInstanceName(instanceName) : undefined;
+    const baseDir = yield* Option.match(explicitBaseDir, {
+      onSome: (value) => resolveBaseDir(value),
+      onNone: () =>
+        instanceSlug !== undefined
+          ? resolveBaseDir(undefined).pipe(
+              Effect.map((defaultBaseRoot) =>
+                deriveInstanceBaseDir(defaultBaseRoot, instanceSlug, (...parts) =>
+                  path.join(...parts),
+                ),
+              ),
+            )
+          : resolveBaseDir(undefined),
+    });
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
@@ -374,6 +425,9 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      // Only present when `--instance` was supplied (omitted otherwise so existing strict
+      // config equality assertions are unaffected). server.ts reads this to announce the instance.
+      ...(instanceName !== undefined ? { instanceName } : {}),
     };
 
     return config;
@@ -389,6 +443,7 @@ export const resolveCliAuthConfig = (
       port: Option.none(),
       host: Option.none(),
       baseDir: flags.baseDir,
+      instance: Option.none(),
       cwd: Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: Option.none(),

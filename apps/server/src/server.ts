@@ -1,4 +1,6 @@
 import { EnvironmentHttpApi } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
@@ -82,6 +84,11 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import {
+  type InstanceRecord,
+  make as makeInstanceRegistry,
+  resolveRegistryDir,
+} from "./instances/InstanceRegistry.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -367,6 +374,62 @@ export const makeServerLayer = Layer.unwrap(
         () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
       ),
     );
+    // Multi-instance discovery (contract C1): announce this instance into the shared registry on
+    // startup and withdraw on shutdown. The registry dir is the well-known `~/.t3/instances` (shared
+    // by every instance regardless of its own baseDir). Failure-isolated: registry I/O must never be
+    // able to break server startup/shutdown, so any error is caught and logged.
+    const instanceRegistryLayer = Layer.effectDiscard(
+      Effect.acquireRelease(
+        Effect.gen(function* () {
+          const server = yield* HttpServer.HttpServer;
+          const address = server.address;
+          if (typeof address === "string" || !("port" in address)) {
+            return undefined;
+          }
+
+          const registry = yield* makeInstanceRegistry(yield* resolveRegistryDir);
+          const crypto = yield* Crypto.Crypto;
+          const instanceId = yield* crypto.randomUUIDv4;
+          const now = yield* DateTime.now;
+          const record: InstanceRecord = {
+            instanceId,
+            name: config.instanceName ?? null,
+            pid: process.pid,
+            port: address.port,
+            host: config.host ?? "127.0.0.1",
+            baseDir: config.baseDir,
+            cwd: config.cwd,
+            startedAt: DateTime.formatIso(now),
+            schemaVersion: 1,
+          };
+          yield* registry.announce(record);
+          yield* Effect.logInfo("Announced instance to registry", {
+            instanceId,
+            name: record.name,
+            port: record.port,
+          });
+          return { registry, instanceId } as const;
+        }).pipe(
+          // catchCause (not catch) so a defect from announce's orDie is also absorbed —
+          // registry I/O must never break server startup.
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to announce instance to registry", { cause }).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+        ),
+        (announced) =>
+          announced === undefined
+            ? Effect.void
+            : announced.registry
+                .withdraw(announced.instanceId)
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Failed to withdraw instance from registry", { cause }),
+                  ),
+                ),
+      ),
+    );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
           Effect.acquireRelease(
@@ -446,6 +509,7 @@ export const makeServerLayer = Layer.unwrap(
       }),
       httpListeningLayer,
       runtimeStateLayer,
+      instanceRegistryLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );

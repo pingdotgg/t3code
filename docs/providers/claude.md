@@ -222,3 +222,30 @@ If the preset needs different Claude files, give it a different `Claude HOME pat
 different API keys, base URLs, or router settings, use Environment variables.
 
 Do not put environment variable assignments in `Launch arguments`.
+
+## Remote Control
+
+Remote Control lets you drive a Claude session that is running on your machine from the
+**Claude iOS app** or the **Claude web app** (`claude.ai`). T3 Code launches the real `claude`
+CLI in remote-control mode for you; you do not need to type the raw `claude remote-control`
+command yourself.
+
+This is different from T3's Remote Access feature. Remote Access connects another device to your
+T3 server over WebSocket. Remote Control routes Claude app commands through Anthropic's relay to
+a `claude` process on your machine.
+
+**Requirement:** a claude.ai Pro, Max, Team, or Enterprise subscription.
+
+To launch from the command line:
+
+```bash
+t3 remote-control
+# or using the short alias:
+t3 rc
+```
+
+To launch from inside T3, expand the Claude provider card in **Settings → Providers**, scroll to
+the **Remote Control** section, and click **Start Remote Control**.
+
+For the full flag reference, pairing steps, and a comparison with Remote Access, see the
+[Remote Control user guide](../user/remote-control.md).
