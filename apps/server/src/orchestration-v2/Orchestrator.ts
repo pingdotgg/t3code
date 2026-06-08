@@ -318,6 +318,24 @@ function visibleDeltaRunOrdinals(
   };
 }
 
+function rootProviderThreadsForProvider(
+  projection: OrchestrationV2ThreadProjection,
+  provider: ModelSelection["instanceId"],
+): ReadonlyArray<OrchestrationV2ProviderThread> {
+  return projection.providerThreads
+    .filter(
+      (providerThread) =>
+        providerThread.provider === provider &&
+        providerThread.appThreadId === projection.thread.id &&
+        providerThread.ownerNodeId === null,
+    )
+    .toSorted(
+      (left, right) =>
+        (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0) ||
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+    );
+}
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -1645,6 +1663,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const now = yield* DateTime.now;
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
+      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const isProviderSwitch =
+        activeProviderThread !== undefined &&
+        activeProviderThread.provider !== modelSelection.instanceId;
+      if (isProviderSwitch && pendingMergeBackTransfer !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} cannot switch providers while merge-back transfer ${pendingMergeBackTransfer.id} is pending.`,
+        });
+      }
       const sourceProjection =
         pendingForkTransfer === undefined
           ? null
@@ -1705,8 +1734,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      const targetProviderThread = isProviderSwitch
+        ? rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0]
+        : activeProviderThread;
       const providerSessionId =
-        activeProviderThread?.providerSessionId ??
+        targetProviderThread?.providerSessionId ??
         (yield* mapDispatchError(command)(
           idAllocator.allocate.providerSession({
             provider: modelSelection.provider,
@@ -1794,7 +1826,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                 ),
               )
-          : activeProviderThread === undefined
+          : targetProviderThread === undefined
             ? yield* session
                 .ensureThread({
                   threadId: command.threadId,
@@ -1813,10 +1845,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ),
                 )
             : Option.isSome(activeSession)
-              ? activeProviderThread
+              ? targetProviderThread
               : yield* session
                   .resumeThread({
-                    providerThread: activeProviderThread,
+                    providerThread: targetProviderThread,
                   })
                   .pipe(
                     Effect.mapError(
@@ -1828,11 +1860,92 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         }),
                     ),
                   );
+      const providerSwitchCoveredRuns =
+        !isProviderSwitch || latestCompletedRun === undefined
+          ? []
+          : projection.runs.filter(
+              (run) =>
+                run.status === "completed" &&
+                run.ordinal > (targetProviderThread?.lastRunOrdinal ?? 0) &&
+                run.ordinal <= latestCompletedRun.ordinal,
+            );
+      const providerSwitchItems =
+        providerSwitchCoveredRuns.length === 0
+          ? []
+          : projection.turnItems.filter(
+              (item) =>
+                item.runId !== null &&
+                providerSwitchCoveredRuns.some((run) => run.id === item.runId),
+            );
+      const providerSwitchTransferId =
+        providerSwitchCoveredRuns.length === 0 || latestCompletedRun === undefined
+          ? null
+          : yield* mapDispatchError(command)(
+              idAllocator.allocate.contextTransfer({
+                sourceThreadId: command.threadId,
+                targetThreadId: command.threadId,
+                type: "provider_handoff",
+              }),
+            );
+      if (providerSwitchTransferId !== null) {
+        yield* enforceCommandPolicy(command)(
+          commandPolicy.ensureContextHandoff({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            provider: modelSelection.instanceId,
+            capabilities: session.providerSession.capabilities,
+            strategy: targetProviderThread === undefined ? "full_thread_summary" : "delta_context",
+          }),
+        );
+      }
+      const providerSwitchHandoff =
+        providerSwitchTransferId === null || latestCompletedRun === undefined
+          ? null
+          : yield* contextHandoffService
+              .prepareProviderHandoff({
+                threadId: command.threadId,
+                targetRunId: runId,
+                transferId: providerSwitchTransferId,
+                fromProviderThreadIds: Array.from(
+                  new Set(
+                    providerSwitchCoveredRuns.flatMap((run) =>
+                      run.providerThreadId === null ? [] : [run.providerThreadId],
+                    ),
+                  ),
+                ),
+                toProviderThreadId: ensuredProviderThread.id,
+                fromProvider: latestCompletedRun.provider,
+                toProvider: modelSelection.instanceId,
+                coveredRunOrdinals: {
+                  from: providerSwitchCoveredRuns[0]!.ordinal,
+                  to: providerSwitchCoveredRuns.at(-1)!.ordinal,
+                },
+                strategy:
+                  targetProviderThread === undefined
+                    ? "full_thread_summary"
+                    : "delta_since_target_last_seen",
+                items: providerSwitchItems,
+                createdAt: now,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+                ),
+              );
       const providerThread: OrchestrationV2ProviderThread = {
         ...ensuredProviderThread,
         status: "active",
         firstRunOrdinal: ensuredProviderThread.firstRunOrdinal ?? ordinal,
         lastRunOrdinal: ordinal,
+        handoffIds:
+          providerSwitchHandoff === null
+            ? ensuredProviderThread.handoffIds
+            : [...ensuredProviderThread.handoffIds, providerSwitchHandoff.id],
         updatedAt: now,
       };
 
@@ -1969,7 +2082,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: now,
         completedAt: null,
         checkpointId: null,
-        contextHandoffId: mergeBackHandoff?.id ?? null,
+        contextHandoffId: providerSwitchHandoff?.id ?? mergeBackHandoff?.id ?? null,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -2035,12 +2148,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: command.attachments,
       };
       const handoffTurnItem: OrchestrationV2TurnItem | null =
-        mergeBackHandoff === null
+        providerSwitchHandoff === null && mergeBackHandoff === null
           ? null
           : {
               id: idAllocator.derive.runSignalTurnItem({
                 runId,
-                signal: `context-handoff:${mergeBackHandoff.id}`,
+                signal: `context-handoff:${(providerSwitchHandoff ?? mergeBackHandoff)!.id}`,
               }),
               threadId: command.threadId,
               runId,
@@ -2051,18 +2164,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               parentItemId: null,
               ordinal: ordinal * 100 - 1,
               status: "completed",
-              title: "Merge-back context",
+              title: providerSwitchHandoff === null ? "Merge-back context" : "Provider handoff",
               startedAt: now,
               completedAt: now,
               updatedAt: now,
               type: "handoff",
-              contextHandoffId: mergeBackHandoff.id,
-              fromProviderThreadIds: mergeBackHandoff.fromProviderThreadIds,
-              toProviderThreadId: mergeBackHandoff.toProviderThreadId,
-              fromProviders: mergeBackSourceRun === null ? [] : [mergeBackSourceRun.provider],
-              toProvider: modelSelection.provider,
-              strategy: "fork_delta_summary",
-              summary: mergeBackHandoff.summaryText,
+              contextHandoffId: (providerSwitchHandoff ?? mergeBackHandoff)!.id,
+              fromProviderThreadIds: (providerSwitchHandoff ?? mergeBackHandoff)!
+                .fromProviderThreadIds,
+              toProviderThreadId: (providerSwitchHandoff ?? mergeBackHandoff)!.toProviderThreadId,
+              fromProviders:
+                providerSwitchHandoff === null
+                  ? mergeBackSourceRun === null
+                    ? []
+                    : [mergeBackSourceRun.provider]
+                  : Array.from(new Set(providerSwitchCoveredRuns.map((run) => run.provider))),
+              toProvider: modelSelection.instanceId,
+              strategy: (providerSwitchHandoff ?? mergeBackHandoff)!.strategy,
+              summary: (providerSwitchHandoff ?? mergeBackHandoff)!.summaryText,
             };
       const nativeForkResolution: OrchestrationV2ContextTransferResolution | null =
         pendingForkTransfer === undefined || providerThread.nativeThreadRef === null
@@ -2111,6 +2230,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: providerThread,
       });
+      if (
+        providerSwitchTransferId !== null &&
+        providerSwitchHandoff !== null &&
+        latestCompletedRun !== undefined
+      ) {
+        const transfer: OrchestrationV2ContextTransfer = {
+          id: providerSwitchTransferId,
+          type: "provider_handoff",
+          sourceThreadId: command.threadId,
+          targetThreadId: command.threadId,
+          sourcePoint: contextSourcePointForRun(projection, latestCompletedRun),
+          basePoint:
+            targetProviderThread?.lastRunOrdinal === null ||
+            targetProviderThread?.lastRunOrdinal === undefined
+              ? null
+              : (() => {
+                  const baseRun = projection.runs.find(
+                    (run) => run.ordinal === targetProviderThread.lastRunOrdinal,
+                  );
+                  return baseRun === undefined
+                    ? null
+                    : contextSourcePointForRun(projection, baseRun);
+                })(),
+          sourceProvider: latestCompletedRun.provider,
+          targetProvider: modelSelection.instanceId,
+          targetRunId: runId,
+          status: "consumed",
+          resolution: {
+            strategy:
+              providerSwitchHandoff.strategy === "full_thread_summary"
+                ? "portable_context"
+                : "delta_context",
+            contextHandoffId: providerSwitchHandoff.id,
+          },
+          createdBy: "user",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          consumedAt: now,
+        };
+        yield* emitEvent({
+          type: "context-transfer.created",
+          threadId: command.threadId,
+          runId,
+          provider: modelSelection.instanceId,
+          occurredAt: now,
+          payload: transfer,
+        });
+        yield* emitEvent({
+          type: "context-handoff.updated",
+          threadId: command.threadId,
+          runId,
+          provider: modelSelection.instanceId,
+          occurredAt: now,
+          payload: providerSwitchHandoff,
+        });
+      }
       if (mergeBackHandoff !== null) {
         yield* emitEvent({
           type: "context-handoff.updated",
@@ -2253,10 +2429,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const providerMessageText =
-        mergeBackHandoff === null
+        providerSwitchHandoff === null && mergeBackHandoff === null
           ? command.text
           : providerMessageWithContextHandoff({
-              handoff: mergeBackHandoff,
+              handoff: (providerSwitchHandoff ?? mergeBackHandoff)!,
               userText: command.text,
             });
       yield* runExecution
