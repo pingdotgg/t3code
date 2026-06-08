@@ -339,9 +339,8 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         });
       }
 
-      return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson))(
-        extractJsonObject(rawContent),
-      ).pipe(
+      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
+      return yield* decodeOutput(extractJsonObject(rawContent)).pipe(
         Effect.catchTag("SchemaError", (cause) =>
           Effect.fail(
             new TextGenerationError({

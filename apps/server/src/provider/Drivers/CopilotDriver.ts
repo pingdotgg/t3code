@@ -22,6 +22,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMainte
 
 const DRIVER_KIND = ProviderDriverKind.make("copilot");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.hours(1);
+const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 
 export type CopilotDriverEnv = Path.Path | ProviderEventLoggers | ServerConfig;
 
@@ -48,7 +49,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
     supportsMultipleInstances: true,
   },
   configSchema: CopilotSettings,
-  defaultConfig: (): CopilotSettings => Schema.decodeSync(CopilotSettings)({}),
+  defaultConfig: (): CopilotSettings => decodeCopilotSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
