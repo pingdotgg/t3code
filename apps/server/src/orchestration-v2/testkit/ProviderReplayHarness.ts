@@ -180,6 +180,19 @@ export function makeOrchestratorV2ProviderReplayLayer<
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(scenario.transcript);
+  return makeOrchestratorV2ReplayLayerWithRegistry(scenario, registryLayer, options);
+}
+
+export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
+  scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
+  registryLayer: Layer.Layer<ProviderAdapterRegistryV2, Error>,
+  options: {
+    readonly databaseLayer?: Layer.Layer<
+      SqlClient.SqlClient,
+      MigrationError | PlatformError.PlatformError | SqlError
+    >;
+  } = {},
+): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
