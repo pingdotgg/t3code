@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
 import { CopilotSettings } from "@t3tools/contracts";
-import { Effect, Schema } from "effect";
+import { DateTime, Effect, Schema } from "effect";
 import { beforeEach, describe, vi } from "vitest";
 
 import { checkCopilotProviderStatus } from "./CopilotProvider.ts";
@@ -112,10 +112,10 @@ describe("CopilotProvider status", () => {
         cwd: process.cwd(),
       });
 
-      vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+      vi.setSystemTime(DateTime.makeUnsafe("2026-06-08T12:00:00.000Z").epochMilliseconds);
       const firstSnapshot = yield* statusCheck;
 
-      vi.setSystemTime(new Date("2026-06-08T12:01:00.000Z"));
+      vi.setSystemTime(DateTime.makeUnsafe("2026-06-08T12:01:00.000Z").epochMilliseconds);
       const secondSnapshot = yield* statusCheck;
 
       assert.equal(firstSnapshot.checkedAt, "2026-06-08T12:00:00.000Z");
