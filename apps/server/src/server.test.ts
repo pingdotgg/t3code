@@ -68,6 +68,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
+import { LaunchEnvLive } from "./launchEnv/Services/LaunchEnv.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
@@ -793,6 +794,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provideMerge(LaunchEnvLive),
       Layer.provide(layerConfig),
     );
 
@@ -6450,6 +6452,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc terminal methods", () =>
     Effect.gen(function* () {
+      const terminalProjectId = ProjectId.make("project-1");
+      const terminalProject = {
+        id: terminalProjectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
       const snapshot = {
         threadId: "thread-1",
         terminalId: "default",
@@ -6466,6 +6478,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          projectionSnapshotQuery: {
+            getProjectShellById: (projectId) =>
+              Effect.succeed(
+                projectId === terminalProjectId ? Option.some(terminalProject) : Option.none(),
+              ),
+          },
           terminalManager: {
             open: () => Effect.succeed(snapshot),
             write: () => Effect.void,
@@ -6484,6 +6502,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.terminalOpen]({
             threadId: "thread-1",
             terminalId: "default",
+            projectId: terminalProjectId,
             cwd: "/tmp/project",
           }),
         ),
@@ -6525,6 +6544,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.terminalRestart]({
             threadId: "thread-1",
             terminalId: "default",
+            projectId: terminalProjectId,
             cwd: "/tmp/project",
             cols: 120,
             rows: 40,

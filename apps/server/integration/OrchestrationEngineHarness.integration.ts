@@ -36,6 +36,7 @@ import { ProjectionPendingApprovalRepository } from "../src/persistence/Services
 import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
+import { LaunchEnvLive } from "../src/launchEnv/Services/LaunchEnv.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
@@ -372,13 +373,15 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
     );
+    const serverConfigLayer = ServerConfig.layerTest(workspaceDir, rootDir);
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(orchestrationReactorLayer),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolverLive),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(LaunchEnvLive.pipe(Layer.provide(serverConfigLayer))),
       Layer.provideMerge(NodeServices.layer),
     );
 

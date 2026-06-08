@@ -4,7 +4,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import { pipe } from "effect/Function";
 import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useVcsStatus } from "../../state/use-vcs-status";
@@ -198,10 +198,6 @@ export function ThreadRouteScreen() {
         project: { cwd: selectedThreadProject.workspaceRoot },
         worktreePath: preferredWorktreePath,
       });
-      const env = projectScriptRuntimeEnv({
-        project: { cwd: selectedThreadProject.workspaceRoot },
-        worktreePath: preferredWorktreePath,
-      });
       stagePendingTerminalLaunch({
         target: {
           environmentId: selectedThread.environmentId,
@@ -211,7 +207,6 @@ export function ThreadRouteScreen() {
         launch: {
           cwd,
           worktreePath: preferredWorktreePath,
-          env,
           initialInput: `${script.command}\r`,
         },
       });

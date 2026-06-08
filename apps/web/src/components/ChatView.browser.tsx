@@ -2003,11 +2003,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             _tag: WS_METHODS.terminalAttach,
             cwd: "/repo/project",
             worktreePath: null,
-            env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-            },
           });
-          expect(attachRequest?.env?.T3CODE_WORKTREE_PATH).toBeUndefined();
+          expect(attachRequest?.env).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2355,11 +2352,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
+            projectId: PROJECT_ID,
             cwd: "/repo/project",
-            env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-            },
           });
+          expect(openRequest?.env).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2434,12 +2430,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
+            projectId: PROJECT_ID,
             cwd: "/repo/worktrees/feature-draft",
-            env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-              T3CODE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
-            },
+            worktreePath: "/repo/worktrees/feature-draft",
           });
+          expect(openRequest?.env).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

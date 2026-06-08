@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { LaunchEnv } from "../../launchEnv/Services/LaunchEnv.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { ProjectSetupScriptRunner } from "../Services/ProjectSetupScriptRunner.ts";
@@ -19,6 +20,9 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
   updatedAt: "2026-01-01T00:00:00.000Z",
   deletedAt: null,
 });
+
+const TEST_BASE_DIR = "/tmp/t3-setup-script-runner";
+const launchEnvLayer = LaunchEnv.layerTest(TEST_BASE_DIR);
 
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
   Layer.succeed(ProjectionSnapshotQuery, {
@@ -50,6 +54,7 @@ describe("ProjectSetupScriptRunner", () => {
       Effect.service(ProjectSetupScriptRunner).pipe(
         Effect.provide(
           ProjectSetupScriptRunnerLive.pipe(
+            Layer.provideMerge(launchEnvLayer),
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
@@ -112,6 +117,7 @@ describe("ProjectSetupScriptRunner", () => {
       Effect.service(ProjectSetupScriptRunner).pipe(
         Effect.provide(
           ProjectSetupScriptRunnerLive.pipe(
+            Layer.provideMerge(launchEnvLayer),
             Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
@@ -149,12 +155,9 @@ describe("ProjectSetupScriptRunner", () => {
     expect(open).toHaveBeenCalledWith({
       threadId: "thread-1",
       terminalId: "setup-setup",
+      projectId: ProjectId.make("project-1"),
       cwd: "/repo/worktrees/a",
       worktreePath: "/repo/worktrees/a",
-      env: {
-        T3CODE_PROJECT_ROOT: "/repo/project",
-        T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
-      },
     });
     expect(write).toHaveBeenCalledWith({
       threadId: "thread-1",

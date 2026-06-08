@@ -7,7 +7,6 @@
  * @module TerminalManager
  */
 import {
-  TerminalAttachInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
@@ -17,6 +16,7 @@ import {
   TerminalHistoryError,
   TerminalMetadataStreamEvent,
   TerminalNotRunningError,
+  TerminalAttachInput,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalRestartInput,

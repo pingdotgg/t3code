@@ -3,6 +3,18 @@ import { describe, expect, it } from "vite-plus/test";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
+  it("strips inherited T3 Code runtime env keys", () => {
+    expect(
+      mergeProviderInstanceEnvironment(undefined, {
+        T3CODE_PORT: "3773",
+        T3CODE_HOME: "/tmp/.t3",
+        PATH: "/bin",
+      }),
+    ).toEqual({
+      PATH: "/bin",
+    });
+  });
+
   it("overrides inherited environment values and preserves empty strings", () => {
     expect(
       mergeProviderInstanceEnvironment(

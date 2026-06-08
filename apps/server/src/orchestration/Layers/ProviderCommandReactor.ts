@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { LaunchEnv } from "../../launchEnv/Services/LaunchEnv.ts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -184,6 +185,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const launchEnv = yield* LaunchEnv;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -412,6 +414,15 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    const providerLaunchEnv =
+      project !== undefined
+        ? yield* launchEnv.resolve({
+            projectRoot: project.workspaceRoot,
+            projectId: project.id,
+            threadId,
+            worktreePath: thread.worktreePath,
+          })
+        : undefined;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -422,6 +433,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(providerLaunchEnv ? { env: providerLaunchEnv } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
