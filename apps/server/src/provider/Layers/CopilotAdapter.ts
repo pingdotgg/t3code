@@ -1663,6 +1663,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       case "session.title_changed": {
+        const title = trimOrUndefined(event.data.title);
+        if (!title) {
+          return;
+        }
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -1670,7 +1674,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }),
           type: "thread.metadata.updated",
           payload: {
-            name: event.data.title.trim(),
+            name: title,
           },
         });
         return;
