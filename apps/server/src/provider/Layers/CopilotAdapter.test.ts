@@ -714,6 +714,61 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         });
       }
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits thread metadata updates from Copilot title changes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-title-change");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-title-change",
+        timestamp,
+        parentId: null,
+        type: "session.title_changed",
+        data: {
+          title: "Implement Copilot thread titles",
+        },
+      } as SessionEvent);
+
+      let titleEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && titleEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        titleEvent = runtimeEvents.find((event) => event.type === "thread.metadata.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(titleEvent?.type, "thread.metadata.updated");
+      if (titleEvent?.type === "thread.metadata.updated") {
+        assert.equal(titleEvent.threadId, threadId);
+        assert.deepStrictEqual(titleEvent.payload, {
+          name: "Implement Copilot thread titles",
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits command metadata separately from command output", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
