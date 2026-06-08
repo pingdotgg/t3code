@@ -17,6 +17,7 @@ import {
   ApprovalRequestId,
   type ProviderRuntimeEvent,
   ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -27,6 +28,7 @@ import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
+const COPILOT_INSTANCE_ID = ProviderInstanceId.make("copilot");
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const waitForSdkEventQueue = () => Effect.promise(() => sleep(10).then(() => undefined));
 
@@ -201,6 +203,68 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         assert.equal(session.provider, "copilot");
         yield* adapter.stopSession(threadId);
       }),
+  );
+
+  it.effect("passes selected Copilot context tier when creating a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-start-session-context-tier");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: {
+          instanceId: COPILOT_INSTANCE_ID,
+          model: "claude-sonnet-4.6",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "contextTier", value: "long_context" },
+          ],
+        },
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.equal(config?.model, "claude-sonnet-4.6");
+      assert.equal(config?.reasoningEffort, "high");
+      assert.equal(config?.contextTier, "long_context");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("passes selected Copilot context tier when changing models for a turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-send-turn-context-tier");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      runtimeMock.state.lastSession.setModel.mockClear();
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Use the long context tier",
+        attachments: [],
+        modelSelection: {
+          instanceId: COPILOT_INSTANCE_ID,
+          model: "claude-sonnet-4.6",
+          options: [{ id: "contextTier", value: "long_context" }],
+        },
+      });
+
+      assert.deepStrictEqual(runtimeMock.state.lastSession.setModel.mock.calls.at(-1), [
+        "claude-sonnet-4.6",
+        { contextTier: "long_context" },
+      ]);
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
   it.effect("returns a session-scoped SDK approval for acceptForSession", () =>

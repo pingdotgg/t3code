@@ -17,6 +17,8 @@ import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
+const PROMPT_EFFORT_DESCRIPTOR_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
   model: string;
@@ -58,7 +60,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && PROMPT_EFFORT_DESCRIPTOR_IDS.has(descriptor.id),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;

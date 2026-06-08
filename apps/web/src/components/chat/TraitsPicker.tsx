@@ -45,6 +45,7 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+const CONTEXT_WINDOW_DESCRIPTOR_IDS = new Set(["contextWindow", "contextTier"]);
 
 function replaceDescriptorCurrentValue(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
@@ -99,7 +100,8 @@ function getSelectedTraits(
   );
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
   const contextWindowDescriptor =
-    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
+    selectDescriptors.find((descriptor) => CONTEXT_WINDOW_DESCRIPTOR_IDS.has(descriptor.id)) ??
+    null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
