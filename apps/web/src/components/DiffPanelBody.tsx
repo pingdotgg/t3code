@@ -173,7 +173,7 @@ export function DiffPanelBody(props: DiffPanelBodyProps) {
               type="button"
               aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
               aria-expanded={!collapsed}
-              className="inline-flex h-5 w-4 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent p-0 align-middle text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-hidden"
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm border-0 bg-transparent p-0 align-middle text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-hidden"
               onClick={(event) => {
                 event.stopPropagation();
                 onToggleFileCollapse(fileKey);

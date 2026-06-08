@@ -6,6 +6,21 @@ export const DIFF_THEME_NAMES = {
 } as const;
 
 export const DIFF_RENDER_UNSAFE_CSS = `
+:host {
+  --diffs-font-family: var(
+    --font-mono,
+    "SF Mono",
+    Monaco,
+    Consolas,
+    "Ubuntu Mono",
+    "Liberation Mono",
+    "Courier New",
+    monospace
+  );
+  --diffs-font-size: 11px;
+  --diffs-line-height: 17px;
+}
+
 [data-diffs-header],
 [data-diff],
 [data-file],
@@ -73,15 +88,74 @@ export const DIFF_RENDER_UNSAFE_CSS = `
 }
 
 [data-diffs-header] [data-metadata] {
+  display: flex !important;
   align-items: center !important;
   gap: 6px !important;
+}
+
+[data-diffs-header] [data-metadata] > * {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 16px !important;
+  line-height: 16px !important;
 }
 
 [data-diffs-header] [data-additions-count],
 [data-diffs-header] [data-deletions-count] {
   font-size: 12px !important;
-  line-height: 1 !important;
   font-variant-numeric: tabular-nums;
+}
+
+/* "Ghost line" treatment for the collapsed "XX unmodified lines" context
+ * separators. The library defaults to a solid full-width grey band (32px tall,
+ * 8px margin) that competes visually with the actual diff. We strip the fill,
+ * draw a single faint hairline through the row, mute the count text, and only
+ * reveal the expand chevrons on hover so unmodified regions recede. */
+[data-separator=line-info],
+[data-separator=line-info-basic] {
+  height: 22px !important;
+  margin-block: 1px !important;
+  background-color: transparent !important;
+}
+
+[data-separator=line-info] [data-separator-wrapper],
+[data-separator=line-info-basic] [data-separator-wrapper] {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    to bottom,
+    transparent calc(50% - 0.5px),
+    var(--border) calc(50% - 0.5px),
+    var(--border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  ) !important;
+}
+
+[data-separator=line-info] [data-separator-content],
+[data-separator=line-info-basic] [data-separator-content] {
+  background-color: transparent !important;
+}
+
+/* Mask the hairline behind the count text so the line appears to break around
+ * the words rather than strike through them. */
+[data-separator=line-info] [data-unmodified-lines],
+[data-separator=line-info-basic] [data-unmodified-lines] {
+  background-color: var(--diffs-bg) !important;
+  padding-inline: 6px !important;
+  font-size: 11px !important;
+  color: var(--diffs-fg-number) !important;
+}
+
+/* Expand chevrons stay invisible until the row is hovered. */
+[data-separator=line-info] [data-expand-button],
+[data-separator=line-info-basic] [data-expand-button] {
+  background-color: transparent !important;
+  opacity: 0 !important;
+  transition: opacity 120ms ease !important;
+}
+
+[data-separator=line-info]:hover [data-expand-button],
+[data-separator=line-info-basic]:hover [data-expand-button] {
+  opacity: 1 !important;
 }
 `;
 
@@ -97,8 +171,8 @@ export const INLINE_DIFF_RENDER_UNSAFE_CSS = `
     "Courier New",
     monospace
   );
-  --diffs-font-size: 13px;
-  --diffs-line-height: 20px;
+  --diffs-font-size: 12px;
+  --diffs-line-height: 18px;
   --diffs-bg: var(--background) !important;
   --diffs-light-bg: var(--background) !important;
   --diffs-dark-bg: var(--background) !important;

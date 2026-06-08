@@ -115,9 +115,12 @@ export class ExternalIntake extends Context.Service<ExternalIntake, ExternalInta
 ) {}
 
 const DEFAULT_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.5",
-  options: [{ id: "fastMode", value: false }],
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-opus-4-8",
+  options: [
+    { id: "effort", value: "xhigh" },
+    { id: "contextWindow", value: "1m" },
+  ],
 } as const satisfies ModelSelection;
 
 const EXTERNAL_INTAKE_AGENT_PROMPT = [

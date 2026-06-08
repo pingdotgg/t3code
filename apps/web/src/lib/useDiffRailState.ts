@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 const RAIL_STORAGE_KEY = "t3code:diff-rail:v1";
 const DEFAULT_RAIL_SIZE = 26;
 const MIN_RAIL_SIZE = 12;
-const MAX_RAIL_SIZE = 50;
+const MAX_RAIL_SIZE = 65;
 
 interface DiffRailState {
   size: number;

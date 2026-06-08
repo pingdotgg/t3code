@@ -120,6 +120,7 @@ function resolveWorkCategory(entry: WorkLogEntry): WorkActivityCategory {
   }
   if (
     entry.requestKind === "file-read" ||
+    entry.itemType === "file_read" ||
     entry.itemType === "image_view" ||
     isFileExploreCommand(entry)
   ) {
@@ -595,7 +596,12 @@ function extractPathLikeText(value: string | null | undefined): string | null {
   if (!firstLine) {
     return null;
   }
-  const withoutPrefix = firstLine.replace(/^(?:read|opened|viewed|listed)\s+/i, "").trim();
+  // Strip a leading "ToolName: " diagnostic prefix (e.g. the adapter's "Read: /path")
+  // before the verb-prefix forms ("Read /path", "Viewed /path", …).
+  const withoutPrefix = firstLine
+    .replace(/^[A-Za-z]+:\s+/u, "")
+    .replace(/^(?:read|opened|viewed|listed)\s+/i, "")
+    .trim();
   return looksLikePath(withoutPrefix) ? withoutPrefix : null;
 }
 

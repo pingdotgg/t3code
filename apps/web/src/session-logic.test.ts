@@ -948,6 +948,29 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("extracts changed file paths from snake_case file_path tool input (Claude Edit)", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "claude-edit",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolName: "Edit",
+            input: {
+              file_path: "apps/web/src/components/ChatView.tsx",
+              replace_all: false,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["apps/web/src/components/ChatView.tsx"]);
+  });
+
   it("drops duplicated tool detail when it only repeats the title", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

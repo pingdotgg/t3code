@@ -202,6 +202,56 @@ describe("summarizeWorkActivityEntries", () => {
     ]);
   });
 
+  it("does not double the verb when the read detail is a 'Read: <path>' prefix", () => {
+    const summaries = summarizeWorkActivityEntries(
+      [
+        workEntry({
+          id: "read-1",
+          label: "File read",
+          toolTitle: "File read",
+          toolName: "Read",
+          itemType: "file_read",
+          detail: "Read: /repo/apps/web/src/components/DiffPanelToolbar.tsx",
+        }),
+      ],
+      "/repo",
+    );
+
+    expect(summaries).toMatchObject([
+      {
+        category: "file",
+        label: "Explored 1 file",
+        items: [{ label: "Read apps/web/src/components/DiffPanelToolbar.tsx" }],
+      },
+    ]);
+  });
+
+  it("does not double the verb for edits when changed files use snake_case paths", () => {
+    const summaries = summarizeWorkActivityEntries(
+      [
+        workEntry({
+          id: "edit-1",
+          label: "File change",
+          toolTitle: "File change",
+          toolName: "Edit",
+          itemType: "file_change",
+          requestKind: "file-change",
+          detail: 'Edit: {"replace_all":false,"file_path":"/repo/apps/web/src/a.ts"}',
+          changedFiles: ["/repo/apps/web/src/a.ts"],
+        }),
+      ],
+      "/repo",
+    );
+
+    expect(summaries).toMatchObject([
+      {
+        category: "edit",
+        label: "Edited 1 file",
+        items: [{ label: "Edited apps/web/src/a.ts" }],
+      },
+    ]);
+  });
+
   it("classifies provider built-in Grep tools as file exploration", () => {
     const summaries = summarizeWorkActivityEntries(
       [
