@@ -2456,6 +2456,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               ? APPROVED_PERMISSION_RESULT
               : DENIED_PERMISSION_RESULT;
       yield* Deferred.succeed(binding.deferred, result);
+      context.pendingPermissionBindings.delete(requestId);
     },
   );
 

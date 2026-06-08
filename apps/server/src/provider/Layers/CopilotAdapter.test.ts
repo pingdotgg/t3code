@@ -337,6 +337,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       });
 
+      const duplicateReply = yield* Effect.flip(
+        adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(requestId),
+          "acceptForSession",
+        ),
+      );
+      assert.match(duplicateReply.message, /Unknown pending permission request/);
+
       yield* adapter.stopSession(threadId);
     }),
   );
