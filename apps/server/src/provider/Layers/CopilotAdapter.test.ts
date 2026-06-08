@@ -56,7 +56,11 @@ const runtimeMock = vi.hoisted(() => {
     nativeWriteCalls: 0,
     nativeWriteGate: null as Promise<void> | null,
     createSessionConfigs: [] as SessionConfig[],
+    resumeSessionCalls: [] as Array<{ readonly sessionId: string; readonly config: SessionConfig }>,
     createSessionImpl: null as ((config: SessionConfig) => Promise<CopilotSession>) | null,
+    resumeSessionImpl: null as
+      | ((sessionId: string, config: SessionConfig) => Promise<CopilotSession>)
+      | null,
     lastSession: makeSession(),
   };
 
@@ -68,8 +72,10 @@ const runtimeMock = vi.hoisted(() => {
       state.nativeWriteCalls = 0;
       state.nativeWriteGate = null;
       state.createSessionConfigs.length = 0;
+      state.resumeSessionCalls.length = 0;
       state.lastSession = makeSession();
       state.createSessionImpl = async () => state.lastSession as unknown as CopilotSession;
+      state.resumeSessionImpl = async () => state.lastSession as unknown as CopilotSession;
     },
   };
 });
@@ -95,8 +101,12 @@ vi.mock("../copilotRuntime.ts", async () => {
               config,
             );
           }),
-          resumeSession: vi.fn(async () => {
-            throw new Error("resumeSession is not used in CopilotAdapter tests");
+          resumeSession: vi.fn(async (sessionId: string, config: SessionConfig) => {
+            runtimeMock.state.resumeSessionCalls.push({ sessionId, config });
+            return (runtimeMock.state.resumeSessionImpl ?? (async () => undefined as never))(
+              sessionId,
+              config,
+            );
           }),
         }) as unknown as CopilotClient,
     ),
@@ -248,6 +258,40 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       assert.equal(config?.model, "claude-sonnet-4.6");
       assert.equal(config?.reasoningEffort, "high");
       assert.equal(config?.contextTier, "long_context");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts a fresh session when the persisted Copilot resume cursor is missing", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.resumeSessionImpl = async (sessionId) => {
+        throw new Error(
+          `Request session.resume failed with message: Session not found: ${sessionId}`,
+        );
+      };
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-stale-resume-cursor");
+
+      const session = yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        resumeCursor: {
+          schemaVersion: 1,
+          sessionId: "missing-copilot-session",
+        },
+      });
+
+      assert.equal(runtimeMock.state.resumeSessionCalls.length, 1);
+      assert.equal(runtimeMock.state.resumeSessionCalls[0]?.sessionId, "missing-copilot-session");
+      assert.equal(runtimeMock.state.createSessionConfigs.length, 1);
+      assert.equal(runtimeMock.state.createSessionConfigs[0]?.sessionId, threadId);
+      assert.deepEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: runtimeMock.state.lastSession.sessionId,
+      });
 
       yield* adapter.stopSession(threadId);
     }),
