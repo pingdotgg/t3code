@@ -60,6 +60,7 @@ export function makePendingCopilotProvider(settings: CopilotSettings): ServerPro
 export function checkCopilotProviderStatus(input: {
   readonly settings: CopilotSettings;
   readonly cwd: string;
+  readonly baseDirectory?: string | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
 }): Effect.Effect<ServerProviderDraft> {
   if (!input.settings.enabled) {
@@ -97,6 +98,7 @@ export function checkCopilotProviderStatus(input: {
         createCopilotClient({
           settings: input.settings,
           cwd: input.cwd,
+          ...(input.baseDirectory ? { baseDirectory: input.baseDirectory } : {}),
           ...(input.environment ? { env: input.environment } : {}),
           logLevel: "error",
         }),
