@@ -61,6 +61,62 @@ describe("contextWindow", () => {
     });
   });
 
+  it("keeps showing the latest reliable context window percentage over newer token-only usage", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 81_659,
+        maxTokens: 258_400,
+      }),
+      makeActivity("activity-2", "context-window.updated", {
+        usedTokens: 126,
+        inputTokens: 120,
+        outputTokens: 6,
+      }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 81_659,
+      maxTokens: 258_400,
+    });
+    expect(snapshot?.usedPercentage).toBeCloseTo(31.6, 1);
+  });
+
+  it("falls back to the latest token-only usage when no window limit is available", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 1000,
+      }),
+      makeActivity("activity-2", "context-window.updated", {
+        usedTokens: 1200,
+      }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 1200,
+      maxTokens: null,
+      usedPercentage: null,
+    });
+  });
+
+  it("does not reuse a pre-compaction window limit", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 81_659,
+        maxTokens: 258_400,
+      }),
+      makeActivity("activity-2", "context-compaction", {}),
+      makeActivity("activity-3", "context-window.updated", {
+        usedTokens: 126,
+      }),
+    ]);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 126,
+      maxTokens: null,
+      usedPercentage: null,
+    });
+  });
+
   it("formats compact token counts", () => {
     expect(formatContextWindowTokens(999)).toBe("999");
     expect(formatContextWindowTokens(1400)).toBe("1.4k");

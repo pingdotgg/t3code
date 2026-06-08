@@ -34,6 +34,8 @@ export function formatProviderDisplayName(provider: string | null | undefined): 
       return "Claude";
     case "codex":
       return "Codex";
+    case "copilot":
+      return "GitHub Copilot";
     case "cursor":
       return "Cursor";
     case "opencode":
@@ -47,52 +49,76 @@ export function formatProviderDisplayName(provider: string | null | undefined): 
   }
 }
 
+function snapshotFromActivity(activity: OrchestrationThreadActivity): ContextWindowSnapshot | null {
+  const payload = asRecord(activity.payload);
+  const usedTokens = asFiniteNumber(payload?.usedTokens);
+  if (usedTokens === null || usedTokens < 0) {
+    return null;
+  }
+
+  const maxTokens = asFiniteNumber(payload?.maxTokens);
+  const usedPercentage =
+    maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+  const remainingTokens =
+    maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
+  const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
+
+  return {
+    usedTokens,
+    totalProcessedTokens: asFiniteNumber(payload?.totalProcessedTokens),
+    maxTokens,
+    remainingTokens,
+    usedPercentage,
+    remainingPercentage,
+    inputTokens: asFiniteNumber(payload?.inputTokens),
+    cachedInputTokens: asFiniteNumber(payload?.cachedInputTokens),
+    outputTokens: asFiniteNumber(payload?.outputTokens),
+    reasoningOutputTokens: asFiniteNumber(payload?.reasoningOutputTokens),
+    lastUsedTokens: asFiniteNumber(payload?.lastUsedTokens),
+    lastInputTokens: asFiniteNumber(payload?.lastInputTokens),
+    lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
+    lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
+    lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
+    toolUses: asFiniteNumber(payload?.toolUses),
+    durationMs: asFiniteNumber(payload?.durationMs),
+    compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
+    updatedAt: activity.createdAt,
+  };
+}
+
 export function deriveLatestContextWindowSnapshot(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ContextWindowSnapshot | null {
+  let latestTokenOnlySnapshot: ContextWindowSnapshot | null = null;
+
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (!activity || activity.kind !== "context-window.updated") {
+    if (!activity) {
       continue;
     }
 
-    const payload = asRecord(activity.payload);
-    const usedTokens = asFiniteNumber(payload?.usedTokens);
-    if (usedTokens === null || usedTokens < 0) {
+    if (activity.kind === "context-compaction") {
+      break;
+    }
+
+    if (activity.kind !== "context-window.updated") {
       continue;
     }
 
-    const maxTokens = asFiniteNumber(payload?.maxTokens);
-    const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
-    const remainingTokens =
-      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
-    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
+    const snapshot = snapshotFromActivity(activity);
+    if (!snapshot) {
+      continue;
+    }
 
-    return {
-      usedTokens,
-      totalProcessedTokens: asFiniteNumber(payload?.totalProcessedTokens),
-      maxTokens,
-      remainingTokens,
-      usedPercentage,
-      remainingPercentage,
-      inputTokens: asFiniteNumber(payload?.inputTokens),
-      cachedInputTokens: asFiniteNumber(payload?.cachedInputTokens),
-      outputTokens: asFiniteNumber(payload?.outputTokens),
-      reasoningOutputTokens: asFiniteNumber(payload?.reasoningOutputTokens),
-      lastUsedTokens: asFiniteNumber(payload?.lastUsedTokens),
-      lastInputTokens: asFiniteNumber(payload?.lastInputTokens),
-      lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
-      lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
-      lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
-      toolUses: asFiniteNumber(payload?.toolUses),
-      durationMs: asFiniteNumber(payload?.durationMs),
-      compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
-      updatedAt: activity.createdAt,
-    };
+    const maxTokens = snapshot.maxTokens ?? null;
+    if (maxTokens !== null && maxTokens > 0) {
+      return snapshot;
+    }
+
+    latestTokenOnlySnapshot ??= snapshot;
   }
 
-  return null;
+  return latestTokenOnlySnapshot;
 }
 
 export function formatContextWindowTokens(value: number | null): string {
