@@ -30,7 +30,8 @@ export const EMPTY_COPILOT_MODEL_CAPABILITIES: ModelCapabilities = createModelCa
   optionDescriptors: [],
 });
 
-const COPILOT_REASONING_LABELS = {
+const COPILOT_REASONING_LABELS: Readonly<Record<string, string>> = {
+  none: "None",
   low: "Low",
   medium: "Medium",
   high: "High",
@@ -311,10 +312,9 @@ function formatContextTierLabel(label: string, tokens: number | undefined): stri
     : label;
 }
 
-type CopilotModelInfoForCapabilities = Pick<
-  ModelInfo,
-  "capabilities" | "supportedReasoningEfforts" | "defaultReasoningEffort"
-> & {
+type CopilotModelInfoForCapabilities = Pick<ModelInfo, "capabilities"> & {
+  readonly supportedReasoningEfforts?: ReadonlyArray<string>;
+  readonly defaultReasoningEffort?: string;
   readonly billing?: unknown;
 };
 
@@ -354,7 +354,7 @@ export function capabilitiesFromCopilotModel(
   const reasoningOptions =
     model.supportedReasoningEfforts?.map((effort) => ({
       id: effort,
-      label: COPILOT_REASONING_LABELS[effort as keyof typeof COPILOT_REASONING_LABELS] ?? effort,
+      label: COPILOT_REASONING_LABELS[effort] ?? effort,
       ...(model.defaultReasoningEffort === effort ? { isDefault: true } : {}),
     })) ?? [];
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
