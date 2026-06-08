@@ -1,5 +1,15 @@
 # Custom Branch Changes
 
+## Debug Browser Launch
+
+For web/server debug work in this branch, start the backend with browser auto-open disabled, then if needed navigate the intended active browser window manually or through Playwright MCP:
+
+```sh
+T3CODE_NO_BROWSER=1 pnpm exec node scripts/dev-runner.ts --dev-url http://127.0.0.1:5173 dev:server
+```
+
+If a pairing URL is required, open the printed `/pair#token=...` URL in the already-open browser window being used for the debug session.
+
 ## Installable Build Commands
 
 Use these commands from the repository root when producing local installable artifacts for this customized branch.
@@ -44,6 +54,24 @@ This branch carries local conversation-rendering changes that are not assumed to
 ## Conversation Tool Activity Rendering
 
 The custom behavior is focused on making subagent and tool activity easier to read in long-running Codex threads without changing agent execution semantics.
+
+### File Change And Command Activity Boxes
+
+File-change and command activities are rendered as clickable, expandable rows in the conversation work log.
+
+Expected behavior:
+
+- A file-change row keeps the compact `Changed files - path/to/file` style preview while collapsed.
+- Clicking a file-change row expands it inline and renders any available patch with the same `FileDiff` diff viewer used by other conversation diff surfaces.
+- If a file-change event only has paths and no patch, the expanded row still lists the changed paths instead of opening the full turn diff panel.
+- A command row keeps the compact `Ran command - command` style preview while collapsed.
+- Clicking a command row expands it inline and shows the command, raw command when it differs, stdout, stderr, exit code, and duration.
+- Stdout and stderr show only the last 40 lines by default when longer than 40 lines; clicking either output block toggles the full stream.
+
+Primary files:
+
+- `apps/web/src/session-logic.ts`
+- `apps/web/src/components/chat/MessagesTimeline.tsx`
 
 ### Subagent Activity Boxes
 

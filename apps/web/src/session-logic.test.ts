@@ -890,8 +890,75 @@ describe("deriveWorkLogEntries", () => {
     expect(entry).toMatchObject({
       command: "bun run dev",
       detail: '{ "dev": "vite dev --port 3000" }',
+      output: '{ "dev": "vite dev --port 3000" }',
+      exitCode: 0,
       itemType: "command_execution",
       toolTitle: "bash",
+    });
+  });
+
+  it("keeps command stdout, stderr, exit code, and duration for expanded command details", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+              stderr: "warning\n",
+              exitCode: 1,
+              durationMs: 1250,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      command: "vp test",
+      stdout: "line 1\nline 2\n",
+      stderr: "warning\n",
+      exitCode: 1,
+      durationMs: 1250,
+    });
+  });
+
+  it("keeps Codex command execution item output, exit code, and duration", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-command-tool-output",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+          data: {
+            item: {
+              aggregatedOutput: "stdout ui smoke test\n",
+              command: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+              commandActions: [{ command: "printf 'stdout ui smoke test\\n'", type: "unknown" }],
+              durationMs: 0,
+              exitCode: 0,
+              type: "commandExecution",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      command: "printf 'stdout ui smoke test\\\\n'",
+      rawCommand: `/opt/homebrew/bin/bash -lc "printf 'stdout ui smoke test\\\\n'"`,
+      output: "stdout ui smoke test\n",
+      exitCode: 0,
+      durationMs: 0,
     });
   });
 
@@ -920,6 +987,122 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/components/ChatView.tsx",
       "apps/web/src/session-logic.ts",
     ]);
+  });
+
+  it("keeps file-change patches for inline expanded diff rendering", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              path: "app.ts",
+              patch,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["app.ts"]);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("normalizes Codex file-change content diffs into unified patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "/Users/example/t3code/SMOKE_TEST_CHANGE.md",
+                  kind: { type: "add" },
+                  diff: "Smoke test file-change row.\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["/Users/example/t3code/SMOKE_TEST_CHANGE.md"]);
+    expect(entry?.patch).toContain(
+      "diff --git a/Users/example/t3code/SMOKE_TEST_CHANGE.md b/Users/example/t3code/SMOKE_TEST_CHANGE.md",
+    );
+    expect(entry?.patch).toContain("--- /dev/null");
+    expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("normalizes Codex file-change diffs for gitignored paths when the provider emits a patch", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-ignored-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "apps/web/dist/ignored.txt",
+                  kind: { type: "add" },
+                  diff: "ignored file content\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["apps/web/dist/ignored.txt"]);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/dist/ignored.txt b/apps/web/dist/ignored.txt",
+    );
+    expect(entry?.patch).toContain("+ignored file content");
+  });
+
+  it("normalizes Codex hunk-only diffs into unified patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_CHANGE.md",
+                  diff: "@@ -1 +1,2 @@\n Smoke test file-change row.\n+Smoke test file-change row rerun.",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.patch).toContain("diff --git a/SMOKE_TEST_CHANGE.md b/SMOKE_TEST_CHANGE.md");
+    expect(entry?.patch).toContain("--- a/SMOKE_TEST_CHANGE.md");
+    expect(entry?.patch).toContain("+++ b/SMOKE_TEST_CHANGE.md");
   });
 
   it("drops duplicated tool detail when it only repeats the title", () => {
