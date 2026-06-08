@@ -99,6 +99,9 @@ function copilotTextClientKey(input: {
 export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(function* (
   settings: CopilotSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  options?: {
+    readonly baseDirectory?: string;
+  },
 ) {
   const serverConfig = yield* ServerConfig;
   const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
@@ -182,6 +185,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
               createCopilotClient({
                 settings: input.settings,
                 cwd: input.cwd,
+                ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
                 env: environment,
                 logLevel: "error",
               }),

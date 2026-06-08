@@ -11,7 +11,7 @@ import { makeCopilotTextGeneration } from "./CopilotTextGeneration.ts";
 const runtimeMock = vi.hoisted(() => {
   const state = {
     createdClients: [] as Array<{
-      readonly input: { readonly cwd?: string };
+      readonly input: { readonly cwd?: string; readonly baseDirectory?: string };
       readonly client: {
         readonly start: ReturnType<typeof vi.fn>;
         readonly stop: ReturnType<typeof vi.fn>;
@@ -40,34 +40,36 @@ vi.mock("../provider/copilotRuntime.ts", async () => {
 
   return {
     ...actual,
-    createCopilotClient: vi.fn((input: { readonly cwd?: string }) => {
-      const start = vi.fn(async () => undefined);
-      const stop = vi.fn(async () => undefined);
-      const createSession = vi.fn(async () => {
-        const sendAndWait = vi.fn(async () => ({
-          data: {
-            content: JSON.stringify({
-              subject: "Add change",
-              body: "",
-            }),
-          },
-        }));
-        const disconnect = vi.fn(async () => undefined);
-        runtimeMock.state.sessions.push({ disconnect, sendAndWait });
-        return {
-          sendAndWait,
-          disconnect,
-        };
-      });
+    createCopilotClient: vi.fn(
+      (input: { readonly cwd?: string; readonly baseDirectory?: string }) => {
+        const start = vi.fn(async () => undefined);
+        const stop = vi.fn(async () => undefined);
+        const createSession = vi.fn(async () => {
+          const sendAndWait = vi.fn(async () => ({
+            data: {
+              content: JSON.stringify({
+                subject: "Add change",
+                body: "",
+              }),
+            },
+          }));
+          const disconnect = vi.fn(async () => undefined);
+          runtimeMock.state.sessions.push({ disconnect, sendAndWait });
+          return {
+            sendAndWait,
+            disconnect,
+          };
+        });
 
-      const client = {
-        start,
-        stop,
-        createSession,
-      };
-      runtimeMock.state.createdClients.push({ input, client });
-      return client;
-    }),
+        const client = {
+          start,
+          stop,
+          createSession,
+        };
+        runtimeMock.state.createdClients.push({ input, client });
+        return client;
+      },
+    ),
   };
 });
 
@@ -112,6 +114,7 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
       expect(second.subject).toBe("Add change");
 
       expect(runtimeMock.state.createdClients).toHaveLength(1);
+      expect(runtimeMock.state.createdClients[0]?.input.baseDirectory).toBeUndefined();
       expect(runtimeMock.state.sessions).toHaveLength(2);
 
       const sharedClient = runtimeMock.state.createdClients[0]?.client;
@@ -123,6 +126,26 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
       expect(runtimeMock.state.sessions[0]?.disconnect).toHaveBeenCalledTimes(1);
       expect(runtimeMock.state.sessions[1]?.sendAndWait).toHaveBeenCalledTimes(1);
       expect(runtimeMock.state.sessions[1]?.disconnect).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("passes the configured Copilot base directory to shared clients", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeCopilotTextGeneration(defaultCopilotSettings, process.env, {
+        baseDirectory: "/tmp/t3-copilot-home",
+      });
+      const modelSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
+
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/copilot-home",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection,
+      });
+
+      expect(runtimeMock.state.createdClients).toHaveLength(1);
+      expect(runtimeMock.state.createdClients[0]?.input.baseDirectory).toBe("/tmp/t3-copilot-home");
     }),
   );
 });

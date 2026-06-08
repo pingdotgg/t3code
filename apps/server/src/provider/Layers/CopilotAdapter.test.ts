@@ -13,7 +13,12 @@ import { it } from "@effect/vitest";
 import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, vi } from "vitest";
 
-import { type ProviderRuntimeEvent, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  type ProviderRuntimeEvent,
+  ProviderDriverKind,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -115,7 +120,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
           });
-          assert.deepStrictEqual(result, { kind: "denied-interactively-by-user" });
+          assert.deepStrictEqual(result, { kind: "reject" });
           return runtimeMock.state.lastSession as unknown as CopilotSession;
         };
 
@@ -143,7 +148,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
           });
-          assert.deepStrictEqual(result, { kind: "approved" });
+          assert.deepStrictEqual(result, { kind: "approve-once" });
           return runtimeMock.state.lastSession as unknown as CopilotSession;
         };
 
@@ -196,6 +201,80 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         assert.equal(session.provider, "copilot");
         yield* adapter.stopSession(threadId);
       }),
+  );
+
+  it.effect("returns a session-scoped SDK approval for acceptForSession", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-permission-accept-for-session");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      assert.ok(config.onPermissionRequest);
+
+      const permissionRequest: PermissionRequest = {
+        kind: "shell",
+        toolCallId: "tool-shell-session-approval",
+        fullCommandText: "git status",
+        intention: "Check repository status",
+        commands: [{ identifier: "git", readOnly: true }],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: true,
+      };
+      const requestId = "permission-shell-session-approval";
+      const resultPromise = Promise.resolve(
+        config.onPermissionRequest(permissionRequest, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+
+      config.onEvent({
+        id: "evt-copilot-permission-session-approval",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+          promptRequest: {
+            kind: "commands",
+            toolCallId: "tool-shell-session-approval",
+            fullCommandText: "git status",
+            intention: "Check repository status",
+            commandIdentifiers: ["git"],
+            canOfferSessionApproval: true,
+          },
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(requestId),
+        "acceptForSession",
+      );
+
+      const result = yield* Effect.promise(() => resultPromise);
+      assert.deepStrictEqual(result, {
+        kind: "approve-for-session",
+        approval: {
+          kind: "commands",
+          commandIdentifiers: ["git"],
+        },
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
   it.effect(

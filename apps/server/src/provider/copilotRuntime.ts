@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import {
   CopilotClient,
+  RuntimeConnection,
   type CopilotClientOptions,
   type GetAuthStatusResponse,
   type GetStatusResponse,
   type ModelInfo,
 } from "@github/copilot-sdk";
-import { dirname, join } from "node:path";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   CopilotSettings,
@@ -40,6 +42,10 @@ const GENERIC_EFFECT_TRY_PROMISE_MESSAGES = new Set([
 ]);
 const COPILOT_CLI_PATH_ENV = "COPILOT_CLI_PATH";
 const COPILOT_CLI_COMMAND = "copilot";
+const COPILOT_FEATURE_FLAGS_ENV = "COPILOT_FEATURE_FLAGS";
+const COPILOT_SHELL_SPAWN_BACKEND_FLAG = "SHELL_SPAWN_BACKEND";
+const COPILOT_SHELL_SPAWN_BACKEND_EXP_ENV = "COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND";
+const COPILOT_POSIX_SHELL_CANDIDATES = ["/bin/bash", "/usr/bin/bash", "/bin/sh"] as const;
 
 export class CopilotProbePromiseError extends Error {
   override readonly cause: unknown;
@@ -107,11 +113,69 @@ function normalizeAuthLabelPart(value: string | null | undefined): string | unde
 export function createCopilotClient(input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
+  readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
 }) {
   return new CopilotClient(buildCopilotClientOptions(input));
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) {
+      return false;
+    }
+
+    accessSync(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidPosixShellPath(path: string | undefined): path is string {
+  return !!path && !/\s/.test(path) && isAbsolute(path) && isExecutableFile(path);
+}
+
+function resolvePosixShellPath(currentShell: string | undefined): string | undefined {
+  if (isValidPosixShellPath(currentShell)) {
+    return currentShell;
+  }
+
+  return COPILOT_POSIX_SHELL_CANDIDATES.find(isExecutableFile);
+}
+
+function appendCommaSeparatedValue(value: string | undefined, entry: string): string {
+  const entries =
+    value
+      ?.split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0) ?? [];
+
+  return entries.includes(entry) ? entries.join(",") : [...entries, entry].join(",");
+}
+
+export function normalizeCopilotRuntimeEnvironment(
+  input: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string | undefined> {
+  const env = { ...input };
+
+  if (platform !== "win32") {
+    const shellPath = resolvePosixShellPath(env.SHELL);
+    if (shellPath) {
+      env.SHELL = shellPath;
+    }
+
+    env[COPILOT_FEATURE_FLAGS_ENV] = appendCommaSeparatedValue(
+      env[COPILOT_FEATURE_FLAGS_ENV],
+      COPILOT_SHELL_SPAWN_BACKEND_FLAG,
+    );
+    env[COPILOT_SHELL_SPAWN_BACKEND_EXP_ENV] = "true";
+  }
+
+  return env;
 }
 
 function validateConfiguredCopilotCliPath(input: {
@@ -186,18 +250,20 @@ export function resolveBundledCopilotCliPath(input: {
 export function buildCopilotClientOptions(input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
+  readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
 }): CopilotClientOptions {
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
-  const env = { ...process.env };
+  let env: Record<string, string | undefined> = { ...process.env };
 
   if (input.env) {
     Object.assign(env, input.env);
   }
 
   delete env[COPILOT_CLI_PATH_ENV];
+  env = normalizeCopilotRuntimeEnvironment(env);
 
   const configuredCliPath = validateConfiguredCopilotCliPath({
     settings: input.settings,
@@ -210,9 +276,14 @@ export function buildCopilotClientOptions(input: {
   const cliPath = configuredCliPath ?? bundledCliPath;
 
   return {
-    ...(cliUrl ? { cliUrl } : {}),
-    ...(!cliUrl && cliPath ? { cliPath } : {}),
-    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(cliUrl
+      ? { connection: RuntimeConnection.forUri(cliUrl) }
+      : cliPath
+        ? { connection: RuntimeConnection.forStdio({ path: cliPath }) }
+        : {}),
+    mode: "copilot-cli",
+    ...(input.cwd ? { workingDirectory: input.cwd } : {}),
+    ...(input.baseDirectory ? { baseDirectory: input.baseDirectory } : {}),
     env,
     ...(input.logLevel ? { logLevel: input.logLevel } : {}),
     ...(input.onListModels ? { onListModels: input.onListModels } : {}),

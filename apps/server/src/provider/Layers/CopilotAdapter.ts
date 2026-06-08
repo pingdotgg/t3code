@@ -55,10 +55,13 @@ type CopilotUserInputResponse = Awaited<
 type SessionPermissionRequestedEvent = Extract<SessionEvent, { type: "permission.requested" }>;
 type SessionUserInputRequestedEvent = Extract<SessionEvent, { type: "user_input.requested" }>;
 type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permissionRequest"];
+type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
+type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
 
 interface CopilotAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly baseDirectory?: string;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -84,6 +87,8 @@ interface PendingPermissionBinding {
     | "command_execution_approval"
     | "file_read_approval"
     | "file_change_approval";
+  readonly permissionRequest: SessionPermissionRequest;
+  readonly promptRequest: SessionPermissionRequestedEvent["data"]["promptRequest"] | undefined;
   readonly deferred: Deferred.Deferred<PermissionRequestResult>;
 }
 
@@ -151,9 +156,9 @@ interface CopilotSessionContext {
   stopped: boolean;
 }
 
-const APPROVED_PERMISSION_RESULT = { kind: "approved" } satisfies PermissionRequestResult;
+const APPROVED_PERMISSION_RESULT = { kind: "approve-once" } satisfies PermissionRequestResult;
 const DENIED_PERMISSION_RESULT = {
-  kind: "denied-interactively-by-user",
+  kind: "reject",
 } satisfies PermissionRequestResult;
 const EMPTY_USER_INPUT_RESPONSE = {
   answer: "",
@@ -374,16 +379,80 @@ function permissionDetail(request: SessionPermissionRequest): string | undefined
       return trimOrUndefined(request.toolName) ?? trimOrUndefined(request.toolDescription);
     case "hook":
       return trimOrUndefined(request.hookMessage) ?? trimOrUndefined(request.toolName);
+    case "extension-management":
+      return [request.operation, request.extensionName]
+        .map((part) => trimOrUndefined(part))
+        .filter(Boolean)
+        .join(" ");
+    case "extension-permission-access":
+      return [request.extensionName, ...request.capabilities]
+        .map((part) => trimOrUndefined(part))
+        .filter(Boolean)
+        .join(" ");
     default:
       return undefined;
   }
 }
 
-function permissionSignature(request: {
-  readonly kind: string;
-  readonly toolCallId?: string;
-  readonly [key: string]: unknown;
-}): string {
+function sessionApprovalDecisionFromPermissionRequest(
+  request: SessionPermissionRequest,
+  promptRequest: SessionPermissionRequestedEvent["data"]["promptRequest"] | undefined,
+): SessionApprovalDecision | undefined {
+  const approve = (approval: SessionApproval): SessionApprovalDecision => ({
+    kind: "approve-for-session",
+    approval,
+  });
+
+  switch (request.kind) {
+    case "shell": {
+      if (!request.canOfferSessionApproval) {
+        return undefined;
+      }
+      const commandIdentifiers =
+        promptRequest?.kind === "commands"
+          ? promptRequest.commandIdentifiers
+          : request.commands.map((command) => command.identifier);
+      const identifiers = commandIdentifiers.map((identifier) => identifier.trim()).filter(Boolean);
+      return identifiers.length > 0
+        ? approve({ kind: "commands", commandIdentifiers: identifiers })
+        : undefined;
+    }
+    case "write":
+      return request.canOfferSessionApproval ? approve({ kind: "write" }) : undefined;
+    case "read":
+      return approve({ kind: "read" });
+    case "mcp":
+      return approve({ kind: "mcp", serverName: request.serverName, toolName: request.toolName });
+    case "url": {
+      try {
+        const domain = new URL(request.url).hostname.trim();
+        return domain ? { kind: "approve-for-session", domain } : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    case "memory":
+      return approve({ kind: "memory" });
+    case "custom-tool":
+      return approve({ kind: "custom-tool", toolName: request.toolName });
+    case "extension-management": {
+      const operation = trimOrUndefined(request.operation);
+      return approve({
+        kind: "extension-management",
+        ...(operation ? { operation } : {}),
+      });
+    }
+    case "extension-permission-access":
+      return approve({
+        kind: "extension-permission-access",
+        extensionName: request.extensionName,
+      });
+    case "hook":
+      return undefined;
+  }
+}
+
+function permissionSignature(request: SessionPermissionRequest): string {
   switch (request.kind) {
     case "shell":
       return JSON.stringify([
@@ -432,6 +501,20 @@ function permissionSignature(request: {
         request.toolName ?? null,
         request.toolArgs ?? null,
         request.hookMessage ?? null,
+      ]);
+    case "extension-management":
+      return JSON.stringify([
+        request.kind,
+        request.toolCallId ?? null,
+        request.operation ?? null,
+        request.extensionName ?? null,
+      ]);
+    case "extension-permission-access":
+      return JSON.stringify([
+        request.kind,
+        request.toolCallId ?? null,
+        request.extensionName ?? null,
+        request.capabilities ?? null,
       ]);
     default:
       return JSON.stringify(request);
@@ -1112,6 +1195,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         context.pendingPermissionBindings.set(requestId, {
           requestId,
           requestType: mapPermissionRequestType(eventData.permissionRequest),
+          permissionRequest: eventData.permissionRequest,
+          promptRequest: eventData.promptRequest,
           deferred: handler.deferred,
         });
         if (
@@ -1187,7 +1272,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return DENIED_PERMISSION_RESULT;
       }
 
-      const signature = permissionSignature(request as PermissionRequest & { kind: string });
+      const signature = permissionSignature(request);
       const deferred = yield* Deferred.make<PermissionRequestResult>();
       const queue = context.pendingPermissionHandlersBySignature.get(signature) ?? [];
       queue.push({
@@ -1912,9 +1997,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (event.data.resolvedByHook === true) {
           return;
         }
-        const signature = permissionSignature(
-          event.data.permissionRequest as SessionPermissionRequest & { kind: string },
-        );
+        const signature = permissionSignature(event.data.permissionRequest);
         const queue = context.pendingPermissionEventsBySignature.get(signature) ?? [];
         queue.push(event.data);
         context.pendingPermissionEventsBySignature.set(signature, queue);
@@ -2051,6 +2134,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           createCopilotClient({
             settings,
             cwd,
+            ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
             ...(options?.environment ? { env: options.environment } : {}),
             logLevel: "error",
           }),
@@ -2343,10 +2427,18 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         });
       }
 
+      const approvalDecision = sessionApprovalDecisionFromPermissionRequest(
+        binding.permissionRequest,
+        binding.promptRequest,
+      );
       const result: PermissionRequestResult =
-        decision === "accept" || decision === "acceptForSession"
-          ? { kind: "approved" }
-          : { kind: "denied-interactively-by-user" };
+        decision === "accept"
+          ? APPROVED_PERMISSION_RESULT
+          : decision === "acceptForSession" && approvalDecision
+            ? approvalDecision
+            : decision === "acceptForSession"
+              ? APPROVED_PERMISSION_RESULT
+              : DENIED_PERMISSION_RESULT;
       yield* Deferred.succeed(binding.deferred, result);
     },
   );

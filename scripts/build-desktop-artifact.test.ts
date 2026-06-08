@@ -171,14 +171,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       resolveDesktopRuntimeDependencies(
         {
           "@github/copilot": "1.0.60",
-          "@github/copilot-sdk": "^0.2.2",
+          "@github/copilot-sdk": "1.0.0",
           "@t3tools/contracts": "workspace:*",
         },
         {},
       ),
       {
         "@github/copilot": "1.0.60",
-        "@github/copilot-sdk": "^0.2.2",
+        "@github/copilot-sdk": "1.0.0",
       },
     );
   });
