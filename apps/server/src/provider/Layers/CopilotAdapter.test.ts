@@ -118,7 +118,7 @@ const nativeEventLogger = {
       }
     }),
   ),
-  close: vi.fn(() => Effect.succeed(undefined)),
+  close: vi.fn(() => Effect.void),
 } satisfies EventNdjsonLogger;
 
 const CopilotAdapterTestLayer = makeCopilotAdapterLive({ nativeEventLogger }).pipe(
@@ -357,11 +357,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       });
 
       const duplicateReply = yield* Effect.flip(
-        adapter.respondToRequest(
-          threadId,
-          ApprovalRequestId.make(requestId),
-          "acceptForSession",
-        ),
+        adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "acceptForSession"),
       );
       assert.match(duplicateReply.message, /Unknown pending permission request/);
 
@@ -716,7 +712,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       } as SessionEvent);
 
       const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
-      for (let attempt = 0; attempt < 20 && runtimeMock.state.nativeWriteCalls === 0; attempt += 1) {
+      for (
+        let attempt = 0;
+        attempt < 20 && runtimeMock.state.nativeWriteCalls === 0;
+        attempt += 1
+      ) {
         yield* waitForSdkEventQueue();
       }
 
