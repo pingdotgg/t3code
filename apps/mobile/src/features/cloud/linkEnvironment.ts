@@ -50,7 +50,7 @@ export function normalizeRelayBaseUrl(value: string | null | undefined): string 
 }
 
 function readRelayUrl(): string | null {
-  return resolveCloudPublicConfig().relayUrl;
+  return resolveCloudPublicConfig().relay.url;
 }
 
 export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{

@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime";
+import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import {
   PrimaryEnvironmentHttpClient,
   primaryEnvironmentHttpClientLive,
@@ -28,6 +29,7 @@ const primaryHttpRuntime = ManagedRuntime.make(
       Layer.mergeAll(
         remoteHttpClientLayer((input, init) => globalThis.fetch(input, init)),
         Layer.succeed(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
+        httpHeaderRedactionLayer,
       ),
     ),
   ),

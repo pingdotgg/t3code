@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
-  ManagedRelayClient,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
 } from "@t3tools/client-runtime";
@@ -9,23 +8,13 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
-import { mobileRuntime } from "../../lib/runtime";
+import { mobileRuntimeContextLayer } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 
-const managedRelayAtomRuntime = Atom.runtime(
-  Layer.effect(
-    ManagedRelayClient,
-    mobileRuntime.contextEffect.pipe(
-      Effect.map((context) => Context.get(context, ManagedRelayClient)),
-    ),
-  ),
-);
+const managedRelayAtomRuntime = Atom.runtime(mobileRuntimeContextLayer);
 
 export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime);
 

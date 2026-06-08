@@ -27,6 +27,12 @@ describe("loadRepoEnv", () => {
     expect(env.EXPO_PUBLIC_CLERK_JWT_TEMPLATE).toBeUndefined();
     expect(env.T3CODE_RELAY_URL).toBeUndefined();
     expect(env.VITE_T3CODE_RELAY_URL).toBeUndefined();
+    expect(env.T3CODE_MOBILE_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.T3CODE_MOBILE_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.T3CODE_MOBILE_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.EXPO_PUBLIC_OTLP_TRACES_TOKEN).toBeUndefined();
   });
 
   it("applies process, root local, and root precedence in that order", () => {
@@ -73,26 +79,41 @@ describe("loadRepoEnv", () => {
         VITE_CLERK_JWT_TEMPLATE: "template_legacy",
         T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
         VITE_T3CODE_RELAY_URL: "https://legacy.example.test",
+        EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+        EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
+        EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
       }),
     ).toEqual({
       clerkPublishableKey: "pk_legacy",
       clerkJwtTemplate: "template_legacy",
       clerkCliOAuthClientId: "oauth_canonical",
       relayUrl: "https://legacy.example.test",
+      mobileOtlpTracesUrl: "https://api.axiom.co/v1/traces",
+      mobileOtlpTracesDataset: "mobile-traces",
+      mobileOtlpTracesToken: "mobile-token",
     });
   });
 
-  it("projects only the configured aliases", () => {
+  it("projects canonical mobile tracing values to Expo public aliases", () => {
     expect(
       loadRepoEnv({
         baseEnv: {
           T3CODE_RELAY_URL: "https://relay.example.test",
+          T3CODE_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+          T3CODE_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
+          T3CODE_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
         },
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toEqual({
       T3CODE_RELAY_URL: "https://relay.example.test",
       VITE_T3CODE_RELAY_URL: "https://relay.example.test",
+      T3CODE_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      T3CODE_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
+      T3CODE_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
+      EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
+      EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
     });
   });
 });

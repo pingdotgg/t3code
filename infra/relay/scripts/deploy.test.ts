@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { hasDeployChanges, reconcileRootEnvRelayUrl, serializeGithubOutput } from "./deploy.ts";
+import {
+  hasDeployChanges,
+  reconcileRootEnvPublicConfig,
+  reconcileRootEnvRelayUrl,
+  serializeGithubOutput,
+} from "./deploy.ts";
 
 describe("hasDeployChanges", () => {
   it("detects resource, binding, and deletion changes", () => {
@@ -47,6 +52,52 @@ describe("reconcileRootEnvRelayUrl", () => {
       ),
     ).toBe(
       "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example\nT3CODE_RELAY_URL=https://relay.example.test\n",
+    );
+  });
+});
+
+describe("reconcileRootEnvPublicConfig", () => {
+  const config = {
+    relayUrl: "https://relay.example.test",
+    mobileTracingUrl: "https://api.axiom.co/v1/traces",
+    mobileTracingDataset: "t3-code-mobile-traces-dev",
+    mobileTracingToken: "xaat-public-ingest",
+  } as const;
+
+  it("adds the complete local client config", () => {
+    expect(reconcileRootEnvPublicConfig("", config)).toBe(
+      [
+        "T3CODE_RELAY_URL=https://relay.example.test",
+        "T3CODE_MOBILE_OTLP_TRACES_URL=https://api.axiom.co/v1/traces",
+        "T3CODE_MOBILE_OTLP_TRACES_DATASET=t3-code-mobile-traces-dev",
+        "T3CODE_MOBILE_OTLP_TRACES_TOKEN=xaat-public-ingest",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("replaces stale values while preserving unrelated entries", () => {
+    expect(
+      reconcileRootEnvPublicConfig(
+        [
+          "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example",
+          "T3CODE_RELAY_URL=https://old.example.test",
+          "T3CODE_MOBILE_OTLP_TRACES_URL=https://old.example.test/v1/traces",
+          "T3CODE_MOBILE_OTLP_TRACES_DATASET=old-dataset",
+          "T3CODE_MOBILE_OTLP_TRACES_TOKEN=old-token",
+          "",
+        ].join("\n"),
+        config,
+      ),
+    ).toBe(
+      [
+        "T3CODE_CLERK_PUBLISHABLE_KEY=pk_test_example",
+        "T3CODE_RELAY_URL=https://relay.example.test",
+        "T3CODE_MOBILE_OTLP_TRACES_URL=https://api.axiom.co/v1/traces",
+        "T3CODE_MOBILE_OTLP_TRACES_DATASET=t3-code-mobile-traces-dev",
+        "T3CODE_MOBILE_OTLP_TRACES_TOKEN=xaat-public-ingest",
+        "",
+      ].join("\n"),
     );
   });
 });
