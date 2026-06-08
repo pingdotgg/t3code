@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import type {
   CopilotSettings,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
@@ -294,8 +295,61 @@ export function versionFromCopilotStatus(status: GetStatusResponse): string | nu
   return trimOrUndefined(status.version) ?? null;
 }
 
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
+  }
+  if (tokens >= 1_000 && tokens % 1_000 === 0) {
+    return `${tokens / 1_000}K`;
+  }
+  return tokens.toLocaleString("en-US");
+}
+
+function formatContextTierLabel(label: string, tokens: number | undefined): string {
+  return typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0
+    ? `${label} (${formatTokenCount(tokens)} tokens)`
+    : label;
+}
+
+type CopilotModelInfoForCapabilities = Pick<
+  ModelInfo,
+  "capabilities" | "supportedReasoningEfforts" | "defaultReasoningEffort"
+> & {
+  readonly billing?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getPositiveFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function getCopilotContextTierTokenBudgets(model: CopilotModelInfoForCapabilities): {
+  readonly defaultContextPromptTokens?: number;
+  readonly longContextPromptTokens?: number;
+} {
+  if (!isRecord(model.billing)) {
+    return {};
+  }
+  const tokenPrices = model.billing.tokenPrices;
+  if (!isRecord(tokenPrices)) {
+    return {};
+  }
+  const longContext = tokenPrices.longContext;
+  const defaultContextPromptTokens = getPositiveFiniteNumber(tokenPrices.contextMax);
+  const longContextPromptTokens = isRecord(longContext)
+    ? getPositiveFiniteNumber(longContext.contextMax)
+    : undefined;
+  return {
+    ...(defaultContextPromptTokens !== undefined ? { defaultContextPromptTokens } : {}),
+    ...(longContextPromptTokens !== undefined ? { longContextPromptTokens } : {}),
+  };
+}
+
 export function capabilitiesFromCopilotModel(
-  model: Pick<ModelInfo, "supportedReasoningEfforts" | "defaultReasoningEffort">,
+  model: CopilotModelInfoForCapabilities,
 ): ModelCapabilities {
   const reasoningOptions =
     model.supportedReasoningEfforts?.map((effort) => ({
@@ -304,21 +358,45 @@ export function capabilitiesFromCopilotModel(
       ...(model.defaultReasoningEffort === effort ? { isDefault: true } : {}),
     })) ?? [];
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
+  const descriptors: Array<ProviderOptionDescriptor> = [];
 
-  return createModelCapabilities({
-    optionDescriptors:
-      reasoningOptions.length > 0
-        ? [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning",
-              type: "select" as const,
-              options: reasoningOptions,
-              ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-            },
-          ]
-        : [],
-  });
+  if (reasoningOptions.length > 0) {
+    descriptors.push({
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: reasoningOptions,
+      ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
+    });
+  }
+
+  const contextTierTokenBudgets = getCopilotContextTierTokenBudgets(model);
+  if (contextTierTokenBudgets.longContextPromptTokens !== undefined) {
+    descriptors.push({
+      id: "contextTier",
+      label: "Context Window",
+      type: "select",
+      options: [
+        {
+          id: "default",
+          label: formatContextTierLabel(
+            "Default",
+            contextTierTokenBudgets.defaultContextPromptTokens,
+          ),
+        },
+        {
+          id: "long_context",
+          label: formatContextTierLabel(
+            "Long Context",
+            model.capabilities.limits.max_context_window_tokens,
+          ),
+        },
+      ],
+      currentValue: "default",
+    });
+  }
+
+  return createModelCapabilities({ optionDescriptors: descriptors });
 }
 
 export function modelsFromCopilotSdk(input: {
