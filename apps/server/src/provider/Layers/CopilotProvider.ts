@@ -67,8 +67,8 @@ export function checkCopilotProviderStatus(input: {
     return Effect.succeed(makePendingCopilotProvider(input.settings));
   }
 
-  const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
   const fallback = (cause: unknown, version: string | null = null) => {
+    const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
     const failure = formatCopilotProbeError({
       cause,
       settings: input.settings,
@@ -107,6 +107,7 @@ export function checkCopilotProviderStatus(input: {
     (client) =>
       Effect.tryPromise({
         try: async () => {
+          const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
           await client.start();
           const [status, authStatus, models] = await Promise.all([
             client.getStatus(),
