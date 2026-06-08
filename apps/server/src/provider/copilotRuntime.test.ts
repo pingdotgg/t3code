@@ -5,10 +5,77 @@ import { describe, it } from "vitest";
 import {
   authSnapshotFromCopilotSdk,
   buildCopilotClientOptions,
+  normalizeCopilotRuntimeEnvironment,
   resolveBundledCopilotCliPath,
 } from "./copilotRuntime.ts";
 
+function assertStdioConnection(
+  connection: ReturnType<typeof buildCopilotClientOptions>["connection"],
+) {
+  assert.equal(connection?.kind, "stdio");
+  return connection;
+}
+
+const POSIX_SHELL_FALLBACKS = ["/bin/bash", "/usr/bin/bash", "/bin/sh"] as const;
+
 describe("buildCopilotClientOptions", () => {
+  it("leaves POSIX PATH hydration to the shared server environment setup", () => {
+    const env = normalizeCopilotRuntimeEnvironment({ PATH: "/custom/bin:/bin" }, "darwin");
+
+    assert.equal(env.PATH, "/custom/bin:/bin");
+  });
+
+  it("hydrates a missing POSIX SHELL for Copilot shell spawning", () => {
+    const env = normalizeCopilotRuntimeEnvironment({}, "darwin");
+
+    assert.ok(POSIX_SHELL_FALLBACKS.some((shell) => shell === env.SHELL));
+  });
+
+  it("replaces POSIX SHELL values that the Copilot CLI rejects", () => {
+    const fallbackShell = normalizeCopilotRuntimeEnvironment({}, "darwin").SHELL;
+    const relativeShellEnv = normalizeCopilotRuntimeEnvironment({ SHELL: "bash" }, "darwin");
+    const shellWithWhitespaceEnv = normalizeCopilotRuntimeEnvironment(
+      { SHELL: "/bin/bash --noprofile" },
+      "darwin",
+    );
+
+    assert.equal(relativeShellEnv.SHELL, fallbackShell);
+    assert.equal(shellWithWhitespaceEnv.SHELL, fallbackShell);
+  });
+
+  it("preserves valid POSIX SHELL paths", () => {
+    const validShell = normalizeCopilotRuntimeEnvironment({}, "darwin").SHELL;
+    assert.ok(validShell);
+
+    const env = normalizeCopilotRuntimeEnvironment({ SHELL: validShell }, "darwin");
+
+    assert.equal(env.SHELL, validShell);
+  });
+
+  it("forces the Copilot POSIX shell spawn backend to avoid node-pty failures", () => {
+    const env = normalizeCopilotRuntimeEnvironment({}, "darwin");
+
+    assert.equal(env.COPILOT_FEATURE_FLAGS, "SHELL_SPAWN_BACKEND");
+    assert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, "true");
+  });
+
+  it("preserves existing Copilot feature flags while enabling the shell spawn backend", () => {
+    const env = normalizeCopilotRuntimeEnvironment(
+      { COPILOT_FEATURE_FLAGS: "FOCUSED_TOOLS, SHELL_SPAWN_BACKEND, MCP_APPS" },
+      "darwin",
+    );
+
+    assert.equal(env.COPILOT_FEATURE_FLAGS, "FOCUSED_TOOLS,SHELL_SPAWN_BACKEND,MCP_APPS");
+  });
+
+  it("does not apply POSIX shell normalization on Windows", () => {
+    const env = normalizeCopilotRuntimeEnvironment({ SHELL: "bash" }, "win32");
+
+    assert.equal(env.SHELL, "bash");
+    assert.equal(env.COPILOT_FEATURE_FLAGS, undefined);
+    assert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, undefined);
+  });
+
   it("strips inherited COPILOT_CLI_PATH and uses the local Copilot CLI shim by default", () => {
     const options = buildCopilotClientOptions({
       settings: {
@@ -18,6 +85,7 @@ describe("buildCopilotClientOptions", () => {
         customModels: [],
       },
       cwd: "/tmp/project",
+      baseDirectory: "/tmp/t3-copilot-home",
       env: {
         PATH: "/usr/bin",
         COPILOT_CLI_PATH: "/opt/homebrew/bin/copilot",
@@ -26,11 +94,15 @@ describe("buildCopilotClientOptions", () => {
       logLevel: "error",
     });
 
-    assert.ok(options.cliPath?.includes("node_modules/.bin/copilot"));
-    assert.equal(options.cwd, "/tmp/project");
+    const connection = assertStdioConnection(options.connection);
+    assert.ok(connection.path?.includes("node_modules/.bin/copilot"));
+    assert.equal(options.workingDirectory, "/tmp/project");
+    assert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
     assert.equal(options.logLevel, "error");
+    assert.equal(options.mode, "copilot-cli");
     assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
     assert.equal(options.env?.GITHUB_TOKEN, "github-token");
+    assert.equal(options.env?.PATH, "/usr/bin");
   });
 
   it("resolves the bundled Copilot CLI shim without relying on PATH", () => {
@@ -57,7 +129,8 @@ describe("buildCopilotClientOptions", () => {
       },
     });
 
-    assert.equal(options.cliPath, configuredBinaryPath);
+    const connection = assertStdioConnection(options.connection);
+    assert.equal(connection.path, configuredBinaryPath);
     assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
   });
 
