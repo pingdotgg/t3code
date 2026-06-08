@@ -89,12 +89,16 @@ export const GitStatusBroadcasterLive = Layer.effect(
       } satisfies CachedValue<GitStatusLocalResult>;
       const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
+        if (previous.local?.fingerprint === nextLocal.fingerprint) {
+          return [false, cache] as const;
+        }
+
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           local: nextLocal,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [true, nextCache] as const;
       });
 
       if (options?.publish && shouldPublish) {
@@ -121,12 +125,16 @@ export const GitStatusBroadcasterLive = Layer.effect(
       } satisfies CachedValue<GitStatusRemoteResult | null>;
       const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
+        if (previous.remote?.fingerprint === nextRemote.fingerprint) {
+          return [false, cache] as const;
+        }
+
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           remote: nextRemote,
         });
-        return [previous.remote?.fingerprint !== nextRemote.fingerprint, nextCache] as const;
+        return [true, nextCache] as const;
       });
 
       if (options?.publish && shouldPublish) {
