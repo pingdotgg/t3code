@@ -58,6 +58,7 @@ vi.mock("../copilotRuntime.ts", async () => {
 });
 
 beforeEach(() => {
+  vi.useRealTimers();
   runtimeMock.reset();
 });
 
@@ -99,6 +100,26 @@ describe("CopilotProvider status", () => {
         snapshot.message,
         "The configured Copilot binary could not be started: /missing/copilot.",
       );
+    }),
+  );
+
+  it.effect("timestamps each provider status check when the Effect executes", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
+
+      const statusCheck = checkCopilotProviderStatus({
+        settings: defaultCopilotSettings,
+        cwd: process.cwd(),
+      });
+
+      vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+      const firstSnapshot = yield* statusCheck;
+
+      vi.setSystemTime(new Date("2026-06-08T12:01:00.000Z"));
+      const secondSnapshot = yield* statusCheck;
+
+      assert.equal(firstSnapshot.checkedAt, "2026-06-08T12:00:00.000Z");
+      assert.equal(secondSnapshot.checkedAt, "2026-06-08T12:01:00.000Z");
     }),
   );
 });
