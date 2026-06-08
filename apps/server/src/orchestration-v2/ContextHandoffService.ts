@@ -52,6 +52,22 @@ export interface ContextHandoffServiceV2Shape {
     readonly deltaItems: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
+  readonly prepareProviderHandoff: (input: {
+    readonly threadId: ThreadId;
+    readonly targetRunId: RunId;
+    readonly transferId: NonNullable<OrchestrationV2ContextHandoff["transferId"]>;
+    readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
+    readonly toProviderThreadId: ProviderThreadId;
+    readonly fromProvider: ProviderKind;
+    readonly toProvider: ProviderKind;
+    readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+    readonly strategy: Extract<
+      OrchestrationV2ContextHandoff["strategy"],
+      "delta_since_target_last_seen" | "full_thread_summary"
+    >;
+    readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly createdAt: DateTime.Utc;
+  }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
 }
 
 export class ContextHandoffServiceV2 extends Context.Service<
@@ -107,12 +123,46 @@ function makeForkDeltaSummary(input: {
   ].join("\n");
 }
 
+function makeProviderHandoffSummary(input: {
+  readonly fromProvider: ProviderKind;
+  readonly toProvider: ProviderKind;
+  readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+  readonly strategy: Extract<
+    OrchestrationV2ContextHandoff["strategy"],
+    "delta_since_target_last_seen" | "full_thread_summary"
+  >;
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+}): string {
+  const itemLines = input.items.flatMap((item) => {
+    if (item.type === "handoff") {
+      return [];
+    }
+    const line = summarizeDeltaItem(item);
+    return line === null ? [] : [line];
+  });
+  return [
+    input.strategy === "full_thread_summary"
+      ? "Full conversation context for provider handoff."
+      : "Conversation delta since this provider last participated.",
+    `From provider: ${input.fromProvider}`,
+    `To provider: ${input.toProvider}`,
+    `Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}`,
+    "",
+    "Canonical conversation context:",
+    ...(itemLines.length === 0 ? ["- No user-visible context items."] : itemLines),
+  ].join("\n");
+}
+
 export function providerMessageWithContextHandoff(input: {
   readonly handoff: OrchestrationV2ContextHandoff;
   readonly userText: string;
 }): string {
+  const label =
+    input.handoff.strategy === "fork_delta_summary"
+      ? "merge_back / fork_delta_summary"
+      : input.handoff.strategy;
   return [
-    "Context handoff (merge_back / fork_delta_summary):",
+    `Context handoff (${label}):`,
     input.handoff.summaryText,
     "",
     "User message:",
@@ -218,9 +268,64 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       },
     );
 
+    const prepareProviderHandoff = Effect.fn(
+      "orchestrationV2.contextHandoff.prepareProviderHandoff",
+    )(function* (input: {
+      readonly threadId: ThreadId;
+      readonly targetRunId: RunId;
+      readonly transferId: NonNullable<OrchestrationV2ContextHandoff["transferId"]>;
+      readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
+      readonly toProviderThreadId: ProviderThreadId;
+      readonly fromProvider: ProviderKind;
+      readonly toProvider: ProviderKind;
+      readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+      readonly strategy: Extract<
+        OrchestrationV2ContextHandoff["strategy"],
+        "delta_since_target_last_seen" | "full_thread_summary"
+      >;
+      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+      readonly createdAt: DateTime.Utc;
+    }) {
+      const handoffId = yield* idAllocator.allocate
+        .contextHandoff({
+          threadId: input.threadId,
+          fromProvider: input.fromProvider,
+          toProvider: input.toProvider,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ContextHandoffPrepareError({
+                threadId: input.threadId,
+                targetRunId: input.targetRunId,
+                fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
+                toProviderThreadId: input.toProviderThreadId,
+                cause,
+              }),
+          ),
+        );
+      return {
+        id: handoffId,
+        transferId: input.transferId,
+        threadId: input.threadId,
+        targetRunId: input.targetRunId,
+        fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
+        toProviderThreadId: input.toProviderThreadId,
+        coveredRunOrdinals: input.coveredRunOrdinals,
+        strategy: input.strategy,
+        status: "ready",
+        summaryMessageId: null,
+        summaryText: makeProviderHandoffSummary(input),
+        createdByProvider: null,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      } satisfies OrchestrationV2ContextHandoff;
+    });
+
     return ContextHandoffServiceV2.of({
       prepare,
       prepareForkDelta,
+      prepareProviderHandoff,
     });
   },
 );
