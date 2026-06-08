@@ -165,6 +165,27 @@ describe("getComposerProviderState", () => {
     );
   });
 
+  it("does not treat context tier as promptEffort when no reasoning descriptor exists", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextTier", [
+          { id: "default", label: "Default", isDefault: true },
+          { id: "long_context", label: "Long Context" },
+        ]),
+      ]),
+      prompt: "",
+      modelOptions: selections(["contextTier", "long_context"]),
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: null,
+      modelOptionsForDispatch: selections(["contextTier", "long_context"]),
+    });
+  });
+
   it("returns undefined dispatch options when the model declares no descriptors", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

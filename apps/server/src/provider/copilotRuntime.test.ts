@@ -5,6 +5,7 @@ import { describe, it } from "vitest";
 import {
   authSnapshotFromCopilotSdk,
   buildCopilotClientOptions,
+  capabilitiesFromCopilotModel,
   normalizeCopilotRuntimeEnvironment,
   resolveBundledCopilotCliPath,
 } from "./copilotRuntime.ts";
@@ -23,6 +24,65 @@ describe("buildCopilotClientOptions", () => {
     const env = normalizeCopilotRuntimeEnvironment({ PATH: "/custom/bin:/bin" }, "darwin");
 
     assert.equal(env.PATH, "/custom/bin:/bin");
+  });
+
+  describe("capabilitiesFromCopilotModel", () => {
+    it("adds a context tier selector for long-context Copilot models", () => {
+      const capabilities = capabilitiesFromCopilotModel({
+        capabilities: {
+          supports: { vision: false, reasoningEffort: true },
+          limits: { max_prompt_tokens: 922_000, max_context_window_tokens: 1_050_000 },
+        },
+        billing: {
+          tokenPrices: {
+            contextMax: 272_000,
+            longContext: { contextMax: 922_000 },
+          },
+        },
+        supportedReasoningEfforts: ["low", "medium", "high"],
+        defaultReasoningEffort: "medium",
+      });
+
+      assert.deepStrictEqual(capabilities.optionDescriptors, [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium", isDefault: true },
+            { id: "high", label: "High" },
+          ],
+          currentValue: "medium",
+        },
+        {
+          id: "contextTier",
+          label: "Context Window",
+          type: "select",
+          options: [
+            { id: "default", label: "Default (272K tokens)" },
+            { id: "long_context", label: "Long Context (1.05M tokens)" },
+          ],
+          currentValue: "default",
+        },
+      ]);
+    });
+
+    it("omits the context tier selector for regular-context Copilot models", () => {
+      const capabilities = capabilitiesFromCopilotModel({
+        capabilities: {
+          supports: { vision: false, reasoningEffort: false },
+          limits: { max_prompt_tokens: 272_000, max_context_window_tokens: 400_000 },
+        },
+        billing: {
+          tokenPrices: {
+            contextMax: 272_000,
+          },
+        },
+      });
+
+      assert.deepStrictEqual(capabilities.optionDescriptors, []);
+    });
   });
 
   it("hydrates a missing POSIX SHELL for Copilot shell spawning", () => {

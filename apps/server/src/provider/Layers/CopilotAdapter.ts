@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   CopilotClient,
   CopilotSession,
+  ContextTier,
   MessageOptions,
   PermissionRequest,
   PermissionRequestResult,
@@ -48,6 +49,7 @@ const COPILOT_RESUME_SCHEMA_VERSION = 1 as const;
 
 type CopilotMode = "interactive" | "plan" | "autopilot";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+type CopilotContextTier = ContextTier;
 type CopilotUserInputRequest = Parameters<NonNullable<SessionConfig["onUserInputRequest"]>>[0];
 type CopilotUserInputResponse = Awaited<
   ReturnType<NonNullable<SessionConfig["onUserInputRequest"]>>
@@ -871,9 +873,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       context: CopilotSessionContext,
       model: string,
       reasoningEffort?: CopilotReasoningEffort | undefined,
+      contextTier?: CopilotContextTier | undefined,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.tryPromise({
-        try: () => context.sdkSession.setModel(model, reasoningEffort ? { reasoningEffort } : {}),
+        try: () =>
+          context.sdkSession.setModel(model, {
+            ...(reasoningEffort ? { reasoningEffort } : {}),
+            ...(contextTier ? { contextTier } : {}),
+          }),
         catch: (cause) =>
           new ProviderAdapterRequestError({
             provider: PROVIDER,
@@ -2101,6 +2108,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         modelSelection,
         "reasoningEffort",
       ) as CopilotReasoningEffort | undefined;
+      const contextTier = getModelSelectionStringOptionValue(modelSelection, "contextTier") as
+        | CopilotContextTier
+        | undefined;
       let context: CopilotSessionContext | undefined;
       const earlyEvents: Array<SessionEvent> = [];
       const onEvent: SessionConfig["onEvent"] = (event) => {
@@ -2150,6 +2160,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         clientName: "t3-code",
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(contextTier ? { contextTier } : {}),
         workingDirectory: cwd,
         streaming: true,
         enableConfigDiscovery: true,
@@ -2159,6 +2170,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         | "clientName"
         | "model"
         | "reasoningEffort"
+        | "contextTier"
         | "workingDirectory"
         | "streaming"
         | "enableConfigDiscovery"
@@ -2303,11 +2315,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     const reasoningEffort = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") as
       | CopilotReasoningEffort
       | undefined;
+    const contextTier = getModelSelectionStringOptionValue(modelSelection, "contextTier") as
+      | CopilotContextTier
+      | undefined;
     if (modelSelection?.model) {
-      yield* copilotSdk.setModel(context, modelSelection.model, reasoningEffort);
+      yield* copilotSdk.setModel(context, modelSelection.model, reasoningEffort, contextTier);
       updateProviderSession(context, {
         model: modelSelection.model,
-        ...(reasoningEffort ? { status: "ready" } : {}),
+        ...(reasoningEffort || contextTier ? { status: "ready" } : {}),
       });
     }
 
@@ -2335,6 +2350,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       payload: {
         model: modelSelection?.model ?? context.session.model,
         ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+        ...(contextTier ? { contextTier } : {}),
       },
     });
 
