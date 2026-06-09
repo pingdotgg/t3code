@@ -573,6 +573,25 @@ label:has(> select#reasoning-effort) select {
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
+/* Show sidebar action buttons on touch devices that lack hover capability.
+   iPad Safari and other tablets report viewport widths >640px but cannot
+   hover, so the hover-only reveal pattern breaks.
+   We scope to min-width: 640px because below that the max-sm: Tailwind
+   modifiers already handle visibility correctly on phones. */
+@media (hover: none) and (min-width: 640px) {
+  .sidebar-touch-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar-touch-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar-touch-timestamp {
+    padding-right: 1.5rem;
+  }
+}
+
 /* Thin scrollbar for model picker */
 .model-picker-list::-webkit-scrollbar {
   width: 4px;
