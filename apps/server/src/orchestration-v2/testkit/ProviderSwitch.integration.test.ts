@@ -526,4 +526,156 @@ describe("orchestration v2 provider switching", () => {
       );
     }
   });
+
+  it("switches providers while consuming a pending cross-provider merge-back", async () => {
+    const sourceThreadId = ThreadId.make("thread:cross-provider-merge:source");
+    const forkThreadId = ThreadId.make("thread:cross-provider-merge:fork");
+    const sourcePrompt = "Remember that the source marker is amber.";
+    const forkPrompt = "Remember that the fork marker is cobalt.";
+    const mergePrompt = "Report both remembered markers.";
+    const cwd = await makeCheckpointWorkspace("cross-provider-merge");
+    const capturedTurns = await Effect.runPromise(Ref.make<ReadonlyArray<CapturedTurn>>([]));
+    const registryLayer = makeProviderAdapterRegistryLayer([
+      makeTestAdapter({
+        instanceId: ProviderInstanceId.make("codex"),
+        provider: "codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        responseByRunOrdinal: {
+          1: "I will remember cobalt.",
+          2: "The markers are amber and cobalt.",
+        },
+        capturedTurns,
+      }),
+      makeTestAdapter({
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        provider: "claudeAgent",
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "I will remember amber." },
+        capturedTurns,
+      }),
+    ]);
+    const commands = [
+      {
+        type: "thread.create",
+        commandId: CommandId.make("command:cross-provider-merge:create"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Cross-provider merge source",
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-merge:source"),
+        threadId: sourceThreadId,
+        messageId: MessageId.make("message:cross-provider-merge:source"),
+        text: sourcePrompt,
+        attachments: [],
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "thread.fork",
+        commandId: CommandId.make("command:cross-provider-merge:fork"),
+        sourceThreadId,
+        targetThreadId: forkThreadId,
+        sourcePoint: { type: "latest_stable" },
+        title: "Cross-provider merge fork",
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-merge:fork-turn"),
+        threadId: forkThreadId,
+        messageId: MessageId.make("message:cross-provider-merge:fork-turn"),
+        text: forkPrompt,
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "thread.merge_back",
+        commandId: CommandId.make("command:cross-provider-merge:merge"),
+        sourceThreadId: forkThreadId,
+        targetThreadId: sourceThreadId,
+        sourcePoint: { type: "latest_stable" },
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-merge:consume"),
+        threadId: sourceThreadId,
+        messageId: MessageId.make("message:cross-provider-merge:consume"),
+        text: mergePrompt,
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+    ] satisfies ReadonlyArray<OrchestrationV2Command>;
+
+    try {
+      const projection = await Effect.runPromise(
+        Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          yield* orchestrator.dispatch(commands[0]!);
+          yield* orchestrator.dispatch(commands[1]!);
+          yield* waitForIdle(sourceThreadId);
+          yield* orchestrator.dispatch(commands[2]!);
+          yield* orchestrator.dispatch(commands[3]!);
+          yield* waitForIdle(forkThreadId);
+          yield* orchestrator.dispatch(commands[4]!);
+          yield* orchestrator.dispatch(commands[5]!);
+          return yield* waitForIdle(sourceThreadId);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "cross-provider-merge",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        ),
+      );
+      const turns = await Effect.runPromise(Ref.get(capturedTurns));
+      const mergedTurn = turns.find(
+        (turn) => turn.threadId === sourceThreadId && turn.provider === "codex",
+      );
+      const mergeTransfer = projection.contextTransfers.find(
+        (transfer) => transfer.type === "merge_back",
+      );
+
+      assert.isDefined(mergedTurn);
+      assert.include(mergedTurn.text, "Context handoff (full_thread_summary):");
+      assert.include(mergedTurn.text, sourcePrompt);
+      assert.include(mergedTurn.text, "I will remember amber.");
+      assert.include(mergedTurn.text, "Context handoff (merge_back / fork_delta_summary):");
+      assert.include(mergedTurn.text, forkPrompt);
+      assert.include(mergedTurn.text, "I will remember cobalt.");
+      assert.include(mergedTurn.text, mergePrompt);
+      assert.isDefined(mergeTransfer);
+      assert.equal(mergeTransfer.status, "consumed");
+      assert.equal(mergeTransfer.targetProvider, "codex");
+      assert.equal(mergeTransfer.resolution?.strategy, "fork_delta_context");
+    } finally {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.remove(cwd, { recursive: true, force: true });
+        }).pipe(Effect.provide(NodeServices.layer)),
+      );
+    }
+  });
 });
