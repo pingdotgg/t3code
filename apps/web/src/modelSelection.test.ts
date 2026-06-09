@@ -101,6 +101,27 @@ describe("instance-scoped model selection", () => {
     ).toBe("openai/gpt-5.5");
   });
 
+  it("includes Grok custom models from the selected provider instance", () => {
+    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("grok")]: {
+          driver: ProviderDriverKind.make("grok"),
+          config: { customModels: ["grok-test-custom-model"] },
+        },
+      },
+    };
+    const grok = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "grok",
+    )!;
+
+    expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
+      "grok-test-custom-model",
+    );
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

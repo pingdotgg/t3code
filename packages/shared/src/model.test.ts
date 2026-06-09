@@ -94,6 +94,9 @@ describe("resolveModelSlugForProvider", () => {
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
       DEFAULT_MODEL,
     );
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
+      "grok-build",
+    );
   });
 
   it("preserves normalized unknown models", () => {
