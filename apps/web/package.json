@@ -21,6 +21,8 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@effect/atom-react": "catalog:",
+    "@fontsource-variable/dm-sans": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "3.0.0-beta.44",
     "@lexical/react": "^0.41.0",
