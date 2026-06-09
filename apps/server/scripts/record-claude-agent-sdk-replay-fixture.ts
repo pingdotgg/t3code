@@ -29,8 +29,24 @@ import {
   THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
   THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
   THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
+  THREAD_MERGE_BACK_FORK_PROMPT,
+  THREAD_MERGE_BACK_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_RECALL_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
+  THREAD_MERGE_BACK_SOURCE_PROMPT,
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
@@ -161,6 +177,50 @@ const CLAUDE_RECORDINGS = {
     queryMode: "fork_session_prior_turn",
     enableTools: true,
   },
+  thread_fork_native_continue: {
+    prompts: [
+      THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
+      THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
+      THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_fork_native_continue/claude_transcript.ndjson",
+    queryMode: "fork_session_continue",
+    enableTools: true,
+  },
+  thread_fork_native_siblings: {
+    prompts: [
+      THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
+      THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
+      THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_fork_native_siblings/claude_transcript.ndjson",
+    queryMode: "fork_session_siblings",
+    enableTools: true,
+  },
+  thread_merge_back_continue: {
+    prompts: [
+      THREAD_MERGE_BACK_SOURCE_PROMPT,
+      THREAD_MERGE_BACK_FORK_PROMPT,
+      THREAD_MERGE_BACK_HANDOFF_PROMPT,
+      THREAD_MERGE_BACK_RECALL_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_merge_back_continue/claude_transcript.ndjson",
+    queryMode: "fork_session_merge_back",
+    enableTools: true,
+  },
+  thread_merge_back_siblings: {
+    prompts: [
+      THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
+      THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+      THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+      THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
+      THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
+      THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
+    ],
+    defaultTranscriptFile: "fixtures/thread_merge_back_siblings/claude_transcript.ndjson",
+    queryMode: "fork_session_merge_back_siblings",
+    enableTools: true,
+  },
 } as const;
 
 function readArgValue(name: string): string | undefined {
@@ -175,6 +235,10 @@ type ClaudeRecordingQueryMode =
   | "resume_at_cursor"
   | "fork_session"
   | "fork_session_prior_turn"
+  | "fork_session_continue"
+  | "fork_session_siblings"
+  | "fork_session_merge_back"
+  | "fork_session_merge_back_siblings"
   | "active_steering"
   | "interrupt"
   | "interrupt_restart";
@@ -190,6 +254,10 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
     raw === "resume_at_cursor" ||
     raw === "fork_session" ||
     raw === "fork_session_prior_turn" ||
+    raw === "fork_session_continue" ||
+    raw === "fork_session_siblings" ||
+    raw === "fork_session_merge_back" ||
+    raw === "fork_session_merge_back_siblings" ||
     raw === "active_steering" ||
     raw === "interrupt" ||
     raw === "interrupt_restart"
@@ -197,7 +265,7 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
     return raw;
   }
   throw new Error(
-    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'resume_at_cursor', 'fork_session', 'fork_session_prior_turn', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
+    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'resume_at_cursor', 'fork_session', 'fork_session_prior_turn', 'fork_session_continue', 'fork_session_siblings', 'fork_session_merge_back', 'fork_session_merge_back_siblings', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
   );
 }
 
