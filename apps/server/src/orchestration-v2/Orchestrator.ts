@@ -1903,13 +1903,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                 ),
               );
+      const requiresFullProviderSwitchContext =
+        isProviderSwitch && pendingMergeBackTransfer !== undefined;
       const providerSwitchCoveredRuns =
         !isProviderSwitch || latestCompletedRun === undefined
           ? []
           : projection.runs.filter(
               (run) =>
                 run.status === "completed" &&
-                run.ordinal > (targetProviderThread?.lastRunOrdinal ?? 0) &&
+                run.ordinal >
+                  (requiresFullProviderSwitchContext
+                    ? 0
+                    : (targetProviderThread?.lastRunOrdinal ?? 0)) &&
                 run.ordinal <= latestCompletedRun.ordinal,
             );
       const providerSwitchItems =
@@ -1937,7 +1942,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             provider: modelSelection.instanceId,
             capabilities: session.providerSession.capabilities,
-            strategy: targetProviderThread === undefined ? "full_thread_summary" : "delta_context",
+            strategy:
+              targetProviderThread === undefined || requiresFullProviderSwitchContext
+                ? "full_thread_summary"
+                : "delta_context",
           }),
         );
       }
@@ -1964,7 +1972,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   to: providerSwitchCoveredRuns.at(-1)!.ordinal,
                 },
                 strategy:
-                  targetProviderThread === undefined
+                  targetProviderThread === undefined || requiresFullProviderSwitchContext
                     ? "full_thread_summary"
                     : "delta_since_target_last_seen",
                 items: providerSwitchItems,
@@ -2337,6 +2345,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           targetThreadId: command.threadId,
           sourcePoint: contextSourcePointForRun(projection, latestCompletedRun),
           basePoint:
+            requiresFullProviderSwitchContext ||
             targetProviderThread?.lastRunOrdinal === null ||
             targetProviderThread?.lastRunOrdinal === undefined
               ? null
