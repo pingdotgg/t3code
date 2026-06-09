@@ -163,7 +163,23 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function normalizeContextHandoffText(value: string): string {
+  if (!value.startsWith("Context handoff (")) {
+    return value;
+  }
+  const userMessageMarker = "\n\nUser message:\n";
+  const userMessageIndex = value.indexOf(userMessageMarker);
+  const headerEndIndex = value.indexOf(":\n");
+  if (headerEndIndex === -1 || userMessageIndex === -1 || headerEndIndex >= userMessageIndex) {
+    return value;
+  }
+  return `${value.slice(0, headerEndIndex + 2)}<dynamic-summary>${value.slice(userMessageIndex)}`;
+}
+
 function normalizeReplayFrame(value: unknown): unknown {
+  if (typeof value === "string") {
+    return normalizeContextHandoffText(value);
+  }
   if (typeof value !== "object" || value === null) {
     return value;
   }

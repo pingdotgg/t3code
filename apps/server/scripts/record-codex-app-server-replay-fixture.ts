@@ -24,6 +24,22 @@ import {
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
+  THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
+  THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
+  THREAD_MERGE_BACK_FORK_PROMPT,
+  THREAD_MERGE_BACK_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_RECALL_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
+  THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
+  THREAD_MERGE_BACK_SOURCE_PROMPT,
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
@@ -57,6 +73,10 @@ const SCENARIO_NAMES = [
   "turn_interrupt",
   "turn_interrupt_mid_tool",
   "thread_rollback",
+  "thread_fork_native_continue",
+  "thread_fork_native_siblings",
+  "thread_merge_back_continue",
+  "thread_merge_back_siblings",
 ] as const;
 
 type ScenarioName = (typeof SCENARIO_NAMES)[number];
@@ -81,6 +101,7 @@ type ReplayStep =
       readonly type: "turn";
       readonly label: string;
       readonly prompt: string;
+      readonly thread?: string;
       readonly turnOverrides?: Omit<TurnStartParams, "input" | "threadId">;
     }
   | {
@@ -102,8 +123,17 @@ type ReplayStep =
       readonly type: "rollback";
       readonly label: string;
       readonly numTurns: number;
+    }
+  | {
+      readonly type: "fork";
+      readonly label: string;
+      readonly from?: string;
+      readonly as?: string;
     };
-type TurnReplayStep = Exclude<ReplayStep, { readonly type: "rollback" }>;
+type TurnReplayStep = Exclude<
+  ReplayStep,
+  { readonly type: "rollback" } | { readonly type: "fork" }
+>;
 
 interface ReplayScenario {
   readonly name: ScenarioName;
@@ -586,6 +616,193 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
         },
       ],
     },
+    {
+      name: "thread_fork_native_continue",
+      fileName: "thread_fork_native_continue.ndjson",
+      description:
+        "One source marker turn, a native thread fork, a fork-local marker turn, and a recall turn that requires both contexts.",
+      runs: [
+        {
+          name: "continue-native-fork",
+          description:
+            "Proves the native fork inherits source context and retains its own first turn into a second fork-local turn.",
+          steps: [
+            {
+              type: "turn",
+              label: "source",
+              prompt: THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT,
+            },
+            {
+              type: "fork",
+              label: "fork-source",
+            },
+            {
+              type: "turn",
+              label: "fork-first-delta",
+              prompt: THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT,
+            },
+            {
+              type: "turn",
+              label: "fork-second-delta",
+              prompt: THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "thread_fork_native_siblings",
+      fileName: "thread_fork_native_siblings.ndjson",
+      description:
+        "One source marker turn and two independent native forks that each recall the source plus only their own fork marker.",
+      runs: [
+        {
+          name: "native-sibling-forks",
+          description:
+            "Creates two native forks from the same source provider thread and proves their contexts remain isolated.",
+          steps: [
+            {
+              type: "turn",
+              label: "source",
+              prompt: THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "fork",
+              label: "fork-first",
+              from: "source",
+              as: "first",
+            },
+            {
+              type: "turn",
+              label: "first-recall",
+              prompt: THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT,
+              thread: "first",
+            },
+            {
+              type: "fork",
+              label: "fork-second",
+              from: "source",
+              as: "second",
+            },
+            {
+              type: "turn",
+              label: "second-recall",
+              prompt: THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT,
+              thread: "second",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "thread_merge_back_continue",
+      fileName: "thread_merge_back_continue.ndjson",
+      description:
+        "A source thread consumes one fork-delta handoff and later recalls source and transferred context.",
+      runs: [
+        {
+          name: "merge-native-fork",
+          description:
+            "Proves a merge-back handoff becomes durable context on the original provider thread.",
+          steps: [
+            {
+              type: "turn",
+              label: "source",
+              prompt: THREAD_MERGE_BACK_SOURCE_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "fork",
+              label: "fork",
+              from: "source",
+              as: "fork",
+            },
+            {
+              type: "turn",
+              label: "fork-delta",
+              prompt: THREAD_MERGE_BACK_FORK_PROMPT,
+              thread: "fork",
+            },
+            {
+              type: "turn",
+              label: "merge-back",
+              prompt: THREAD_MERGE_BACK_HANDOFF_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "turn",
+              label: "source-recall",
+              prompt: THREAD_MERGE_BACK_RECALL_PROMPT,
+              thread: "source",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "thread_merge_back_siblings",
+      fileName: "thread_merge_back_siblings.ndjson",
+      description:
+        "Two sibling fork deltas are merged sequentially into one source provider thread and recalled together.",
+      runs: [
+        {
+          name: "merge-native-sibling-forks",
+          description:
+            "Proves repeated merge-back handoffs accumulate on the source while native sibling forks remain independent.",
+          steps: [
+            {
+              type: "turn",
+              label: "source",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "fork",
+              label: "fork-first",
+              from: "source",
+              as: "first",
+            },
+            {
+              type: "turn",
+              label: "first-fork-delta",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT,
+              thread: "first",
+            },
+            {
+              type: "fork",
+              label: "fork-second",
+              from: "source",
+              as: "second",
+            },
+            {
+              type: "turn",
+              label: "second-fork-delta",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT,
+              thread: "second",
+            },
+            {
+              type: "turn",
+              label: "merge-first",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "turn",
+              label: "merge-second",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT,
+              thread: "source",
+            },
+            {
+              type: "turn",
+              label: "source-recall",
+              prompt: THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT,
+              thread: "source",
+            },
+          ],
+        },
+      ],
+    },
   ];
 }
 
@@ -608,8 +825,12 @@ function makeRecorder({
       Effect.sync(() => {
         records.push(record);
       });
-    const flush = () =>
-      fs.writeFileString(
+    const flush = () => {
+      const outputRecords = sessionizeForkReplayRecords({
+        scenario: scenario.name,
+        records,
+      });
+      return fs.writeFileString(
         outPath,
         `${[
           {
@@ -624,14 +845,105 @@ function makeRecorder({
               description: scenario.description,
             },
           },
-          ...records,
+          ...outputRecords,
         ]
           .map((record) => JSON.stringify(record))
           .join("\n")}\n`,
       );
+    };
 
     return { path: outPath, setVersion, writeRecord, flush };
   });
+}
+
+function sessionizeForkReplayRecords(input: {
+  readonly scenario: ScenarioName;
+  readonly records: ReadonlyArray<Record<string, unknown>>;
+}): ReadonlyArray<Record<string, unknown>> {
+  if (
+    input.scenario !== "thread_merge_back_continue" &&
+    input.scenario !== "thread_merge_back_siblings"
+  ) {
+    return input.records;
+  }
+  const initializeRequest = input.records.find(
+    (record) => record.type === "expect_outbound" && record.label === "initialize",
+  );
+  const initializeResponse = input.records.find(
+    (record) => record.type === "emit_inbound" && record.label === "initialize",
+  );
+  const initializedNotification = input.records.find(
+    (record) => record.type === "expect_outbound" && record.label === "initialized",
+  );
+  if (
+    initializeRequest === undefined ||
+    initializeResponse === undefined ||
+    initializedNotification === undefined
+  ) {
+    throw new Error(`Scenario ${input.scenario} is missing initialization records.`);
+  }
+
+  let nextRequestId = 1;
+  let forkSessionOrdinal = 0;
+  const requestIdMap = new Map<number, number>();
+  const output: Array<Record<string, unknown>> = [];
+  const appendRequest = (record: Record<string, unknown>, id: number) => {
+    const frame = record.frame as Record<string, unknown>;
+    output.push({ ...record, frame: { ...frame, id } });
+  };
+  const appendResponse = (record: Record<string, unknown>, id: number) => {
+    const frame = record.frame as Record<string, unknown>;
+    output.push({ ...record, frame: { ...frame, id } });
+  };
+
+  for (const record of input.records) {
+    const frame = record.frame;
+    if (record.type === "expect_outbound" && isRecord(frame) && frame.method === "thread/fork") {
+      forkSessionOrdinal += 1;
+      const initializeId = nextRequestId++;
+      appendRequest(
+        { ...initializeRequest, label: `initialize/fork:${forkSessionOrdinal}` },
+        initializeId,
+      );
+      appendResponse(
+        { ...initializeResponse, label: `initialize/fork:${forkSessionOrdinal}` },
+        initializeId,
+      );
+      output.push({
+        ...initializedNotification,
+        label: `initialized/fork:${forkSessionOrdinal}`,
+      });
+    }
+
+    if (
+      record.type === "expect_outbound" &&
+      isRecord(frame) &&
+      typeof frame.id === "number" &&
+      typeof frame.method === "string"
+    ) {
+      const requestId = nextRequestId++;
+      requestIdMap.set(frame.id, requestId);
+      appendRequest(record, requestId);
+      continue;
+    }
+    if (
+      record.type === "emit_inbound" &&
+      isRecord(frame) &&
+      typeof frame.id === "number" &&
+      !("method" in frame)
+    ) {
+      const responseId = requestIdMap.get(frame.id);
+      if (responseId === undefined) {
+        throw new Error(
+          `Scenario ${input.scenario} has an unmatched response id ${String(frame.id)}.`,
+        );
+      }
+      appendResponse(record, responseId);
+      continue;
+    }
+    output.push(record);
+  }
+  return output;
 }
 
 function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
@@ -919,7 +1231,9 @@ function runReplaySession({
         !firstStep ||
         !secondStep ||
         firstStep.type === "rollback" ||
-        secondStep.type === "rollback"
+        firstStep.type === "fork" ||
+        secondStep.type === "rollback" ||
+        secondStep.type === "fork"
       ) {
         throw new Error("provider_thread_resume replay recording requires two turn steps.");
       }
@@ -961,17 +1275,40 @@ function runReplaySession({
     yield* Effect.gen(function* () {
       const client = yield* initializeClient;
       const thread = yield* client.request("thread/start", {});
+      let activeThreadId = thread.thread.id;
+      const threadIds = new Map<string, string>([["source", thread.thread.id]]);
 
       for (const [stepIndex, step] of run.steps.entries()) {
         if (step.type === "rollback") {
           yield* client.request("thread/rollback", {
-            threadId: thread.thread.id,
+            threadId: activeThreadId,
             numTurns: step.numTurns,
           });
           continue;
         }
+        if (step.type === "fork") {
+          const sourceThreadId =
+            step.from === undefined ? activeThreadId : threadIds.get(step.from);
+          if (sourceThreadId === undefined) {
+            throw new Error(`Unknown replay thread alias '${step.from}'.`);
+          }
+          const forked = yield* client.request("thread/fork", {
+            threadId: sourceThreadId,
+          });
+          activeThreadId = forked.thread.id;
+          if (step.as !== undefined) {
+            threadIds.set(step.as, forked.thread.id);
+          }
+          continue;
+        }
 
-        yield* runTurnStep(client, thread.thread.id, step);
+        const threadAlias = "thread" in step ? step.thread : undefined;
+        const turnThreadId =
+          threadAlias === undefined ? activeThreadId : threadIds.get(threadAlias);
+        if (turnThreadId === undefined) {
+          throw new Error(`Unknown replay thread alias '${threadAlias}'.`);
+        }
+        yield* runTurnStep(client, turnThreadId, step);
         void stepIndex;
       }
     }).pipe(
