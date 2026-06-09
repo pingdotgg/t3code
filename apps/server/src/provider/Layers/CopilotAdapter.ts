@@ -13,6 +13,7 @@ import type {
 import {
   EventId,
   type CopilotSettings,
+  type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -1269,6 +1270,27 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       },
     });
 
+  const emitPermissionRequestResolved = (
+    context: CopilotSessionContext,
+    pending: PendingPermissionBinding,
+    decision: ProviderApprovalDecision | PermissionRequestResult["kind"],
+    resolution: unknown,
+    raw?: SessionEvent,
+  ): Effect.Effect<void> =>
+    emit({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        requestId: pending.requestId,
+        raw,
+      }),
+      type: "request.resolved",
+      payload: {
+        requestType: pending.requestType,
+        decision,
+        resolution,
+      },
+    });
+
   const emitUserInputRequested = (
     context: CopilotSessionContext,
     requestId: string,
@@ -2158,19 +2180,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.pendingPermissionBindings.delete(event.data.requestId);
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            requestId: binding.requestId,
-            raw: event,
-          }),
-          type: "request.resolved",
-          payload: {
-            requestType: binding.requestType,
-            decision: event.data.result.kind,
-            resolution: event.data.result,
-          },
-        });
+        await runWithContext(
+          emitPermissionRequestResolved(
+            context,
+            binding,
+            event.data.result.kind,
+            event.data.result,
+            event,
+          ),
+        );
         return;
       }
       case "user_input.requested": {
@@ -2599,8 +2617,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             : decision === "acceptForSession"
               ? APPROVED_PERMISSION_RESULT
               : DENIED_PERMISSION_RESULT;
-      yield* Deferred.succeed(binding.deferred, result);
+      yield* emitPermissionRequestResolved(context, binding, decision, result);
       context.pendingPermissionBindings.delete(requestId);
+      yield* Deferred.succeed(binding.deferred, result);
     },
   );
 
