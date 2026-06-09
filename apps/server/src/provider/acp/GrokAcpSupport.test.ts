@@ -1,6 +1,6 @@
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
-import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGrokAcpModelSelection,
@@ -49,61 +49,61 @@ describe("applyGrokAcpModelSelection", () => {
     return { runtime, modelCalls };
   };
 
-  it("calls session/set_model when the requested model differs from current", async () => {
-    const { runtime, modelCalls } = makeRecordingRuntime();
-    const result = await Effect.runPromise(
-      applyGrokAcpModelSelection({
+  it.effect("calls session/set_model when the requested model differs from current", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
         runtime,
         currentModelId: "grok-build",
         requestedModelId: "grok-mock-alt",
         mapError: (cause) => cause.message,
-      }),
-    );
-    expect(modelCalls).toEqual(["grok-mock-alt"]);
-    expect(result).toBe("grok-mock-alt");
-  });
+      });
+      expect(modelCalls).toEqual(["grok-mock-alt"]);
+      expect(result).toBe("grok-mock-alt");
+    }),
+  );
 
-  it("skips set_model when requested matches current", async () => {
-    const { runtime, modelCalls } = makeRecordingRuntime();
-    const result = await Effect.runPromise(
-      applyGrokAcpModelSelection({
+  it.effect("skips set_model when requested matches current", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
         runtime,
         currentModelId: "grok-build",
         requestedModelId: "grok-build",
         mapError: (cause) => cause.message,
-      }),
-    );
-    expect(modelCalls).toEqual([]);
-    expect(result).toBe("grok-build");
-  });
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-build");
+    }),
+  );
 
-  it("skips set_model when no model is requested", async () => {
-    const { runtime, modelCalls } = makeRecordingRuntime();
-    const result = await Effect.runPromise(
-      applyGrokAcpModelSelection({
+  it.effect("skips set_model when no model is requested", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
         runtime,
         currentModelId: "grok-build",
         requestedModelId: undefined,
         mapError: (cause) => cause.message,
-      }),
-    );
-    expect(modelCalls).toEqual([]);
-    expect(result).toBe("grok-build");
-  });
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-build");
+    }),
+  );
 
-  it("propagates session/set_model failures via mapError", async () => {
-    const failure = EffectAcpErrors.AcpRequestError.invalidParams("session id not known");
-    const { runtime } = makeRecordingRuntime(failure);
-    const error = await Effect.runPromise(
-      Effect.flip(
+  it.effect("propagates session/set_model failures via mapError", () =>
+    Effect.gen(function* () {
+      const failure = EffectAcpErrors.AcpRequestError.invalidParams("session id not known");
+      const { runtime } = makeRecordingRuntime(failure);
+      const error = yield* Effect.flip(
         applyGrokAcpModelSelection({
           runtime,
           currentModelId: "grok-build",
           requestedModelId: "grok-mock-alt",
           mapError: (cause) => cause.message,
         }),
-      ),
-    );
-    expect(error).toBe(failure.message);
-  });
+      );
+      expect(error).toBe(failure.message);
+    }),
+  );
 });

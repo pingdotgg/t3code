@@ -45,20 +45,21 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
   return wrapperPath;
 }
 
-async function waitForFileContent(filePath: string, attempts = 40): Promise<string> {
-  const readAttempt = async (remainingAttempts: number): Promise<string> => {
-    if (remainingAttempts <= 0) {
-      throw new Error(`Timed out waiting for file content at ${filePath}`);
-    }
-    try {
-      const raw = await readFile(filePath, "utf8");
+function waitForFileContent(filePath: string, attempts = 40): Effect.Effect<string> {
+  const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
+    Effect.gen(function* () {
+      if (remainingAttempts <= 0) {
+        return yield* Effect.die(new Error(`Timed out waiting for file content at ${filePath}`));
+      }
+      const raw = yield* Effect.tryPromise(() => readFile(filePath, "utf8")).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
       if (raw.trim().length > 0) {
         return raw;
       }
-    } catch {}
-    await Effect.runPromise(Effect.sleep("25 millis"));
-    return readAttempt(remainingAttempts - 1);
-  };
+      yield* Effect.sleep("25 millis");
+      return yield* readAttempt(remainingAttempts - 1);
+    });
   return readAttempt(attempts);
 }
 
@@ -169,7 +170,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       yield* adapter.stopSession(threadId);
 
-      const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
+      const exitLog = yield* waitForFileContent(exitLogPath);
       assert.include(exitLog, "SIGTERM");
     }),
   );
