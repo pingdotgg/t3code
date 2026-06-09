@@ -23,7 +23,13 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import type { FileDiffMetadata, Hunk } from "@pierre/diffs/types";
 import { deriveTimelineEntries, formatDuration, formatElapsed } from "../../session-logic";
-import { type ThreadShell, type TurnDiffSummary } from "../../types";
+import { type TurnDiffSummary } from "../../types";
+import {
+  formatSubagentDuration,
+  LiveSubagentDuration,
+  subagentStatusLabel,
+  subagentStatusToneClass,
+} from "../../subagentDisplay";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
   getRenderablePatch,
@@ -1792,15 +1798,16 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   const relation =
     childShell?.parentRelation?.kind === "subagent" ? childShell.parentRelation : null;
   const title = childShell?.title ?? props.titleSeed ?? "Subagent";
-  const status = relation?.status ?? "running";
+  const status = relation?.status ?? null;
   const startedAt = relation?.startedAt ?? props.parentCreatedAt;
   const completedAt = relation?.completedAt ?? null;
   const statusLabel = subagentStatusLabel(status);
+  const fallbackDurationLabel = status === null ? "status unknown" : "completed";
   const durationLabel =
     status === "running" ? (
       <LiveSubagentDuration startedAt={startedAt} />
     ) : (
-      (formatSubagentDuration(startedAt, completedAt) ?? "completed")
+      (formatSubagentDuration(startedAt, completedAt) ?? fallbackDurationLabel)
     );
 
   const openChildThread = useCallback(() => {
@@ -1820,7 +1827,7 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
       <span
         className={cn(
           "flex size-5 shrink-0 items-center justify-center rounded-full border",
-          subagentStatusClassName(status),
+          subagentStatusToneClass(status),
         )}
         aria-hidden="true"
       >
@@ -1838,67 +1845,3 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
     </button>
   );
 });
-
-type SubagentThreadStatus = Extract<
-  NonNullable<ThreadShell["parentRelation"]>,
-  { kind: "subagent" }
->["status"];
-
-function subagentStatusLabel(status: SubagentThreadStatus): string {
-  switch (status) {
-    case "running":
-      return "Running";
-    case "errored":
-      return "Errored";
-    case "interrupted":
-      return "Interrupted";
-    case "stopped":
-      return "Stopped";
-    case "completed":
-      return "Completed";
-  }
-}
-
-function subagentStatusClassName(status: SubagentThreadStatus): string {
-  switch (status) {
-    case "running":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
-    case "errored":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300";
-    case "interrupted":
-    case "stopped":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
-    case "completed":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  }
-}
-
-function formatSubagentDuration(startIso: string, endIso: string | null): string | null {
-  if (!endIso) {
-    return null;
-  }
-  return formatElapsed(startIso, endIso);
-}
-
-function LiveSubagentDuration({ startedAt }: { startedAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatSubagentRunningDuration(startedAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatSubagentRunningDuration(startedAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-
-  return <span ref={textRef}>{initialText}</span>;
-}
-
-function formatSubagentRunningDuration(startedAt: string): string {
-  const elapsed = formatElapsed(startedAt, new Date().toISOString());
-  return elapsed ? `running for ${elapsed}` : "running";
-}

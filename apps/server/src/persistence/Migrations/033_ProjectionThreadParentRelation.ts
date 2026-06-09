@@ -5,7 +5,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`ALTER TABLE projection_threads ADD COLUMN parent_kind TEXT NOT NULL DEFAULT 'root'`;
-  yield* sql`ALTER TABLE projection_threads ADD COLUMN root_thread_id TEXT`;
+  yield* sql`ALTER TABLE projection_threads ADD COLUMN root_thread_id TEXT NOT NULL DEFAULT ''`;
   yield* sql`ALTER TABLE projection_threads ADD COLUMN parent_thread_id TEXT`;
   yield* sql`ALTER TABLE projection_threads ADD COLUMN parent_turn_id TEXT`;
   yield* sql`ALTER TABLE projection_threads ADD COLUMN parent_item_id TEXT`;
@@ -20,7 +20,7 @@ export default Effect.gen(function* () {
   yield* sql`
     UPDATE projection_threads
     SET root_thread_id = thread_id
-    WHERE root_thread_id IS NULL
+    WHERE root_thread_id = ''
   `;
 
   yield* sql`

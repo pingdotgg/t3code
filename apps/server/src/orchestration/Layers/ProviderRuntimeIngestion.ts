@@ -145,6 +145,11 @@ function readRuntimeSubagentChildren(
   });
 }
 
+function runtimeEventSequence(event: ProviderRuntimeEvent): number | undefined {
+  const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
+  return eventWithSequence.sessionSequence;
+}
+
 function subagentTerminalStatusFromRuntimeEvent(
   event: ProviderRuntimeEvent,
 ): SubagentThreadParentRelation["status"] | null {
@@ -355,12 +360,8 @@ function requestKindFromCanonicalRequestType(
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const maybeSequence = (() => {
-    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
-    return eventWithSequence.sessionSequence !== undefined
-      ? { sequence: eventWithSequence.sessionSequence }
-      : {};
-  })();
+  const eventSequence = runtimeEventSequence(event);
+  const maybeSequence = eventSequence !== undefined ? { sequence: eventSequence } : {};
   switch (event.type) {
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
@@ -1341,7 +1342,8 @@ const make = Effect.gen(function* () {
                 parentThreadId: thread.id,
                 parentTurnId: existingRelation?.parentTurnId ?? eventTurnId ?? null,
                 parentItemId: existingRelation?.parentItemId ?? child.parentItemId,
-                parentActivitySequence: existingRelation?.parentActivitySequence ?? 0,
+                parentActivitySequence:
+                  existingRelation?.parentActivitySequence ?? runtimeEventSequence(event) ?? 0,
                 providerThreadId: child.providerThreadId,
                 titleSeed: existingRelation?.titleSeed ?? child.titleSeed,
                 depth: parentDepth + 1,
@@ -1532,7 +1534,7 @@ const make = Effect.gen(function* () {
             const terminalStatus = subagentTerminalStatusFromRuntimeEvent(event);
             const shouldUpdateSubagentTerminalStatus =
               terminalStatus !== null &&
-              thread.parentRelation.status !== "stopped" &&
+              thread.parentRelation.status === "running" &&
               !(
                 event.type === "session.exited" &&
                 thread.parentRelation.completedAt !== null &&

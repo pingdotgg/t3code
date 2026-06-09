@@ -234,7 +234,7 @@ interface PendingUserInput {
 }
 
 interface CollabReceiverInfo {
-  readonly parentTurnId: TurnId;
+  readonly parentTurnId: TurnId | undefined;
   readonly parentItemId: ProviderItemId | undefined;
   readonly providerThreadId: string;
   readonly childThreadId: ThreadId;
@@ -663,10 +663,6 @@ function rememberCollabReceiverTurns(
   parentTurnId: TurnId | undefined,
   parentThreadId: ThreadId,
 ): void {
-  if (!parentTurnId) {
-    return;
-  }
-
   if (notification.method !== "item/started" && notification.method !== "item/completed") {
     return;
   }
@@ -967,7 +963,7 @@ export const makeCodexSessionRuntime = (
           collabReceiverTurns,
           notification,
           route.turnId,
-          options.threadId,
+          childParentInfo?.childThreadId ?? options.threadId,
         );
 
         let requestId: ApprovalRequestId | undefined;

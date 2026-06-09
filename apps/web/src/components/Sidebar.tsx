@@ -293,9 +293,9 @@ function flattenSidebarThreadTree(input: {
 function resolveSidebarRootThread(
   threads: readonly SidebarThreadSummary[],
   threadKey: string,
+  threadByKey = new Map(threads.map((thread) => [sidebarThreadKey(thread), thread] as const)),
 ): SidebarThreadSummary | null {
-  const byKey = new Map(threads.map((thread) => [sidebarThreadKey(thread), thread] as const));
-  let current = byKey.get(threadKey) ?? null;
+  let current = threadByKey.get(threadKey) ?? null;
   const seen = new Set<string>();
   while (current) {
     const currentKey = sidebarThreadKey(current);
@@ -307,7 +307,7 @@ function resolveSidebarRootThread(
     if (!parentKey) {
       return current;
     }
-    const parent = byKey.get(parentKey);
+    const parent = threadByKey.get(parentKey);
     if (!parent) {
       return current;
     }
@@ -1331,10 +1331,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         .filter((thread) => !visibleThreadKeys.has(sidebarThreadKey(thread)))
         .map(sidebarThreadKey),
     );
+    const visibleThreadByKey = new Map(
+      visibleProjectThreads.map((thread) => [sidebarThreadKey(thread), thread] as const),
+    );
     const hiddenThreads = visibleProjectThreads.filter((thread) =>
       hiddenRootKeys.has(
         sidebarThreadKey(
-          resolveSidebarRootThread(visibleProjectThreads, sidebarThreadKey(thread)) ?? thread,
+          resolveSidebarRootThread(
+            visibleProjectThreads,
+            sidebarThreadKey(thread),
+            visibleThreadByKey,
+          ) ?? thread,
         ),
       ),
     );

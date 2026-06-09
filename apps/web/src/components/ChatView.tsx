@@ -65,6 +65,12 @@ import {
   isLatestTurnSettled,
   formatElapsed,
 } from "../session-logic";
+import {
+  LiveSubagentDuration,
+  subagentStatusLabel,
+  subagentStatusToneClass,
+  type SubagentThreadStatus,
+} from "../subagentDisplay";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   buildPendingUserInputAnswers,
@@ -214,11 +220,6 @@ type EnvironmentUnavailableState = {
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
-type SubagentThreadStatus = Extract<
-  NonNullable<Thread["parentRelation"]>,
-  { kind: "subagent" }
->["status"];
-
 function SubagentControlBar(props: {
   title: string;
   status: SubagentThreadStatus;
@@ -267,58 +268,6 @@ function SubagentControlBar(props: {
       </div>
     </div>
   );
-}
-
-function LiveSubagentDuration({ startedAt }: { startedAt: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const initialText = formatRunningSubagentDuration(startedAt);
-
-  useEffect(() => {
-    const update = () => {
-      if (ref.current) {
-        ref.current.textContent = formatRunningSubagentDuration(startedAt);
-      }
-    };
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-
-  return <span ref={ref}>{initialText}</span>;
-}
-
-function formatRunningSubagentDuration(startedAt: string): string {
-  const elapsed = formatElapsed(startedAt, new Date().toISOString());
-  return elapsed ? `running for ${elapsed}` : "running";
-}
-
-function subagentStatusLabel(status: SubagentThreadStatus): string {
-  switch (status) {
-    case "running":
-      return "Running";
-    case "completed":
-      return "Completed";
-    case "errored":
-      return "Errored";
-    case "interrupted":
-      return "Interrupted";
-    case "stopped":
-      return "Stopped";
-  }
-}
-
-function subagentStatusToneClass(status: SubagentThreadStatus): string {
-  switch (status) {
-    case "running":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
-    case "completed":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-    case "errored":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300";
-    case "interrupted":
-    case "stopped":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
-  }
 }
 
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
@@ -960,6 +909,9 @@ export default function ChatView(props: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
+  const [pendingSubagentStopThreadId, setPendingSubagentStopThreadId] = useState<ThreadId | null>(
+    null,
+  );
   const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
     Record<string, Record<string, PendingUserInputDraftAnswer>>
   >({});
@@ -1074,6 +1026,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const activeThreadSubagentRelation =
     activeThread?.parentRelation?.kind === "subagent" ? activeThread.parentRelation : null;
+  useEffect(() => {
+    if (
+      pendingSubagentStopThreadId !== null &&
+      (activeThread?.id !== pendingSubagentStopThreadId ||
+        activeThreadSubagentRelation?.status !== "running")
+    ) {
+      setPendingSubagentStopThreadId(null);
+    }
+  }, [activeThread?.id, activeThreadSubagentRelation?.status, pendingSubagentStopThreadId]);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -3286,12 +3247,18 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
+    setPendingSubagentStopThreadId(activeThread.id);
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.interrupt",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setPendingSubagentStopThreadId(null);
+      throw error;
+    }
   };
 
   const onRespondToApproval = useCallback(
@@ -3984,7 +3951,7 @@ export default function ChatView(props: ChatViewProps) {
                     status={activeThreadSubagentRelation.status}
                     startedAt={activeThreadSubagentRelation.startedAt}
                     completedAt={activeThreadSubagentRelation.completedAt}
-                    stopping={isConnecting}
+                    stopping={isConnecting || pendingSubagentStopThreadId === activeThread.id}
                     onStop={onInterrupt}
                   />
                 ) : (

@@ -101,18 +101,66 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
-          parent_kind = excluded.parent_kind,
-          root_thread_id = excluded.root_thread_id,
-          parent_thread_id = excluded.parent_thread_id,
-          parent_turn_id = excluded.parent_turn_id,
-          parent_item_id = excluded.parent_item_id,
-          parent_activity_sequence = excluded.parent_activity_sequence,
-          provider_thread_id = excluded.provider_thread_id,
-          title_seed = excluded.title_seed,
-          subagent_depth = excluded.subagent_depth,
-          subagent_started_at = excluded.subagent_started_at,
-          subagent_completed_at = excluded.subagent_completed_at,
-          subagent_status = excluded.subagent_status,
+          parent_kind = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_kind
+            ELSE excluded.parent_kind
+          END,
+          root_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.root_thread_id
+            ELSE excluded.root_thread_id
+          END,
+          parent_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_thread_id
+            ELSE excluded.parent_thread_id
+          END,
+          parent_turn_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_turn_id
+            ELSE excluded.parent_turn_id
+          END,
+          parent_item_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_item_id
+            ELSE excluded.parent_item_id
+          END,
+          parent_activity_sequence = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_activity_sequence
+            ELSE excluded.parent_activity_sequence
+          END,
+          provider_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.provider_thread_id
+            ELSE excluded.provider_thread_id
+          END,
+          title_seed = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.title_seed
+            ELSE excluded.title_seed
+          END,
+          subagent_depth = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_depth
+            ELSE excluded.subagent_depth
+          END,
+          subagent_started_at = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_started_at
+            ELSE excluded.subagent_started_at
+          END,
+          subagent_completed_at = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_completed_at
+            ELSE excluded.subagent_completed_at
+          END,
+          subagent_status = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_status
+            ELSE excluded.subagent_status
+          END,
           latest_turn_id = excluded.latest_turn_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
