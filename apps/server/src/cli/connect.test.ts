@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { acquireRelayClientForLink } from "./cloud.ts";
+import { acquireRelayClientForLink } from "./connect.ts";
 
 const managedExecutable = {
   status: "available",

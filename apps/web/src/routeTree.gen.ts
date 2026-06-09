@@ -19,7 +19,6 @@ import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybi
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
-import { Route as SettingsCloudRouteImport } from './routes/settings.cloud'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -73,11 +72,6 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsCloudRoute = SettingsCloudRouteImport.update({
-  id: '/cloud',
-  path: '/cloud',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -100,7 +94,6 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -114,7 +107,6 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -131,7 +123,6 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
-  '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -149,7 +140,6 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
-    | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -163,7 +153,6 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
-    | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -179,7 +168,6 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
-    | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -269,13 +257,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/cloud': {
-      id: '/settings/cloud'
-      path: '/cloud'
-      fullPath: '/settings/cloud'
-      preLoaderRoute: typeof SettingsCloudRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -316,7 +297,6 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
-  SettingsCloudRoute: typeof SettingsCloudRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -327,7 +307,6 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
-  SettingsCloudRoute: SettingsCloudRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,

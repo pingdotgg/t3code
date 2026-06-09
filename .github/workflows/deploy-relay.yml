@@ -1,4 +1,4 @@
-name: Deploy T3 Cloud relay
+name: Deploy T3 Connect relay
 
 on:
   push:

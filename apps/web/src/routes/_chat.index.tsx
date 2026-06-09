@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
 
 import { NoActiveThreadState } from "../components/NoActiveThreadState";
@@ -52,16 +52,13 @@ function HostedStaticOnboardingState() {
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
                 {cloudEnabled
-                  ? "Sign in to T3 Cloud to connect a linked environment through its managed tunnel, or add a reachable backend manually."
+                  ? "Sign in to T3 Connect to connect a linked environment through its managed tunnel, or add a reachable backend manually."
                   : "Add a reachable backend manually to start working from this browser."}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
-                <Button
-                  render={<a href={cloudEnabled ? "/settings/cloud" : "/settings/connections"} />}
-                  size="sm"
-                >
+                <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />
-                  {cloudEnabled ? "Open T3 Cloud" : "Add environment"}
+                  {cloudEnabled ? "Open Connections" : "Add environment"}
                 </Button>
               </div>
             </EmptyHeader>

@@ -165,7 +165,7 @@ describe("DesktopWindow", () => {
     assert.isTrue(
       DesktopWindow.isSameOriginRendererNavigation({
         applicationUrl: "http://127.0.0.1:3773/",
-        navigationUrl: "http://127.0.0.1:3773/settings/cloud",
+        navigationUrl: "http://127.0.0.1:3773/settings/connections",
       }),
     );
     assert.isFalse(

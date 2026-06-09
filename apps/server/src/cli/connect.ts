@@ -89,15 +89,15 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       ? "pending server startup"
       : "not provisioned";
   const nextStep = !status.authenticated
-    ? "Run `t3 cloud link` to authorize and enable cloud exposure."
+    ? "Run `t3 connect link` to authorize and enable T3 Connect."
     : !status.desired
-      ? "Run `t3 cloud link` to enable cloud exposure."
+      ? "Run `t3 connect link` to enable T3 Connect."
       : !status.linked
         ? "Start T3 to provision the environment link and launch its managed tunnel."
         : undefined;
 
   return [
-    "T3 Cloud",
+    "T3 Connect",
     `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
@@ -112,7 +112,7 @@ const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
     Prompt.confirm({
-      message: `The T3 relay client is required for T3 Cloud exposure. Download and install version ${version}?`,
+      message: `The T3 relay client is required for T3 Connect. Download and install version ${version}?`,
       initial: false,
     }),
   );
@@ -169,7 +169,7 @@ const withCloudCliSessionToken = <A, E, R>(
     environmentAuth.issueSession({
       scopes: [AuthRelayWriteScope],
       subject: "cloud-cli",
-      label: "t3 cloud cli",
+      label: "t3 connect cli",
     }),
     (issued) => run(issued.token),
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
@@ -194,7 +194,7 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
         baseUrl: runtimeState.value.origin,
       }).pipe(
         Effect.flatMap((client) =>
-          client.cloud.unlink({ headers: { authorization: `Bearer ${token}` } }),
+          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
         ),
         Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
       ),
@@ -249,24 +249,24 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
 
   if (liveResult.status === "failed") {
     yield* Console.warn(
-      `T3 Cloud exposure is disabled, but the running server could not stop its tunnel: ${String(liveResult.cause)}\nRestart that server to stop the connector.`,
+      `T3 Connect is disabled, but the running server could not stop its tunnel: ${String(liveResult.cause)}\nRestart that server to stop the connector.`,
     );
   } else {
-    yield* Console.log("T3 Cloud exposure is disabled locally.");
+    yield* Console.log("T3 Connect is disabled locally.");
   }
 
   if (Exit.isFailure(relayResult)) {
     yield* Console.warn(
       options.clearAuthorization
         ? `Could not revoke the relay-side environment record before signing out: ${String(relayResult.cause)}\nThe stored CLI authorization was still removed locally.`
-        : `Could not revoke the relay-side environment record yet: ${String(relayResult.cause)}\nRun \`t3 cloud unlink\` again when the relay is reachable.`,
+        : `Could not revoke the relay-side environment record yet: ${String(relayResult.cause)}\nRun \`t3 connect unlink\` again when the relay is reachable.`,
     );
   } else if (relayResult.value.status === "revoked") {
     yield* Console.log("Revoked the relay-side environment record.");
   }
 
   if (options.clearAuthorization) {
-    yield* Console.log("Signed out of T3 Cloud locally.");
+    yield* Console.log("Signed out of T3 Connect locally.");
   }
 });
 
@@ -307,26 +307,26 @@ const runCloudCommand = <A, E>(
     return yield* run.pipe(Effect.provide(runtimeLayer));
   });
 
-const cloudLoginCommand = Command.make("login", {
+const connectLoginCommand = Command.make("login", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Authorize the T3 Cloud CLI without enabling cloud exposure."),
+  Command.withDescription("Authorize the T3 Connect CLI without enabling remote access."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         yield* tokens.get;
-        yield* Console.log("Signed in to T3 Cloud.");
+        yield* Console.log("Signed in to T3 Connect.");
       }),
     ),
   ),
 );
 
-const cloudLinkCommand = Command.make("link", {
+const connectLinkCommand = Command.make("link", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Authorize this environment for T3 Cloud and expose it on next start."),
+  Command.withDescription("Authorize this environment for T3 Connect on next start."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -338,7 +338,7 @@ const cloudLinkCommand = Command.make("link", {
           reportRelayClientInstallProgress,
         );
         if (Option.isNone(installed)) {
-          yield* Console.log("T3 Cloud link cancelled. The relay client was not installed.");
+          yield* Console.log("T3 Connect setup cancelled. The relay client was not installed.");
           return;
         }
         yield* Console.log(
@@ -349,18 +349,18 @@ const cloudLinkCommand = Command.make("link", {
         yield* tokens.get;
         yield* CliState.setCliDesiredCloudLink(true);
         yield* Console.log(
-          "This T3 environment will be available over T3 Cloud the next time T3 starts.",
+          "This T3 environment will be available through T3 Connect the next time T3 starts.",
         );
       }),
     ),
   ),
 );
 
-const cloudStatusCommand = Command.make("status", {
+const connectStatusCommand = Command.make("status", {
   ...projectLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Show persisted T3 Cloud and relay client state."),
+  Command.withDescription("Show persisted T3 Connect and relay client state."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -395,31 +395,31 @@ const cloudStatusCommand = Command.make("status", {
   ),
 );
 
-const cloudUnlinkCommand = Command.make("unlink", {
+const connectUnlinkCommand = Command.make("unlink", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable T3 Cloud exposure while retaining the stored authorization."),
+  Command.withDescription("Disable T3 Connect while retaining the stored authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: false })),
   ),
 );
 
-const cloudLogoutCommand = Command.make("logout", {
+const connectLogoutCommand = Command.make("logout", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable T3 Cloud exposure and clear the stored CLI authorization."),
+  Command.withDescription("Disable T3 Connect and clear the stored CLI authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: true })),
   ),
 );
 
-export const cloudCommand = Command.make("cloud").pipe(
-  Command.withDescription("Manage headless T3 Cloud exposure."),
+export const connectCommand = Command.make("connect").pipe(
+  Command.withDescription("Manage headless T3 Connect access."),
   Command.withSubcommands([
-    cloudLoginCommand,
-    cloudLinkCommand,
-    cloudStatusCommand,
-    cloudUnlinkCommand,
-    cloudLogoutCommand,
+    connectLoginCommand,
+    connectLinkCommand,
+    connectStatusCommand,
+    connectUnlinkCommand,
+    connectLogoutCommand,
   ]),
 );

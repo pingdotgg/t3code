@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>T3 Code Cloud Architecture</title>
+    <title>T3 Connect Architecture</title>
     <style>
       :root {
         color-scheme: light;
@@ -253,10 +253,10 @@
     <main class="shell">
       <header>
         <div class="eyebrow">Implemented architecture</div>
-        <h1>T3 Code Cloud Control Plane and Managed Endpoint Flow</h1>
+        <h1>T3 Connect Control Plane and Managed Endpoint Flow</h1>
         <p class="lede">
-          T3 Cloud links a locally authorized T3 environment to a signed-in cloud user, provisions a
-          managed HTTPS/WSS endpoint for that environment, and brokers proof-bound remote
+          T3 Connect links a locally authorized T3 environment to a signed-in cloud user, provisions
+          a managed HTTPS/WSS endpoint for that environment, and brokers proof-bound remote
           connections. The local environment remains the authority that issues environment access
           credentials. The hosted relay stores links, reconciles managed endpoint resources,
           validates signed proofs, and delivers agent-activity notifications.
@@ -279,7 +279,7 @@
             following:
           </p>
           <ul>
-            <li>a Clerk-authenticated T3 Cloud user;</li>
+            <li>a Clerk-authenticated T3 Connect user;</li>
             <li>an active relay link for that user and environment;</li>
             <li>a DPoP proof key held by the remote client;</li>
             <li>a relay-signed mint request accepted by the linked local environment; and</li>
@@ -547,7 +547,7 @@ sequenceDiagram
   participant CF as Cloudflare APIs
   participant RC as Local relay client
 
-  U->>C: Enable T3 Cloud for a locally paired environment
+  U->>C: Enable T3 Connect for a locally paired environment
   C->>E: Check relay client availability
   alt relay client is missing
     C->>U: Prompt before download and install
@@ -557,7 +557,7 @@ sequenceDiagram
   end
   C->>R: POST /v1/client/environment-link-challenges (Clerk bearer)
   R-->>C: Short-lived challenge
-  C->>E: POST /api/cloud/link-proof (local relay:write bearer)
+  C->>E: POST /api/connect/link-proof (local relay:write bearer)
   E->>E: Authenticate, reject forwarded authority, get or create key pair, validate loopback origin
   E-->>C: Environment-signed link proof
   C->>R: POST /v1/client/environment-links (Clerk bearer + proof)
@@ -565,7 +565,7 @@ sequenceDiagram
   R->>CF: Reconcile tunnel, ingress, and CNAME
   R->>R: Upsert user/environment link and issue environment bearer
   R-->>C: Managed endpoint, relay config, and connector token
-  C->>E: POST /api/cloud/relay-config (local relay:write bearer)
+  C->>E: POST /api/connect/relay-config (local relay:write bearer)
   E->>RC: Start relay client with TUNNEL_TOKEN
           </pre>
           <div class="callout">
@@ -585,13 +585,13 @@ sequenceDiagram
           <pre class="diagram mermaid">
 sequenceDiagram
   participant U as Operator
-  participant CLI as t3 cloud CLI
+  participant CLI as t3 connect CLI
   participant Clerk as Clerk OAuth
   participant S as Environment server on next start
   participant R as Relay Worker
   participant RC as Local relay client
 
-  U->>CLI: t3 cloud link
+  U->>CLI: t3 connect link
   CLI->>CLI: Resolve relay client
   alt relay client is missing
     CLI->>U: Confirm managed relay-client install
@@ -607,9 +607,9 @@ sequenceDiagram
   S->>RC: Start relay client
           </pre>
           <p>
-            <code>t3 cloud login</code> stores authorization without enabling exposure.
-            <code>t3 cloud unlink</code> disables exposure while retaining authorization.
-            <code>t3 cloud logout</code> also removes the stored CLI authorization.
+            <code>t3 connect login</code> stores authorization without enabling exposure.
+            <code>t3 connect unlink</code> disables exposure while retaining authorization.
+            <code>t3 connect logout</code> also removes the stored CLI authorization.
           </p>
         </article>
 
@@ -626,7 +626,7 @@ sequenceDiagram
   C->>R: POST /v1/client/dpop-token (Clerk JWT + DPoP proof)
   R-->>C: Relay DPoP access token
   C->>R: POST /v1/environments/:id/connect (relay DPoP)
-  R->>E: POST /api/t3-cloud/mint-credential (relay-signed proof)
+  R->>E: POST /api/t3-connect/mint-credential (relay-signed proof)
   E->>E: Verify relay signer, linked user, scope, lifetime, cnf, and replay guards
   E-->>R: Bootstrap credential + environment-signed proof
   R->>R: Verify environment signature, nonce, endpoint, and DPoP binding
@@ -941,37 +941,37 @@ sequenceDiagram
           </thead>
           <tbody>
             <tr>
-              <td><code>POST /api/cloud/link-proof</code></td>
+              <td><code>POST /api/connect/link-proof</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Validate local origin and sign an environment link proof.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/relay-config</code></td>
+              <td><code>POST /api/connect/relay-config</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Persist linked relay configuration and start the relay client.</td>
             </tr>
             <tr>
-              <td><code>GET /api/cloud/link-state</code></td>
+              <td><code>GET /api/connect/link-state</code></td>
               <td>Local environment token with <code>relay:read</code></td>
-              <td>Read the environment's current T3 Cloud link state.</td>
+              <td>Read the environment's current T3 Connect link state.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/preferences</code></td>
+              <td><code>POST /api/connect/preferences</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Enable or disable agent-activity publication.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/unlink</code></td>
+              <td><code>POST /api/connect/unlink</code></td>
               <td>Local environment token with <code>relay:write</code></td>
-              <td>Stop the relay client and clear local T3 Cloud configuration.</td>
+              <td>Stop the relay client and clear local T3 Connect configuration.</td>
             </tr>
             <tr>
-              <td><code>POST /api/t3-cloud/health</code></td>
+              <td><code>POST /api/t3-connect/health</code></td>
               <td>Relay-signed proof</td>
               <td>Return a signed environment health response.</td>
             </tr>
             <tr>
-              <td><code>POST /api/t3-cloud/mint-credential</code></td>
+              <td><code>POST /api/t3-connect/mint-credential</code></td>
               <td>Relay-signed proof</td>
               <td>Mint a DPoP-bound one-time bootstrap credential for a remote client.</td>
             </tr>

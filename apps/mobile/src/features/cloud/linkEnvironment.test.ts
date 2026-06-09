@@ -572,7 +572,7 @@ describe("mobile cloud link environment client", () => {
           if (String(url).endsWith("/v1/client/environment-link-challenges")) {
             return Promise.resolve(Response.json(validLinkChallengeResponse()));
           }
-          if (String(url).endsWith("/api/cloud/link-proof")) {
+          if (String(url).endsWith("/api/connect/link-proof")) {
             return Promise.resolve(Response.json(validLinkProof()));
           }
           return Promise.resolve(Response.json(validLinkResponse("env-other")));
@@ -631,7 +631,7 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
           return Promise.resolve(Response.json(validLinkChallengeResponse()));
         }
-        if (String(url).endsWith("/api/cloud/link-proof")) {
+        if (String(url).endsWith("/api/connect/link-proof")) {
           return Promise.resolve(Response.json(validLinkProof()));
         }
         return Promise.resolve(
@@ -669,7 +669,7 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
           return Promise.resolve(Response.json(validLinkChallengeResponse()));
         }
-        if (String(url).endsWith("/api/cloud/link-proof")) {
+        if (String(url).endsWith("/api/connect/link-proof")) {
           return Promise.resolve(Response.json(validLinkProof()));
         }
         return Promise.resolve(
@@ -713,7 +713,7 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
           return Promise.resolve(Response.json(validLinkChallengeResponse()));
         }
-        if (String(url).endsWith("/api/cloud/link-proof")) {
+        if (String(url).endsWith("/api/connect/link-proof")) {
           return Promise.resolve(Response.json(validLinkProof()));
         }
         if (String(url).endsWith("/v1/client/environment-links")) {
