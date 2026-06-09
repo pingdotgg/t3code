@@ -149,11 +149,15 @@ const authAccessHarness = vi.hoisted(() => {
 
 const mockConnectDesktopSshEnvironment = vi.hoisted(() => vi.fn());
 const mockGetClerkToken = vi.hoisted(() => vi.fn(async () => null));
+const mockOpenClerkWaitlist = vi.hoisted(() => vi.fn());
 
 vi.mock("@clerk/react", () => ({
   useAuth: () => ({
     getToken: mockGetClerkToken,
     isSignedIn: false,
+  }),
+  useClerk: () => ({
+    openWaitlist: mockOpenClerkWaitlist,
   }),
 }));
 
