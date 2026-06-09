@@ -2386,7 +2386,36 @@ export const layer: Layer.Layer<
             }).pipe(Effect.orDie),
           );
 
-          yield* client.handleServerNotification("item/started", (payload) =>
+        const runtime: ProviderAdapterV2SessionRuntime = {
+          instanceId: CODEX_DEFAULT_INSTANCE_ID,
+          provider: CODEX_PROVIDER,
+          providerSessionId: input.providerSessionId,
+          providerSession: session,
+          rawEvents: Stream.empty,
+          events: Stream.fromEffectRepeat(Queue.take(events)),
+          ensureThread: (threadInput) =>
+            ensureInitialized.pipe(
+              Effect.andThen(client.request("thread/start", {})),
+              Effect.map(
+                (response): OrchestrationV2ProviderThread =>
+                  providerThreadFromCodexThread({
+                    appThreadId: threadInput.threadId,
+                    idAllocator,
+                    ownerNodeId: null,
+                    providerSessionId: input.providerSessionId,
+                    thread: response.thread,
+                  }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterEnsureThreadError({
+                    provider: CODEX_PROVIDER,
+                    threadId: threadInput.threadId,
+                    cause: normalizeCodexCause(cause),
+                  }),
+              ),
+            ),
+          resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
               if (context === undefined || payload.item.type !== "webSearch") {

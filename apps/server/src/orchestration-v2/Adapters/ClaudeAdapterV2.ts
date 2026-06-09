@@ -2667,7 +2667,7 @@ export function makeClaudeAdapterV2(
           providerSessionId: input.providerSessionId,
           providerSession: session,
           rawEvents: Stream.empty,
-          events: Stream.fromQueue(events),
+          events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;

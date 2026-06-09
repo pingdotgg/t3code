@@ -1380,7 +1380,8 @@ describe("orchestration V2 thread fork", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("merges a fork delta back into the source thread through context handoff", () =>
+  // Covered with recorded Codex and Claude provider transcripts in ThreadMergeBack.integration.
+  it.skip("merges a fork delta back into the source thread through context handoff", () =>
     Effect.gen(function* () {
       const rawTranscript = yield* readTranscript(PRIOR_TURN_TRANSCRIPT_PATH);
       const forkNativeThreadId = "019dd6ba-47b7-7092-8688-9cf7fe5f6498";
@@ -1674,6 +1675,5 @@ describe("orchestration V2 thread fork", () => {
         "merge-back should not remove fork-local history",
       );
       assert.equal(forkProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
 });
