@@ -128,4 +128,65 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       });
     }),
   );
+
+  it.effect("finds the active thread that owns a worktree subdirectory", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-worktree-parent"),
+        projectId: ProjectId.make("project-worktree"),
+        title: "Parent worktree thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/parent",
+        worktreePath: "/tmp/project/worktree",
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-worktree-child"),
+        projectId: ProjectId.make("project-worktree"),
+        title: "Child worktree thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/child",
+        worktreePath: "/tmp/project/worktree/nested",
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:01.000Z",
+        updatedAt: "2026-03-24T00:00:01.000Z",
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const resolved = yield* threads.getByWorktreePath({
+        worktreePath: "/tmp/project/worktree/nested/src",
+      });
+
+      assert.strictEqual(
+        Option.getOrNull(resolved)?.threadId,
+        ThreadId.make("thread-worktree-child"),
+      );
+    }),
+  );
 });

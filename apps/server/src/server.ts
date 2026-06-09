@@ -102,6 +102,7 @@ import {
   supportEmailWebhookRouteLayer,
 } from "./externalIntake/http.ts";
 import { ExternalIntegrationRepositoryLive } from "./persistence/Layers/ExternalIntegrations.ts";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -217,6 +218,8 @@ const GitLayerLive = Layer.empty.pipe(
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
+  Layer.provide(ProjectionThreadRepositoryLive),
+  Layer.provide(ExternalIntegrationRepositoryLive),
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(

@@ -41,11 +41,12 @@ type DiffThemeType = "light" | "dark";
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  active?: boolean;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({ mode = "inline", active = true }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
@@ -201,6 +202,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const usesCheckpoint =
     source.kind === "turn" || source.kind === "last-turn" || source.kind === "all-turns";
   const usesReview = source.kind === "branch" || source.kind === "working-tree";
+  const shouldLoadDiffData = active;
 
   const activeCheckpointRange = checkpointTurn
     ? selectedCheckpointRange
@@ -221,7 +223,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: checkpointTurn ? `turn:${checkpointTurn.turnId}` : conversationCacheScope,
     },
-    { enabled: isGitRepo && usesCheckpoint },
+    { enabled: shouldLoadDiffData && isGitRepo && usesCheckpoint },
   );
 
   const selectedBaseRef = source.kind === "branch" ? source.baseRef : null;
@@ -231,7 +233,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       cwd: activeCwd ?? null,
       baseRef: selectedBaseRef,
     },
-    { enabled: isGitRepo && usesReview },
+    { enabled: shouldLoadDiffData && isGitRepo && usesReview },
   );
   const branchSource = useMemo(
     () => reviewDiff.data?.sources.find((entry) => entry.kind === "branch-range") ?? null,
@@ -267,7 +269,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [gitStatusQuery.data]);
   const lastRepoFingerprintRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!usesReview || repoFingerprint === null) return;
+    if (!shouldLoadDiffData || !usesReview || repoFingerprint === null) return;
     // Skip the first observed fingerprint: the SWR atom already loads on mount,
     // so we only refresh on a genuine change.
     if (lastRepoFingerprintRef.current === null) {
@@ -278,16 +280,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     lastRepoFingerprintRef.current = repoFingerprint;
     const timer = setTimeout(() => reviewRefreshRef.current(), 300);
     return () => clearTimeout(timer);
-  }, [repoFingerprint, usesReview]);
+  }, [repoFingerprint, shouldLoadDiffData, usesReview]);
 
   const branchBaseLabel = branchSource?.baseRef ?? null;
   const currentBranch = gitStatusQuery.data?.refName ?? activeThread?.branch ?? null;
 
   // Branches to compare against. Only fetch when the source dropdown could use
   // it (branch mode) so we don't list refs for turn/working-tree views.
+  const shouldLoadBranchRefs = shouldLoadDiffData && source.kind === "branch";
   const vcsRefs = useVcsRefs({
-    environmentId: activeThread?.environmentId ?? null,
-    cwd: activeCwd ?? null,
+    environmentId: shouldLoadBranchRefs ? (activeThread?.environmentId ?? null) : null,
+    cwd: shouldLoadBranchRefs ? (activeCwd ?? null) : null,
   });
   const branchOptions = useMemo<ReadonlyArray<DiffBranchOption>>(() => {
     const refs = vcsRefs.data?.refs ?? [];

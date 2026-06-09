@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   GitManagerError,
@@ -29,6 +31,9 @@ import {
 } from "@t3tools/contracts";
 
 import { GitManager, type GitRunStackedActionOptions } from "./GitManager.ts";
+import { extractGitHubPullRequests } from "../externalIntake/github.ts";
+import { ExternalIntegrationRepository } from "../persistence/Services/ExternalIntegrations.ts";
+import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 
@@ -133,6 +138,8 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
   const registry = yield* VcsDriverRegistry;
   const git = yield* GitVcsDriver;
   const gitManager = yield* GitManager;
+  const externalIntegrations = yield* ExternalIntegrationRepository;
+  const projectionThreads = yield* ProjectionThreadRepository;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -244,6 +251,45 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     (input: Input) =>
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
+  const recordPullRequestArtifactsForThread = Effect.fn(
+    "GitWorkflowService.recordPullRequestArtifactsForThread",
+  )(function* (input: { readonly cwd: string; readonly result: GitRunStackedActionResult }) {
+    const pullRequestUrl =
+      (input.result.pr.status === "created" || input.result.pr.status === "opened_existing") &&
+      input.result.pr.url
+        ? input.result.pr.url
+        : null;
+    if (pullRequestUrl === null) {
+      return;
+    }
+
+    const pullRequests = extractGitHubPullRequests(pullRequestUrl);
+    if (pullRequests.length === 0) {
+      return;
+    }
+
+    const thread = yield* projectionThreads.getByWorktreePath({ worktreePath: input.cwd });
+    if (Option.isNone(thread)) {
+      return;
+    }
+
+    const now = DateTime.formatIso(DateTime.toUtc(DateTime.nowUnsafe()));
+    for (const pullRequest of pullRequests) {
+      yield* externalIntegrations.upsertArtifactLink({
+        kind: "github_pr",
+        externalId: pullRequest.externalId,
+        t3ThreadId: thread.value.threadId,
+        url: pullRequest.url,
+        metadata: {
+          ...pullRequest,
+          source: "git_stacked_action",
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  });
+
   return GitWorkflowService.of({
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
@@ -275,6 +321,16 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
         Effect.andThen(gitManager.runStackedAction(input, options)),
+        Effect.tap((result) =>
+          recordPullRequestArtifactsForThread({ cwd: input.cwd, result }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to record GitHub pull request artifact link", {
+                cwd: input.cwd,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            ),
+          ),
+        ),
       ),
     resolvePullRequest: routeGitManager(
       "GitWorkflowService.resolvePullRequest",

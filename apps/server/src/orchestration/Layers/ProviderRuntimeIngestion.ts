@@ -1691,28 +1691,33 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const highPriorityWorker = yield* makeDrainableWorker(processInputSafely);
+  const lowPriorityWorker = yield* makeDrainableWorker(processInputSafely);
+
+  const enqueueRuntimeEvent = (event: ProviderRuntimeEvent) =>
+    event.type === "runtime.warning"
+      ? lowPriorityWorker.enqueue({ source: "runtime", event })
+      : highPriorityWorker.enqueue({ source: "runtime", event });
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
+      yield* Effect.logInfo("provider.runtime-ingestion.started");
       yield* Effect.forkScoped(
-        Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
-        ),
+        Stream.runForEach(providerService.streamEvents, enqueueRuntimeEvent),
       );
       yield* Effect.forkScoped(
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
           if (event.type !== "thread.turn-start-requested") {
             return Effect.void;
           }
-          return worker.enqueue({ source: "domain", event });
+          return highPriorityWorker.enqueue({ source: "domain", event });
         }),
       );
     });
 
   return {
     start,
-    drain: worker.drain,
+    drain: Effect.all([highPriorityWorker.drain, lowPriorityWorker.drain]).pipe(Effect.asVoid),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

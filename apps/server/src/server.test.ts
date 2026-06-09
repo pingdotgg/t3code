@@ -144,6 +144,7 @@ import {
   ExternalIntegrationRepository,
   type ExternalIntegrationRepositoryShape,
 } from "./persistence/Services/ExternalIntegrations.ts";
+import { ProjectionThreadRepository } from "./persistence/Services/ProjectionThreads.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -528,6 +529,12 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(vcsDriverRegistryLayer),
       Layer.provideMerge(gitVcsDriverLayer),
       Layer.provideMerge(gitManagerLayer),
+      Layer.provide(Layer.mock(ProjectionThreadRepository)({})),
+      Layer.provide(
+        Layer.mock(ExternalIntegrationRepository)({
+          ...options?.layers?.externalIntegrationRepository,
+        }),
+      ),
     );
     const vcsProvisioningLayer = VcsProvisioningService.layer.pipe(
       Layer.provide(vcsDriverRegistryLayer),

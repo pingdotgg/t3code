@@ -272,7 +272,7 @@ export function useThreadDockPanels(args: UseThreadDockPanelsArgs): ThreadDockPa
         return (
           <DiffWorkerPoolProvider>
             <Suspense fallback={null}>
-              <LazyDiffPanel mode="panel" />
+              <LazyDiffPanel mode="panel" active={active} />
             </Suspense>
           </DiffWorkerPoolProvider>
         );

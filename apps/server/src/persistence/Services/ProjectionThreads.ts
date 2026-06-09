@@ -49,6 +49,12 @@ export const GetProjectionThreadInput = Schema.Struct({
 });
 export type GetProjectionThreadInput = typeof GetProjectionThreadInput.Type;
 
+export const GetProjectionThreadByWorktreePathInput = Schema.Struct({
+  worktreePath: Schema.String,
+});
+export type GetProjectionThreadByWorktreePathInput =
+  typeof GetProjectionThreadByWorktreePathInput.Type;
+
 export const DeleteProjectionThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -75,6 +81,13 @@ export interface ProjectionThreadRepositoryShape {
    */
   readonly getById: (
     input: GetProjectionThreadInput,
+  ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read the active projected thread that owns a worktree path.
+   */
+  readonly getByWorktreePath: (
+    input: GetProjectionThreadByWorktreePathInput,
   ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
 
   /**

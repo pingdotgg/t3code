@@ -37,6 +37,8 @@ const CODEX_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 
+const CODEX_MODEL_LIST_TIMEOUT_MS = 3_000;
+
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
   readonly version: string | undefined;
@@ -154,6 +156,73 @@ function parseCodexModelListResponse(
   }));
 }
 
+function codexFallbackModelCapabilities(input: {
+  readonly defaultReasoningEffort: CodexSchema.V2ModelListResponse__ReasoningEffort;
+  readonly supportsFastMode?: boolean;
+}): ModelCapabilities {
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: (["low", "medium", "high", "xhigh"] as const).map((reasoningEffort) => ({
+          id: reasoningEffort,
+          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          ...(reasoningEffort === input.defaultReasoningEffort ? { isDefault: true } : {}),
+        })),
+        currentValue: input.defaultReasoningEffort,
+      },
+      ...(input.supportsFastMode
+        ? [
+            {
+              id: "fastMode",
+              label: "Fast Mode",
+              type: "boolean" as const,
+            },
+          ]
+        : []),
+    ],
+  });
+}
+
+const FALLBACK_CODEX_MODELS = [
+  {
+    slug: "gpt-5.5",
+    name: "GPT-5.5",
+    isCustom: false,
+    capabilities: codexFallbackModelCapabilities({
+      defaultReasoningEffort: "medium",
+      supportsFastMode: true,
+    }),
+  },
+  {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: codexFallbackModelCapabilities({
+      defaultReasoningEffort: "medium",
+      supportsFastMode: true,
+    }),
+  },
+  {
+    slug: "gpt-5.4-mini",
+    name: "GPT-5.4-Mini",
+    isCustom: false,
+    capabilities: codexFallbackModelCapabilities({
+      defaultReasoningEffort: "medium",
+    }),
+  },
+  {
+    slug: "gpt-5.3-codex-spark",
+    name: "GPT-5.3-Codex-Spark",
+    isCustom: false,
+    capabilities: codexFallbackModelCapabilities({
+      defaultReasoningEffort: "high",
+    }),
+  },
+] satisfies ReadonlyArray<ServerProviderModel>;
+
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
@@ -235,6 +304,40 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   return models;
 });
 
+const fallbackCodexModelsFromSettings = (
+  customModels: ReadonlyArray<string>,
+): ReadonlyArray<ServerProviderModel> =>
+  appendCustomCodexModels(FALLBACK_CODEX_MODELS, customModels);
+
+const requestCodexModelsOrFallback = Effect.fn("requestCodexModelsOrFallback")(function* (
+  client: CodexClient.CodexAppServerClientShape,
+  customModels: ReadonlyArray<string>,
+) {
+  const result = yield* requestAllCodexModels(client).pipe(
+    Effect.timeoutOption(Duration.millis(CODEX_MODEL_LIST_TIMEOUT_MS)),
+    Effect.result,
+  );
+
+  if (Result.isFailure(result)) {
+    yield* Effect.logWarning("Codex app-server model discovery failed; using fallback models", {
+      error: result.failure.message,
+    });
+    return fallbackCodexModelsFromSettings(customModels);
+  }
+
+  if (Option.isNone(result.success)) {
+    yield* Effect.logWarning("Codex app-server model discovery timed out; using fallback models", {
+      timeoutMs: CODEX_MODEL_LIST_TIMEOUT_MS,
+    });
+    return fallbackCodexModelsFromSettings(customModels);
+  }
+
+  const models = result.success.value;
+  return models.length > 0
+    ? appendCustomCodexModels(models, customModels)
+    : fallbackCodexModelsFromSettings(customModels);
+});
+
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
@@ -306,7 +409,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
-      requestAllCodexModels(client),
+      requestCodexModelsOrFallback(client, input.customModels ?? []),
     ],
     { concurrency: "unbounded" },
   );
@@ -314,7 +417,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   return {
     account: accountResponse,
     version,
-    models: appendCustomCodexModels(models, input.customModels ?? []),
+    models,
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -495,12 +598,16 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const models =
+    snapshot.models.length > 0
+      ? appendCustomCodexModels(snapshot.models, codexSettings.customModels)
+      : fallbackCodexModelsFromSettings(codexSettings.customModels);
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
-    models: snapshot.models,
+    models,
     skills: snapshot.skills,
     probe: {
       installed: true,

@@ -388,6 +388,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           }),
       );
 
+      it.effect("uses fallback Codex models when app-server model discovery is unavailable", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                models: [],
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"],
+          );
+        }),
+      );
+
       it.effect("returns an api key label for codex api key auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>

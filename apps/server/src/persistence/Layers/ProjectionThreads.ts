@@ -8,6 +8,7 @@ import * as Struct from "effect/Struct";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionThreadInput,
+  GetProjectionThreadByWorktreePathInput,
   GetProjectionThreadInput,
   ListProjectionThreadsByProjectInput,
   ProjectionThread,
@@ -117,6 +118,41 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+  const getProjectionThreadByWorktreePathRow = SqlSchema.findOneOption({
+    Request: GetProjectionThreadByWorktreePathInput,
+    Result: ProjectionThreadDbRow,
+    execute: ({ worktreePath }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE deleted_at IS NULL
+          AND worktree_path IS NOT NULL
+          AND (
+            worktree_path = ${worktreePath}
+            OR ${worktreePath} LIKE worktree_path || '/%'
+          )
+        ORDER BY length(worktree_path) DESC, updated_at DESC, thread_id ASC
+        LIMIT 1
+      `,
+  });
+
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
     Result: ProjectionThreadDbRow,
@@ -165,6 +201,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
+  const getByWorktreePath: ProjectionThreadRepositoryShape["getByWorktreePath"] = (input) =>
+    getProjectionThreadByWorktreePathRow(input).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getByWorktreePath:query")),
+    );
+
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
@@ -178,6 +219,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
   return {
     upsert,
     getById,
+    getByWorktreePath,
     listByProjectId,
     deleteById,
   } satisfies ProjectionThreadRepositoryShape;
