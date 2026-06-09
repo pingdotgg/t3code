@@ -59,6 +59,7 @@ function makeTestAdapter(input: {
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly modelSelection: ModelSelection;
   readonly responseByRunOrdinal: Readonly<Record<number, string>>;
+  readonly responseByThreadId?: Readonly<Record<string, Readonly<Record<number, string>>>>;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
 }): ProviderAdapterV2Shape {
   return {
@@ -128,9 +129,10 @@ function makeTestAdapter(input: {
               ]);
               const eventTime = yield* DateTime.now;
               const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.provider}:${turnInput.runOrdinal}`,
+                `provider-turn:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
               const response =
+                input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.provider} response for run ${turnInput.runOrdinal}`;
               const providerEvents: ReadonlyArray<ProviderAdapterV2Event> = [
@@ -144,7 +146,7 @@ function makeTestAdapter(input: {
                     runAttemptId: turnInput.attemptId,
                     nativeTurnRef: {
                       provider: input.provider,
-                      nativeId: `native-turn:${turnInput.runOrdinal}`,
+                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
                       strength: "strong",
                     },
                     ordinal: turnInput.runOrdinal,
@@ -158,7 +160,7 @@ function makeTestAdapter(input: {
                   provider: input.provider,
                   turnItem: {
                     id: TurnItemId.make(
-                      `turn-item:${input.provider}:${turnInput.runOrdinal}:assistant`,
+                      `turn-item:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
                     threadId: turnInput.threadId,
                     runId: turnInput.runId,
@@ -175,7 +177,7 @@ function makeTestAdapter(input: {
                     updatedAt: eventTime,
                     type: "assistant_message",
                     messageId: MessageId.make(
-                      `message:${input.provider}:${turnInput.runOrdinal}:assistant`,
+                      `message:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
                     text: response,
                     streaming: false,
@@ -530,9 +532,10 @@ describe("orchestration v2 provider switching", () => {
   it("switches providers while consuming a pending cross-provider merge-back", async () => {
     const sourceThreadId = ThreadId.make("thread:cross-provider-merge:source");
     const forkThreadId = ThreadId.make("thread:cross-provider-merge:fork");
-    const sourcePrompt = "Remember that the source marker is amber.";
+    const firstSourcePrompt = "Remember that the first source marker is amber.";
+    const secondSourcePrompt = "Remember that the second source marker is violet.";
     const forkPrompt = "Remember that the fork marker is cobalt.";
-    const mergePrompt = "Report both remembered markers.";
+    const mergePrompt = "Report all three remembered markers.";
     const cwd = await makeCheckpointWorkspace("cross-provider-merge");
     const capturedTurns = await Effect.runPromise(Ref.make<ReadonlyArray<CapturedTurn>>([]));
     const registryLayer = makeProviderAdapterRegistryLayer([
@@ -541,9 +544,15 @@ describe("orchestration v2 provider switching", () => {
         provider: "codex",
         capabilities: CodexProviderCapabilitiesV2,
         modelSelection: CODEX_MODEL_SELECTION,
-        responseByRunOrdinal: {
-          1: "I will remember cobalt.",
-          2: "The markers are amber and cobalt.",
+        responseByRunOrdinal: {},
+        responseByThreadId: {
+          [sourceThreadId]: {
+            1: "I will remember amber.",
+            3: "The markers are amber, violet, and cobalt.",
+          },
+          [forkThreadId]: {
+            1: "I will remember cobalt.",
+          },
         },
         capturedTurns,
       }),
@@ -552,7 +561,7 @@ describe("orchestration v2 provider switching", () => {
         provider: "claudeAgent",
         capabilities: ClaudeProviderCapabilitiesV2,
         modelSelection: CLAUDE_MODEL_SELECTION,
-        responseByRunOrdinal: { 1: "I will remember amber." },
+        responseByRunOrdinal: { 2: "I will remember violet." },
         capturedTurns,
       }),
     ]);
@@ -563,7 +572,7 @@ describe("orchestration v2 provider switching", () => {
         threadId: sourceThreadId,
         projectId,
         title: "Cross-provider merge source",
-        modelSelection: CLAUDE_MODEL_SELECTION,
+        modelSelection: CODEX_MODEL_SELECTION,
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -571,10 +580,20 @@ describe("orchestration v2 provider switching", () => {
       },
       {
         type: "message.dispatch",
-        commandId: CommandId.make("command:cross-provider-merge:source"),
+        commandId: CommandId.make("command:cross-provider-merge:first-source"),
         threadId: sourceThreadId,
-        messageId: MessageId.make("message:cross-provider-merge:source"),
-        text: sourcePrompt,
+        messageId: MessageId.make("message:cross-provider-merge:first-source"),
+        text: firstSourcePrompt,
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:cross-provider-merge:second-source"),
+        threadId: sourceThreadId,
+        messageId: MessageId.make("message:cross-provider-merge:second-source"),
+        text: secondSourcePrompt,
         attachments: [],
         modelSelection: CLAUDE_MODEL_SELECTION,
         dispatchMode: { type: "start_immediately" },
@@ -624,10 +643,12 @@ describe("orchestration v2 provider switching", () => {
           yield* orchestrator.dispatch(commands[1]!);
           yield* waitForIdle(sourceThreadId);
           yield* orchestrator.dispatch(commands[2]!);
+          yield* waitForIdle(sourceThreadId);
           yield* orchestrator.dispatch(commands[3]!);
-          yield* waitForIdle(forkThreadId);
           yield* orchestrator.dispatch(commands[4]!);
+          yield* waitForIdle(forkThreadId);
           yield* orchestrator.dispatch(commands[5]!);
+          yield* orchestrator.dispatch(commands[6]!);
           return yield* waitForIdle(sourceThreadId);
         }).pipe(
           Effect.provide(
@@ -650,7 +671,7 @@ describe("orchestration v2 provider switching", () => {
         ),
       );
       const turns = await Effect.runPromise(Ref.get(capturedTurns));
-      const mergedTurn = turns.find(
+      const mergedTurn = turns.findLast(
         (turn) => turn.threadId === sourceThreadId && turn.provider === "codex",
       );
       const mergeTransfer = projection.contextTransfers.find(
@@ -659,8 +680,10 @@ describe("orchestration v2 provider switching", () => {
 
       assert.isDefined(mergedTurn);
       assert.include(mergedTurn.text, "Context handoff (full_thread_summary):");
-      assert.include(mergedTurn.text, sourcePrompt);
+      assert.include(mergedTurn.text, firstSourcePrompt);
       assert.include(mergedTurn.text, "I will remember amber.");
+      assert.include(mergedTurn.text, secondSourcePrompt);
+      assert.include(mergedTurn.text, "I will remember violet.");
       assert.include(mergedTurn.text, "Context handoff (merge_back / fork_delta_summary):");
       assert.include(mergedTurn.text, forkPrompt);
       assert.include(mergedTurn.text, "I will remember cobalt.");
