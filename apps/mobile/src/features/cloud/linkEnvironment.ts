@@ -301,7 +301,7 @@ export function linkEnvironmentToCloud(input: {
         ),
       );
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
-    const proof = yield* environmentClient.cloud
+    const proof = yield* environmentClient.connect
       .linkProof({
         headers: { authorization: `Bearer ${localBearerToken}` },
         payload: {
@@ -336,7 +336,7 @@ export function linkEnvironmentToCloud(input: {
       link,
     });
 
-    yield* environmentClient.cloud
+    yield* environmentClient.connect
       .relayConfig({
         headers: { authorization: `Bearer ${localBearerToken}` },
         payload: {

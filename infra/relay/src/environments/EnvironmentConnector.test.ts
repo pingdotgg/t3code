@@ -300,7 +300,7 @@ describe("EnvironmentConnector", () => {
         environmentId: "env-connector-test",
       });
 
-      expect(seenUrls).toEqual(["https://env.example.test/api/t3-cloud/health"]);
+      expect(seenUrls).toEqual(["https://env.example.test/api/t3-connect/health"]);
       expect(seenProofs[0]).toMatchObject({
         iss: "https://relay.example.test",
         aud: "t3-env:env-connector-test",
@@ -663,7 +663,7 @@ describe("EnvironmentConnector", () => {
         deviceId: "device-123",
       });
 
-      expect(seenUrls).toEqual(["https://env.example.test/api/t3-cloud/mint-credential"]);
+      expect(seenUrls).toEqual(["https://env.example.test/api/t3-connect/mint-credential"]);
       expect(seenProofs[0]).toMatchObject({
         iss: "https://relay.example.test",
         aud: "t3-env:env-connector-test",

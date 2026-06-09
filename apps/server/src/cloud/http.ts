@@ -924,9 +924,9 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
   }),
 );
 
-export const cloudHttpApiLayer = HttpApiBuilder.group(
+export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
-  "cloud",
+  "connect",
   Effect.fnUntraced(function* (handlers) {
     const dependencies = yield* cloudHttpDependencies;
     return handlers

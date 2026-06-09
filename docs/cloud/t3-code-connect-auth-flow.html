@@ -557,7 +557,7 @@ sequenceDiagram
   end
   C->>R: POST /v1/client/environment-link-challenges (Clerk bearer)
   R-->>C: Short-lived challenge
-  C->>E: POST /api/cloud/link-proof (local relay:write bearer)
+  C->>E: POST /api/connect/link-proof (local relay:write bearer)
   E->>E: Authenticate, reject forwarded authority, get or create key pair, validate loopback origin
   E-->>C: Environment-signed link proof
   C->>R: POST /v1/client/environment-links (Clerk bearer + proof)
@@ -565,7 +565,7 @@ sequenceDiagram
   R->>CF: Reconcile tunnel, ingress, and CNAME
   R->>R: Upsert user/environment link and issue environment bearer
   R-->>C: Managed endpoint, relay config, and connector token
-  C->>E: POST /api/cloud/relay-config (local relay:write bearer)
+  C->>E: POST /api/connect/relay-config (local relay:write bearer)
   E->>RC: Start relay client with TUNNEL_TOKEN
           </pre>
           <div class="callout">
@@ -626,7 +626,7 @@ sequenceDiagram
   C->>R: POST /v1/client/dpop-token (Clerk JWT + DPoP proof)
   R-->>C: Relay DPoP access token
   C->>R: POST /v1/environments/:id/connect (relay DPoP)
-  R->>E: POST /api/t3-cloud/mint-credential (relay-signed proof)
+  R->>E: POST /api/t3-connect/mint-credential (relay-signed proof)
   E->>E: Verify relay signer, linked user, scope, lifetime, cnf, and replay guards
   E-->>R: Bootstrap credential + environment-signed proof
   R->>R: Verify environment signature, nonce, endpoint, and DPoP binding
@@ -941,37 +941,37 @@ sequenceDiagram
           </thead>
           <tbody>
             <tr>
-              <td><code>POST /api/cloud/link-proof</code></td>
+              <td><code>POST /api/connect/link-proof</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Validate local origin and sign an environment link proof.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/relay-config</code></td>
+              <td><code>POST /api/connect/relay-config</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Persist linked relay configuration and start the relay client.</td>
             </tr>
             <tr>
-              <td><code>GET /api/cloud/link-state</code></td>
+              <td><code>GET /api/connect/link-state</code></td>
               <td>Local environment token with <code>relay:read</code></td>
               <td>Read the environment's current T3 Connect link state.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/preferences</code></td>
+              <td><code>POST /api/connect/preferences</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Enable or disable agent-activity publication.</td>
             </tr>
             <tr>
-              <td><code>POST /api/cloud/unlink</code></td>
+              <td><code>POST /api/connect/unlink</code></td>
               <td>Local environment token with <code>relay:write</code></td>
               <td>Stop the relay client and clear local T3 Connect configuration.</td>
             </tr>
             <tr>
-              <td><code>POST /api/t3-cloud/health</code></td>
+              <td><code>POST /api/t3-connect/health</code></td>
               <td>Relay-signed proof</td>
               <td>Return a signed environment health response.</td>
             </tr>
             <tr>
-              <td><code>POST /api/t3-cloud/mint-credential</code></td>
+              <td><code>POST /api/t3-connect/mint-credential</code></td>
               <td>Relay-signed proof</td>
               <td>Mint a DPoP-bound one-time bootstrap credential for a remote client.</td>
             </tr>

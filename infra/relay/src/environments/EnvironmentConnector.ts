@@ -458,7 +458,7 @@ const make = Effect.gen(function* () {
       );
       const checkedAt = DateTime.formatIso(now);
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const responseOption = yield* environmentClient.cloud.health({ payload: { proof } }).pipe(
+      const responseOption = yield* environmentClient.connect.health({ payload: { proof } }).pipe(
         withoutRedirects,
         Effect.match({
           onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
@@ -591,30 +591,32 @@ const make = Effect.gen(function* () {
         ),
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const decoded = yield* environmentClient.cloud.t3MintCredential({ payload: { proof } }).pipe(
-        withoutRedirects,
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "connect",
-              cause,
+      const decoded = yield* environmentClient.connect
+        .t3MintCredential({ payload: { proof } })
+        .pipe(
+          withoutRedirects,
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "connect",
+                cause,
+              }),
+          ),
+          Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new EnvironmentMintRequestTimedOut({
+                    environmentId: input.environmentId,
+                    timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+                  }),
+                ),
+              onSome: Effect.succeed,
             }),
-        ),
-        Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new EnvironmentMintRequestTimedOut({
-                  environmentId: input.environmentId,
-                  timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
-                }),
-              ),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
+          ),
+        );
       const verified = yield* verifyEnvironmentResponse({
         response: decoded,
         environmentId: input.environmentId,
