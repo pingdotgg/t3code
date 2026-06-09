@@ -342,6 +342,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeMode: "approval-required",
       });
 
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
       const config = runtimeMock.state.createSessionConfigs.at(-1);
       assert.ok(config?.onEvent);
       assert.ok(config.onPermissionRequest);
@@ -400,11 +407,42 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       });
 
+      let requestResolved: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && requestResolved === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        requestResolved = runtimeEvents.find(
+          (event) => event.type === "request.resolved" && String(event.requestId) === requestId,
+        );
+      }
+      assert.equal(requestResolved?.type, "request.resolved");
+      if (requestResolved?.type === "request.resolved") {
+        assert.equal(requestResolved.payload.requestType, "command_execution_approval");
+        assert.equal(requestResolved.payload.decision, "acceptForSession");
+        assert.deepStrictEqual(requestResolved.payload.resolution, result);
+      }
+
+      config.onEvent({
+        id: "evt-copilot-permission-session-approval-completed",
+        timestamp,
+        parentId: null,
+        type: "permission.completed",
+        data: {
+          requestId,
+          result,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      const resolvedEvents = runtimeEvents.filter(
+        (event) => event.type === "request.resolved" && String(event.requestId) === requestId,
+      );
+      assert.equal(resolvedEvents.length, 1);
+
       const duplicateReply = yield* Effect.flip(
         adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "acceptForSession"),
       );
       assert.match(duplicateReply.message, /Unknown pending permission request/);
 
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
     }),
   );
