@@ -685,6 +685,7 @@ label:has(> select#reasoning-effort) select {
   );
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;
+  filter: saturate(0.82) brightness(0.92);
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
