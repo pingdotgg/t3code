@@ -157,17 +157,24 @@ export function providerMessageWithContextHandoff(input: {
   readonly handoff: OrchestrationV2ContextHandoff;
   readonly userText: string;
 }): string {
-  const label =
-    input.handoff.strategy === "fork_delta_summary"
-      ? "merge_back / fork_delta_summary"
-      : input.handoff.strategy;
-  return [
-    `Context handoff (${label}):`,
-    input.handoff.summaryText,
-    "",
-    "User message:",
-    input.userText,
-  ].join("\n");
+  return providerMessageWithContextHandoffs({
+    handoffs: [input.handoff],
+    userText: input.userText,
+  });
+}
+
+export function providerMessageWithContextHandoffs(input: {
+  readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
+  readonly userText: string;
+}): string {
+  const handoffSections = input.handoffs.flatMap((handoff) => {
+    const label =
+      handoff.strategy === "fork_delta_summary"
+        ? "merge_back / fork_delta_summary"
+        : handoff.strategy;
+    return [`Context handoff (${label}):`, handoff.summaryText, ""];
+  });
+  return [...handoffSections, "User message:", input.userText].join("\n");
 }
 
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
