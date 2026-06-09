@@ -55,7 +55,11 @@ import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMo
 import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 =======
 import Migration026V2 from "./Migrations/026_OrchestrationV2.ts";
+<<<<<<< HEAD
 >>>>>>> d788fb20eb (Implement orchestration v2 runtime)
+=======
+import Migration034V2 from "./Migrations/034_OrchestrationV2Subagents.ts";
+>>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
 
 /**
  * Migration loader with all migrations defined inline.
@@ -111,7 +115,11 @@ export const migrationEntries = [
   [40, "ProjectionProjectFaviconPath", Migration0040],
 =======
   [38, "OrchestrationV2", Migration026V2],
+<<<<<<< HEAD
 >>>>>>> d788fb20eb (Implement orchestration v2 runtime)
+=======
+  [39, "OrchestrationV2Subagents", Migration034V2],
+>>>>>>> 3273fa742b (feat(orchestration-v2): model native subagents)
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
