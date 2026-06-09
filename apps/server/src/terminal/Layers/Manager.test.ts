@@ -159,7 +159,6 @@ function openInput(overrides: Partial<TerminalOpenInput> = {}): TerminalOpenInpu
   return {
     threadId: "thread-1",
     terminalId: DEFAULT_TERMINAL_ID,
-    projectId: ProjectId.make("project-1"),
     cwd: process.cwd(),
     cols: 100,
     rows: 24,
@@ -171,7 +170,6 @@ function restartInput(overrides: Partial<TerminalRestartInput> = {}): TerminalRe
   return {
     threadId: "thread-1",
     terminalId: DEFAULT_TERMINAL_ID,
-    projectId: ProjectId.make("project-1"),
     cwd: process.cwd(),
     cols: 100,
     rows: 24,

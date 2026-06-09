@@ -1,6 +1,5 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { ProjectId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_TERMINAL_ID,
@@ -14,8 +13,6 @@ import {
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
-
-const PROJECT_ID = ProjectId.make("project-1");
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -36,7 +33,6 @@ describe("TerminalOpenInput", () => {
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        projectId: PROJECT_ID,
         cwd: "/tmp/project",
         cols: 120,
         rows: 40,
@@ -49,7 +45,6 @@ describe("TerminalOpenInput", () => {
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        projectId: PROJECT_ID,
         cwd: "/tmp/project",
         cols: 423,
         rows: 40,
@@ -62,7 +57,6 @@ describe("TerminalOpenInput", () => {
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        projectId: PROJECT_ID,
         cwd: "/tmp/project",
         cols: 10,
         rows: 0,
@@ -74,7 +68,6 @@ describe("TerminalOpenInput", () => {
     expect(
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
-        projectId: PROJECT_ID,
         cwd: "/tmp/project",
         cols: 100,
         rows: 24,
@@ -86,7 +79,6 @@ describe("TerminalOpenInput", () => {
     const parsed = decodeSync(TerminalOpenInput, {
       threadId: "thread-1",
       terminalId: DEFAULT_TERMINAL_ID,
-      projectId: PROJECT_ID,
       cwd: "/tmp/project",
       worktreePath: "/tmp/project/.t3/worktrees/feature-a",
       cols: 100,
@@ -107,7 +99,6 @@ describe("TerminalOpenInput", () => {
     expect(
       decodes(TerminalOpenInput, {
         threadId: "thread-1",
-        projectId: PROJECT_ID,
         cwd: "/tmp/project",
         cols: 100,
         rows: 24,

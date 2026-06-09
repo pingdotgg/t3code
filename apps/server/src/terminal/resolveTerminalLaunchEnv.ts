@@ -23,10 +23,10 @@ export type TerminalAttachRuntimeInput = TerminalAttachInput & {
 export interface TerminalLaunchEnvResolver {
   readonly resolveOpenInput: (
     input: TerminalOpenInput,
-  ) => Effect.Effect<TerminalOpenInput, TerminalCwdError>;
+  ) => Effect.Effect<TerminalOpenInput, TerminalCwdError | TerminalSessionLookupError>;
   readonly resolveRestartInput: (
     input: TerminalRestartInput,
-  ) => Effect.Effect<TerminalRestartInput, TerminalCwdError>;
+  ) => Effect.Effect<TerminalRestartInput, TerminalCwdError | TerminalSessionLookupError>;
   readonly resolveAttachInput: (
     input: TerminalAttachInput,
   ) => Effect.Effect<TerminalAttachRuntimeInput, TerminalCwdError | TerminalSessionLookupError>;
@@ -38,6 +38,36 @@ export interface ResolveTerminalLaunchEnvInput {
   readonly worktreePath?: string | null;
   readonly extraEnv?: Record<string, string>;
 }
+
+const resolveThreadForTerminal = Effect.fn("resolveThreadForTerminal")(function* (input: {
+  readonly threadId: string;
+  readonly terminalId: string;
+}) {
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+
+  const threadOption = yield* projectionSnapshotQuery
+    .getThreadShellById(ThreadId.make(input.threadId))
+    .pipe(
+      Effect.mapError(
+        () =>
+          new TerminalSessionLookupError({
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+          }),
+      ),
+    );
+
+  return yield* Option.match(threadOption, {
+    onNone: () =>
+      Effect.fail(
+        new TerminalSessionLookupError({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+        }),
+      ),
+    onSome: Effect.succeed,
+  });
+});
 
 export const resolveTerminalLaunchEnv = Effect.fn("resolveTerminalLaunchEnv")(function* (
   input: ResolveTerminalLaunchEnvInput,
@@ -77,18 +107,53 @@ export const resolveTerminalLaunchEnv = Effect.fn("resolveTerminalLaunchEnv")(fu
   });
 });
 
+const resolveLaunchEnvForTerminalInput = Effect.fn("resolveLaunchEnvForTerminalInput")(
+  function* (input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly worktreePath?: string | null;
+    readonly env?: Readonly<Record<string, string>>;
+  }) {
+    const thread = yield* resolveThreadForTerminal({
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+    });
+    const worktreePath =
+      input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath;
+
+    const env = yield* resolveTerminalLaunchEnv({
+      projectId: thread.projectId,
+      threadId: input.threadId,
+      worktreePath,
+      ...(input.env !== undefined ? { extraEnv: input.env } : {}),
+    });
+
+    return {
+      worktreePath,
+      env,
+    };
+  },
+);
+
+const terminalLaunchEnvInput = (
+  input: Pick<TerminalOpenInput, "threadId" | "terminalId" | "worktreePath" | "env">,
+) => ({
+  threadId: input.threadId,
+  terminalId: input.terminalId,
+  ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+  ...(input.env !== undefined ? { env: input.env } : {}),
+});
+
 export const resolveTerminalOpenInput = Effect.fn("resolveTerminalOpenInput")(function* (
   input: TerminalOpenInput,
 ) {
-  const env = yield* resolveTerminalLaunchEnv({
-    projectId: input.projectId,
-    threadId: input.threadId,
-    ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-    ...(input.env !== undefined ? { extraEnv: input.env } : {}),
-  });
+  const { worktreePath, env } = yield* resolveLaunchEnvForTerminalInput(
+    terminalLaunchEnvInput(input),
+  );
 
   return {
     ...input,
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
     env,
   };
 });
@@ -96,15 +161,13 @@ export const resolveTerminalOpenInput = Effect.fn("resolveTerminalOpenInput")(fu
 export const resolveTerminalRestartInput = Effect.fn("resolveTerminalRestartInput")(function* (
   input: TerminalRestartInput,
 ) {
-  const env = yield* resolveTerminalLaunchEnv({
-    projectId: input.projectId,
-    threadId: input.threadId,
-    ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-    ...(input.env !== undefined ? { extraEnv: input.env } : {}),
-  });
+  const { worktreePath, env } = yield* resolveLaunchEnvForTerminalInput(
+    terminalLaunchEnvInput(input),
+  );
 
   return {
     ...input,
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
     env,
   };
 });
@@ -112,31 +175,10 @@ export const resolveTerminalRestartInput = Effect.fn("resolveTerminalRestartInpu
 export const resolveTerminalAttachInput = Effect.fn("resolveTerminalAttachInput")(function* (
   input: TerminalAttachInput,
 ) {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-
-  const threadOption = yield* projectionSnapshotQuery
-    .getThreadShellById(ThreadId.make(input.threadId))
-    .pipe(
-      Effect.mapError(
-        () =>
-          new TerminalSessionLookupError({
-            threadId: input.threadId,
-            terminalId: input.terminalId,
-          }),
-      ),
-    );
-
-  const thread = yield* Option.match(threadOption, {
-    onNone: () =>
-      Effect.fail(
-        new TerminalSessionLookupError({
-          threadId: input.threadId,
-          terminalId: input.terminalId,
-        }),
-      ),
-    onSome: Effect.succeed,
+  const thread = yield* resolveThreadForTerminal({
+    threadId: input.threadId,
+    terminalId: input.terminalId,
   });
-
   const worktreePath = input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath;
 
   const env = yield* resolveTerminalLaunchEnv({
@@ -155,6 +197,13 @@ export const resolveTerminalAttachInput = Effect.fn("resolveTerminalAttachInput"
 });
 
 export type TerminalLaunchEnvResolverServices = LaunchEnv | ProjectionSnapshotQuery;
+
+/** Launch env resolution runs in the server runtime, which always provides these services. */
+export const inTerminalRuntimeContext = <A, E>(
+  effect: Effect.Effect<A, E, TerminalLaunchEnvResolverServices>,
+): Effect.Effect<A, E> =>
+  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
+  effect as Effect.Effect<A, E>;
 
 const provideTerminalLaunchEnvResolverServices = <A, E>(
   services: Context.Context<TerminalLaunchEnvResolverServices>,

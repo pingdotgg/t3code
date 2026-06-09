@@ -615,7 +615,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         await api.terminal.open({
           threadId,
           terminalId,
-          projectId: project.id,
           cwd,
           ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
         });
@@ -647,7 +646,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         await api.terminal.open({
           threadId,
           terminalId,
-          projectId: project.id,
           cwd,
           ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
         });
@@ -2008,7 +2006,6 @@ export default function ChatView(props: ChatViewProps) {
         await api.terminal.open({
           threadId: activeThreadId,
           terminalId,
-          projectId: activeProject.id,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         });
@@ -2047,7 +2044,6 @@ export default function ChatView(props: ChatViewProps) {
         await api.terminal.open({
           threadId: activeThreadId,
           terminalId,
-          projectId: activeProject.id,
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         });
@@ -2142,7 +2138,6 @@ export default function ChatView(props: ChatViewProps) {
         ? {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
-            projectId: activeProject.id,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
             ...customRuntimeEnv,
@@ -2152,7 +2147,6 @@ export default function ChatView(props: ChatViewProps) {
         : {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
-            projectId: activeProject.id,
             cwd: targetCwd,
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
             ...customRuntimeEnv,

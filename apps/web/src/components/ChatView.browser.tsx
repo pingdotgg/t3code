@@ -2352,7 +2352,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
-            projectId: PROJECT_ID,
             cwd: "/repo/project",
           });
           expect(openRequest?.env).toBeUndefined();
@@ -2430,7 +2429,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
-            projectId: PROJECT_ID,
             cwd: "/repo/worktrees/feature-draft",
             worktreePath: "/repo/worktrees/feature-draft",
           });

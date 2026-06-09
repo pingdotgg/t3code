@@ -6502,7 +6502,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.terminalOpen]({
             threadId: "thread-1",
             terminalId: "default",
-            projectId: terminalProjectId,
             cwd: "/tmp/project",
           }),
         ),
@@ -6544,7 +6543,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[WS_METHODS.terminalRestart]({
             threadId: "thread-1",
             terminalId: "default",
-            projectId: terminalProjectId,
             cwd: "/tmp/project",
             cols: 120,
             rows: 40,
