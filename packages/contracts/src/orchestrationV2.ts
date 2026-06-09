@@ -391,6 +391,36 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+export const OrchestrationV2Subagent = Schema.Struct({
+  id: NodeId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  parentNodeId: NodeId,
+  origin: Schema.Literals(["provider_native", "app_owned"]),
+  createdBy: Schema.Literals(["agent", "user", "system"]),
+  provider: ProviderKind,
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  childThreadId: Schema.NullOr(ThreadId),
+  nativeTaskRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  prompt: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  model: Schema.NullOr(Schema.String),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "waiting",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]),
+  result: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+
 export const OrchestrationV2CheckpointScope = Schema.Struct({
   id: CheckpointScopeId,
   threadId: ThreadId,
@@ -779,6 +809,16 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("subagent"),
+    subagentId: NodeId,
+    origin: Schema.Literals(["provider_native", "app_owned"]),
+    provider: ProviderKind,
+    childThreadId: Schema.NullOr(ThreadId),
+    prompt: Schema.String,
+    result: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("dynamic_tool"),
     toolName: Schema.NullOr(TrimmedNonEmptyString),
     input: Schema.Unknown,
@@ -853,6 +893,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("subagent.updated"),
+    payload: OrchestrationV2Subagent,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("provider-session.updated"),
     payload: OrchestrationV2ProviderSession,
   }),
@@ -919,6 +964,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   runs: Schema.Array(OrchestrationV2Run),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
+  subagents: Schema.Array(OrchestrationV2Subagent),
   providerSessions: Schema.Array(OrchestrationV2ProviderSession),
   providerThreads: Schema.Array(OrchestrationV2ProviderThread),
   providerTurns: Schema.Array(OrchestrationV2ProviderTurn),
@@ -1017,6 +1063,14 @@ export const OrchestrationV2ExecutionNodeJson = OrchestrationV2ExecutionNode.map
   }),
 );
 export type OrchestrationV2ExecutionNodeJson = typeof OrchestrationV2ExecutionNodeJson.Type;
+
+export const OrchestrationV2SubagentJson = OrchestrationV2Subagent.mapFields((fields) => ({
+  ...fields,
+  startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  updatedAt: Schema.DateTimeUtcFromString,
+}));
+export type OrchestrationV2SubagentJson = typeof OrchestrationV2SubagentJson.Type;
 
 export const OrchestrationV2CheckpointScopeJson = OrchestrationV2CheckpointScope.mapFields(
   (fields) => ({
@@ -1239,6 +1293,16 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("subagent"),
+    subagentId: NodeId,
+    origin: Schema.Literals(["provider_native", "app_owned"]),
+    provider: ProviderKind,
+    childThreadId: Schema.NullOr(ThreadId),
+    prompt: Schema.String,
+    result: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("dynamic_tool"),
     toolName: Schema.NullOr(TrimmedNonEmptyString),
     input: Schema.Unknown,
@@ -1290,6 +1354,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("node.updated"),
     payload: OrchestrationV2ExecutionNodeJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("subagent.updated"),
+    payload: OrchestrationV2SubagentJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

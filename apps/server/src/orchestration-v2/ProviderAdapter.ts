@@ -13,6 +13,7 @@ import {
   OrchestrationV2ProviderTurn,
   OrchestrationV2RawProviderEvent,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -80,6 +81,11 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("node.updated"),
     provider: ProviderKind,
     node: OrchestrationV2ExecutionNode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("subagent.updated"),
+    provider: ProviderKind,
+    subagent: OrchestrationV2Subagent,
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
