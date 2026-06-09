@@ -561,6 +561,11 @@ function applyStreamEventToProjection(
         ...base,
         nodes: upsertProjectionEntity(base.nodes, event.payload),
       };
+    case "subagent.updated":
+      return {
+        ...base,
+        subagents: upsertProjectionEntity(base.subagents, event.payload),
+      };
     case "provider-session.updated":
       return {
         ...base,
@@ -745,6 +750,8 @@ function turnItemBody(item: OrchestrationV2TurnItem): string | undefined {
       return item.summary;
     case "fork":
       return `Target thread: ${compactId(item.targetThreadId) ?? item.targetThreadId}`;
+    case "subagent":
+      return [item.prompt, item.result].filter(Boolean).join("\n\n");
     case "dynamic_tool":
       return [item.toolName, stringifyShort(item.output) ?? stringifyShort(item.input)]
         .filter(Boolean)
@@ -2699,6 +2706,7 @@ const STANDALONE_CHAT_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "user_message",
   "assistant_message",
   "fork",
+  "subagent",
   "run_interrupt_request",
   "run_interrupt_result",
   "user_input_request",
@@ -3246,6 +3254,13 @@ function workLogRowContent(item: OrchestrationV2TurnItem): WorkLogRowContent {
         preview: `→ ${compactId(item.targetThreadId) ?? item.targetThreadId}`,
         tone: "muted",
       };
+    case "subagent":
+      return {
+        glyph: "↳",
+        label: item.title ?? "Subagent",
+        preview: clipOneLine(item.result ?? item.prompt, 120),
+        tone: item.status === "completed" ? "emerald" : "sky",
+      };
     case "user_message":
     case "assistant_message":
     case "user_input_request":
@@ -3624,6 +3639,16 @@ function ChatItem(props: {
         />
       );
 
+    case "subagent":
+      return (
+        <ChatSubagentItem
+          item={item}
+          timestamp={timestamp}
+          nowMs={nowMs}
+          onOpenThread={props.onOpenThread}
+        />
+      );
+
     case "checkpoint":
       return (
         <ChatSystemDivider
@@ -3681,6 +3706,50 @@ function ChatItem(props: {
     case "fork":
       return <ChatForkDivider item={item} onOpenThread={props.onOpenThread} />;
   }
+}
+
+function ChatSubagentItem(props: {
+  readonly item: Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+  readonly timestamp: string | undefined;
+  readonly nowMs: number;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
+  const label = props.item.title ?? "Subagent";
+  const detail = props.item.result ?? props.item.prompt;
+  const content = (
+    <>
+      <ToolKindPill kind="AGENT" />
+      <span className="min-w-0 truncate font-medium text-foreground">{label}</span>
+      <span className="min-w-0 truncate text-muted-foreground">· {clipOneLine(detail, 120)}</span>
+    </>
+  );
+
+  return (
+    <ChatBubbleRow side="left">
+      {props.item.childThreadId === null ? (
+        <div className="flex min-w-0 max-w-full items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-xs">
+          {content}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            if (props.item.childThreadId !== null) {
+              props.onOpenThread(props.item.childThreadId);
+            }
+          }}
+          className="flex min-w-0 max-w-full items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-left text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+          title="Open subagent thread"
+        >
+          {content}
+        </button>
+      )}
+      <ChatMeta side="left">
+        <ChatStatusPill status={props.item.status} />
+        <ChatClock iso={props.timestamp} nowMs={props.nowMs} />
+      </ChatMeta>
+    </ChatBubbleRow>
+  );
 }
 
 function ChatBubbleRow(props: { readonly side: "left" | "right"; readonly children: ReactNode }) {

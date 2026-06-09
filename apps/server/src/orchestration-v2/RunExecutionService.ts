@@ -300,7 +300,9 @@ export const layer: Layer.Layer<
                   event,
                 });
                 if (event.type === "provider_thread.updated") {
-                  yield* Ref.set(latestProviderThread, event.providerThread);
+                  if (event.providerThread.id === input.providerThread.id) {
+                    yield* Ref.set(latestProviderThread, event.providerThread);
+                  }
                 }
                 if (event.type === "turn.terminal") {
                   yield* Ref.set(terminalStatus, event.status);
