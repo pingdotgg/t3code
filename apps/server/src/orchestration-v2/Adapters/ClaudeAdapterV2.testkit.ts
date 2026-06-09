@@ -238,8 +238,38 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function normalizeContextHandoffText(value: string): string {
+  if (!value.startsWith("Context handoff (")) {
+    return value;
+  }
+  const userMessageMarker = "\n\nUser message:\n";
+  const userMessageIndex = value.indexOf(userMessageMarker);
+  const headerEndIndex = value.indexOf(":\n");
+  if (headerEndIndex === -1 || userMessageIndex === -1 || headerEndIndex >= userMessageIndex) {
+    return value;
+  }
+  return `${value.slice(0, headerEndIndex + 2)}<dynamic-summary>${value.slice(userMessageIndex)}`;
+}
+
+function normalizeReplayFrame(value: unknown): unknown {
+  if (typeof value === "string") {
+    return normalizeContextHandoffText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeReplayFrame);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, normalizeReplayFrame(entry)]),
+  );
+}
+
 function sameFrame(left: unknown, right: unknown): boolean {
-  return stableStringify(left) === stableStringify(right);
+  return (
+    stableStringify(normalizeReplayFrame(left)) === stableStringify(normalizeReplayFrame(right))
+  );
 }
 
 function isClaudeSdkReplayMessage(frame: unknown): frame is SDKMessage {
@@ -1565,6 +1595,9 @@ async function recordClaudeForkSessionQuery(input: {
   readonly entries: Array<ProviderReplayEntry>;
   readonly metadata: Record<string, unknown>;
   readonly forkFromPromptIndex?: 1 | 2;
+  readonly sourcePromptCount?: number;
+  readonly forkPromptGroups?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly sourceContinuationPromptCount?: number;
   readonly enableTools?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAgentSdkQueryOptions["permissionMode"];
@@ -1577,7 +1610,19 @@ async function recordClaudeForkSessionQuery(input: {
       `Claude fork-session replay scenario ${input.scenario} requires at least two prompts.`,
     );
   }
-  const sourcePromptCount = input.prompts.length - 1;
+  const sourceContinuationPromptCount = input.sourceContinuationPromptCount ?? 0;
+  const forkPromptEnd = input.prompts.length - sourceContinuationPromptCount;
+  const sourcePromptCount = input.sourcePromptCount ?? forkPromptEnd - 1;
+  if (
+    sourceContinuationPromptCount < 0 ||
+    sourceContinuationPromptCount >= input.prompts.length ||
+    sourcePromptCount < 1 ||
+    sourcePromptCount >= forkPromptEnd
+  ) {
+    throw new Error(
+      `Claude fork-session replay scenario ${input.scenario} requires at least one source prompt and one fork prompt.`,
+    );
+  }
   const forkFromPromptIndex = input.forkFromPromptIndex ?? sourcePromptCount;
   if (forkFromPromptIndex > sourcePromptCount) {
     throw new Error(
@@ -1650,82 +1695,165 @@ async function recordClaudeForkSessionQuery(input: {
     });
 
     const upToMessageId = sourceCursors[forkFromPromptIndex - 1]!;
+    const forkPrompts = input.prompts.slice(sourcePromptCount, forkPromptEnd);
+    const forkPromptGroups = input.forkPromptGroups ?? [forkPrompts];
+    if (
+      forkPromptGroups.length === 0 ||
+      forkPromptGroups.some((group) => group.length === 0) ||
+      forkPromptGroups.flat().join("\n") !== forkPrompts.join("\n")
+    ) {
+      throw new Error(
+        `Claude fork-session replay scenario ${input.scenario} has invalid fork prompt groups.`,
+      );
+    }
     input.metadata.sourceAssistantMessageUuids = sourceCursors;
     input.metadata.forkUpToMessageId = upToMessageId;
-    input.entries.push({
-      type: "expect_outbound",
-      label: "session.fork",
-      frame: {
-        type: "session.fork",
-        sessionId: input.sessionId,
-        options: {
-          dir: sanitizedReplayCwd(input.scenario),
-          upToMessageId,
+    const forkedNativeSessionIds: Array<string> = [];
+    let promptOrdinal = sourcePromptCount;
+    for (const [groupIndex, forkPrompts] of forkPromptGroups.entries()) {
+      const labelSuffix = forkPromptGroups.length === 1 ? "" : `:${groupIndex + 1}`;
+      input.entries.push({
+        type: "expect_outbound",
+        label: `session.fork${labelSuffix}`,
+        frame: {
+          type: "session.fork",
+          sessionId: input.sessionId,
+          options: {
+            dir: sanitizedReplayCwd(input.scenario),
+            upToMessageId,
+          },
         },
-      },
-    });
-    const forked = await forkSession(input.sessionId, {
-      dir: input.cwd,
-      upToMessageId,
-    });
-    input.metadata.forkedNativeSessionId = forked.sessionId;
-    input.entries.push({
-      type: "emit_inbound",
-      label: "session.forked",
-      frame: {
-        type: "session.forked",
-        sessionId: forked.sessionId,
-      },
-    });
+      });
+      const forked = await forkSession(input.sessionId, {
+        dir: input.cwd,
+        upToMessageId,
+      });
+      forkedNativeSessionIds.push(forked.sessionId);
+      input.entries.push({
+        type: "emit_inbound",
+        label: `session.forked${labelSuffix}`,
+        frame: {
+          type: "session.forked",
+          sessionId: forked.sessionId,
+        },
+      });
 
-    const targetPromptQueue = new RecordingPromptQueue();
-    const targetOptions = makeClaudeQueryOptions({
-      modelSelection: input.modelSelection,
-      nativeThreadId: forked.sessionId,
-      resume: true,
-      cwd: input.cwd,
-      ...(input.enableTools === true
-        ? {
-            tools: input.tools ?? { type: "preset", preset: "claude_code" },
-            permissionMode: input.permissionMode ?? "default",
-            ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
-            ...(input.disallowedTools === undefined
-              ? {}
-              : { disallowedTools: input.disallowedTools }),
-            ...(input.allowDangerouslySkipPermissions === true
-              ? { allowDangerouslySkipPermissions: true }
-              : {}),
-          }
-        : {}),
-    });
-    input.entries.push({
-      type: "expect_outbound",
-      label: "query.open:fork",
-      frame: makeClaudeQueryOpenFrame({ options: targetOptions }),
-    });
-    const targetMessage = makeClaudeUserMessage({ text: input.prompts[sourcePromptCount]! });
-    input.entries.push({
-      type: "expect_outbound",
-      label: `prompt.offer:${sourcePromptCount + 1}`,
-      frame: makeClaudePromptOfferFrame(targetMessage),
-    });
-    const targetRuntime = query({
-      prompt: targetPromptQueue,
-      options: targetOptions,
-    });
-    targetPromptQueue.offer(targetMessage);
-    targetPromptQueue.close();
-    const targetIterator = targetRuntime[Symbol.asyncIterator]();
-    await recordMessagesUntilIteratorDone({
-      iterator: targetIterator,
-      entries: input.entries,
-      scenario: input.scenario,
-    });
-    targetRuntime.close();
-    input.entries.push({
-      type: "runtime_exit",
-      status: "success",
-    });
+      const targetPromptQueue = new RecordingPromptQueue();
+      const targetOptions = makeClaudeQueryOptions({
+        modelSelection: input.modelSelection,
+        nativeThreadId: forked.sessionId,
+        resume: true,
+        cwd: input.cwd,
+        ...(input.enableTools === true
+          ? {
+              tools: input.tools ?? { type: "preset", preset: "claude_code" },
+              permissionMode: input.permissionMode ?? "default",
+              ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+              ...(input.disallowedTools === undefined
+                ? {}
+                : { disallowedTools: input.disallowedTools }),
+              ...(input.allowDangerouslySkipPermissions === true
+                ? { allowDangerouslySkipPermissions: true }
+                : {}),
+            }
+          : {}),
+      });
+      input.entries.push({
+        type: "expect_outbound",
+        label: `query.open:fork${labelSuffix}`,
+        frame: makeClaudeQueryOpenFrame({ options: targetOptions }),
+      });
+      const targetRuntime = query({
+        prompt: targetPromptQueue,
+        options: targetOptions,
+      });
+      const targetIterator = targetRuntime[Symbol.asyncIterator]();
+      for (const prompt of forkPrompts) {
+        promptOrdinal += 1;
+        const targetMessage = makeClaudeUserMessage({ text: prompt });
+        input.entries.push({
+          type: "expect_outbound",
+          label: `prompt.offer:${promptOrdinal}`,
+          frame: makeClaudePromptOfferFrame(targetMessage),
+        });
+        targetPromptQueue.offer(targetMessage);
+        const completed = await recordMessagesUntilTurnResult({
+          iterator: targetIterator,
+          entries: input.entries,
+          scenario: input.scenario,
+        });
+        if (!completed) {
+          throw new Error(`Claude fork query ended before prompt ${promptOrdinal} completed.`);
+        }
+      }
+      targetPromptQueue.close();
+      targetRuntime.close();
+      input.entries.push({
+        type: "runtime_exit",
+        status: "success",
+      });
+    }
+    input.metadata.forkedNativeSessionId = forkedNativeSessionIds[0];
+    input.metadata.forkedNativeSessionIds = forkedNativeSessionIds;
+    if (sourceContinuationPromptCount > 0) {
+      const continuationPromptQueue = new RecordingPromptQueue();
+      const continuationOptions = makeClaudeQueryOptions({
+        modelSelection: input.modelSelection,
+        nativeThreadId: input.sessionId,
+        resume: true,
+        cwd: input.cwd,
+        ...(input.enableTools === true
+          ? {
+              tools: input.tools ?? { type: "preset", preset: "claude_code" },
+              permissionMode: input.permissionMode ?? "default",
+              ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+              ...(input.disallowedTools === undefined
+                ? {}
+                : { disallowedTools: input.disallowedTools }),
+              ...(input.allowDangerouslySkipPermissions === true
+                ? { allowDangerouslySkipPermissions: true }
+                : {}),
+            }
+          : {}),
+      });
+      input.entries.push({
+        type: "expect_outbound",
+        label: "query.open:source-continuation",
+        frame: makeClaudeQueryOpenFrame({ options: continuationOptions }),
+      });
+      const continuationRuntime = query({
+        prompt: continuationPromptQueue,
+        options: continuationOptions,
+      });
+      const continuationIterator = continuationRuntime[Symbol.asyncIterator]();
+      for (const prompt of input.prompts.slice(forkPromptEnd)) {
+        promptOrdinal += 1;
+        const continuationMessage = makeClaudeUserMessage({ text: prompt });
+        input.entries.push({
+          type: "expect_outbound",
+          label: `prompt.offer:${promptOrdinal}`,
+          frame: makeClaudePromptOfferFrame(continuationMessage),
+        });
+        continuationPromptQueue.offer(continuationMessage);
+        const completed = await recordMessagesUntilTurnResult({
+          iterator: continuationIterator,
+          entries: input.entries,
+          scenario: input.scenario,
+        });
+        if (!completed) {
+          throw new Error(
+            `Claude source continuation ended before prompt ${promptOrdinal} completed.`,
+          );
+        }
+      }
+      continuationPromptQueue.close();
+      continuationRuntime.close();
+      input.entries.push({
+        type: "runtime_exit",
+        status: "success",
+      });
+      input.metadata.sourceContinuationPromptCount = sourceContinuationPromptCount;
+    }
   } catch (error) {
     sourcePromptQueue.close();
     sourceRuntime.close();
@@ -2005,6 +2133,10 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
     | "resume_at_cursor"
     | "fork_session"
     | "fork_session_prior_turn"
+    | "fork_session_continue"
+    | "fork_session_siblings"
+    | "fork_session_merge_back"
+    | "fork_session_merge_back_siblings"
     | "active_steering"
     | "interrupt"
     | "interrupt_restart";
@@ -2109,7 +2241,14 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
         ? {}
         : { allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions }),
     });
-  } else if (queryMode === "fork_session" || queryMode === "fork_session_prior_turn") {
+  } else if (
+    queryMode === "fork_session" ||
+    queryMode === "fork_session_prior_turn" ||
+    queryMode === "fork_session_continue" ||
+    queryMode === "fork_session_siblings" ||
+    queryMode === "fork_session_merge_back" ||
+    queryMode === "fork_session_merge_back_siblings"
+  ) {
     await recordClaudeForkSessionQuery({
       scenario: input.scenario,
       prompts: input.prompts,
@@ -2119,6 +2258,27 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       entries,
       metadata: recordingMetadata,
       ...(queryMode === "fork_session_prior_turn" ? { forkFromPromptIndex: 1 as const } : {}),
+      ...(queryMode === "fork_session_continue" ? { sourcePromptCount: 1 } : {}),
+      ...(queryMode === "fork_session_siblings"
+        ? {
+            sourcePromptCount: 1,
+            forkPromptGroups: [[input.prompts[1]!], [input.prompts[2]!]],
+          }
+        : {}),
+      ...(queryMode === "fork_session_merge_back"
+        ? {
+            sourcePromptCount: 1,
+            forkPromptGroups: [[input.prompts[1]!]],
+            sourceContinuationPromptCount: 2,
+          }
+        : {}),
+      ...(queryMode === "fork_session_merge_back_siblings"
+        ? {
+            sourcePromptCount: 1,
+            forkPromptGroups: [[input.prompts[1]!], [input.prompts[2]!]],
+            sourceContinuationPromptCount: 3,
+          }
+        : {}),
       ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
       ...(input.tools === undefined ? {} : { tools: input.tools }),
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
