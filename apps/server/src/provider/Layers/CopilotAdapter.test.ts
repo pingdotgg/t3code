@@ -467,6 +467,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           attachments: [],
         });
 
+        const runtimeEvents: ProviderRuntimeEvent[] = [];
+        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+          Effect.forkChild,
+        );
+        yield* waitForSdkEventQueue();
+
         const config = runtimeMock.state.createSessionConfigs.at(-1);
         assert.ok(config?.onEvent);
         const emit = (event: SessionEvent) => config.onEvent?.(event);
@@ -550,6 +557,26 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           messageId: `copilot-task-completion-${String(turn.turnId)}`,
           content: resultText,
         });
+
+        let turnDiffEvent: ProviderRuntimeEvent | undefined;
+        for (let attempt = 0; attempt < 20 && turnDiffEvent === undefined; attempt += 1) {
+          yield* waitForSdkEventQueue();
+          turnDiffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+        }
+        yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+        assert.equal(turnDiffEvent?.type, "turn.diff.updated");
+        if (turnDiffEvent?.type === "turn.diff.updated") {
+          assert.equal(turnDiffEvent.threadId, threadId);
+          assert.equal(String(turnDiffEvent.turnId), String(turn.turnId));
+          assert.equal(
+            String(turnDiffEvent.itemId),
+            `copilot-task-completion-${String(turn.turnId)}`,
+          );
+          assert.deepStrictEqual(turnDiffEvent.payload, {
+            unifiedDiff: "",
+          });
+        }
 
         yield* adapter.stopSession(threadId);
       }),

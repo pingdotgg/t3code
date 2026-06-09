@@ -296,6 +296,16 @@ function turnHasSuccessfulFileChange(context: CopilotSessionContext, turnId: Tur
   );
 }
 
+function turnHasSuccessfulTaskComplete(context: CopilotSessionContext, turnId: TurnId): boolean {
+  const turn = context.turns.find((entry) => entry.id === turnId);
+  return (
+    turn?.items.some(
+      (item): item is CopilotToolExecutionItem =>
+        isCopilotToolExecutionItem(item) && item.success && isTaskCompleteTool(item.toolName),
+    ) ?? false
+  );
+}
+
 function assistantItemIdsForContext(context: CopilotSessionContext): Map<TurnId, string> {
   const mutable = context as CopilotSessionContext & {
     assistantItemIdByTurnId?: Map<TurnId, string>;
@@ -1095,13 +1105,17 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
   };
 
-  const emitTurnDiffUpdatedForFileChanges = async (
+  const emitTurnDiffUpdatedForSnapshotCandidate = async (
     context: CopilotSessionContext,
     turnId: TurnId,
     raw: SessionEvent,
   ) => {
     const turnDiffEmittedTurnIds = turnDiffEmittedTurnIdsForContext(context);
-    if (turnDiffEmittedTurnIds.has(turnId) || !turnHasSuccessfulFileChange(context, turnId)) {
+    if (
+      turnDiffEmittedTurnIds.has(turnId) ||
+      (!turnHasSuccessfulFileChange(context, turnId) &&
+        !turnHasSuccessfulTaskComplete(context, turnId))
+    ) {
       return;
     }
 
@@ -1672,7 +1686,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           if (!event.data.aborted) {
             await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
             await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
-            await emitTurnDiffUpdatedForFileChanges(context, turnId, event);
+            await emitTurnDiffUpdatedForSnapshotCandidate(context, turnId, event);
           }
           await emitTurnCompleted(context, turnId, event.data.aborted ? "cancelled" : "completed", {
             raw: event,
@@ -1960,7 +1974,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
         await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
-        await emitTurnDiffUpdatedForFileChanges(context, turnId, event);
+        await emitTurnDiffUpdatedForSnapshotCandidate(context, turnId, event);
         await emitTurnCompleted(context, turnId, "completed", {
           raw: event,
           stopReason: null,
