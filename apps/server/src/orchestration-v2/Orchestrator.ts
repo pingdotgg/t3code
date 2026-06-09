@@ -38,6 +38,7 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
   providerMessageWithContextHandoff,
+  providerMessageWithContextHandoffs,
 } from "./ContextHandoffService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -1667,13 +1668,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.provider !== modelSelection.instanceId;
-      if (isProviderSwitch && pendingMergeBackTransfer !== undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} cannot switch providers while merge-back transfer ${pendingMergeBackTransfer.id} is pending.`,
-        });
-      }
       const sourceProjection =
         pendingForkTransfer === undefined
           ? null
@@ -2199,7 +2193,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.text,
         attachments: command.attachments,
       };
-      const activeHandoff = portableForkHandoff ?? providerSwitchHandoff ?? mergeBackHandoff;
+      const activeHandoff = portableForkHandoff ?? mergeBackHandoff ?? providerSwitchHandoff;
+      const providerHandoffs = [
+        portableForkHandoff,
+        providerSwitchHandoff,
+        mergeBackHandoff,
+      ].flatMap((handoff) => (handoff === null ? [] : [handoff]));
       const handoffTurnItem: OrchestrationV2TurnItem | null =
         activeHandoff === null
           ? null
@@ -2526,12 +2525,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const providerMessageText =
-        activeHandoff === null
+        providerHandoffs.length === 0
           ? command.text
-          : providerMessageWithContextHandoff({
-              handoff: activeHandoff,
-              userText: command.text,
-            });
+          : providerHandoffs.length === 1
+            ? providerMessageWithContextHandoff({
+                handoff: providerHandoffs[0]!,
+                userText: command.text,
+              })
+            : providerMessageWithContextHandoffs({
+                handoffs: providerHandoffs,
+                userText: command.text,
+              });
       yield* runExecution
         .startRootRun({
           commandId: command.commandId,
