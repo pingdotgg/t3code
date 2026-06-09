@@ -76,6 +76,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Group, GroupSeparator } from "../ui/group";
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
@@ -121,6 +122,7 @@ import {
   connectManagedCloudEnvironment,
   linkPrimaryEnvironmentToCloud,
   unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
 } from "~/cloud/linkEnvironment";
 import {
   refreshManagedRelayEnvironments,
@@ -1614,7 +1616,7 @@ function CloudLinkSwitch({
 }) {
   const control = (
     <Switch
-      aria-label="Enable T3 Cloud"
+      aria-label="Enable T3 Connect"
       checked={checked}
       disabled={disabled}
       {...(onCheckedChange ? { onCheckedChange } : {})}
@@ -1632,9 +1634,11 @@ function CloudLinkSwitch({
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
   const { getToken, isSignedIn } = useAuth();
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
   const primaryCloudLinkState = usePrimaryCloudLinkState();
   const [operationError, setOperationError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const updateLink = async (enabled: boolean) => {
     setIsUpdating(true);
@@ -1643,7 +1647,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       const clerkToken = await getToken(resolveRelayClerkTokenOptions());
       if (enabled) {
         if (!clerkToken) {
-          throw new Error("Sign in from T3 Cloud settings before linking this environment.");
+          throw new Error("Sign in to T3 Connect before linking this environment.");
         }
         await webRuntime.runPromise(linkPrimaryEnvironmentToCloud({ clerkToken }));
       } else {
@@ -1655,48 +1659,103 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       refreshManagedRelayEnvironments();
       toastManager.add({
         type: "success",
-        title: enabled ? "T3 Cloud linked" : "T3 Cloud unlinked",
+        title: enabled ? "T3 Connect linked" : "T3 Connect unlinked",
         description: enabled
-          ? "This environment is available through T3 Cloud."
-          : "This environment is no longer available through T3 Cloud.",
+          ? "This environment is available through T3 Connect."
+          : "This environment is no longer available through T3 Connect.",
       });
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Could not update T3 Cloud access.";
+      const message =
+        cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
       setOperationError(message);
       toastManager.add({
         type: "error",
-        title: "Could not update T3 Cloud",
+        title: "Could not update T3 Connect",
         description: message,
       });
     } finally {
       setIsUpdating(false);
     }
   };
+  const updatePublishAgentActivity = async (enabled: boolean) => {
+    setIsUpdatingPreference(true);
+    try {
+      await webRuntime.runPromise(updatePrimaryCloudPreferences({ publishAgentActivity: enabled }));
+      primaryCloudLinkState.refresh();
+      toastManager.add({
+        type: "success",
+        title: enabled ? "Agent activity enabled" : "Agent activity disabled",
+        description: enabled
+          ? "This environment can publish agent activity to your notification devices."
+          : "This environment will stop publishing agent activity.",
+      });
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: "Could not update T3 Connect preferences",
+        description:
+          cause instanceof Error ? cause.message : "Could not update agent activity publishing.",
+      });
+    } finally {
+      setIsUpdatingPreference(false);
+    }
+  };
   const disabledReason = !isSignedIn
-    ? "Sign in from T3 Cloud settings to manage this environment."
+    ? "Sign in to T3 Connect"
     : !canManageRelay
-      ? "Your session does not have permission to manage T3 Cloud access."
+      ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const linked = primaryCloudLinkState.data?.linked ?? false;
 
   return (
-    <SettingsRow
-      title="T3 Cloud"
-      description={
-        linked
-          ? "This environment is available to your other devices through T3 Cloud."
-          : "Make this environment available to your other devices through T3 Cloud."
-      }
-      status={operationError ?? primaryCloudLinkState.error}
-      control={
-        <CloudLinkSwitch
-          checked={linked}
-          disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isUpdating}
-          disabledReason={disabledReason}
-          onCheckedChange={(enabled) => void updateLink(enabled)}
+    <>
+      <SettingsRow
+        title="T3 Connect"
+        description={
+          linked
+            ? "This environment is available to your other devices through T3 Connect."
+            : "Make this environment available to your other devices through T3 Connect."
+        }
+        status={operationError ?? primaryCloudLinkState.error}
+        control={
+          <CloudLinkSwitch
+            checked={linked}
+            disabled={
+              (isSignedIn && !canManageRelay) || primaryCloudLinkState.isPending || isUpdating
+            }
+            disabledReason={disabledReason}
+            onCheckedChange={(enabled) => {
+              if (!isSignedIn) {
+                openAuthPrompt();
+                return;
+              }
+              void updateLink(enabled);
+            }}
+          />
+        }
+      />
+      {linked ? (
+        <SettingsRow
+          title="Publish agent activity"
+          description="Send agent activity from this environment to your notification devices."
+          className="bg-muted/20 pl-7 sm:pl-8"
+          control={
+            <Switch
+              aria-label="Publish agent activity"
+              checked={primaryCloudLinkState.data?.publishAgentActivity ?? false}
+              disabled={
+                !canManageRelay ||
+                !isSignedIn ||
+                primaryCloudLinkState.isPending ||
+                isUpdatingPreference
+              }
+              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
+            />
+          }
         />
-      }
-    />
+      ) : null}
+      {authPrompt}
+    </>
   );
 }
 
@@ -1704,7 +1763,13 @@ function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) 
   return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
 }
 
-function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
+function EmptyRemoteEnvironments({
+  cloudEnabled = true,
+  onConnectFromCloud,
+}: {
+  readonly cloudEnabled?: boolean;
+  readonly onConnectFromCloud?: () => void;
+}) {
   return (
     <Empty className="min-h-52">
       <EmptyMedia variant="icon">
@@ -1713,9 +1778,24 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
       <EmptyHeader>
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
-          {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Cloud."
-            : "Click “Add environment” to pair another environment."}
+          Click “Add environment” to pair another environment
+          {cloudEnabled ? (
+            <>
+              , or connect one from{" "}
+              {onConnectFromCloud ? (
+                <button
+                  type="button"
+                  className="border-b border-dotted border-current text-foreground/80 hover:text-foreground"
+                  onClick={onConnectFromCloud}
+                >
+                  T3 Connect
+                </button>
+              ) : (
+                "T3 Connect"
+              )}
+            </>
+          ) : null}
+          .
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1743,7 +1823,8 @@ function ConfiguredCloudRemoteEnvironmentRows({
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn } = useAuth();
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
   const environmentsState = useManagedRelayEnvironments();
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
@@ -1755,7 +1836,7 @@ function ConfiguredCloudRemoteEnvironmentRows({
     try {
       const clerkToken = await getToken(resolveRelayClerkTokenOptions());
       if (!clerkToken) {
-        throw new Error("Sign in from T3 Cloud settings before connecting this environment.");
+        throw new Error("Sign in to T3 Connect before connecting this environment.");
       }
       const connection = await webRuntime.runPromise(
         connectManagedCloudEnvironment({ clerkToken, environment }),
@@ -1764,14 +1845,14 @@ function ConfiguredCloudRemoteEnvironmentRows({
       toastManager.add({
         type: "success",
         title: "Environment connected",
-        description: `${connection.label} is available through T3 Cloud.`,
+        description: `${connection.label} is available through T3 Connect.`,
       });
     } catch (cause) {
       toastManager.add({
         type: "error",
         title: "Could not connect environment",
         description:
-          cause instanceof Error ? cause.message : "Could not connect the T3 Cloud environment.",
+          cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.",
       });
     } finally {
       setConnectingEnvironmentId(null);
@@ -1789,7 +1870,12 @@ function ConfiguredCloudRemoteEnvironmentRows({
   }
 
   if (savedEnvironmentIds.length === 0 && connectableEnvironments.length === 0) {
-    return <EmptyRemoteEnvironments />;
+    return (
+      <>
+        <EmptyRemoteEnvironments {...(!isSignedIn ? { onConnectFromCloud: openAuthPrompt } : {})} />
+        {authPrompt}
+      </>
+    );
   }
 
   return connectableEnvironments.map((environment) => (
@@ -1799,11 +1885,11 @@ function ConfiguredCloudRemoteEnvironmentRows({
           <div className="flex items-center gap-2">
             <ConnectionStatusDot
               dotClassName="bg-muted-foreground/35"
-              tooltipText="Available through T3 Cloud"
+              tooltipText="Available through T3 Connect"
             />
             <p className="truncate text-sm font-medium">{environment.label}</p>
           </div>
-          <p className="mt-1 truncate text-xs text-muted-foreground">T3 Cloud</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">T3 Connect</p>
         </div>
         <Button
           size="sm"

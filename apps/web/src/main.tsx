@@ -27,7 +27,6 @@ if (isElectron) {
 document.title = APP_DISPLAY_NAME;
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
-const cloudWaitlistUrl = "/settings/cloud";
 
 const app = <RouterProvider router={router} />;
 
@@ -39,7 +38,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </DesktopClerkProvider>
       ) : (
-        <ClerkProvider publishableKey={clerkPublishableKey} waitlistUrl={cloudWaitlistUrl}>
+        <ClerkProvider publishableKey={clerkPublishableKey}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ClerkProvider>
       )

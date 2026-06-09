@@ -1,12 +1,12 @@
-# T3 Cloud Clerk Setup
+# T3 Connect Clerk Setup
 
-T3 Cloud uses one Clerk application for web, desktop, and mobile authentication. The relay accepts
+T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay accepts
 Clerk JWTs only when they are generated from the `t3-relay` template with the shared
 `t3-code-relay` audience.
 
 ## Application Keys
 
-T3 Cloud is disabled in a fresh clone. To enable it for source builds, add a repository-root `.env`
+T3 Connect is disabled in a fresh clone. To enable it for source builds, add a repository-root `.env`
 or `.env.local` file:
 
 ```dotenv
@@ -36,7 +36,7 @@ production builds only need the Clerk publishable key, JWT template name, and re
 environment.
 
 When any client-facing public value is absent, cloud UI is omitted. When the CLI public values are
-absent, the `t3 cloud` CLI command group is omitted. The bundled server still accepts runtime
+absent, the `t3 connect` CLI command group is omitted. The bundled server still accepts runtime
 overrides for self-hosted or operator-managed
 deployments.
 
@@ -56,7 +56,7 @@ personal developer stage.
 
 ## Headless CLI OAuth Application
 
-The `t3 cloud` commands authorize a headless environment with a separate Clerk OAuth application.
+The `t3 connect` commands authorize a headless environment with a separate Clerk OAuth application.
 This uses an OAuth public client with PKCE, so the CLI stores no client secret.
 
 In **Clerk Dashboard > OAuth applications**:
@@ -75,25 +75,25 @@ handshake; it only validates the issued Clerk bearer token when the CLI manages 
 The CLI supports these headless operations:
 
 ```sh
-t3 cloud login
-t3 cloud link
-t3 cloud status
-t3 cloud unlink
-t3 cloud logout
+t3 connect login
+t3 connect link
+t3 connect status
+t3 connect unlink
+t3 connect logout
 t3 serve
 ```
 
-`t3 cloud login` opens the Clerk authorization flow and stores the CLI credential without enabling
-cloud exposure. `t3 cloud link` installs the pinned managed `cloudflared` binary when needed,
+`t3 connect login` opens the Clerk authorization flow and stores the CLI credential without enabling
+cloud exposure. `t3 connect link` installs the pinned managed `cloudflared` binary when needed,
 authorizes when needed, and records durable intent to expose the environment. It works without a
 running T3 server. The next `t3 serve` or `t3 start` reconciles the relay link and launches the
-managed tunnel. `t3 cloud unlink` records disabled intent immediately, stops a reachable running
+managed tunnel. `t3 connect unlink` records disabled intent immediately, stops a reachable running
 connector, and attempts to revoke the relay-side environment record. It retains the stored CLI
-authorization so `t3 cloud link` can re-enable exposure without another browser flow. `t3 cloud
+authorization so `t3 connect link` can re-enable exposure without another browser flow. `t3 connect
 logout` performs the same cleanup and removes the stored CLI authorization.
 
 The current OAuth callback listener binds to loopback port `34338`. When running the CLI over SSH,
-forward that port before running `t3 cloud login` or `t3 cloud link`:
+forward that port before running `t3 connect login` or `t3 connect link`:
 
 ```sh
 ssh -L 34338:127.0.0.1:34338 <host>
@@ -145,9 +145,9 @@ For a private beta where people should request access, use **Clerk Dashboard > W
 1. Toggle on **Enable waitlist** and save.
 2. Review requests on the same page and select **Invite** or **Deny**.
 
-Signed-out web and desktop users see Clerk's waitlist enrollment as the T3 Cloud page content,
-while approved signed-in users see cloud settings. The browser app also uses `/settings/cloud` as
-its Clerk waitlist URL.
+Approved signed-in users manage T3 Connect under **Connections**. The web and desktop sidebars do
+not expose a dedicated account or waitlist control. Signed-out users reach Clerk's waitlist and
+sign-in flow contextually from the T3 Connect controls on the Connections page.
 
 On mobile, signed-out users open **Settings > T3 Account** to reach `/settings/waitlist` within the
 Settings form sheet. It submits enrollment through Clerk's `useWaitlist()` flow because the prebuilt
