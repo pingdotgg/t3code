@@ -25,6 +25,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
@@ -1565,8 +1566,15 @@ interface ActiveClaudeTurnContext {
     nativeItemId: string;
   };
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
   readonly subagentNodesByToolUseId: Map<string, OrchestrationV2ExecutionNode["id"]>;
+}
+
+interface ActiveClaudeSubagent {
+  task: OrchestrationV2Subagent;
+  readonly turnItemId: OrchestrationV2TurnItem["id"];
+  readonly turnItemOrdinal: number;
 }
 
 interface ClaudeLiveQueryContext {
@@ -1823,6 +1831,9 @@ export function makeClaudeAdapterV2(
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
           readonly toolUseId?: string;
+          readonly prompt?: string;
+          readonly title?: string;
+          readonly result?: string;
           readonly status: Extract<
             OrchestrationV2ExecutionNode["status"],
             "running" | "completed" | "failed" | "cancelled"
@@ -1851,6 +1862,50 @@ export function makeClaudeAdapterV2(
               input.context.subagentNodesByToolUseId.set(input.toolUseId, nodeId);
             }
           }
+          const existingSubagent = input.context.subagentsByTaskId.get(input.taskId);
+          const turnItemOrdinal =
+            existingSubagent?.turnItemOrdinal ??
+            (yield* resolveItemOrdinal(input.context, `${nativeItemId}:subagent`));
+          const task = {
+            ...(existingSubagent?.task ?? {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.input.rootNodeId,
+              origin: "provider_native" as const,
+              createdBy: "agent" as const,
+              provider: CLAUDE_PROVIDER,
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: {
+                provider: CLAUDE_PROVIDER,
+                nativeId: input.taskId,
+                strength: "strong" as const,
+              },
+              prompt: input.prompt ?? "",
+              title: input.title ?? null,
+              model: input.context.input.modelSelection.model,
+              result: null,
+              startedAt: now,
+            }),
+            status: input.status,
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.result === undefined ? {} : { result: input.result }),
+            completedAt: input.status === "running" ? null : now,
+            updatedAt: now,
+          } satisfies OrchestrationV2Subagent;
+          const subagent = {
+            task,
+            turnItemId:
+              existingSubagent?.turnItemId ??
+              idAllocator.derive.turnItemFromProviderItem({
+                provider: CLAUDE_PROVIDER,
+                nativeItemId: `${nativeItemId}:subagent`,
+              }),
+            turnItemOrdinal,
+          } satisfies ActiveClaudeSubagent;
+          input.context.subagentsByTaskId.set(input.taskId, subagent);
 
           yield* emitProviderEvent({
             type: "node.updated",
@@ -1873,8 +1928,40 @@ export function makeClaudeAdapterV2(
               },
               runtimeRequestId: null,
               checkpointScopeId: null,
-              startedAt: now,
+              startedAt: task.startedAt,
               completedAt: input.status === "running" ? null : now,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "subagent.updated",
+            provider: CLAUDE_PROVIDER,
+            subagent: task,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            provider: CLAUDE_PROVIDER,
+            turnItem: {
+              id: subagent.turnItemId,
+              threadId: task.threadId,
+              runId: task.runId,
+              nodeId: task.id,
+              providerThreadId: input.context.input.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: task.nativeTaskRef,
+              parentItemId: null,
+              ordinal: subagent.turnItemOrdinal,
+              status: task.status,
+              title: task.title,
+              startedAt: task.startedAt,
+              completedAt: task.completedAt,
+              updatedAt: task.updatedAt,
+              type: "subagent",
+              subagentId: task.id,
+              origin: task.origin,
+              provider: task.provider,
+              childThreadId: task.childThreadId,
+              prompt: task.prompt,
+              result: task.result,
             },
           });
         });
@@ -2175,6 +2262,8 @@ export function makeClaudeAdapterV2(
               context,
               taskId: message.task_id,
               ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+              ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
+              title: message.description,
               status: "running",
             });
           }
@@ -2184,6 +2273,7 @@ export function makeClaudeAdapterV2(
               context,
               taskId: message.task_id,
               ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+              result: message.summary,
               status:
                 message.status === "completed"
                   ? "completed"
@@ -2488,6 +2578,7 @@ export function makeClaudeAdapterV2(
                 nativeItemId: `assistant:${turnInput.runId}`,
               },
               toolCalls: new Map(),
+              subagentsByTaskId: new Map(),
               subagentNodesByTaskId: new Map(),
               subagentNodesByToolUseId: new Map(),
             };

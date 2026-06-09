@@ -29,7 +29,12 @@ export function assertClaudeSubagentOutput(
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
   assertExecutionNodeKinds(projection, ["root_turn", "subagent", "tool_call"]);
-  assertTurnItemTypes(projection, ["user_message", "dynamic_tool", "assistant_message"]);
+  assertTurnItemTypes(projection, [
+    "user_message",
+    "subagent",
+    "dynamic_tool",
+    "assistant_message",
+  ]);
   assertRunProviderTurnCardinality({ projection, rootRunCount: 1 });
   assertNoExtraAppRunsForProviderChildren({ projection, expectedAppRuns: 1 });
   assertUserMessagesInclude(projection, [SUBAGENT_PROMPT]);
@@ -42,6 +47,34 @@ export function assertClaudeSubagentOutput(
     subagentNodes.map((node) => node.status),
     ["completed", "completed"],
   );
+
+  assert.lengthOf(projection.subagents, 2);
+  assert.isTrue(
+    projection.subagents.some(
+      (subagent) =>
+        subagent.prompt ===
+          "Read the file `package.json` in the current working directory and return its full contents." &&
+        subagent.result === "Read package.json",
+    ),
+  );
+  assert.isTrue(
+    projection.subagents.some(
+      (subagent) =>
+        subagent.prompt ===
+          "Read the file `tsconfig.json` in the current working directory and return its full contents." &&
+        subagent.result === "Read tsconfig.json",
+    ),
+  );
+  for (const subagent of projection.subagents) {
+    assert.equal(subagent.origin, "provider_native");
+    assert.equal(subagent.createdBy, "agent");
+    assert.equal(subagent.provider, "claudeAgent");
+    assert.equal(subagent.status, "completed");
+    assert.isNull(subagent.providerThreadId);
+    assert.isNull(subagent.childThreadId);
+    assert.isNotNull(subagent.nativeTaskRef);
+    assert.isNotNull(subagent.completedAt);
+  }
 
   const subagentNodeIds = new Set(subagentNodes.map((node) => node.id));
   const nestedToolNodes = projection.nodes.filter(

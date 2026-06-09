@@ -9,6 +9,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2PlanStep,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
@@ -578,6 +579,28 @@ interface ActiveCodexTurnContext {
   readonly nativeTurnId: string;
   readonly providerTurnId: ProviderTurnId;
   readonly providerTurnOrdinal: number;
+  readonly providerNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly providerNodeKind: OrchestrationV2ExecutionNode["kind"];
+  readonly providerNodeStartedAt: DateTime.Utc | null;
+  readonly itemParentNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly startedAt: DateTime.Utc;
+}
+
+interface CodexSubagentThreadContext {
+  readonly parentContext: ActiveCodexTurnContext;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly subagentNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly nativeToolCallId: string;
+  readonly ordinal: number;
+  readonly startedAt: DateTime.Utc;
+  readonly turnItemId: OrchestrationV2TurnItem["id"];
+  readonly turnItemOrdinal: number;
+  task: OrchestrationV2Subagent;
+}
+
+interface PendingCodexSubagentTurnStarted {
+  readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
 }
 
@@ -786,19 +809,223 @@ export const layer: Layer.Layer<
             providerSessionId: input.providerSessionId,
             runtimePolicy: input.runtimePolicy,
           });
-          const initialized = yield* Ref.make(false);
-          const ensureInitialized = Effect.gen(function* () {
-            const alreadyInitialized = yield* Ref.get(initialized);
-            if (alreadyInitialized) {
+          yield* client.notify("initialized", undefined);
+          yield* Ref.set(initialized, true);
+        });
+        const now = yield* DateTime.now;
+        const session = providerSession({
+          providerSessionId: input.providerSessionId,
+          cwd: input.runtimePolicy.cwd,
+          model: input.modelSelection.model,
+          now,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
+        const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
+        const pendingSubagentTurns = yield* Ref.make(
+          new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
+        );
+        const itemOrdinals = yield* Ref.make(new Map<string, number>());
+        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
+        const agentMessageDeltas = yield* Ref.make(new Map<string, string>());
+        const planDeltas = yield* Ref.make(new Map<string, string>());
+        const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
+        const pendingRuntimeRequests = yield* Ref.make(
+          new Map<string, PendingCodexRuntimeRequest>(),
+        );
+
+        const emitProviderEvent = (event: ProviderAdapterV2Event) =>
+          Queue.offer(events, event).pipe(Effect.asVoid);
+
+        const findActiveTurnByNativeThreadId = (nativeThreadId: string) =>
+          Effect.gen(function* () {
+            const turns = Array.from((yield* Ref.get(activeTurns)).values());
+            return turns.find(
+              (context) => context.providerThread.nativeThreadRef?.nativeId === nativeThreadId,
+            );
+          });
+
+        const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
+          Effect.gen(function* () {
+            const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+            if (existing !== undefined) {
+              return existing;
+            }
+
+            const turnKey = context.nativeTurnId;
+            const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
+              const next = (current.get(turnKey) ?? 0) + 1;
+              const updated = new Map(current);
+              updated.set(turnKey, next);
+              return [next, updated];
+            });
+            const nextOrdinal = context.providerTurnOrdinal * 100 + nextWithinTurn;
+            yield* Ref.update(itemOrdinals, (current) => {
+              const updated = new Map(current);
+              updated.set(nativeItemId, nextOrdinal);
+              return updated;
+            });
+            return nextOrdinal;
+          });
+
+        const emitSubagentTaskUpdate = (input: {
+          readonly subagent: CodexSubagentThreadContext;
+          readonly status: OrchestrationV2Subagent["status"];
+          readonly result?: string | null;
+          readonly completedAt?: DateTime.Utc | null;
+        }) =>
+          Effect.gen(function* () {
+            const now = yield* DateTime.now;
+            const terminal =
+              input.status === "completed" ||
+              input.status === "failed" ||
+              input.status === "cancelled" ||
+              input.status === "interrupted";
+            const completedAt = terminal ? (input.completedAt ?? now) : null;
+            const task = {
+              ...input.subagent.task,
+              status: input.status,
+              result: input.result === undefined ? input.subagent.task.result : input.result,
+              completedAt,
+              updatedAt: now,
+            } satisfies OrchestrationV2Subagent;
+            input.subagent.task = task;
+
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              provider: CODEX_PROVIDER,
+              subagent: task,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: {
+                id: input.subagent.turnItemId,
+                threadId: task.threadId,
+                runId: task.runId,
+                nodeId: task.id,
+                providerThreadId: task.providerThreadId,
+                providerTurnId: input.subagent.parentContext.providerTurnId,
+                nativeItemRef: task.nativeTaskRef,
+                parentItemId: null,
+                ordinal: input.subagent.turnItemOrdinal,
+                status: task.status,
+                title: task.title,
+                startedAt: task.startedAt,
+                completedAt: task.completedAt,
+                updatedAt: task.updatedAt,
+                type: "subagent",
+                subagentId: task.id,
+                origin: task.origin,
+                provider: task.provider,
+                childThreadId: task.childThreadId,
+                prompt: task.prompt,
+                result: task.result,
+              },
+            });
+          });
+
+        const emitSubagentProviderTurnStarted = (
+          subagent: CodexSubagentThreadContext,
+          turn: PendingCodexSubagentTurnStarted,
+        ) =>
+          Effect.gen(function* () {
+            const providerTurnId = idAllocator.derive.providerTurn({
+              provider: CODEX_PROVIDER,
+              nativeTurnId: turn.nativeTurnId,
+            });
+            const activeContext: ActiveCodexTurnContext = {
+              input: subagent.parentContext.input,
+              nativeTurnId: turn.nativeTurnId,
+              providerThread: subagent.providerThread,
+              providerTurnId,
+              providerTurnOrdinal:
+                subagent.parentContext.providerTurnOrdinal * 100 + subagent.ordinal,
+              providerNodeId: subagent.subagentNodeId,
+              providerNodeKind: "subagent",
+              providerNodeStartedAt: subagent.startedAt,
+              itemParentNodeId: subagent.subagentNodeId,
+              rootNodeId: subagent.parentContext.rootNodeId,
+              startedAt: turn.startedAt,
+            };
+            yield* Ref.update(activeTurns, (current) => {
+              const updated = new Map(current);
+              updated.set(turn.nativeTurnId, activeContext);
+              return updated;
+            });
+            const now = yield* DateTime.now;
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              provider: CODEX_PROVIDER,
+              providerThread: {
+                ...subagent.providerThread,
+                status: "active",
+                updatedAt: now,
+              },
+            });
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              provider: CODEX_PROVIDER,
+              providerTurn: {
+                id: providerTurnId,
+                providerThreadId: subagent.providerThread.id,
+                nodeId: subagent.subagentNodeId,
+                runAttemptId: subagent.parentContext.input.attemptId,
+                nativeTurnRef: {
+                  provider: CODEX_PROVIDER,
+                  nativeId: turn.nativeTurnId,
+                  strength: "strong",
+                },
+                ordinal: activeContext.providerTurnOrdinal,
+                status: "running",
+                startedAt: turn.startedAt,
+                completedAt: null,
+              },
+            });
+          });
+
+        const rememberSubagentTurnStarted = (input: {
+          readonly nativeThreadId: string;
+          readonly nativeTurnId: string;
+          readonly startedAt: DateTime.Utc;
+        }) =>
+          Effect.gen(function* () {
+            const subagent = (yield* Ref.get(subagentThreads)).get(input.nativeThreadId);
+            if (subagent !== undefined) {
+              yield* emitSubagentProviderTurnStarted(subagent, input);
+              return;
+            }
+            yield* Ref.update(pendingSubagentTurns, (current) => {
+              const updated = new Map(current);
+              updated.set(input.nativeThreadId, [
+                ...(updated.get(input.nativeThreadId) ?? []),
+                { nativeTurnId: input.nativeTurnId, startedAt: input.startedAt },
+              ]);
+              return updated;
+            });
+          });
+
+        const registerSubagentThreads = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "collabAgentToolCall" }
+          >;
+        }) =>
+          Effect.gen(function* () {
+            if (input.item.tool !== "spawnAgent" || input.item.receiverThreadIds.length === 0) {
               return;
             }
 
             const now = yield* DateTime.now;
             for (const [index, nativeThreadId] of input.item.receiverThreadIds.entries()) {
+              const nativeItemId = `${input.item.id}:${nativeThreadId}`;
               const subagentNodeId = idAllocator.derive.nodeFromProviderItem({
                 provider: CODEX_PROVIDER,
-                nativeItemId: `${input.item.id}:${nativeThreadId}`,
+                nativeItemId,
               });
+              const turnItemOrdinal = yield* resolveItemOrdinal(input.context, nativeItemId);
               const providerThread = {
                 id: idAllocator.derive.providerThread({
                   provider: CODEX_PROVIDER,
@@ -806,7 +1033,7 @@ export const layer: Layer.Layer<
                 }),
                 provider: CODEX_PROVIDER,
                 providerSessionId: input.context.providerThread.providerSessionId,
-                appThreadId: input.context.input.threadId,
+                appThreadId: null,
                 ownerNodeId: subagentNodeId,
                 nativeThreadRef: {
                   provider: CODEX_PROVIDER,
@@ -825,6 +1052,29 @@ export const layer: Layer.Layer<
                 createdAt: now,
                 updatedAt: now,
               } satisfies OrchestrationV2ProviderThread;
+              const task = {
+                id: subagentNodeId,
+                threadId: input.context.input.threadId,
+                runId: input.context.input.runId,
+                parentNodeId: input.context.rootNodeId,
+                origin: "provider_native",
+                createdBy: "agent",
+                provider: CODEX_PROVIDER,
+                providerThreadId: providerThread.id,
+                childThreadId: null,
+                nativeTaskRef: codexNativeItemRef(nativeItemId),
+                prompt: input.item.prompt ?? "",
+                title: null,
+                model:
+                  typeof input.item.model === "string" && input.item.model.length > 0
+                    ? input.item.model
+                    : null,
+                status: "running",
+                result: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              } satisfies OrchestrationV2Subagent;
               const subagent = {
                 parentContext: input.context,
                 providerThread,
@@ -832,6 +1082,12 @@ export const layer: Layer.Layer<
                 nativeToolCallId: input.item.id,
                 ordinal: index + 1,
                 startedAt: now,
+                turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                  provider: CODEX_PROVIDER,
+                  nativeItemId,
+                }),
+                turnItemOrdinal,
+                task,
               } satisfies CodexSubagentThreadContext;
 
           const emitProviderEvent = (event: ProviderAdapterV2Event) =>
@@ -866,8 +1122,36 @@ export const layer: Layer.Layer<
                 updated.set(nativeItemId, nextOrdinal);
                 return updated;
               });
-              return nextOrdinal;
-            });
+              yield* emitProviderEvent({
+                type: "node.updated",
+                provider: CODEX_PROVIDER,
+                node: {
+                  id: subagentNodeId,
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  parentNodeId: input.context.rootNodeId,
+                  rootNodeId: input.context.rootNodeId,
+                  kind: "subagent",
+                  status: "running",
+                  countsForRun: false,
+                  providerThreadId: providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  nativeItemRef: codexNativeItemRef(input.item.id),
+                  runtimeRequestId: null,
+                  checkpointScopeId: null,
+                  startedAt: now,
+                  completedAt: null,
+                },
+              });
+              yield* emitProviderEvent({
+                type: "provider_thread.updated",
+                provider: CODEX_PROVIDER,
+                providerThread,
+              });
+              yield* emitSubagentTaskUpdate({
+                subagent,
+                status: "running",
+              });
 
           const resolvePlanId = (context: ActiveCodexTurnContext, planKey: string) =>
             Effect.gen(function* () {
@@ -888,26 +1172,46 @@ export const layer: Layer.Layer<
               return planId;
             });
 
-          const resolveCodexAttachment = (attachment: ChatAttachment) =>
-            Effect.gen(function* () {
-              const attachmentPath = resolveAttachmentPath({
-                attachmentsDir: serverConfig.attachmentsDir,
-                attachment,
-              });
-              if (attachmentPath === null) {
-                return yield* toProtocolError(`Invalid attachment id '${attachment.id}'`);
+        const updateSubagentStates = (input: {
+          readonly item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "collabAgentToolCall" }
+          >;
+        }) =>
+          Effect.gen(function* () {
+            const subagents = yield* Ref.get(subagentThreads);
+            for (const [nativeThreadId, state] of Object.entries(input.item.agentsStates)) {
+              const subagent = subagents.get(nativeThreadId);
+              if (subagent === undefined) {
+                continue;
               }
-              const bytes = yield* fileSystem
-                .readFile(attachmentPath)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toProtocolError(`Failed to read attachment '${attachment.id}'.`, cause),
-                  ),
-                );
-              return {
-                type: "image" as const,
-                url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
-              } satisfies CodexSchema.V2TurnStartParams__UserInput;
+              const nativeStatus = String(state.status);
+              const status: OrchestrationV2Subagent["status"] =
+                nativeStatus === "completed"
+                  ? "completed"
+                  : nativeStatus === "failed" || nativeStatus === "errored"
+                    ? "failed"
+                    : nativeStatus === "cancelled" || nativeStatus === "closed"
+                      ? "cancelled"
+                      : "running";
+              yield* emitSubagentTaskUpdate({
+                subagent,
+                status,
+                ...(state.message === null ? {} : { result: state.message }),
+              });
+            }
+          });
+
+        const resolvePlanId = (context: ActiveCodexTurnContext, planKey: string) =>
+          Effect.gen(function* () {
+            const existing = (yield* Ref.get(planIds)).get(planKey);
+            if (existing !== undefined) {
+              return existing;
+            }
+            const planId = yield* idAllocator.allocate.plan({
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              provider: CODEX_PROVIDER,
             });
 
           const toCodexInput = (
@@ -2368,6 +2672,429 @@ export const layer: Layer.Layer<
                 ...(explanation === undefined ? {} : { explanation }),
                 steps,
               });
+              yield* updateSubagentStates({
+                item: payload.item,
+              });
+              return;
+            }
+
+            if (payload.item.type !== "agentMessage") {
+              return;
+            }
+
+            const deltas = yield* Ref.get(agentMessageDeltas);
+            const text =
+              payload.item.text.length > 0
+                ? payload.item.text
+                : (deltas.get(payload.item.id) ?? "");
+            const artifacts = yield* buildAgentMessageArtifacts(context, {
+              ...payload.item,
+              text,
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              provider: CODEX_PROVIDER,
+              message: artifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for approval turn ${payload.turnId}.`,
+                payload,
+              );
+            }
+
+            const nativeRequestId = payload.approvalId ?? payload.itemId;
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: payload.itemId,
+              nativeRequestId,
+              requestKind: "command",
+              ...((payload.reason ?? payload.command) === undefined
+                ? {}
+                : { prompt: payload.reason ?? payload.command }),
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind: "command",
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return {
+              decision: resolved,
+            } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("item/fileChange/requestApproval", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for file change approval turn ${payload.turnId}.`,
+                payload,
+              );
+            }
+
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: payload.itemId,
+              nativeRequestId: payload.itemId,
+              requestKind: "file-change",
+              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind: "file-change",
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return {
+              decision: resolved,
+            } satisfies CodexSchema.FileChangeRequestApprovalResponse;
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("item/permissions/requestApproval", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for permissions approval turn ${payload.turnId}.`,
+                payload,
+              );
+            }
+
+            const requestKind = providerRequestKindFromPermissions(payload.permissions);
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: payload.itemId,
+              nativeRequestId: payload.itemId,
+              requestKind,
+              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind,
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return permissionsResponseFromDecision({
+              decision: resolved,
+              permissions: payload.permissions,
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("execCommandApproval", (payload) =>
+          Effect.gen(function* () {
+            const context = yield* findActiveTurnByNativeThreadId(payload.conversationId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for exec approval thread ${payload.conversationId}.`,
+                payload,
+              );
+            }
+
+            const nativeRequestId = payload.approvalId ?? payload.callId;
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: payload.callId,
+              nativeRequestId,
+              requestKind: "command",
+              prompt: payload.reason ?? payload.command.join(" "),
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind: "command",
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return {
+              decision: approvalDecisionToLegacyReviewDecision(resolved),
+            } satisfies CodexSchema.ExecCommandApprovalResponse;
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("applyPatchApproval", (payload) =>
+          Effect.gen(function* () {
+            const context = yield* findActiveTurnByNativeThreadId(payload.conversationId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for apply patch approval thread ${payload.conversationId}.`,
+                payload,
+              );
+            }
+
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: payload.callId,
+              nativeRequestId: payload.callId,
+              requestKind: "file-change",
+              prompt: payload.reason ?? Object.keys(payload.fileChanges).join(", "),
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind: "file-change",
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return {
+              decision: approvalDecisionToLegacyReviewDecision(resolved),
+            } satisfies CodexSchema.ApplyPatchApprovalResponse;
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return yield* toProtocolError(
+                `No active Codex turn context for user input request turn ${payload.turnId}.`,
+                payload,
+              );
+            }
+
+            const artifacts = yield* buildUserInputRequestArtifacts({
+              context,
+              nativeItemId: payload.itemId,
+              nativeRequestId: payload.itemId,
+              questions: payload.questions,
+            });
+            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "user_input",
+                requestId: artifacts.request.id,
+                answers,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              provider: CODEX_PROVIDER,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(answers).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return {
+              answers: toCodexUserInputAnswers(resolved),
+            } satisfies CodexSchema.ToolRequestUserInputResponse;
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("turn/completed", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+            if (context === undefined) {
+              return;
+            }
+            const completedAt = codexTimestamp(payload.turn.completedAt);
+            const status = mapCodexTurnStatus(payload.turn.status);
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              provider: CODEX_PROVIDER,
+              providerTurn: {
+                id: context.providerTurnId,
+                providerThreadId: context.providerThread.id,
+                nodeId: context.providerNodeId,
+                runAttemptId: context.input.attemptId,
+                nativeTurnRef: {
+                  provider: CODEX_PROVIDER,
+                  nativeId: payload.turn.id,
+                  strength: "strong",
+                },
+                ordinal: context.providerTurnOrdinal,
+                status,
+                startedAt: context.startedAt,
+                completedAt,
+              },
+            });
+            if (context.providerNodeKind === "subagent") {
               yield* emitProviderEvent({
                 type: "node.updated",
                 provider: CODEX_PROVIDER,
@@ -2378,13 +3105,37 @@ export const layer: Layer.Layer<
                 provider: CODEX_PROVIDER,
                 plan: artifacts.plan,
               });
+              const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+              if (nativeThreadId !== null && nativeThreadId !== undefined) {
+                const subagent = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
+                if (subagent !== undefined) {
+                  yield* emitSubagentTaskUpdate({
+                    subagent,
+                    status,
+                    completedAt,
+                  });
+                }
+              }
+            }
+            if (context.providerNodeKind === "root_turn") {
               yield* emitProviderEvent({
-                type: "turn_item.updated",
+                type: "turn.terminal",
                 provider: CODEX_PROVIDER,
-                turnItem: artifacts.turnItem,
+                providerTurnId: context.providerTurnId,
+                status: providerTurnStatusToTerminal(status),
               });
-            }).pipe(Effect.orDie),
-          );
+            }
+            const waiter = (yield* Ref.get(turnWaiters)).get(payload.turn.id);
+            if (waiter !== undefined) {
+              yield* Deferred.succeed(waiter, undefined);
+            }
+            yield* Ref.update(activeTurns, (current) => {
+              const updated = new Map(current);
+              updated.delete(payload.turn.id);
+              return updated;
+            });
+          }),
+        );
 
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: CODEX_DEFAULT_INSTANCE_ID,
