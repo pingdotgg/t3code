@@ -23,6 +23,7 @@ import {
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "./orchestrationV2.ts";
@@ -210,6 +211,60 @@ describe("orchestration V2 contracts", () => {
     expect(dynamicTool.id).toBe(TurnItemId.make("turn-item-dynamic-1"));
   });
 
+  it("decodes provider-native subagent lifecycle records and timeline items", () => {
+    const subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent)({
+      id: "node-subagent-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      parentNodeId: "node-root-1",
+      origin: "provider_native",
+      createdBy: "agent",
+      provider: "codex",
+      providerThreadId: "provider-thread-subagent-1",
+      childThreadId: null,
+      nativeTaskRef: {
+        provider: "codex",
+        nativeId: "native-task-1",
+        strength: "strong",
+      },
+      prompt: "Inspect package.json",
+      title: "Package audit",
+      model: "gpt-5.4",
+      status: "completed",
+      result: "Package is private.",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const turnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem)({
+      id: "turn-item-subagent-1",
+      type: "subagent",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: subagent.id,
+      providerThreadId: subagent.providerThreadId,
+      providerTurnId: "provider-turn-1",
+      nativeItemRef: subagent.nativeTaskRef,
+      parentItemId: null,
+      ordinal: 2,
+      status: "completed",
+      title: subagent.title,
+      subagentId: subagent.id,
+      origin: subagent.origin,
+      provider: subagent.provider,
+      childThreadId: subagent.childThreadId,
+      prompt: subagent.prompt,
+      result: subagent.result,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+
+    expect(subagent.origin).toBe("provider_native");
+    expect(subagent.childThreadId).toBeNull();
+    expect(turnItem.type).toBe("subagent");
+  });
+
   it("decodes thread projections with an ordered turn item rendering stream", () => {
     const projection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
       thread: {
@@ -237,6 +292,7 @@ describe("orchestration V2 contracts", () => {
       runs: [],
       attempts: [],
       nodes: [],
+      subagents: [],
       providerSessions: [],
       providerThreads: [],
       providerTurns: [],
