@@ -321,6 +321,9 @@ export const layer: Layer.Layer<
                   checkpointScope: input.checkpointScope,
                   providerThread,
                   attempt: input.attempt,
+                  ...(input.shouldFinalizeRun === undefined
+                    ? {}
+                    : { shouldFinalizeRun: input.shouldFinalizeRun }),
                   status,
                   runtimePolicy: input.runtimePolicy,
                 }).pipe(
@@ -339,6 +342,9 @@ export const layer: Layer.Layer<
                     checkpointScope: input.checkpointScope,
                     providerThread,
                     attempt: input.attempt,
+                    ...(input.shouldFinalizeRun === undefined
+                      ? {}
+                      : { shouldFinalizeRun: input.shouldFinalizeRun }),
                     status: "failed",
                     runtimePolicy: input.runtimePolicy,
                   }),
@@ -394,6 +400,9 @@ export const layer: Layer.Layer<
                       checkpointScope: input.checkpointScope,
                       providerThread,
                       attempt: input.attempt,
+                      ...(input.shouldFinalizeRun === undefined
+                        ? {}
+                        : { shouldFinalizeRun: input.shouldFinalizeRun }),
                       status: "failed",
                       runtimePolicy: input.runtimePolicy,
                     }),
