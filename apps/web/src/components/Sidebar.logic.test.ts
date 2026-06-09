@@ -3,6 +3,10 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  buildSidebarProjectThreadRenderState,
+  buildSidebarThreadRenderModel,
+  buildSidebarWorktreeThreadGroups,
+  getSidebarWorktreeGroupUiKey,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -19,6 +23,8 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+  SIDEBAR_FLAT_THREADS_GROUP_KEY,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -36,6 +42,11 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const currentCheckoutGroupUiKey = getSidebarWorktreeGroupUiKey(
+  "",
+  SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+);
+const flatThreadsGroupUiKey = getSidebarWorktreeGroupUiKey("", SIDEBAR_FLAT_THREADS_GROUP_KEY);
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -140,6 +151,543 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
+  });
+});
+
+describe("buildSidebarWorktreeThreadGroups", () => {
+  it("groups local checkout threads under the current checkout", () => {
+    const threads = [
+      { branch: "main", worktreePath: null, title: "One" },
+      { branch: "main", worktreePath: null, title: "Two" },
+    ];
+
+    expect(buildSidebarWorktreeThreadGroups(threads)).toEqual([
+      {
+        expanded: true,
+        key: SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+        uiKey: currentCheckoutGroupUiKey,
+        label: "Current checkout",
+        threadsExpanded: false,
+        totalThreadCount: 2,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads,
+      },
+    ]);
+  });
+
+  it("uses worktree path rather than branch name to identify the current checkout", () => {
+    const currentCheckoutThread = {
+      branch: "feature/current-checkout",
+      worktreePath: null,
+      title: "Current checkout",
+    };
+    const mainBranchWorktreeThread = {
+      branch: "main",
+      worktreePath: "/repo/.t3/worktrees/main",
+      title: "Main branch worktree",
+    };
+
+    expect(
+      buildSidebarWorktreeThreadGroups([currentCheckoutThread, mainBranchWorktreeThread]),
+    ).toEqual([
+      {
+        expanded: true,
+        key: SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+        uiKey: currentCheckoutGroupUiKey,
+        label: "Current checkout",
+        threadsExpanded: false,
+        totalThreadCount: 1,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [currentCheckoutThread],
+      },
+      {
+        expanded: true,
+        key: "/repo/.t3/worktrees/main",
+        uiKey: "::/repo/.t3/worktrees/main",
+        label: "main",
+        threadsExpanded: false,
+        totalThreadCount: 1,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [mainBranchWorktreeThread],
+      },
+    ]);
+  });
+
+  it("groups contiguous worktree threads by worktree path", () => {
+    const currentThread = { branch: "main", worktreePath: null, title: "Current" };
+    const firstWorktreeThread = {
+      branch: "feature/workspaces",
+      worktreePath: "/repo/.t3/worktrees/workspaces",
+      title: "First",
+    };
+    const secondWorktreeThread = {
+      branch: "feature/workspaces",
+      worktreePath: "/repo/.t3/worktrees/workspaces",
+      title: "Second",
+    };
+
+    expect(
+      buildSidebarWorktreeThreadGroups([currentThread, firstWorktreeThread, secondWorktreeThread]),
+    ).toEqual([
+      {
+        expanded: true,
+        key: SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+        uiKey: currentCheckoutGroupUiKey,
+        label: "Current checkout",
+        threadsExpanded: false,
+        totalThreadCount: 1,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [currentThread],
+      },
+      {
+        expanded: true,
+        key: "/repo/.t3/worktrees/workspaces",
+        uiKey: "::/repo/.t3/worktrees/workspaces",
+        label: "feature/workspaces",
+        threadsExpanded: false,
+        totalThreadCount: 2,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [firstWorktreeThread, secondWorktreeThread],
+      },
+    ]);
+  });
+
+  it("groups interleaved worktree threads in first-seen worktree order", () => {
+    const firstWorktreeThread = {
+      branch: "feature/a",
+      worktreePath: "/repo/.t3/worktrees/a",
+      title: "First",
+    };
+    const currentThread = { branch: "main", worktreePath: null, title: "Current" };
+    const secondWorktreeThread = {
+      branch: "feature/a",
+      worktreePath: "/repo/.t3/worktrees/a",
+      title: "Second",
+    };
+
+    expect(
+      buildSidebarWorktreeThreadGroups([firstWorktreeThread, currentThread, secondWorktreeThread]),
+    ).toEqual([
+      {
+        expanded: true,
+        key: "/repo/.t3/worktrees/a",
+        uiKey: "::/repo/.t3/worktrees/a",
+        label: "feature/a",
+        threadsExpanded: false,
+        totalThreadCount: 2,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [firstWorktreeThread, secondWorktreeThread],
+      },
+      {
+        expanded: true,
+        key: SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+        uiKey: currentCheckoutGroupUiKey,
+        label: "Current checkout",
+        threadsExpanded: false,
+        totalThreadCount: 1,
+        hiddenThreadCount: 0,
+        overflowThreadCount: 0,
+        threads: [currentThread],
+      },
+    ]);
+  });
+
+  it("falls back to the worktree directory name when branch is unavailable", () => {
+    const thread = {
+      branch: null,
+      worktreePath: "/repo/.t3/worktrees/generated",
+      title: "Generated",
+    };
+
+    expect(buildSidebarWorktreeThreadGroups([thread])[0]?.label).toBe("generated");
+  });
+
+  it("uses a generic worktree label when the worktree path has no basename", () => {
+    const thread = {
+      branch: null,
+      worktreePath: "/",
+      title: "Generated",
+    };
+
+    expect(buildSidebarWorktreeThreadGroups([thread])[0]?.label).toBe("Worktree");
+  });
+});
+
+describe("buildSidebarThreadRenderModel", () => {
+  it("keeps separate mode flat and preserves input order", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+    ];
+
+    const model = buildSidebarThreadRenderModel<(typeof threads)[number]>({
+      threads,
+      groupingMode: "separate",
+      expanded: false,
+      threadPreviewCount: 2,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "2"]);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["3"]);
+    expect(model.groups).toEqual([
+      {
+        expanded: true,
+        key: SIDEBAR_FLAT_THREADS_GROUP_KEY,
+        uiKey: flatThreadsGroupUiKey,
+        label: "",
+        threadsExpanded: true,
+        totalThreadCount: 3,
+        hiddenThreadCount: 1,
+        overflowThreadCount: 1,
+        threads: [threads[0], threads[1]],
+      },
+    ]);
+    expect(model.hiddenGroupCount).toBe(0);
+  });
+
+  it("groups worktree mode before applying worktree and per-worktree limits", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "2"]);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["3", "4"]);
+    expect(model.hiddenGroupCount).toBe(1);
+    expect(model.groups.map((group) => group.key)).toEqual([
+      "/repo/a",
+      SIDEBAR_CURRENT_CHECKOUT_WORKTREE_KEY,
+    ]);
+    expect(model.groups[0]?.hiddenThreadCount).toBe(1);
+  });
+
+  it("separates hidden worktree threads from hidden rows inside visible worktrees", () => {
+    const threads = [
+      { id: "a1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "b1", branch: "feature/b", worktreePath: "/repo/b" },
+      { id: "a2", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "c1", branch: "feature/c", worktreePath: "/repo/c" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.groups.map((group) => group.key)).toEqual(["/repo/a", "/repo/b"]);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["a2", "c1"]);
+    expect(model.hiddenGroupThreads.map((thread) => thread.id)).toEqual(["c1"]);
+  });
+
+  it("keeps overflow true after grouped worktree rows are expanded", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      threadPreviewCount: 10,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.hiddenThreads).toEqual([]);
+    expect(model.hasOverflowingGroups).toBe(true);
+    expect(model.hasOverflowingThreads).toBe(true);
+  });
+
+  it("uses top-level expansion for single current-checkout worktree groups", () => {
+    const threads = [
+      { id: "1", branch: "main", worktreePath: null },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "main", worktreePath: null },
+    ];
+
+    const collapsedModel = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 2,
+      worktreePreviewCount: 2,
+    });
+    const expandedModel = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      threadPreviewCount: 2,
+      worktreePreviewCount: 2,
+    });
+
+    expect(collapsedModel.groups[0]?.threads.map((thread) => thread.id)).toEqual(["1", "2"]);
+    expect(collapsedModel.hiddenThreads.map((thread) => thread.id)).toEqual(["3"]);
+    expect(collapsedModel.hasOverflowingGroups).toBe(false);
+    expect(collapsedModel.hasOverflowingThreads).toBe(true);
+    expect(expandedModel.groups[0]?.threads.map((thread) => thread.id)).toEqual(["1", "2", "3"]);
+    expect(expandedModel.hiddenThreads).toEqual([]);
+    expect(expandedModel.hasOverflowingGroups).toBe(false);
+    expect(expandedModel.hasOverflowingThreads).toBe(true);
+  });
+
+  it("keeps per-worktree overflow available after grouped thread rows are expanded", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      expandedWorktreeThreadKeys: new Set(["::/repo/a"]),
+      threadPreviewCount: 2,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.groups[0]?.threads.map((thread) => thread.id)).toEqual(["1", "2", "3"]);
+    expect(model.groups[0]?.hiddenThreadCount).toBe(0);
+    expect(model.groups[0]?.overflowThreadCount).toBe(1);
+  });
+
+  it("keeps the active thread visible when it is past the per-worktree preview", () => {
+    const threads = Array.from({ length: 7 }, (_, index) => ({
+      id: String(index + 1),
+      branch: "feature/a",
+      worktreePath: "/repo/a",
+    }));
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 4,
+      worktreePreviewCount: 2,
+      pinnedThread: threads[6]!,
+    });
+
+    expect(model.groups[0]?.threads.map((thread) => thread.id)).toEqual(["1", "2", "3", "4", "7"]);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["5", "6"]);
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "2", "3", "4", "7"]);
+  });
+
+  it("keeps the active worktree visible when it is past the worktree preview", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/b", worktreePath: "/repo/b" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+      pinnedThread: threads[3]!,
+    });
+
+    expect(model.groups.map((group) => group.key)).toEqual(["/repo/a", "/repo/b"]);
+    expect(model.groups.map((group) => group.threads.map((thread) => thread.id))).toEqual([
+      ["1"],
+      ["3", "4"],
+    ]);
+    expect(model.hiddenGroupCount).toBe(1);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["2"]);
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "3", "4"]);
+  });
+
+  it("keeps the active thread visible when its worktree is collapsed past the worktree preview", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/b", worktreePath: "/repo/b" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+      projectKey: "repo",
+      collapsedWorktreeKeys: new Set([getSidebarWorktreeGroupUiKey("repo", "/repo/b")]),
+      pinnedThread: threads[3]!,
+    });
+
+    expect(model.groups.map((group) => group.key)).toEqual(["/repo/a", "/repo/b"]);
+    expect(model.groups.map((group) => group.threads.map((thread) => thread.id))).toEqual([
+      ["1"],
+      ["4"],
+    ]);
+    expect(model.hiddenGroupCount).toBe(1);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["3", "2"]);
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "4"]);
+  });
+
+  it("keeps a pinned-only thread visible inside a collapsed worktree", () => {
+    const thread = {
+      id: "1",
+      branch: "feature/a",
+      worktreePath: "/repo/a",
+    };
+
+    const model = buildSidebarThreadRenderModel({
+      threads: [thread],
+      groupingMode: "worktree",
+      expanded: true,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+      projectKey: "repo",
+      collapsedWorktreeKeys: new Set([getSidebarWorktreeGroupUiKey("repo", "/repo/a")]),
+      pinnedThread: thread,
+    });
+
+    expect(model.groups[0]).toMatchObject({
+      key: "/repo/a",
+      expanded: false,
+      threads: [thread],
+    });
+    expect(model.visibleThreads).toEqual([thread]);
+  });
+
+  it("returns grouped flattened order for shortcuts, prewarming, and range selection", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      expandedWorktreeThreadKeys: new Set(["::/repo/a"]),
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+    });
+
+    expect(model.groups.map((group) => group.threads.map((thread) => thread.id))).toEqual([
+      ["1", "3"],
+      ["2"],
+      ["4"],
+    ]);
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["1", "3", "2", "4"]);
+  });
+
+  it("excludes collapsed worktree rows from visible order", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+      projectKey: "repo",
+      collapsedWorktreeKeys: new Set([getSidebarWorktreeGroupUiKey("repo", "/repo/a")]),
+    });
+
+    expect(model.groups[0]).toMatchObject({
+      key: "/repo/a",
+      uiKey: "repo::/repo/a",
+      expanded: false,
+      totalThreadCount: 2,
+      threads: [],
+      hiddenThreadCount: 0,
+    });
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["2", "4"]);
+  });
+
+  it("keeps the active thread visible inside a collapsed worktree", () => {
+    const threads = [
+      { id: "1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "2", branch: "main", worktreePath: null },
+      { id: "3", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "4", branch: "feature/b", worktreePath: "/repo/b" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: true,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 1,
+      projectKey: "repo",
+      collapsedWorktreeKeys: new Set([getSidebarWorktreeGroupUiKey("repo", "/repo/a")]),
+      pinnedThread: threads[2]!,
+    });
+
+    expect(model.groups[0]).toMatchObject({
+      key: "/repo/a",
+      expanded: false,
+      threads: [threads[2]],
+      hiddenThreadCount: 0,
+    });
+    expect(model.visibleThreads.map((thread) => thread.id)).toEqual(["3", "2", "4"]);
+  });
+});
+
+describe("buildSidebarProjectThreadRenderState", () => {
+  it("pins the active thread when its project is collapsed", () => {
+    const threads = Array.from({ length: 7 }, (_, index) => ({
+      id: String(index + 1),
+      branch: "feature/a",
+      worktreePath: "/repo/a",
+    }));
+
+    const renderState = buildSidebarProjectThreadRenderState({
+      activeThreadKey: "7",
+      collapsedWorktreeKeys: new Set(),
+      expandedWorktreeThreadKeys: new Set(),
+      getThreadKey: (thread) => thread.id,
+      isThreadListExpanded: false,
+      projectExpanded: false,
+      projectKey: "repo",
+      threadGroupingMode: "worktree",
+      threadPreviewCount: 4,
+      threads,
+      worktreePreviewCount: 1,
+    });
+
+    expect(renderState.shouldShowThreadPanel).toBe(true);
+    expect(renderState.pinnedCollapsedThread).toBe(threads[6]);
+    expect(renderState.hasOverflowingThreads).toBe(false);
+    expect(renderState.hasOverflowingWorktrees).toBe(false);
+    expect(renderState.orderedThreadKeys).toEqual(["7"]);
+    expect(renderState.renderModel.visibleThreads).toEqual([threads[6]]);
   });
 });
 

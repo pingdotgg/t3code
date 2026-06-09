@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   clearThreadUi,
   hydratePersistedProjectState,
+  hydratePersistedWorktreeState,
   markThreadVisited,
   markThreadUnread,
   PERSISTED_STATE_KEY,
@@ -15,12 +16,14 @@ import {
   setThreadChangedFilesExpanded,
   syncProjects,
   syncThreads,
+  toggleWorktree,
   type UiState,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
+    worktreeExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -523,6 +526,29 @@ describe("uiStateStore persistence round-trip", () => {
       [projectA.key]: true,
       [projectB.key]: false,
       [projectC.key]: true,
+    });
+  });
+
+  it("preserves collapsed worktree state across restart", () => {
+    const collapsedWorktreeId = "repo::/repo/.t3/worktrees/worktree-a";
+    const expandedWorktreeId = "repo::/repo/.t3/worktrees/worktree-b";
+    let state = makeUiState();
+
+    state = toggleWorktree(state, collapsedWorktreeId);
+    state = toggleWorktree(toggleWorktree(state, expandedWorktreeId), expandedWorktreeId);
+    persistState(state);
+
+    expect(state.worktreeExpandedById).toEqual({
+      [collapsedWorktreeId]: false,
+    });
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(persisted.collapsedWorktreeIds).toEqual([collapsedWorktreeId]);
+    expect(hydratePersistedWorktreeState(persisted)).toEqual({
+      [collapsedWorktreeId]: false,
     });
   });
 

@@ -398,6 +398,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
+      ...(settings.sidebarThreadGroupingMode !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode
+        ? ["Thread grouping"]
+        : []),
+      ...(settings.sidebarWorktreePreviewCount !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarWorktreePreviewCount
+        ? ["Shown worktrees"]
+        : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -439,7 +446,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.sidebarThreadGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.sidebarWorktreePreviewCount,
       settings.timestampFormat,
       theme,
     ],
@@ -460,7 +469,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      sidebarThreadGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      sidebarWorktreePreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarWorktreePreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,

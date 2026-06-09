@@ -25,8 +25,10 @@ const clientSettings: ClientSettings = {
     "environment-1:/tmp/project-a": "separate",
   },
   sidebarProjectSortOrder: "manual",
+  sidebarThreadGroupingMode: "worktree",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
+  sidebarWorktreePreviewCount: 4,
   timestampFormat: "24-hour",
 };
 

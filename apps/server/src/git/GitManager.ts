@@ -103,6 +103,19 @@ function isNotGitRepositoryError(error: GitCommandError): boolean {
   return error.message.toLowerCase().includes("not a git repository");
 }
 
+function parsePrimaryWorktreePath(worktreeListPorcelain: string): string | null {
+  for (const line of worktreeListPorcelain.split("\n")) {
+    if (!line.startsWith("worktree ")) {
+      continue;
+    }
+
+    const worktreePath = line.slice("worktree ".length);
+    return worktreePath.length > 0 ? worktreePath : null;
+  }
+
+  return null;
+}
+
 interface OpenPrInfo {
   number: number;
   title: string;
@@ -704,6 +717,29 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
   const normalizeStatusCacheKey = canonicalizeExistingPath;
+  const resolvePrimaryWorktreePath = Effect.fn("resolvePrimaryWorktreePath")(function* (
+    cwd: string,
+  ) {
+    const fallbackPath = yield* canonicalizeExistingPath(cwd);
+    const worktreeList = yield* gitCore
+      .execute({
+        operation: "GitManager.resolvePrimaryWorktreePath",
+        cwd,
+        args: ["worktree", "list", "--porcelain"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+
+    if (!worktreeList || worktreeList.exitCode !== 0) {
+      return fallbackPath;
+    }
+
+    const primaryWorktreePath = parsePrimaryWorktreePath(worktreeList.stdout);
+    return primaryWorktreePath
+      ? yield* canonicalizeExistingPath(primaryWorktreePath)
+      : fallbackPath;
+  });
   const nonRepositoryStatusDetails = {
     isRepo: false,
     hasOriginRemote: false,
@@ -1417,7 +1453,6 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     };
     return yield* Effect.gen(function* () {
       const normalizedReference = normalizePullRequestReference(input.reference);
-      const rootWorktreePath = yield* canonicalizeExistingPath(input.cwd);
       const pullRequestSummary = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
         cwd: input.cwd,
         reference: normalizedReference,
@@ -1445,6 +1480,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           worktreePath: null,
         };
       }
+
+      const primaryWorktreePath = yield* resolvePrimaryWorktreePath(input.cwd);
 
       const ensureExistingWorktreeUpstream = Effect.fn("ensureExistingWorktreeUpstream")(function* (
         worktreePath: string,
@@ -1485,7 +1522,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           }
 
           const worktreePath = yield* canonicalizeExistingPath(branch.worktreePath);
-          if (worktreePath !== rootWorktreePath) {
+          if (worktreePath !== primaryWorktreePath) {
             return branch;
           }
         }
@@ -1499,7 +1536,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         : null;
       if (
         existingBranchBeforeFetch?.worktreePath &&
-        existingBranchBeforeFetchPath !== rootWorktreePath
+        existingBranchBeforeFetchPath !== primaryWorktreePath
       ) {
         yield* ensureExistingWorktreeUpstream(existingBranchBeforeFetch.worktreePath);
         return {
@@ -1508,10 +1545,10 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           worktreePath: existingBranchBeforeFetch.worktreePath,
         };
       }
-      if (existingBranchBeforeFetchPath === rootWorktreePath) {
+      if (existingBranchBeforeFetchPath === primaryWorktreePath) {
         return yield* gitManagerError(
           "preparePullRequestThread",
-          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+          "This PR branch is already checked out in the main checkout. Use Local, or switch the main checkout off that branch before creating a worktree thread.",
         );
       }
 
@@ -1527,7 +1564,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         : null;
       if (
         existingBranchAfterFetch?.worktreePath &&
-        existingBranchAfterFetchPath !== rootWorktreePath
+        existingBranchAfterFetchPath !== primaryWorktreePath
       ) {
         yield* ensureExistingWorktreeUpstream(existingBranchAfterFetch.worktreePath);
         return {
@@ -1536,10 +1573,10 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           worktreePath: existingBranchAfterFetch.worktreePath,
         };
       }
-      if (existingBranchAfterFetchPath === rootWorktreePath) {
+      if (existingBranchAfterFetchPath === primaryWorktreePath) {
         return yield* gitManagerError(
           "preparePullRequestThread",
-          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+          "This PR branch is already checked out in the main checkout. Use Local, or switch the main checkout off that branch before creating a worktree thread.",
         );
       }
 

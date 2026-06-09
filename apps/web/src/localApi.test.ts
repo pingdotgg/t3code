@@ -654,8 +654,10 @@ describe("wsApi", () => {
         "environment-local:/tmp/project": "separate" as const,
       },
       sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadGroupingMode: "worktree" as const,
       sidebarThreadSortOrder: "created_at" as const,
       sidebarThreadPreviewCount: 6,
+      sidebarWorktreePreviewCount: 4,
       timestampFormat: "24-hour" as const,
     };
     const getClientSettings = vi.fn().mockResolvedValue({
@@ -717,8 +719,10 @@ describe("wsApi", () => {
         "environment-local:/tmp/project": "separate" as const,
       },
       sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadGroupingMode: "worktree" as const,
       sidebarThreadSortOrder: "created_at" as const,
       sidebarThreadPreviewCount: 6,
+      sidebarWorktreePreviewCount: 4,
       timestampFormat: "24-hour" as const,
     };
 

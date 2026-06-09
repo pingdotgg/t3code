@@ -21,6 +21,10 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SidebarThreadGroupingMode = Schema.Literals(["separate", "worktree"]);
+export type SidebarThreadGroupingMode = typeof SidebarThreadGroupingMode.Type;
+export const DEFAULT_SIDEBAR_THREAD_GROUPING_MODE: SidebarThreadGroupingMode = "worktree";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -38,6 +42,16 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
+export const MIN_SIDEBAR_WORKTREE_PREVIEW_COUNT = 1;
+export const MAX_SIDEBAR_WORKTREE_PREVIEW_COUNT = 15;
+export const SidebarWorktreePreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_WORKTREE_PREVIEW_COUNT,
+    maximum: MAX_SIDEBAR_WORKTREE_PREVIEW_COUNT,
+  }),
+);
+export type SidebarWorktreePreviewCount = typeof SidebarWorktreePreviewCount.Type;
+export const DEFAULT_SIDEBAR_WORKTREE_PREVIEW_COUNT: SidebarWorktreePreviewCount = 4;
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -86,8 +100,14 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
+  sidebarThreadGroupingMode: SidebarThreadGroupingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_GROUPING_MODE)),
+  ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
+  ),
+  sidebarWorktreePreviewCount: SidebarWorktreePreviewCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_WORKTREE_PREVIEW_COUNT)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -539,7 +559,9 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarThreadGroupingMode: Schema.optionalKey(SidebarThreadGroupingMode),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  sidebarWorktreePreviewCount: Schema.optionalKey(SidebarWorktreePreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

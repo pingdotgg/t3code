@@ -18,6 +18,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
+  collapsedWorktreeIds?: string[];
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
@@ -25,6 +26,7 @@ export interface PersistedUiState {
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
+  worktreeExpandedById: Record<string, boolean>;
   projectOrder: string[];
 }
 
@@ -54,6 +56,7 @@ export interface SyncThreadInput {
 
 const initialState: UiState = {
   projectExpandedById: {},
+  worktreeExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
@@ -95,6 +98,7 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(parsed);
     return {
       ...initialState,
+      worktreeExpandedById: hydratePersistedWorktreeState(parsed),
       defaultAdvertisedEndpointKey:
         typeof parsed.defaultAdvertisedEndpointKey === "string" &&
         parsed.defaultAdvertisedEndpointKey.length > 0
@@ -107,6 +111,16 @@ function readPersistedState(): UiState {
   } catch {
     return initialState;
   }
+}
+
+export function hydratePersistedWorktreeState(parsed: PersistedUiState): Record<string, boolean> {
+  const nextState: Record<string, boolean> = {};
+  for (const worktreeId of parsed.collapsedWorktreeIds ?? []) {
+    if (typeof worktreeId === "string" && worktreeId.length > 0) {
+      nextState[worktreeId] = false;
+    }
+  }
+  return nextState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -175,6 +189,9 @@ export function persistState(state: UiState): void {
     const expandedProjectCwds = Object.entries(state.projectExpandedById)
       .filter(([, expanded]) => expanded)
       .flatMap(([logicalKey]) => currentProjectCwdsByLogicalKey.get(logicalKey) ?? []);
+    const collapsedWorktreeIds = Object.entries(state.worktreeExpandedById).flatMap(
+      ([worktreeId, expanded]) => (!expanded && worktreeId.length > 0 ? [worktreeId] : []),
+    );
     const projectOrderCwds = state.projectOrder.flatMap((projectId) => {
       const cwd = currentProjectCwdById.get(projectId);
       return cwd ? [cwd] : [];
@@ -192,6 +209,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         collapsedProjectCwds,
         expandedProjectCwds,
+        collapsedWorktreeIds,
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -577,6 +595,20 @@ export function toggleProject(state: UiState, projectId: string): UiState {
   };
 }
 
+export function toggleWorktree(state: UiState, worktreeId: string): UiState {
+  const expanded = state.worktreeExpandedById[worktreeId] ?? true;
+  const nextWorktreeExpandedById = { ...state.worktreeExpandedById };
+  if (expanded) {
+    nextWorktreeExpandedById[worktreeId] = false;
+  } else {
+    delete nextWorktreeExpandedById[worktreeId];
+  }
+  return {
+    ...state,
+    worktreeExpandedById: nextWorktreeExpandedById,
+  };
+}
+
 export function setProjectExpanded(state: UiState, projectId: string, expanded: boolean): UiState {
   if ((state.projectExpandedById[projectId] ?? true) === expanded) {
     return state;
@@ -642,6 +674,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
+  toggleWorktree: (worktreeId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
   reorderProjects: (
     draggedProjectIds: readonly string[],
@@ -663,6 +696,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
+  toggleWorktree: (worktreeId) => set((state) => toggleWorktree(state, worktreeId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
