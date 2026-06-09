@@ -132,6 +132,9 @@ export function applyThreadDetailEvent(
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
             : {}),
+          ...(event.payload.parentRelation !== undefined
+            ? { parentRelation: event.payload.parentRelation }
+            : {}),
           updatedAt: event.payload.updatedAt,
         },
       };

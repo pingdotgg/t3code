@@ -812,7 +812,7 @@ const make = Effect.gen(function* () {
     }
     const subagentRelation =
       thread.parentRelation?.kind === "subagent" ? thread.parentRelation : null;
-    const routedThreadId = subagentRelation?.parentThreadId ?? event.payload.threadId;
+    const routedThreadId = subagentRelation?.rootThreadId ?? event.payload.threadId;
     const routedThread =
       routedThreadId === event.payload.threadId ? thread : yield* resolveThread(routedThreadId);
     const hasSession = routedThread?.session && routedThread.session.status !== "stopped";

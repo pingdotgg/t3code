@@ -19,9 +19,32 @@ import {
 } from "../store";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import type { Thread } from "../types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
+
+function collectLifecycleThreadIds(
+  threads: readonly Pick<Thread, "id" | "parentRelation">[],
+  rootThreadIds: ReadonlySet<ThreadId>,
+): Set<ThreadId> {
+  const threadIds = new Set(rootThreadIds);
+  for (const thread of threads) {
+    if (
+      thread.parentRelation?.kind === "subagent" &&
+      rootThreadIds.has(thread.parentRelation.rootThreadId)
+    ) {
+      threadIds.add(thread.id);
+    }
+  }
+  return threadIds;
+}
+
+function withRootLast(threadIds: ReadonlySet<ThreadId>, rootThreadId: ThreadId): ThreadId[] {
+  return [...threadIds].sort((left, right) =>
+    left === rootThreadId ? 1 : right === rootThreadId ? -1 : 0,
+  );
+}
 
 export function useThreadActions() {
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
@@ -63,25 +86,35 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return;
       const { thread, threadRef } = resolved;
-      if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+      const threads = selectThreadsForEnvironment(useStore.getState(), threadRef.environmentId);
+      const archivedThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
+      if (
+        threads.some(
+          (entry) =>
+            archivedThreadIds.has(entry.id) &&
+            entry.session?.status === "running" &&
+            entry.session.activeTurnId != null,
+        )
+      ) {
         throw new Error("Cannot archive a running thread.");
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId;
-      const archiveCommand = api.orchestration.dispatchCommand({
-        type: "thread.archive",
-        commandId: newCommandId(),
-        threadId: threadRef.threadId,
-      });
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        archivedThreadIds.has(currentRouteThreadRef.threadId);
 
       if (shouldNavigateToDraft) {
         await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
       }
 
-      await archiveCommand;
+      for (const archivedThreadId of withRootLast(archivedThreadIds, threadRef.threadId)) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.archive",
+          commandId: newCommandId(),
+          threadId: archivedThreadId,
+        });
+      }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     },
     [getCurrentRouteThreadRef, resolveThreadTarget],
@@ -120,7 +153,7 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
-      const deletedIds =
+      const selectedDeleteRootIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
               [...opts.deletedThreadKeys].flatMap((threadKey) => {
@@ -129,6 +162,11 @@ export function useThreadActions() {
               }),
             )
           : undefined;
+      const targetThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
+      const deletedIds =
+        selectedDeleteRootIds && selectedDeleteRootIds.size > 0
+          ? collectLifecycleThreadIds(threads, selectedDeleteRootIds)
+          : targetThreadIds;
       const survivingThreads =
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
@@ -154,46 +192,60 @@ export function useThreadActions() {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId: threadRef.threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
+      for (const deletedThreadId of targetThreadIds) {
+        const deletedThread = threads.find((entry) => entry.id === deletedThreadId);
+        if (deletedThread?.session && deletedThread.session.status !== "closed") {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.session.stop",
+              commandId: newCommandId(),
+              threadId: deletedThreadId,
+              createdAt: new Date().toISOString(),
+            })
+            .catch(() => undefined);
+        }
+
+        try {
+          await api.terminal.close({ threadId: deletedThreadId, deleteHistory: true });
+        } catch {
+          // Terminal may already be closed.
+        }
       }
 
-      try {
-        await api.terminal.close({ threadId: threadRef.threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed.
-      }
-
-      const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
       const currentRouteThreadRef = getCurrentRouteThreadRef();
-      const shouldNavigateToFallback =
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const activeDeletedThreadId =
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        deletedIds.has(currentRouteThreadRef.threadId)
+          ? currentRouteThreadRef.threadId
+          : null;
+      const shouldNavigateToFallback = activeDeletedThreadId !== null;
+      const deletedThreadIdForFallback = activeDeletedThreadId ?? threadRef.threadId;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads,
-        deletedThreadId: threadRef.threadId,
-        deletedThreadIds,
+        deletedThreadId: deletedThreadIdForFallback,
+        deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      await api.orchestration.dispatchCommand({
-        type: "thread.delete",
-        commandId: newCommandId(),
-        threadId: threadRef.threadId,
-      });
+      for (const deletedThreadId of withRootLast(targetThreadIds, threadRef.threadId)) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.delete",
+          commandId: newCommandId(),
+          threadId: deletedThreadId,
+        });
+      }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
-      clearTerminalUiState(threadRef);
+      for (const deletedThreadId of targetThreadIds) {
+        const deletedThreadRef = scopeThreadRef(threadRef.environmentId, deletedThreadId);
+        const deletedThread = threads.find((entry) => entry.id === deletedThreadId);
+        clearComposerDraftForThread(deletedThreadRef);
+        if (deletedThread) {
+          clearProjectDraftThreadById(
+            scopeProjectRef(threadRef.environmentId, deletedThread.projectId),
+            deletedThreadRef,
+          );
+        }
+        clearTerminalUiState(deletedThreadRef);
+      }
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
