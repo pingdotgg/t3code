@@ -13,15 +13,8 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
-import { LaunchEnv } from "./launchEnv/Services/LaunchEnv.ts";
-import { TerminalManager } from "./terminal/Services/Manager.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  Layer.mock(TerminalManager)({}),
-  Layer.mock(LaunchEnv)({}),
-);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";

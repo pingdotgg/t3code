@@ -77,7 +77,10 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
-import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import {
+  OrchestrationInfrastructureLayerLive,
+  OrchestrationLayerLive,
+} from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -145,10 +148,17 @@ const PlatformServicesLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
-const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
+const LaunchEnvLayerLive = LaunchEnvLive.pipe(
+  Layer.provideMerge(OrchestrationInfrastructureLayerLive),
+  Layer.provideMerge(PersistenceLayerLive),
+);
+
+const TerminalLayerLive = TerminalManagerLive.pipe(
+  Layer.provide(PtyAdapterLive),
+  Layer.provide(LaunchEnvLayerLive),
+);
 
 const ReactorLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(LaunchEnvLive),
   Layer.provideMerge(
     Layer.empty.pipe(
       Layer.provideMerge(OrchestrationReactorLive),
@@ -160,7 +170,7 @@ const ReactorLayerLive = Layer.empty.pipe(
       Layer.provideMerge(RuntimeReceiptBusLive),
     ),
   ),
-  Layer.provideMerge(TerminalLayerLive),
+  Layer.provide(LaunchEnvLayerLive),
 );
 
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
@@ -273,6 +283,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ProviderRegistryLive),

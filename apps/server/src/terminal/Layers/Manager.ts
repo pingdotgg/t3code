@@ -1005,6 +1005,11 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         })),
       );
 
+    const resolveLaunchInput = <T extends TerminalOpenInput | TerminalRestartInput>(input: T) =>
+      applyLaunchEnv(input).pipe(
+        Effect.catchTag("TerminalSessionLookupError", () => Effect.succeed(input)),
+      );
+
     const applyLaunchEnvForAttach = (input: TerminalAttachInput) =>
       launchEnv.resolveForThread(toLaunchEnvInput(input)).pipe(
         Effect.catchTags({
@@ -1035,6 +1040,11 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               env: resolved.env,
             }) satisfies TerminalAttachRuntimeInput,
         ),
+      );
+
+    const resolveAttachLaunchInput = (input: TerminalAttachInput) =>
+      applyLaunchEnvForAttach(input).pipe(
+        Effect.catchTag("TerminalSessionLookupError", () => Effect.succeed(input)),
       );
 
     const logsDir = options.logsDir;
@@ -2095,12 +2105,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
-          const resolvedInput = yield* applyLaunchEnv(input);
+          const resolvedInput = yield* resolveLaunchInput(input);
           return yield* openLocked(resolvedInput);
         }),
       );
 
-    const openOrAttachForStream = (input: TerminalAttachRuntimeInput) =>
+    const openOrAttachForStream = (input: TerminalAttachInput) =>
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -2114,8 +2124,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 terminalId,
               });
             }
+            const resolvedInput = yield* resolveAttachLaunchInput(input);
             return yield* openLocked({
-              ...input,
+              ...resolvedInput,
               terminalId,
               cwd: input.cwd,
             });
@@ -2126,8 +2137,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const targetRows = input.rows ?? session.rows;
 
           if (!session.process && input.cwd && input.restartIfNotRunning === true) {
+            const resolvedInput = yield* resolveAttachLaunchInput(input);
             return yield* openLocked({
-              ...input,
+              ...resolvedInput,
               terminalId,
               cwd: input.cwd,
             });
@@ -2199,8 +2211,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           return attachEvent ? listener(attachEvent) : Effect.void;
         });
 
-        const resolvedInput = yield* applyLaunchEnvForAttach(input);
-        const initialSnapshot = yield* openOrAttachForStream(resolvedInput);
+        const initialSnapshot = yield* openOrAttachForStream(input);
 
         yield* listener({
           type: "snapshot",
@@ -2374,7 +2385,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
-          const resolvedInput = yield* applyLaunchEnv(input);
+          const resolvedInput = yield* resolveLaunchInput(input);
           yield* increment(terminalRestartsTotal, { scope: "thread" });
           const terminalId = resolvedInput.terminalId;
           yield* assertValidCwd(resolvedInput.cwd);

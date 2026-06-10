@@ -34,15 +34,8 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
-import { LaunchEnv } from "./launchEnv/Services/LaunchEnv.ts";
-import { TerminalManager } from "./terminal/Services/Manager.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  Layer.mock(TerminalManager)({}),
-  Layer.mock(LaunchEnv)({}),
-);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
 const connectCli = makeCli({ cloudEnabled: true });

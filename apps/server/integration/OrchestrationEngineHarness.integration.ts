@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off missingLayerContext:off
+// @effect-diagnostics nodeBuiltinImport:off
 import { execFileSync } from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -389,6 +389,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(providerRegistryLayer),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provide(persistenceLayer),
       Layer.provideMerge(
         LaunchEnvLive.pipe(
           Layer.provide(serverConfigLayer),
@@ -398,7 +399,6 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
     );
 
-    // @ts-ignore - Layer composition type system limitation, layers satisfy all requirements at runtime
     const runtime = ManagedRuntime.make(layer);
     const engine = yield* tryRuntimePromise("load OrchestrationEngine service", () =>
       runtime.runPromise(Effect.service(OrchestrationEngineService)),
