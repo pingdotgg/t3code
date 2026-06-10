@@ -383,6 +383,7 @@ function MarkdownDetails({
   children,
   open = false,
 }: Pick<React.ComponentProps<"details">, "children" | "open">) {
+  const [isOpen, setIsOpen] = useState(open);
   const childNodes = Children.toArray(children);
   const summaryIndex = childNodes.findIndex(
     (child) => isValidElement(child) && child.type === "summary",
@@ -397,9 +398,10 @@ function MarkdownDetails({
   return (
     <Collapsible
       defaultOpen={open}
+      onOpenChange={setIsOpen}
       className="chat-markdown-details my-2 border-y border-border/60"
       data-markdown-details=""
-      data-markdown-details-open={open ? "true" : "false"}
+      data-markdown-details-open={isOpen ? "true" : "false"}
     >
       <CollapsibleTrigger
         className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"

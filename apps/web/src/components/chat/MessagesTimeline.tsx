@@ -904,9 +904,14 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
         if (matchIndex > cursor) {
           inlineNodes.push(
-            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              <SkillInlineText text={props.text.slice(cursor, matchIndex)} skills={props.skills} />
-            </span>,
+            <ChatMarkdown
+              key={`user-terminal-context-inline-before:${context.header}:${cursor}`}
+              text={props.text.slice(cursor, matchIndex)}
+              cwd={props.markdownCwd}
+              skills={props.skills}
+              className="text-foreground"
+              lineBreaks
+            />,
           );
         }
         inlineNodes.push(
@@ -921,9 +926,14 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       if (inlineNodes.length > 0) {
         if (cursor < props.text.length) {
           inlineNodes.push(
-            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              <SkillInlineText text={props.text.slice(cursor)} skills={props.skills} />
-            </span>,
+            <ChatMarkdown
+              key={`user-message-terminal-context-inline-rest:${cursor}`}
+              text={props.text.slice(cursor)}
+              cwd={props.markdownCwd}
+              skills={props.skills}
+              className="text-foreground"
+              lineBreaks
+            />,
           );
         }
 
@@ -951,9 +961,14 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
     if (props.text.length > 0) {
       inlineNodes.push(
-        <span key="user-message-terminal-context-inline-text">
-          <SkillInlineText text={props.text} skills={props.skills} />
-        </span>,
+        <ChatMarkdown
+          key="user-message-terminal-context-inline-text"
+          text={props.text}
+          cwd={props.markdownCwd}
+          skills={props.skills}
+          className="text-foreground"
+          lineBreaks
+        />,
       );
     } else if (inlinePrefix.length === 0) {
       return null;
