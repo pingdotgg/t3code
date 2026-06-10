@@ -107,32 +107,6 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
-function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  let nullTurnResponseIndex = 0;
-
-  for (const timelineEntry of timelineEntries) {
-    if (timelineEntry.kind !== "message") {
-      continue;
-    }
-    const { message } = timelineEntry;
-    if (message.role === "user") {
-      nullTurnResponseIndex += 1;
-      continue;
-    }
-    if (message.role !== "assistant") {
-      continue;
-    }
-
-    const responseKey = message.turnId
-      ? `turn:${message.turnId}`
-      : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
-  }
-
-  return new Set(lastAssistantMessageIdByResponseKey.values());
-}
-
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   completionDividerBeforeEntryId: string | null;
@@ -143,7 +117,16 @@ export function deriveMessagesTimelineRows(input: {
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: BaseMessagesTimelineRow[] = [];
-  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  // Last assistant message row per response key (turn). Only the final
+  // assistant message of each turn is "terminal" and shows copy/terminal
+  // affordances. Tracking the row references here lets us fold what used to be
+  // a separate terminal pre-pass and a separate flatMap post-pass into the
+  // single build loop below, then finalize over just these rows.
+  const lastAssistantRowByResponseKey = new Map<
+    string,
+    Extract<BaseMessagesTimelineRow, { kind: "message" }>
+  >();
+  let nullTurnResponseIndex = 0;
   let lastDurationBoundary: string | null = null;
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
@@ -190,12 +173,11 @@ export function deriveMessagesTimelineRows(input: {
     const message = timelineEntry.message;
     if (message.role === "user") {
       lastDurationBoundary = message.createdAt;
+      nullTurnResponseIndex += 1;
     }
     const durationStart = lastDurationBoundary ?? message.createdAt;
-    const isTerminalAssistant =
-      message.role === "assistant" && terminalAssistantMessageIds.has(message.id);
 
-    nextRows.push({
+    const messageRow: Extract<BaseMessagesTimelineRow, { kind: "message" }> = {
       kind: "message",
       id: timelineEntry.id,
       createdAt: timelineEntry.createdAt,
@@ -203,17 +185,27 @@ export function deriveMessagesTimelineRows(input: {
       durationStart,
       showCompletionDivider:
         message.role === "assistant" && input.completionDividerBeforeEntryId === timelineEntry.id,
-      showAssistantCopyButton: isTerminalAssistant,
-      showAssistantTerminalMetadata: isTerminalAssistant,
+      // Terminal-only affordances; resolved in the finalize pass below once we
+      // know which assistant row is the last of its turn.
+      showAssistantCopyButton: false,
+      showAssistantTerminalMetadata: false,
       assistantTurnDiffSummary:
         message.role === "assistant"
           ? input.turnDiffSummaryByAssistantMessageId.get(message.id)
           : undefined,
       revertTurnCount:
         message.role === "user" ? input.revertTurnCountByUserMessageId.get(message.id) : undefined,
-    });
-    if (message.role === "assistant" && message.completedAt) {
-      lastDurationBoundary = message.completedAt;
+    };
+    nextRows.push(messageRow);
+
+    if (message.role === "assistant") {
+      const responseKey = message.turnId
+        ? `turn:${message.turnId}`
+        : `unkeyed:${nullTurnResponseIndex}`;
+      lastAssistantRowByResponseKey.set(responseKey, messageRow);
+      if (message.completedAt) {
+        lastDurationBoundary = message.completedAt;
+      }
     }
   }
 
@@ -225,17 +217,22 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  const completedResponseEntryIds = new Set(
-    nextRows.flatMap((row) =>
-      row.kind === "message" &&
-      row.message.role === "assistant" &&
-      row.message.completedAt &&
-      (!input.isWorking || !input.activeTurnId || row.message.turnId !== input.activeTurnId) &&
-      terminalAssistantMessageIds.has(row.message.id)
-        ? [row.id]
-        : [],
-    ),
-  );
+  // Finalize over just the terminal rows (at most one per turn) rather than
+  // rescanning the whole timeline: flag terminal affordances and collect the
+  // completed-response boundaries used to group reasoning rows.
+  const completedResponseEntryIds = new Set<string>();
+  for (const terminalRow of lastAssistantRowByResponseKey.values()) {
+    terminalRow.showAssistantCopyButton = true;
+    terminalRow.showAssistantTerminalMetadata = true;
+
+    const { message } = terminalRow;
+    if (
+      message.completedAt &&
+      (!input.isWorking || !input.activeTurnId || message.turnId !== input.activeTurnId)
+    ) {
+      completedResponseEntryIds.add(terminalRow.id);
+    }
+  }
   if (input.completionDividerBeforeEntryId) {
     completedResponseEntryIds.add(input.completionDividerBeforeEntryId);
   }
