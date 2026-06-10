@@ -34,6 +34,18 @@ const handleMethod = (message: Record<string, unknown>) => {
 
   switch (method) {
     case "initialize": {
+      const stderrBytes = Number(process.env.CODEX_APP_SERVER_TEST_STDERR_BYTES ?? 0);
+      if (Number.isFinite(stderrBytes) && stderrBytes > 0) {
+        process.stderr.write("x".repeat(stderrBytes), () => {
+          respond(message.id as number | string, {
+            userAgent: "mock-codex-app-server",
+            codexHome: process.cwd(),
+            platformFamily: process.platform === "win32" ? "windows" : "unix",
+            platformOs: process.platform === "darwin" ? "macos" : process.platform,
+          });
+        });
+        return;
+      }
       respond(message.id as number | string, {
         userAgent: "mock-codex-app-server",
         codexHome: process.cwd(),
