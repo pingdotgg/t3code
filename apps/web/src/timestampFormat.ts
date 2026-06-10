@@ -44,6 +44,40 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(new Date(isoDate));
 }
 
+const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
+
+function ordinalSuffix(day: number): string {
+  const lastTwo = day % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return "th";
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+/**
+ * Long-form tooltip label, e.g. `12:04, 4th June`.
+ * Renders the wall-clock time without seconds followed by the ordinal day and month name.
+ */
+export function formatChatTimestampTooltip(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = formatShortTimestamp(isoDate, timestampFormat);
+  const day = date.getDate();
+  const month = monthNameFormatter.format(date);
+  const year = date.getFullYear();
+  return `${time}, ${day}${ordinalSuffix(day)} ${month} ${year}`;
+}
+
 export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
   return getTimestampFormatter(timestampFormat, false).format(new Date(isoDate));
 }

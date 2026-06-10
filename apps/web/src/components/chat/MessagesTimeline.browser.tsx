@@ -54,11 +54,9 @@ function buildProps() {
   return {
     isWorking: false,
     activeTurnInProgress: false,
-    activeTurnId: null,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
-    completionDividerBeforeEntryId: null,
-    completionSummary: null,
+    latestTurn: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: vi.fn(),
@@ -131,9 +129,9 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-04-13T12:00:00.000Z",
-              label: "thinking",
+              label: "read files",
               detail: "Inspecting repository state",
-              tone: "thinking",
+              tone: "tool",
             },
           },
         ]}
@@ -144,7 +142,7 @@ describe("MessagesTimeline", () => {
       await expect
         .element(page.getByText("Send a message to start the conversation."))
         .not.toBeInTheDocument();
-      await expect.element(page.getByText("Thinking - Inspecting repository state")).toBeVisible();
+      await expect.element(page.getByText("Inspecting repository state")).toBeVisible();
       expect(document.querySelector('[data-testid="legend-list"] [title]')).toBeNull();
     } finally {
       await screen.unmount();
@@ -231,16 +229,16 @@ describe("MessagesTimeline", () => {
               entry: {
                 id: "work-1",
                 createdAt: "2026-04-13T12:00:00.000Z",
-                label: "thinking",
+                label: "read files",
                 detail: "Inspecting repository state",
-                tone: "thinking",
+                tone: "tool",
               },
             },
           ]}
         />,
       );
 
-      await expect.element(page.getByText("Thinking - Inspecting repository state")).toBeVisible();
+      await expect.element(page.getByText("Inspecting repository state")).toBeVisible();
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
@@ -411,6 +409,80 @@ describe("MessagesTimeline", () => {
       expect(icon?.getAttribute("src")).toBe(
         getVscodeIconUrlForEntry("/repo/project/path/to/package.json", "file", "dark"),
       );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("folds settled-turn work behind a Worked-for row and expands it on click", async () => {
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-commentary",
+            kind: "message" as const,
+            createdAt: "2026-04-13T12:00:00.000Z",
+            message: {
+              id: "message-commentary" as never,
+              role: "assistant" as const,
+              text: "Let me look around first.",
+              turnId: "turn-1" as never,
+              createdAt: "2026-04-13T12:00:00.000Z",
+              completedAt: "2026-04-13T12:00:02.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-work",
+            kind: "work" as const,
+            createdAt: "2026-04-13T12:00:05.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-04-13T12:00:05.000Z",
+              turnId: "turn-1" as never,
+              label: "read files",
+              detail: "Inspecting repository state",
+              tone: "tool" as const,
+            },
+          },
+          {
+            id: "entry-final",
+            kind: "message" as const,
+            createdAt: "2026-04-13T12:00:20.000Z",
+            message: {
+              id: "message-final" as never,
+              role: "assistant" as const,
+              text: "All done.",
+              turnId: "turn-1" as never,
+              createdAt: "2026-04-13T12:00:20.000Z",
+              completedAt: "2026-04-13T12:00:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const foldButton = page.getByRole("button", { name: "Worked for 30s" });
+      await expect.element(foldButton).toBeVisible();
+      await expect.element(foldButton).toHaveAttribute("aria-expanded", "false");
+
+      expect(document.body.textContent).toContain("All done.");
+      expect(document.body.textContent).not.toContain("Let me look around first.");
+      expect(document.body.textContent).not.toContain("Inspecting repository state");
+
+      await foldButton.click();
+
+      await expect.element(foldButton).toHaveAttribute("aria-expanded", "true");
+      expect(document.body.textContent).toContain("Let me look around first.");
+      expect(document.body.textContent).toContain("Inspecting repository state");
+
+      await foldButton.click();
+
+      await expect.element(foldButton).toHaveAttribute("aria-expanded", "false");
+      expect(document.body.textContent).not.toContain("Inspecting repository state");
     } finally {
       await screen.unmount();
     }
