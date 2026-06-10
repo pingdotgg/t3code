@@ -1,11 +1,3 @@
-/**
- * LaunchEnvLive - Layer implementation for LaunchEnv service.
- *
- * Provides the LaunchEnv service via Effect Layer. Depends on ServerConfig
- * and ProjectionSnapshotQuery (auto-wired from context).
- *
- * @module LaunchEnvLive
- */
 import { TerminalCwdError, TerminalSessionLookupError, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,10 +8,6 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { LaunchEnv, type LaunchEnvShape, type LaunchEnvProjectionShape } from "../Services/LaunchEnv.ts";
 import { mergeResolvedLaunchEnv } from "../launchEnvUtils.ts";
 
-/**
- * Create resolve function for launch environment.
- * @internal
- */
 export const makeResolveLaunchEnv = (t3Home: string): LaunchEnvShape["resolve"] =>
   Effect.fn("LaunchEnv.resolve")(function* (input) {
     return mergeResolvedLaunchEnv({
@@ -34,10 +22,6 @@ export const makeResolveLaunchEnv = (t3Home: string): LaunchEnvShape["resolve"] 
     });
   });
 
-/**
- * Create resolveForThread function for launch environment.
- * @internal
- */
 export const makeResolveForThread = (
   resolve: LaunchEnvShape["resolve"],
   projection: LaunchEnvProjectionShape,
@@ -108,10 +92,6 @@ export const makeResolveForThread = (
     } as const;
   });
 
-/**
- * Create LaunchEnv service implementation.
- * @internal
- */
 export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -126,9 +106,5 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
   } satisfies LaunchEnvShape;
 });
 
-/**
- * LaunchEnvLive - Layer providing LaunchEnv service.
- *
- * Automatically wires ServerConfig and ProjectionSnapshotQuery from context.
- */
 export const LaunchEnvLive = Layer.effect(LaunchEnv, makeLaunchEnv());
+
