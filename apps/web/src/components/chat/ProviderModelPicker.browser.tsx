@@ -255,6 +255,7 @@ async function mountPicker(props: {
   providers?: ReadonlyArray<ServerProvider>;
   settings?: UnifiedSettings;
   triggerVariant?: "ghost" | "outline";
+  getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
 }) {
   const host = document.createElement("div");
   document.body.append(host);
@@ -277,6 +278,9 @@ async function mountPicker(props: {
       instanceEntries={instanceEntries}
       modelOptionsByInstance={modelOptionsByInstance}
       triggerVariant={props.triggerVariant}
+      {...(props.getModelDisabledReason
+        ? { getModelDisabledReason: props.getModelDisabledReason }
+        : {})}
       onInstanceModelChange={onInstanceModelChange}
     />,
     { container: host },
@@ -461,7 +465,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows locked provider header and only its models in locked mode", async () => {
+  it("keeps the full provider rail in locked mode and only lists compatible models", async () => {
     localStorage.setItem(
       "t3code:client-settings:v1",
       JSON.stringify({
@@ -484,8 +488,21 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
-        // Should show locked provider label
         expect(text).toContain("Claude");
+        // Locked-compatible instances render first, then disabled ones.
+        expect(getSidebarProviderOrder().slice(0, 3)).toEqual([
+          "favorites",
+          "claudeAgent",
+          "codex",
+        ]);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="codex"]')
+            ?.disabled,
+        ).toBe(true);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="claudeAgent"]')
+            ?.disabled,
+        ).toBe(false);
         expect(getVisibleModelNames()).toEqual([
           "Claude Sonnet 4.6",
           "Claude Opus 4.6",
@@ -559,7 +576,21 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        expect(getSidebarProviderOrder()).toEqual(["codex", "codex_personal"]);
+        expect(getSidebarProviderOrder().slice(0, 5)).toEqual([
+          "favorites",
+          "codex",
+          "codex_personal",
+          "codex_isolated",
+          "claudeAgent",
+        ]);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="codex_isolated"]')
+            ?.disabled,
+        ).toBe(true);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="claudeAgent"]')
+            ?.disabled,
+        ).toBe(true);
         expect(getModelPickerListText()).not.toContain("Codex Isolated");
         expect(
           document.querySelector<HTMLElement>('[data-model-picker-provider="codex_personal"]')
@@ -625,7 +656,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("uses the trigger label for locked opencode rows", async () => {
+  it("shows the plain model name in the trigger and provider details on locked opencode rows", async () => {
     const providers: ReadonlyArray<ServerProvider> = [
       buildOpenCodeProvider([
         {
@@ -658,14 +689,15 @@ describe("ProviderModelPicker", () => {
         const trigger = document.querySelector<HTMLElement>(
           '[data-chat-provider-model-picker="true"]',
         );
-        expect(trigger?.textContent).toContain("GitHub Copilot");
         expect(trigger?.textContent).toContain("Opus 4.5");
+        expect(trigger?.textContent).not.toContain("GitHub Copilot");
       });
 
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        expect(getVisibleModelNames()).toEqual(["GitHub Copilot · Opus 4.5"]);
+        expect(getVisibleModelNames()).toEqual(["Claude Opus 4.5"]);
+        expect(getModelPickerListText()).toContain("OpenCode · GitHub Copilot");
       });
     } finally {
       await mounted.cleanup();
@@ -961,27 +993,30 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude Opus 4.6");
       });
 
-      const getFirstStarButton = () => {
-        const starButton = document.querySelector<HTMLButtonElement>(
+      const getFavoriteButton = () => {
+        const modelRow = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+          (row) => row.textContent?.includes("Claude Opus 4.6"),
+        );
+        const starButton = modelRow?.querySelector<HTMLButtonElement>(
           'button[aria-label*="favorites"]',
         );
         expect(starButton).not.toBeNull();
         return starButton!;
       };
 
-      const firstStar = getFirstStarButton();
-      const initialAriaLabel = firstStar.getAttribute("aria-label");
+      const favoriteButton = getFavoriteButton();
+      const initialAriaLabel = favoriteButton.getAttribute("aria-label");
       expect(
         initialAriaLabel === "Add to favorites" || initialAriaLabel === "Remove from favorites",
       ).toBe(true);
 
-      await page.getByRole("button", { name: initialAriaLabel! }).first().click();
+      await userEvent.click(favoriteButton);
 
       const expectedAriaLabel =
         initialAriaLabel === "Add to favorites" ? "Remove from favorites" : "Add to favorites";
 
       await vi.waitFor(() => {
-        expect(getFirstStarButton().getAttribute("aria-label")).toBe(expectedAriaLabel);
+        expect(getFavoriteButton().getAttribute("aria-label")).toBe(expectedAriaLabel);
       });
     } finally {
       await mounted.cleanup();
@@ -1050,6 +1085,38 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("filters favorites to compatible models in locked mode", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        favorites: [
+          { provider: "codex", model: "gpt-5.3-codex" },
+          { provider: "claudeAgent", model: "claude-sonnet-4-6" },
+        ],
+      }),
+    );
+
+    const mounted = await mountPicker({
+      activeInstanceId: CLAUDE_INSTANCE_ID,
+      model: "claude-opus-4-6",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("button", { name: "Favorites", exact: true }).click();
+
+      await vi.waitFor(() => {
+        expect(getVisibleModelNames()).toEqual(["Claude Sonnet 4.6"]);
+        expect(getModelPickerListText()).not.toContain("GPT-5.3 Codex");
+      });
+    } finally {
+      await mounted.cleanup();
+      localStorage.removeItem("t3code:client-settings:v1");
+    }
+  });
+
   it("dispatches callback with correct provider and model when selected", async () => {
     const mounted = await mountPicker({
       activeInstanceId: CLAUDE_INSTANCE_ID,
@@ -1074,6 +1141,29 @@ describe("ProviderModelPicker", () => {
         "claudeAgent",
         "claude-sonnet-4-6",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not select models blocked by the provider", async () => {
+    const disabledReason =
+      "This provider does not allow switching models after a conversation has started. Start a new thread to use this model.";
+    const mounted = await mountPicker({
+      activeInstanceId: CLAUDE_INSTANCE_ID,
+      model: "claude-opus-4-6",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
+      getModelDisabledReason: (instanceId, model) =>
+        instanceId === CLAUDE_INSTANCE_ID && model !== "claude-opus-4-6" ? disabledReason : null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      const blockedModel = page.getByText("Claude Sonnet 4.6").first();
+      await blockedModel.click();
+      expect(mounted.onProviderModelChange).not.toHaveBeenCalled();
+      expect(document.querySelector(".model-picker-list")).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }

@@ -41,6 +41,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   onOpenChange?: (open: boolean) => void;
+  getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -65,7 +66,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerSubtitle = selectedModel?.subProvider;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
   const duplicateDriverCount = props.instanceEntries.filter(
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
@@ -83,6 +83,54 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     setModelPickerOpen(isMenuOpen);
     return () => {
       setModelPickerOpen(false);
+    };
+  }, [isMenuOpen]);
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return;
+    }
+
+    const { documentElement, body } = document;
+    const previousDocumentOverscrollBehavior = documentElement.style.overscrollBehavior;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyPaddingRight = body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - documentElement.clientWidth;
+
+    documentElement.style.overscrollBehavior = "contain";
+    body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) {
+      body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    const shouldAllowOverlayScroll = (target: EventTarget | null) => {
+      return target instanceof Element && target.closest("[data-model-picker-content]");
+    };
+    const preventBackgroundWheel = (event: WheelEvent) => {
+      if (shouldAllowOverlayScroll(event.target)) {
+        return;
+      }
+      event.preventDefault();
+    };
+    const preventBackgroundTouchMove = (event: TouchEvent) => {
+      if (shouldAllowOverlayScroll(event.target)) {
+        return;
+      }
+      event.preventDefault();
+    };
+
+    document.addEventListener("wheel", preventBackgroundWheel, { capture: true, passive: false });
+    document.addEventListener("touchmove", preventBackgroundTouchMove, {
+      capture: true,
+      passive: false,
+    });
+
+    return () => {
+      document.removeEventListener("wheel", preventBackgroundWheel, { capture: true });
+      document.removeEventListener("touchmove", preventBackgroundTouchMove, { capture: true });
+      documentElement.style.overscrollBehavior = previousDocumentOverscrollBehavior;
+      body.style.overflow = previousBodyOverflow;
+      body.style.paddingRight = previousBodyPaddingRight;
     };
   }, [isMenuOpen]);
 
@@ -110,7 +158,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
             className={cn(
-              "min-w-0 justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
+              "min-w-0 justify-between whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80",
               props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
               props.triggerClassName,
             )}
@@ -118,12 +166,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           />
         }
       >
-        <span
-          className={cn(
-            "flex min-w-0 w-full box-border items-center gap-2 overflow-hidden",
-            props.compact ? "max-w-36 sm:pl-1" : undefined,
-          )}
-        >
+        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           {activeEntry ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
@@ -132,42 +175,28 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               showBadge={showInstanceBadge}
               className={showInstanceBadge ? "size-5" : "size-4"}
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
-              badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+              indicatorBackground="var(--input)"
+              badgeClassName={cn(
+                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3",
+                "px-0.5 text-[7px]",
+              )}
             />
           ) : null}
           <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 overflow-hidden",
-                    triggerSubtitle
-                      ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
-                      : "truncate",
-                  )}
-                />
-              }
-            >
-              {triggerSubtitle ? (
-                <>
-                  <span className="min-w-0 truncate">{triggerSubtitle}</span>
-                  <span aria-hidden="true" className="shrink-0 opacity-60">
-                    ·
-                  </span>
-                  <span className="min-w-0 truncate">{triggerTitle}</span>
-                </>
-              ) : (
-                triggerTitle
-              )}
+            <TooltipTrigger render={<span className="min-w-0 flex-1 overflow-hidden truncate" />}>
+              {triggerTitle}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
-          <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+        </span>
+        <span aria-hidden="true" className="flex items-center">
+          <ChevronDownIcon aria-hidden="true" className="!ms-0 !-me-1 size-3 shrink-0 opacity-60" />
         </span>
       </PopoverTrigger>
       <PopoverPopup
         align="start"
-        className="border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0] *:data-[slot=popover-viewport]:p-0"
+        className="border-0 bg-transparent p-0 shadow-none before:hidden [--viewport-inline-padding:0]"
+        viewportClassName="!overflow-hidden p-0"
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}
@@ -179,6 +208,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           modelOptionsByInstance={props.modelOptionsByInstance}
           terminalOpen={props.terminalOpen ?? false}
           onRequestClose={() => setIsMenuOpen(false)}
+          {...(props.getModelDisabledReason
+            ? { getModelDisabledReason: props.getModelDisabledReason }
+            : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
       </PopoverPopup>

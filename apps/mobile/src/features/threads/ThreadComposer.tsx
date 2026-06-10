@@ -10,7 +10,7 @@ import type {
 import {
   detectComposerTrigger,
   replaceTextRange,
-  serializeComposerMentionPath,
+  serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import { TextInputWrapper } from "expo-paste-input";
@@ -419,7 +419,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
       let replacement = "";
       if (item.type === "path") {
-        replacement = `@${serializeComposerMentionPath(item.path)} `;
+        replacement = `${serializeComposerFileLink(item.path)} `;
       } else if (item.type === "skill") {
         replacement = `$${item.skill.name} `;
       } else if (item.type === "slash-command") {

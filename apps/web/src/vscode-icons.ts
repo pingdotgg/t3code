@@ -69,6 +69,24 @@ function toLowercaseLookup(source: Record<string, string>): Record<string, strin
   return lookup;
 }
 
+const extensionByLanguageId: Record<string, string> = {};
+for (const [extension, languageId] of Object.entries(languageAssociations.extensionToLanguageId)) {
+  const key = languageId.toLowerCase();
+  if (!(key in extensionByLanguageId)) {
+    extensionByLanguageId[key] = extension.toLowerCase();
+  }
+}
+
+/**
+ * Synthesizes a file name whose icon resolution best represents a markdown
+ * fence language id — handles both extension-style ids ("ts", "py") and
+ * language ids ("typescript", "python", "shellscript").
+ */
+export function syntheticFileNameForLanguageId(languageId: string): string {
+  const normalized = languageId.toLowerCase();
+  return `file.${extensionByLanguageId[normalized] ?? normalized}`;
+}
+
 export function basenameOfPath(pathValue: string): string {
   const slashIndex = pathValue.lastIndexOf("/");
   if (slashIndex === -1) return pathValue;
@@ -163,6 +181,17 @@ function resolveFolderDefinition(pathValue: string, theme: "light" | "dark"): st
     folderNames[basename] ??
     darkFolderNames[basename] ??
     (theme === "light" ? defaultLightFolderIconDefinition : defaultDarkFolderIconDefinition)
+  );
+}
+
+/** True when the file name resolves to a real icon rather than the generic default. */
+export function hasSpecificVscodeIconForFileName(
+  fileName: string,
+  theme: "light" | "dark",
+): boolean {
+  const definition = resolveFileDefinition(fileName, theme);
+  return (
+    definition !== defaultDarkFileIconDefinition && definition !== defaultLightFileIconDefinition
   );
 }
 
