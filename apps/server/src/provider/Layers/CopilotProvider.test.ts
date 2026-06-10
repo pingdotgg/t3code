@@ -147,7 +147,7 @@ describe("CopilotProvider", () => {
         slug: "claude-opus-4.8",
         name: "Claude Opus 4.8",
         isCustom: false,
-        capabilities: reasoningCapabilities(false),
+        capabilities: { optionDescriptors: [] },
       },
     );
     assert.deepStrictEqual(
@@ -165,7 +165,7 @@ describe("CopilotProvider", () => {
         slug: "claude-sonnet-4.6",
         name: "Claude Sonnet 4.6",
         isCustom: false,
-        capabilities: reasoningCapabilities(false),
+        capabilities: { optionDescriptors: [] },
       },
     );
     assert.deepStrictEqual(models.at(-1), {

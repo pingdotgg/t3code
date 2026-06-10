@@ -235,6 +235,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    showNotification: async () => false,
+    onNotificationClick: () => () => undefined,
     ...overrides,
   };
 }
@@ -583,6 +585,7 @@ describe("wsApi", () => {
       autoOpenPlanSidebar: false,
       chatFontSize: 14,
       codeFontSize: 12,
+      inputFontSize: 14,
       sidebarFontSize: 12,
       toolFontSize: 12,
       confirmThreadArchive: true,
@@ -597,6 +600,7 @@ describe("wsApi", () => {
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      threadCompletionNotifications: "background-only" as const,
       timestampFormat: "24-hour" as const,
       uiDensity: "default" as const,
       uiFont: "geist" as const,
@@ -650,6 +654,7 @@ describe("wsApi", () => {
       autoOpenPlanSidebar: false,
       chatFontSize: 14,
       codeFontSize: 12,
+      inputFontSize: 14,
       sidebarFontSize: 12,
       toolFontSize: 12,
       confirmThreadArchive: true,
@@ -664,6 +669,7 @@ describe("wsApi", () => {
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      threadCompletionNotifications: "background-only" as const,
       timestampFormat: "24-hour" as const,
       uiDensity: "default" as const,
       uiFont: "geist" as const,

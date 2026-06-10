@@ -42,6 +42,19 @@ export const COPILOT_CLIENT_CAPABILITIES = {
   terminal: false,
 } satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
 
+const COPILOT_MCP_TOOLSETS = [
+  "terminal",
+  "read_file",
+  "write_file",
+  "search_files",
+  "skill_view",
+  "skills_list",
+  "skill_manage",
+  "web_search",
+  "web_extract",
+  "memory",
+] as const;
+
 type CopilotAcpRuntimeCopilotSettings = {
   readonly binaryPath: CopilotSettings["binaryPath"];
 };
@@ -69,6 +82,30 @@ export function buildCopilotAcpSpawnInput(
     args: ["--acp", ...buildCopilotRuntimeModeArgs(runtimeMode)],
     cwd,
   };
+}
+
+export function buildCopilotMcpServers(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): ReadonlyArray<EffectAcpSchema.McpServer> {
+  if (env.T3_COPILOT_ACP_ENABLE_MCP !== "1" && env.HERMES_COPILOT_ACP_ENABLE_MCP !== "1") {
+    return [];
+  }
+
+  const command =
+    env.T3_COPILOT_ACP_MCP_COMMAND?.trim() || env.HERMES_COPILOT_ACP_MCP_COMMAND?.trim() || "t3";
+  const toolsets =
+    env.T3_COPILOT_ACP_MCP_TOOLSETS?.trim() ||
+    env.HERMES_COPILOT_ACP_MCP_TOOLSETS?.trim() ||
+    COPILOT_MCP_TOOLSETS.join(",");
+  return [
+    {
+      name: "t3-tools",
+      command,
+      args: ["mcp", "serve", "--cwd", cwd, "--toolsets", toolsets],
+      env: [],
+    },
+  ];
 }
 
 export function resolveCopilotAcpModeId(
@@ -118,6 +155,7 @@ export const makeCopilotAcpRuntime = (
         clientInfo: COPILOT_CLIENT_INFO,
         clientCapabilities: COPILOT_CLIENT_CAPABILITIES,
         modeSwitchMethod: "set_mode",
+        mcpServers: buildCopilotMcpServers(input.cwd),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

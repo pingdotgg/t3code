@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Random, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import * as Crypto from "node:crypto";
 import { homedir } from "node:os";
 import { ServerConfig } from "../config.ts";
@@ -61,7 +61,7 @@ const upsertAnonymousId = Effect.gen(function* () {
   const anonymousId = yield* fileSystem.readFileString(anonymousIdPath).pipe(
     Effect.catch(() =>
       Effect.gen(function* () {
-        const randomId = yield* Random.nextUUIDv4;
+        const randomId = crypto.randomUUID();
         yield* fileSystem.writeFileString(anonymousIdPath, randomId);
         return randomId;
       }),

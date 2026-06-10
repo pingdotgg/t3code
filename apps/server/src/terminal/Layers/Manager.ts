@@ -2,11 +2,17 @@ import path from "node:path";
 
 import {
   DEFAULT_TERMINAL_ID,
+  type TerminalAttachInput,
+  type TerminalAttachStreamEvent,
   type TerminalEvent,
+  type TerminalMetadataStreamEvent,
+  type TerminalOpenInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
+  type TerminalSummary,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Effect,
   Encoding,
@@ -163,7 +169,90 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     history: session.history,
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
+    label: getTerminalLabel(session.terminalId),
     updatedAt: session.updatedAt,
+  };
+}
+
+function summary(session: TerminalSessionState): TerminalSummary {
+  return {
+    threadId: session.threadId,
+    terminalId: session.terminalId,
+    cwd: session.cwd,
+    worktreePath: session.worktreePath,
+    status: session.status,
+    pid: session.pid,
+    exitCode: session.exitCode,
+    exitSignal: session.exitSignal,
+    hasRunningSubprocess: session.hasRunningSubprocess,
+    label: getTerminalLabel(session.terminalId),
+    updatedAt: session.updatedAt,
+  };
+}
+
+function shouldPublishTerminalMetadataEvent(event: TerminalEvent): boolean {
+  switch (event.type) {
+    case "started":
+    case "restarted":
+    case "exited":
+    case "closed":
+    case "error":
+    case "activity":
+      return true;
+    case "output":
+    case "cleared":
+      return false;
+  }
+}
+
+function terminalEventToAttachEvent(event: TerminalEvent): TerminalAttachStreamEvent | null {
+  switch (event.type) {
+    case "started":
+      return {
+        type: "snapshot",
+        snapshot: event.snapshot,
+      };
+    case "output":
+    case "exited":
+    case "closed":
+    case "error":
+    case "cleared":
+    case "restarted":
+    case "activity":
+      return event;
+  }
+}
+
+/**
+ * A `started` event published while the attach stream was opening can duplicate
+ * the initial snapshot. Our terminal events carry no sequence number, so we dedup
+ * by comparing the started snapshot identity and `updatedAt` against the initial.
+ */
+function isDuplicateAttachSnapshotEvent(
+  event: TerminalEvent,
+  initialSnapshot: TerminalSessionSnapshot,
+): boolean {
+  return (
+    event.type === "started" &&
+    event.snapshot.threadId === initialSnapshot.threadId &&
+    event.snapshot.terminalId === initialSnapshot.terminalId &&
+    event.snapshot.updatedAt <= initialSnapshot.updatedAt
+  );
+}
+
+function buildOpenInput(
+  input: TerminalAttachInput,
+  terminalId: string,
+  cwd: string,
+): TerminalOpenInput {
+  return {
+    threadId: input.threadId,
+    terminalId,
+    cwd,
+    ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+    ...(input.cols !== undefined ? { cols: input.cols } : {}),
+    ...(input.rows !== undefined ? { rows: input.rows } : {}),
+    ...(input.env !== undefined ? { env: input.env } : {}),
   };
 }
 
@@ -1526,14 +1615,23 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
 
       yield* flushPersist(threadId, terminalId);
 
-      yield* modifyManagerState((state) => {
+      const wasPresent = yield* modifyManagerState((state) => {
         if (!state.sessions.has(key)) {
-          return [undefined, state] as const;
+          return [false, state] as const;
         }
         const sessions = new Map(state.sessions);
         sessions.delete(key);
-        return [undefined, { ...state, sessions }] as const;
+        return [true, { ...state, sessions }] as const;
       });
+
+      if (wasPresent) {
+        yield* publishEvent({
+          type: "closed",
+          threadId,
+          terminalId,
+          createdAt: new Date().toISOString(),
+        });
+      }
 
       if (deleteHistoryOnClose) {
         yield* deleteHistory(threadId, terminalId);
@@ -1942,20 +2040,224 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         }),
       );
 
+    const subscribe: TerminalManagerShape["subscribe"] = (listener) =>
+      Effect.sync(() => {
+        terminalEventListeners.add(listener);
+        return () => {
+          terminalEventListeners.delete(listener);
+        };
+      });
+
+    const openOrAttachForStream = (input: TerminalAttachInput) =>
+      Effect.gen(function* () {
+        const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+        const existing = yield* getSession(input.threadId, terminalId);
+
+        if (Option.isNone(existing)) {
+          if (!input.cwd) {
+            return yield* new TerminalSessionLookupError({
+              threadId: input.threadId,
+              terminalId,
+            });
+          }
+          return yield* open(buildOpenInput(input, terminalId, input.cwd));
+        }
+
+        const session = existing.value;
+
+        if (!session.process && input.cwd && input.restartIfNotRunning === true) {
+          return yield* open(buildOpenInput(input, terminalId, input.cwd));
+        }
+
+        const targetCols = input.cols ?? session.cols;
+        const targetRows = input.rows ?? session.rows;
+        if (
+          session.process &&
+          session.status === "running" &&
+          (session.cols !== targetCols || session.rows !== targetRows)
+        ) {
+          yield* withThreadLock(
+            input.threadId,
+            Effect.sync(() => {
+              session.cols = targetCols;
+              session.rows = targetRows;
+              session.updatedAt = new Date().toISOString();
+              session.process?.resize(targetCols, targetRows);
+            }),
+          );
+        }
+
+        return snapshot(session);
+      });
+
+    const attachStream: TerminalManagerShape["attachStream"] = (input, listener) => {
+      let unsubscribe: (() => void) | null = null;
+
+      // Normalize terminalId once so the live-event filter and the
+      // open/snapshot path agree on the same key (the encoded input allows an
+      // omitted terminalId, which would otherwise never match live events).
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      const attachInput = { ...input, terminalId };
+
+      return Effect.gen(function* () {
+        const bufferedEvents: TerminalEvent[] = [];
+        let deliverLive = false;
+
+        unsubscribe = yield* subscribe((event) => {
+          if (event.threadId !== attachInput.threadId || event.terminalId !== terminalId) {
+            return Effect.void;
+          }
+
+          if (!deliverLive) {
+            bufferedEvents.push(event);
+            return Effect.void;
+          }
+
+          const attachEvent = terminalEventToAttachEvent(event);
+          return attachEvent ? listener(attachEvent) : Effect.void;
+        });
+
+        const initialSnapshot = yield* openOrAttachForStream(attachInput);
+
+        yield* listener({
+          type: "snapshot",
+          snapshot: initialSnapshot,
+        });
+
+        for (const event of bufferedEvents) {
+          if (isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
+            continue;
+          }
+
+          const attachEvent = terminalEventToAttachEvent(event);
+          if (attachEvent) {
+            yield* listener(attachEvent);
+          }
+        }
+
+        deliverLive = true;
+        return () => {
+          unsubscribe?.();
+          unsubscribe = null;
+        };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.flatMap(
+            Effect.sync(() => {
+              unsubscribe?.();
+              unsubscribe = null;
+            }),
+            () => Effect.failCause(cause),
+          ),
+        ),
+      );
+    };
+
+    const readTerminalMetadata = (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+    }) =>
+      getSession(input.threadId, input.terminalId).pipe(
+        Effect.map((session) => (Option.isSome(session) ? summary(session.value) : null)),
+      );
+
+    const readAllTerminalMetadata = () =>
+      readManagerState.pipe(
+        Effect.map((state) => [...state.sessions.values()].map((session) => summary(session))),
+      );
+
+    const metadataEventFromTerminalEvent = (
+      event: TerminalEvent,
+    ): Effect.Effect<TerminalMetadataStreamEvent | null> => {
+      if (!shouldPublishTerminalMetadataEvent(event)) {
+        return Effect.succeed(null);
+      }
+
+      if (event.type === "closed") {
+        return Effect.succeed({
+          type: "remove" as const,
+          threadId: event.threadId,
+          terminalId: event.terminalId,
+        });
+      }
+
+      return readTerminalMetadata({
+        threadId: event.threadId,
+        terminalId: event.terminalId,
+      }).pipe(
+        Effect.map((terminal) =>
+          terminal
+            ? {
+                type: "upsert" as const,
+                terminal,
+              }
+            : null,
+        ),
+      );
+    };
+
+    const offerMetadataEvent = (
+      listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
+      event: TerminalEvent,
+    ) =>
+      metadataEventFromTerminalEvent(event).pipe(
+        Effect.flatMap((metadataEvent) => (metadataEvent ? listener(metadataEvent) : Effect.void)),
+      );
+
+    const subscribeMetadata: TerminalManagerShape["subscribeMetadata"] = (listener) => {
+      let unsubscribe: (() => void) | null = null;
+
+      return Effect.gen(function* () {
+        const bufferedEvents: TerminalEvent[] = [];
+        let deliverLive = false;
+
+        unsubscribe = yield* subscribe((event) => {
+          if (!deliverLive) {
+            bufferedEvents.push(event);
+            return Effect.void;
+          }
+
+          return offerMetadataEvent(listener, event);
+        });
+
+        const terminals = yield* readAllTerminalMetadata();
+        yield* listener({
+          type: "snapshot",
+          terminals,
+        });
+
+        for (const event of bufferedEvents) {
+          yield* offerMetadataEvent(listener, event);
+        }
+
+        deliverLive = true;
+        return () => {
+          unsubscribe?.();
+          unsubscribe = null;
+        };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.flatMap(
+            Effect.sync(() => {
+              unsubscribe?.();
+              unsubscribe = null;
+            }),
+            () => Effect.failCause(cause),
+          ),
+        ),
+      );
+    };
+
     return {
       open,
+      attachStream,
       write,
       resize,
       clear,
       restart,
       close,
-      subscribe: (listener) =>
-        Effect.sync(() => {
-          terminalEventListeners.add(listener);
-          return () => {
-            terminalEventListeners.delete(listener);
-          };
-        }),
+      subscribe,
+      subscribeMetadata,
     } satisfies TerminalManagerShape;
   },
 );

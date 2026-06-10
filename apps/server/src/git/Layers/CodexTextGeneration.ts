@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Random, Schema, Scope, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
@@ -71,7 +71,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     content: string,
   ): Effect.Effect<string, TextGenerationError, Scope.Scope> => {
     return Effect.gen(function* () {
-      const tempFileId = yield* Random.nextUUIDv4;
+      const tempFileId = crypto.randomUUID();
       return yield* fileSystem
         .makeTempFileScoped({
           prefix: `t3code-${prefix}-${process.pid}-${tempFileId}.tmp`,

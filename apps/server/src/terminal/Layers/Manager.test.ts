@@ -4,7 +4,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  type TerminalAttachStreamEvent,
   type TerminalEvent,
+  type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
 } from "@t3tools/contracts";
@@ -277,6 +279,184 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attachStream emits a snapshot first and attaches without restarting", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+
+      yield* manager.open(openInput());
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, cols: 100, rows: 40 },
+        (event) => Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const events = yield* Ref.get(attachEvents);
+      expect(events[0]?.type).toBe("snapshot");
+      const first = events[0];
+      if (first?.type === "snapshot") {
+        assert.equal(first.snapshot.threadId, "thread-1");
+        assert.equal(first.snapshot.terminalId, DEFAULT_TERMINAL_ID);
+      }
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attachStream observes exited sessions without restarting them", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitExit({ exitCode: 0, signal: 0 });
+      yield* waitFor(
+        Effect.map(getEvents, (events) => events.some((event) => event.type === "exited")),
+        "1200 millis",
+      );
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const snapshot = (yield* Ref.get(attachEvents)).find((event) => event.type === "snapshot");
+      expect(snapshot).toBeDefined();
+      if (snapshot?.type === "snapshot") {
+        assert.equal(snapshot.snapshot.status, "exited");
+      }
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attachStream restarts inactive sessions only when requested", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitExit({ exitCode: 0, signal: 0 });
+      yield* waitFor(
+        Effect.map(getEvents, (events) => events.some((event) => event.type === "exited")),
+        "1200 millis",
+      );
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(
+        { ...openInput(), restartIfNotRunning: true },
+        (event) => Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const snapshot = (yield* Ref.get(attachEvents)).find((event) => event.type === "snapshot");
+      expect(snapshot).toBeDefined();
+      if (snapshot?.type === "snapshot") {
+        assert.equal(snapshot.snapshot.status, "running");
+      }
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("attachStream streams a single snapshot followed by live output", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        ptyAdapter: new FakePtyAdapter("async"),
+      });
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("hello from attach\n");
+      yield* waitFor(
+        Effect.map(Ref.get(attachEvents), (events) =>
+          events.some((event) => event.type === "output" && event.data === "hello from attach\n"),
+        ),
+        "1200 millis",
+      );
+
+      const events = yield* Ref.get(attachEvents);
+      expect(events.filter((event) => event.type === "snapshot")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attachStream unsubscribe stops further delivery", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      unsubscribe();
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      process.emitData("after unsubscribe\n");
+
+      const events = yield* Ref.get(attachEvents);
+      expect(events.some((event) => event.type === "output")).toBe(false);
+    }),
+  );
+
+  it.effect("subscribeMetadata emits a snapshot then upsert and remove deltas", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      yield* manager.open(openInput({ threadId: "existing-thread" }));
+
+      const metadataEvents = yield* Ref.make<ReadonlyArray<TerminalMetadataStreamEvent>>([]);
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Ref.update(metadataEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const initialEvents = yield* Ref.get(metadataEvents);
+      expect(initialEvents[0]).toMatchObject({
+        type: "snapshot",
+        terminals: [{ threadId: "existing-thread", terminalId: DEFAULT_TERMINAL_ID }],
+      });
+
+      yield* manager.open(openInput({ threadId: "new-thread" }));
+      yield* waitFor(
+        Effect.map(Ref.get(metadataEvents), (events) =>
+          events.some(
+            (event) =>
+              event.type === "upsert" &&
+              event.terminal.threadId === "new-thread" &&
+              event.terminal.terminalId === DEFAULT_TERMINAL_ID,
+          ),
+        ),
+        "1200 millis",
+      );
+
+      yield* manager.close({ threadId: "new-thread", terminalId: DEFAULT_TERMINAL_ID });
+      yield* waitFor(
+        Effect.map(Ref.get(metadataEvents), (events) =>
+          events.some(
+            (event) =>
+              event.type === "remove" &&
+              event.threadId === "new-thread" &&
+              event.terminalId === DEFAULT_TERMINAL_ID,
+          ),
+        ),
+        "1200 millis",
+      );
     }),
   );
 

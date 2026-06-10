@@ -1624,7 +1624,7 @@ function ComposerPromptEditorInner({
                 "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
-              style={{ fontSize: "var(--app-chat-font-size)" }}
+              style={{ fontSize: "var(--app-input-font-size)" }}
               data-testid="composer-editor"
               aria-placeholder={placeholder}
               placeholder={<span />}
@@ -1635,7 +1635,7 @@ function ComposerPromptEditorInner({
             terminalContexts.length > 0 ? null : (
               <div
                 className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground/35"
-                style={{ fontSize: "var(--app-chat-font-size)" }}
+                style={{ fontSize: "var(--app-input-font-size)" }}
               >
                 {placeholder}
               </div>

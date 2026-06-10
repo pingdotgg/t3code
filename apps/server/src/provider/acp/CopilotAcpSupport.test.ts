@@ -8,6 +8,7 @@ import {
   COPILOT_PLAN_MODE_ID,
   buildCopilotRuntimeModeArgs,
   buildCopilotAcpSpawnInput,
+  buildCopilotMcpServers,
   isCopilotPlanModeId,
   normalizeCopilotAcpModeId,
   resolveCopilotAcpModeId,
@@ -29,6 +30,29 @@ describe("buildCopilotAcpSpawnInput", () => {
       command: "/opt/bin/copilot",
       args: ["--acp", "--allow-all"],
       cwd: "/tmp/project",
+    });
+  });
+
+  describe("buildCopilotMcpServers", () => {
+    it("keeps MCP disabled by default", () => {
+      expect(buildCopilotMcpServers("/tmp/project", {})).toEqual([]);
+    });
+
+    it("builds an env-gated T3 MCP stdio server descriptor", () => {
+      expect(
+        buildCopilotMcpServers("/tmp/project", {
+          T3_COPILOT_ACP_ENABLE_MCP: "1",
+          T3_COPILOT_ACP_MCP_COMMAND: "t3-dev",
+          T3_COPILOT_ACP_MCP_TOOLSETS: "read_file,search_files",
+        }),
+      ).toEqual([
+        {
+          name: "t3-tools",
+          command: "t3-dev",
+          args: ["mcp", "serve", "--cwd", "/tmp/project", "--toolsets", "read_file,search_files"],
+          env: [],
+        },
+      ]);
     });
   });
 });

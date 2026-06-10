@@ -92,6 +92,7 @@ describe("orchestration projector", () => {
         archivedAt: null,
         deletedAt: null,
         messages: [],
+        queuedTurns: [],
         proposedPlans: [],
         activities: [],
         checkpoints: [],
@@ -204,6 +205,143 @@ describe("orchestration projector", () => {
       ),
     );
     expect(unarchived.threads[0]?.archivedAt).toBeNull();
+  });
+
+  it("applies queued turn lifecycle events", async () => {
+    const createdAt = "2026-03-01T00:00:00.000Z";
+    const updatedAt = "2026-03-01T00:00:01.000Z";
+    const failedAt = "2026-03-01T00:00:02.000Z";
+    const dispatchedAt = "2026-03-01T00:00:03.000Z";
+
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-queue",
+          occurredAt: createdAt,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-queue",
+            projectId: "project-1",
+            title: "queued",
+            modelSelection: {
+              instanceId: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            pendingRuntimeMode: null,
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const queued = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.queued-turn-created",
+          aggregateKind: "thread",
+          aggregateId: "thread-queue",
+          occurredAt: createdAt,
+          commandId: "cmd-queue-create",
+          payload: {
+            threadId: "thread-queue",
+            queuedTurn: {
+              id: "queued-turn-1",
+              threadId: "thread-queue",
+              message: {
+                messageId: "message-queued-1",
+                role: "user",
+                text: "first queued prompt",
+                attachments: [],
+              },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              createdAt,
+              updatedAt: createdAt,
+              failedAt: null,
+              failureMessage: null,
+            },
+          },
+        }),
+      ),
+    );
+    expect(queued.threads[0]?.queuedTurns).toHaveLength(1);
+    expect(queued.threads[0]?.queuedTurns?.[0]?.message.text).toBe("first queued prompt");
+
+    const failed = await Effect.runPromise(
+      projectEvent(
+        queued,
+        makeEvent({
+          sequence: 3,
+          type: "thread.queued-turn-failed",
+          aggregateKind: "thread",
+          aggregateId: "thread-queue",
+          occurredAt: failedAt,
+          commandId: "cmd-queue-fail",
+          payload: {
+            threadId: "thread-queue",
+            queuedTurnId: "queued-turn-1",
+            failureMessage: "provider refused turn",
+            failedAt,
+          },
+        }),
+      ),
+    );
+    expect(failed.threads[0]?.queuedTurns?.[0]?.failedAt).toBe(failedAt);
+
+    const edited = await Effect.runPromise(
+      projectEvent(
+        failed,
+        makeEvent({
+          sequence: 4,
+          type: "thread.queued-turn-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-queue",
+          occurredAt: updatedAt,
+          commandId: "cmd-queue-update",
+          payload: {
+            threadId: "thread-queue",
+            queuedTurnId: "queued-turn-1",
+            text: "edited queued prompt",
+            updatedAt,
+          },
+        }),
+      ),
+    );
+    expect(edited.threads[0]?.queuedTurns?.[0]?.message.text).toBe("edited queued prompt");
+    expect(edited.threads[0]?.queuedTurns?.[0]?.failedAt).toBeNull();
+    expect(edited.threads[0]?.queuedTurns?.[0]?.failureMessage).toBeNull();
+
+    const dispatched = await Effect.runPromise(
+      projectEvent(
+        edited,
+        makeEvent({
+          sequence: 5,
+          type: "thread.queued-turn-dispatched",
+          aggregateKind: "thread",
+          aggregateId: "thread-queue",
+          occurredAt: dispatchedAt,
+          commandId: "cmd-queue-dispatch",
+          payload: {
+            threadId: "thread-queue",
+            queuedTurnId: "queued-turn-1",
+            messageId: "message-queued-1",
+            dispatchedAt,
+          },
+        }),
+      ),
+    );
+    expect(dispatched.threads[0]?.queuedTurns).toEqual([]);
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {

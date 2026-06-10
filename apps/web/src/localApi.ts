@@ -65,6 +65,20 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
         return showContextMenuFallback(items, position);
       },
     },
+    notifications: {
+      show: async (request) => {
+        if (!window.desktopBridge) {
+          return false;
+        }
+        return window.desktopBridge.showNotification(request);
+      },
+      onClick: (listener) => {
+        if (!window.desktopBridge) {
+          return () => undefined;
+        }
+        return window.desktopBridge.onNotificationClick(listener);
+      },
+    },
     persistence: {
       getClientSettings: async () => {
         if (window.desktopBridge) {
@@ -123,6 +137,7 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
+      exportThreadMarkdown: rpcClient.server.exportThreadMarkdown,
     },
   };
 }

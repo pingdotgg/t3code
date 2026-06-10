@@ -401,27 +401,7 @@ function areWorkLogEntriesUnchanged(a: WorkLogEntry, b: WorkLogEntry): boolean {
     a.itemType === b.itemType &&
     a.requestKind === b.requestKind &&
     a.isComplete === b.isComplete &&
-    areSubagentDetailsUnchanged(a.subagent, b.subagent) &&
     areStringArraysUnchanged(a.changedFiles, b.changedFiles)
-  );
-}
-
-function areSubagentDetailsUnchanged(
-  a: WorkLogEntry["subagent"],
-  b: WorkLogEntry["subagent"],
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    a.id === b.id &&
-    a.name === b.name &&
-    a.description === b.description &&
-    a.agentType === b.agentType &&
-    a.prompt === b.prompt &&
-    a.promptPreview === b.promptPreview &&
-    a.result === b.result &&
-    a.resultPreview === b.resultPreview &&
-    a.status === b.status
   );
 }
 

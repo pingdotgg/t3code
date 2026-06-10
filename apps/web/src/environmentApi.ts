@@ -38,6 +38,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     server: {
       listProviderCommands: rpcClient.server.listProviderCommands,
+      exportThreadMarkdown: rpcClient.server.exportThreadMarkdown,
     },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,

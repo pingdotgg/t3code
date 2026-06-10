@@ -381,6 +381,9 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         Object.fromEntries(thread.turnDiffSummaries.map((summary) => [summary.turnId, summary])),
       ]),
     ),
+    queuedTurnsByThreadId: Object.fromEntries(
+      threads.map((thread) => [thread.id, thread.queuedTurns ?? []]),
+    ),
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };

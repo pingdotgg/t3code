@@ -62,19 +62,6 @@ export interface WorkLogEntry {
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   isComplete?: boolean;
-  subagent?: SubagentActivityDetail;
-}
-
-export interface SubagentActivityDetail {
-  id: string;
-  name: string;
-  description?: string;
-  agentType?: string;
-  prompt?: string;
-  promptPreview?: string;
-  result?: string;
-  resultPreview?: string;
-  status: "pending" | "inProgress" | "completed" | "failed";
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -83,9 +70,6 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   toolCallId?: string;
   turnId?: string;
 }
-
-const SUBAGENT_TIMELINE_PREVIEW_LIMIT = 360;
-const SUBAGENT_DETAIL_TEXT_LIMIT = 30_000;
 
 export interface PendingApproval {
   requestId: ApprovalRequestId;
@@ -621,7 +605,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  const subagent = extractSubagentActivityDetail(payload, activity.kind);
   if (detail) {
     entry.detail = detail;
   }
@@ -642,9 +625,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (requestKind) {
     entry.requestKind = requestKind;
-  }
-  if (subagent) {
-    entry.subagent = subagent;
   }
   if (toolCallId) {
     entry.toolCallId = toolCallId;
@@ -702,14 +682,6 @@ function shouldCollapseToolLifecycleEntries(
   if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
     return false;
   }
-  if (
-    previous.toolCallId !== undefined &&
-    next.toolCallId !== undefined &&
-    previous.toolCallId === next.toolCallId &&
-    isSameTurnScope(previous, next)
-  ) {
-    return true;
-  }
   if (previous.activityKind === "tool.completed") {
     return false;
   }
@@ -745,7 +717,6 @@ function mergeDerivedWorkLogEntries(
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const subagent = mergeSubagentActivityDetails(previous.subagent, next.subagent);
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const stableId = next.stableId ?? previous.stableId;
@@ -760,7 +731,6 @@ function mergeDerivedWorkLogEntries(
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
-    ...(subagent ? { subagent } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(stableId ? { stableId } : {}),
@@ -1023,161 +993,6 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
   return asTrimmedString(data?.toolCallId);
-}
-
-function truncateBoundedText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-function extractTextFromToolContent(value: unknown): string | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const chunks = value.flatMap((entry) => {
-    const record = asRecord(entry);
-    const content = asRecord(record?.content);
-    const text = asTrimmedString(content?.text);
-    return text ? [text] : [];
-  });
-  return chunks.length > 0 ? chunks.join("\n") : null;
-}
-
-function extractSubagentResult(data: Record<string, unknown>): string | null {
-  const rawOutput = asRecord(data.rawOutput);
-  const content = asTrimmedString(rawOutput?.content);
-  if (content) {
-    return content;
-  }
-  const detailedContent = asTrimmedString(rawOutput?.detailedContent);
-  if (detailedContent) {
-    return detailedContent;
-  }
-  return extractTextFromToolContent(data.content);
-}
-
-function normalizeSubagentStatus(
-  payload: Record<string, unknown> | null,
-  activityKind: OrchestrationThreadActivity["kind"],
-): SubagentActivityDetail["status"] {
-  switch (payload?.status) {
-    case "pending":
-    case "inProgress":
-    case "completed":
-    case "failed":
-      return payload.status;
-    default:
-      return activityKind === "tool.completed" ? "completed" : "inProgress";
-  }
-}
-
-function extractSubagentActivityDetail(
-  payload: Record<string, unknown> | null,
-  activityKind: OrchestrationThreadActivity["kind"],
-): SubagentActivityDetail | null {
-  if (extractWorkLogItemType(payload) !== "collab_agent_tool_call") {
-    return null;
-  }
-  const data = asRecord(payload?.data);
-  if (!data) {
-    return null;
-  }
-  const id = asTrimmedString(data.toolCallId);
-  if (!id) {
-    return null;
-  }
-
-  const rawInput = asRecord(data.rawInput);
-  const prompt = asTrimmedString(rawInput?.prompt);
-  const result = extractSubagentResult(data);
-  const name =
-    asTrimmedString(rawInput?.name) ??
-    asTrimmedString(payload?.title) ??
-    asTrimmedString(payload?.summary) ??
-    id;
-  const description = asTrimmedString(rawInput?.description);
-  const agentType = asTrimmedString(rawInput?.agent_type);
-  const boundedPrompt = prompt
-    ? truncateBoundedText(prompt, SUBAGENT_DETAIL_TEXT_LIMIT)
-    : undefined;
-  const boundedResult = result
-    ? truncateBoundedText(result, SUBAGENT_DETAIL_TEXT_LIMIT)
-    : undefined;
-
-  return {
-    id,
-    name,
-    status: normalizeSubagentStatus(payload, activityKind),
-    ...(description ? { description } : {}),
-    ...(agentType ? { agentType } : {}),
-    ...(boundedPrompt ? { prompt: boundedPrompt } : {}),
-    ...(boundedPrompt
-      ? {
-          promptPreview: truncateBoundedText(
-            normalizeInlinePreview(boundedPrompt),
-            SUBAGENT_TIMELINE_PREVIEW_LIMIT,
-          ),
-        }
-      : {}),
-    ...(boundedResult ? { result: boundedResult } : {}),
-    ...(boundedResult
-      ? {
-          resultPreview: truncateBoundedText(
-            normalizeInlinePreview(boundedResult),
-            SUBAGENT_TIMELINE_PREVIEW_LIMIT,
-          ),
-        }
-      : {}),
-  };
-}
-
-function statusRank(status: SubagentActivityDetail["status"]): number {
-  switch (status) {
-    case "pending":
-      return 0;
-    case "inProgress":
-      return 1;
-    case "completed":
-      return 2;
-    case "failed":
-      return 3;
-  }
-}
-
-function latestTerminalAwareStatus(
-  previous: SubagentActivityDetail["status"],
-  next: SubagentActivityDetail["status"],
-): SubagentActivityDetail["status"] {
-  return statusRank(next) >= statusRank(previous) ? next : previous;
-}
-
-function mergeSubagentActivityDetails(
-  previous: SubagentActivityDetail | undefined,
-  next: SubagentActivityDetail | undefined,
-): SubagentActivityDetail | undefined {
-  if (!previous) return next;
-  if (!next) return previous;
-  return {
-    id: next.id || previous.id,
-    name: next.name || previous.name,
-    status: latestTerminalAwareStatus(previous.status, next.status),
-    ...((next.description ?? previous.description)
-      ? { description: next.description ?? previous.description }
-      : {}),
-    ...((next.agentType ?? previous.agentType)
-      ? { agentType: next.agentType ?? previous.agentType }
-      : {}),
-    ...((next.prompt ?? previous.prompt) ? { prompt: next.prompt ?? previous.prompt } : {}),
-    ...((next.promptPreview ?? previous.promptPreview)
-      ? { promptPreview: next.promptPreview ?? previous.promptPreview }
-      : {}),
-    ...((next.result ?? previous.result) ? { result: next.result ?? previous.result } : {}),
-    ...((next.resultPreview ?? previous.resultPreview)
-      ? { resultPreview: next.resultPreview ?? previous.resultPreview }
-      : {}),
-  };
 }
 
 function normalizeInlinePreview(value: string): string {

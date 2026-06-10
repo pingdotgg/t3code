@@ -1,5 +1,4 @@
 import { Effect, FileSystem, Path } from "effect";
-import * as Random from "effect/Random";
 
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
@@ -9,7 +8,7 @@ export const writeFileStringAtomically = (input: {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const tempFileId = yield* Random.nextUUIDv4;
+      const tempFileId = crypto.randomUUID();
       const targetDirectory = path.dirname(input.filePath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });

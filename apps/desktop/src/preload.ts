@@ -24,6 +24,8 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const SHOW_NOTIFICATION_CHANNEL = "desktop:show-notification";
+const NOTIFICATION_CLICKED_CHANNEL = "desktop:notification-clicked";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
@@ -74,6 +76,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   checkForUpdate: () => ipcRenderer.invoke(UPDATE_CHECK_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
+  showNotification: (request) => ipcRenderer.invoke(SHOW_NOTIFICATION_CHANNEL, request),
+  onNotificationClick: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, click: unknown) => {
+      if (typeof click !== "object" || click === null) return;
+      listener(click as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(NOTIFICATION_CLICKED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(NOTIFICATION_CLICKED_CHANNEL, wrappedListener);
+    };
+  },
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

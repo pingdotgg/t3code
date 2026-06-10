@@ -6,6 +6,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import { randomUUID } from "node:crypto";
+
 import {
   type CanUseTool,
   query,
@@ -61,7 +63,6 @@ import {
   Fiber,
   Path,
   Queue,
-  Random,
   Ref,
   Stream,
 } from "effect";
@@ -1006,7 +1007,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
+  const nextEventId = Effect.sync(() => EventId.make(randomUUID()));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
@@ -1114,7 +1115,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const block: AssistantTextBlockState = {
-      itemId: yield* Random.nextUUIDv4,
+      itemId: randomUUID(),
       blockIndex,
       emittedTextDelta: false,
       fallbackText: options?.fallbackText ?? "",
@@ -1947,7 +1948,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Auto-start a synthetic turn for assistant messages that arrive without
     // an active turn (e.g., background agent/subagent responses between user prompts).
     if (!context.turnState) {
-      const turnId = TurnId.make(yield* Random.nextUUIDv4);
+      const turnId = TurnId.make(randomUUID());
       const startedAt = yield* nowIso;
       context.turnState = {
         turnId,
@@ -2524,8 +2525,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
-      const newSessionId =
-        existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
+      const newSessionId = existingResumeSessionId === undefined ? randomUUID() : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
       const runtimeContext = yield* Effect.context<never>();
@@ -2560,7 +2560,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           readonly toolUseID?: string;
         },
       ) {
-        const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
+        const requestId = ApprovalRequestId.make(randomUUID());
 
         // Parse questions from the SDK's AskUserQuestion input.
         // `id` MUST equal the full question text — Claude SDK >= 2.1.121 looks
@@ -2730,7 +2730,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
-        const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
+        const requestId = ApprovalRequestId.make(randomUUID());
         const requestType = classifyRequestType(toolName);
         const detail = summarizeToolRequest(toolName, toolInput);
         const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
@@ -3092,7 +3092,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const turnId = TurnId.make(yield* Random.nextUUIDv4);
+    const turnId = TurnId.make(randomUUID());
     const turnState: ClaudeTurnState = {
       turnId,
       startedAt: yield* nowIso,

@@ -377,7 +377,7 @@ interface DevRunnerCliInput {
 
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
-    const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
+    const { portOffset, devInstance } = yield* OffsetConfig.pipe(
       Effect.mapError(
         (cause) =>
           new DevRunnerError({

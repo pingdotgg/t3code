@@ -14,6 +14,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   protocol,
   safeStorage,
   shell,
@@ -31,7 +32,9 @@ import type {
   DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
+import { DesktopNotificationRequest } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
+import * as Schema from "effect/Schema";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
@@ -102,6 +105,8 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const SHOW_NOTIFICATION_CHANNEL = "desktop:show-notification";
+const NOTIFICATION_CLICKED_CHANNEL = "desktop:notification-clicked";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -1115,6 +1120,36 @@ function emitUpdateState(): void {
   }
 }
 
+function emitNotificationClick(request: DesktopNotificationRequest): void {
+  const window = mainWindow ?? BrowserWindow.getAllWindows().find((entry) => !entry.isDestroyed());
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  revealWindow(window);
+  window.webContents.send(NOTIFICATION_CLICKED_CHANNEL, {
+    kind: request.kind,
+    environmentId: request.environmentId,
+    threadId: request.threadId,
+    turnId: request.turnId,
+  });
+}
+
+function showDesktopNotification(request: DesktopNotificationRequest): boolean {
+  if (!Notification.isSupported()) {
+    return false;
+  }
+
+  const notification = new Notification({
+    title: request.title,
+    body: request.body,
+    silent: false,
+  });
+  notification.on("click", () => emitNotificationClick(request));
+  notification.show();
+  return true;
+}
+
 function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   updateState = { ...updateState, ...patch };
   emitUpdateState();
@@ -1784,6 +1819,12 @@ function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.removeHandler(SHOW_NOTIFICATION_CHANNEL);
+  ipcMain.handle(SHOW_NOTIFICATION_CHANNEL, async (_event, rawRequest: unknown) => {
+    const request = Schema.decodeUnknownSync(DesktopNotificationRequest)(rawRequest);
+    return showDesktopNotification(request);
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);

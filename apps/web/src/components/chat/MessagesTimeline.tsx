@@ -17,11 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  deriveTimelineEntries,
-  formatElapsed,
-  type SubagentActivityDetail,
-} from "../../session-logic";
+import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
@@ -44,15 +40,6 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-  DialogTrigger,
-} from "../ui/dialog";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -1170,103 +1157,10 @@ function capitalizePhrase(value: string): string {
 }
 
 function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (workEntry.subagent) {
-    return workEntry.subagent.name;
-  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
-function subagentStatusLabel(status: SubagentActivityDetail["status"]): string {
-  switch (status) {
-    case "pending":
-      return "Queued";
-    case "inProgress":
-      return "Running";
-    case "completed":
-      return "Completed";
-    case "failed":
-      return "Failed";
-  }
-}
-
-function SubagentDetailBlock(props: { title: string; value: string | undefined }) {
-  const { title, value } = props;
-  return (
-    <section className="space-y-2">
-      <h4 className="font-medium text-foreground/85 text-xs uppercase tracking-wide">{title}</h4>
-      {value ? (
-        <pre className="max-h-[36vh] overflow-auto rounded-lg border bg-muted/45 p-3 text-[11px] leading-5 whitespace-pre-wrap wrap-break-word">
-          {value}
-        </pre>
-      ) : (
-        <p className="rounded-lg border border-dashed bg-muted/25 p-3 text-muted-foreground text-xs">
-          Not provided by the provider.
-        </p>
-      )}
-    </section>
-  );
-}
-
-function SubagentCard(props: { workEntry: TimelineWorkEntry; heading: string }) {
-  const { workEntry, heading } = props;
-  const subagent = workEntry.subagent;
-  if (!subagent) {
-    return null;
-  }
-  const description = subagent.description ?? subagent.agentType ?? "Provider subagent";
-  const preview = subagent.resultPreview ?? subagent.promptPreview ?? "Open details";
-
-  return (
-    <Dialog>
-      <DialogTrigger
-        className={cn(
-          "group flex w-full min-w-0 items-start gap-2 rounded-lg border border-border/60 bg-muted/25 px-3 py-2 text-left transition-colors",
-          "hover:border-border hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        )}
-      >
-        <span
-          className={cn(
-            "mt-0.5 flex size-5 shrink-0 items-center justify-center",
-            workToneClass(workEntry.tone),
-          )}
-        >
-          <GitForkIcon className="size-3.5" />
-        </span>
-        <span className="min-w-0 flex-1 space-y-1">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-medium text-foreground/85 text-xs">{heading}</span>
-            <span
-              className={cn(
-                "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px]",
-                subagent.status === "failed"
-                  ? "border-destructive/35 text-destructive"
-                  : "border-border/70 text-muted-foreground",
-              )}
-            >
-              {subagentStatusLabel(subagent.status)}
-            </span>
-          </span>
-          <span className="block truncate text-muted-foreground/75 text-[11px]">{description}</span>
-          <span className="block truncate text-muted-foreground/60 text-[11px]">{preview}</span>
-        </span>
-      </DialogTrigger>
-      <DialogPopup className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="pr-8">{heading}</DialogTitle>
-          <DialogDescription>
-            {description} · {subagentStatusLabel(subagent.status)}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel className="space-y-4">
-          <SubagentDetailBlock title="Prompt" value={subagent.prompt} />
-          <SubagentDetailBlock title="Response" value={subagent.result} />
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
-  );
 }
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1288,20 +1182,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
-
-  if (workEntry.subagent) {
-    return (
-      <div
-        className="rounded-lg px-1"
-        style={{
-          paddingTop: "var(--density-work-entry-py)",
-          paddingBottom: "var(--density-work-entry-py)",
-        }}
-      >
-        <SubagentCard heading={heading} workEntry={workEntry} />
-      </div>
-    );
-  }
 
   return (
     <div

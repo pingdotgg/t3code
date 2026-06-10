@@ -63,7 +63,17 @@ function supportsCopilotXHigh(slug: string): boolean {
   return /^gpt-5(?:[.-]|$)/u.test(slug);
 }
 
+function isCopilotClaudeModel(slug: string): boolean {
+  return /^claude(?:[-.]|$)/u.test(slug);
+}
+
 function getCopilotModelCapabilities(slug: string): ModelCapabilities {
+  // Copilot Claude models do not expose a selectable reasoning effort; the
+  // backend only accepts "medium", so offering low/high here would produce an
+  // "Invalid value ... for session config option reasoning_effort" turn failure.
+  if (isCopilotClaudeModel(slug)) {
+    return EMPTY_CAPABILITIES;
+  }
   return createModelCapabilities({
     optionDescriptors: [
       buildSelectOptionDescriptor({

@@ -30,7 +30,6 @@ import {
   Layer,
   Option,
   PubSub,
-  Random,
   Scope,
   Schema,
   Semaphore,
@@ -50,7 +49,8 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { collectSessionConfigOptionValues } from "../acp/AcpRuntimeModel.ts";
 import {
   type AcpSessionRuntimeShape,
   type AcpSessionRuntimeStartResult,
@@ -58,12 +58,17 @@ import {
 import {
   makeAcpAssistantItemEvent,
   makeAcpContentDeltaEvent,
+  makeAcpModeChangedEvent,
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
+import {
+  selectCopilotPermissionForDecision,
+  selectCopilotPermissionForRuntimeMode,
+} from "../acp/CopilotAcpPermissions.ts";
 import { makeCopilotAcpRuntime, resolveCopilotAcpModeId } from "../acp/CopilotAcpSupport.ts";
 import {
   copilotFatalToolCallErrorMessage,
@@ -107,11 +112,6 @@ interface CopilotRuntimeResources {
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntimeShape;
   readonly notificationFiber: Fiber.Fiber<void, never>;
-}
-
-interface UnsupportedTerminalState {
-  readonly output: string;
-  readonly exitCode: number;
 }
 
 interface CopilotRetainedTurnSnapshot {
@@ -307,111 +307,10 @@ function parseCopilotResume(raw: unknown): { sessionId: string } | undefined {
   return { sessionId: raw.sessionId.trim() };
 }
 
-function getPermissionText(params: EffectAcpSchema.RequestPermissionRequest): string {
-  const contentText = params.toolCall.content
-    ?.flatMap((entry) => {
-      if (entry.type !== "content") {
-        return [];
-      }
-      const content = entry.content;
-      return content.type === "text" ? [content.text] : [];
-    })
-    .join(" ");
-  return [
-    params.toolCall.kind,
-    params.toolCall.title,
-    contentText,
-    typeof params.toolCall.rawInput === "string"
-      ? params.toolCall.rawInput
-      : JSON.stringify(params.toolCall.rawInput ?? ""),
-  ]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .join(" ")
-    .toLowerCase();
-}
-
-function isQuestionLikePermissionRequest(
-  params: EffectAcpSchema.RequestPermissionRequest,
-): boolean {
-  const text = getPermissionText(params);
-  return (
-    text.includes("?") ||
-    text.includes("question") ||
-    text.includes("ask user") ||
-    text.includes("exit plan") ||
-    text.includes("exit planning")
-  );
-}
-
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-  preferAlways: boolean,
-): string | undefined {
-  if (isQuestionLikePermissionRequest(request)) {
-    return undefined;
-  }
-
-  const orderedKinds = preferAlways
-    ? (["allow_always", "allow_once"] as const)
-    : (["allow_once", "allow_always"] as const);
-  for (const kind of orderedKinds) {
-    const option = request.options.find((entry) => entry.kind === kind);
-    if (typeof option?.optionId === "string" && option.optionId.trim()) {
-      return option.optionId.trim();
-    }
-  }
-  return undefined;
-}
-
-function isAutoAcceptEditsPermission(
-  permissionRequest: ReturnType<typeof normalizeCopilotPermissionRequest>,
-): boolean {
-  return (
-    permissionRequest.kind === "edit" ||
-    permissionRequest.kind === "delete" ||
-    permissionRequest.kind === "move" ||
-    permissionRequest.toolCall?.itemType === "file_change"
-  );
-}
-
-function selectPermissionOptionForRuntimeMode(
-  runtimeMode: ProviderSession["runtimeMode"],
-  params: EffectAcpSchema.RequestPermissionRequest,
-  permissionRequest: ReturnType<typeof normalizeCopilotPermissionRequest>,
-): string | undefined {
-  switch (runtimeMode) {
-    case "full-access":
-      return selectAutoApprovedPermissionOption(params, true);
-    case "auto-accept-edits":
-      return isAutoAcceptEditsPermission(permissionRequest)
-        ? selectAutoApprovedPermissionOption(params, false)
-        : undefined;
-    default:
-      return undefined;
-  }
-}
-
 function leakedFullAccessWarningKey(
   permissionRequest: ReturnType<typeof normalizeCopilotPermissionRequest>,
 ): string {
   return `${permissionRequest.kind}:${permissionRequest.toolCall?.itemType ?? "unknown"}`;
-}
-
-function selectPermissionOptionForDecision(
-  request: EffectAcpSchema.RequestPermissionRequest,
-  decision: ProviderApprovalDecision,
-): string {
-  const preferredKind =
-    decision === "accept"
-      ? "allow_once"
-      : decision === "acceptForSession"
-        ? "allow_always"
-        : "reject_once";
-  const option = request.options.find((option) => option.kind === preferredKind);
-  if (typeof option?.optionId === "string" && option.optionId.trim()) {
-    return option.optionId.trim();
-  }
-  return acpPermissionOutcome(decision);
 }
 
 function textOrFallback(value: string | null | undefined, fallback: string): string {
@@ -574,8 +473,11 @@ function buildElicitationResponseAction(
   return { action: "accept", content };
 }
 
-function unsupportedClientToolOutput(toolName: string): string {
-  return `${toolName} is not supported by this client.`;
+function unsupportedClientToolError(toolName: string): EffectAcpErrors.AcpRequestError {
+  return EffectAcpErrors.AcpRequestError.internalError(
+    `${toolName} is not supported by this Copilot ACP client.`,
+    { method: toolName },
+  );
 }
 
 function resolveEffectiveCopilotModel(input: {
@@ -630,7 +532,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-    const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
+    const nextEventId = Effect.sync(() => EventId.make(crypto.randomUUID()));
     const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
@@ -799,11 +701,11 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             Effect.gen(function* () {
               yield* logNative(input.threadId, "session/request_permission", params);
               const permissionRequest = normalizeCopilotPermissionRequest(params);
-              const autoApprovedOptionId = selectPermissionOptionForRuntimeMode(
-                input.runtimeMode,
+              const autoApproval = selectCopilotPermissionForRuntimeMode({
+                runtimeMode: input.runtimeMode,
                 params,
                 permissionRequest,
-              );
+              });
 
               if (input.runtimeMode === "full-access") {
                 const warningKey = leakedFullAccessWarningKey(permissionRequest);
@@ -826,11 +728,11 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 }
               }
 
-              if (autoApprovedOptionId !== undefined) {
+              if (autoApproval._tag === "select") {
                 return {
                   outcome: {
                     outcome: "selected" as const,
-                    optionId: autoApprovedOptionId,
+                    optionId: autoApproval.optionId,
                   },
                 };
               }
@@ -869,14 +771,18 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                   decision: resolved,
                 }),
               );
+              const selection = selectCopilotPermissionForDecision({
+                params,
+                decision: resolved,
+              });
               return {
                 outcome:
-                  resolved === "cancel"
-                    ? ({ outcome: "cancelled" } as const)
-                    : {
+                  selection._tag === "select"
+                    ? {
                         outcome: "selected" as const,
-                        optionId: selectPermissionOptionForDecision(params, resolved),
-                      },
+                        optionId: selection.optionId,
+                      }
+                    : ({ outcome: "cancelled" } as const),
               };
             }),
           );
@@ -917,13 +823,10 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               };
             }),
           );
-          const unsupportedTerminals = new Map<string, UnsupportedTerminalState>();
           yield* acp.handleReadTextFile((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "fs/read_text_file", params);
-              return {
-                content: unsupportedClientToolOutput("fs/read_text_file"),
-              };
+              return yield* unsupportedClientToolError("fs/read_text_file");
             }),
           );
           yield* acp.handleWriteTextFile((params) =>
@@ -933,50 +836,37 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 contentLength: params.content.length,
                 content: undefined,
               });
-              return {};
+              return yield* unsupportedClientToolError("fs/write_text_file");
             }),
           );
           yield* acp.handleCreateTerminal((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "terminal/create", params);
-              const terminalId = `unsupported:${crypto.randomUUID()}`;
-              unsupportedTerminals.set(terminalId, {
-                output: unsupportedClientToolOutput("terminal/create"),
-                exitCode: 1,
-              });
-              return { terminalId };
+              return yield* unsupportedClientToolError("terminal/create");
             }),
           );
           yield* acp.handleTerminalOutput((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "terminal/output", params);
-              const terminal = unsupportedTerminals.get(params.terminalId);
-              return {
-                output: terminal?.output ?? unsupportedClientToolOutput("terminal/output"),
-                truncated: false,
-                exitStatus: { exitCode: terminal?.exitCode ?? 1 },
-              };
+              return yield* unsupportedClientToolError("terminal/output");
             }),
           );
           yield* acp.handleTerminalWaitForExit((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "terminal/wait_for_exit", params);
-              return {
-                exitCode: unsupportedTerminals.get(params.terminalId)?.exitCode ?? 1,
-              };
+              return yield* unsupportedClientToolError("terminal/wait_for_exit");
             }),
           );
           yield* acp.handleTerminalKill((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "terminal/kill", params);
-              return {};
+              return yield* unsupportedClientToolError("terminal/kill");
             }),
           );
           yield* acp.handleTerminalRelease((params) =>
             Effect.gen(function* () {
               yield* logNative(input.threadId, "terminal/release", params);
-              unsupportedTerminals.delete(params.terminalId);
-              return {};
+              return yield* unsupportedClientToolError("terminal/release");
             }),
           );
           return yield* acp.start();
@@ -1006,6 +896,17 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 const activeTurnId = input.getCurrentTurnId();
                 switch (event._tag) {
                   case "ModeChanged":
+                    yield* logNative(input.threadId, "session/update", event.rawPayload);
+                    yield* offerRuntimeEvent(
+                      makeAcpModeChangedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: activeTurnId,
+                        modeId: event.modeId,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
                     break;
                   case "AssistantItemStarted":
                     if (!activeTurnId) {
@@ -1111,6 +1012,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                         threadId: input.threadId,
                         turnId: eventTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
+                        streamKind: event.streamKind,
                         text: friendlyMessage ?? event.text,
                         rawPayload: event.rawPayload,
                       }),
@@ -1255,11 +1157,25 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               name.includes("effort"))
           );
         });
-        if (!reasoningConfig) {
+        if (!reasoningConfig || reasoningConfig.type !== "select") {
+          return;
+        }
+        const supportedValues = collectSessionConfigOptionValues(reasoningConfig);
+        const effectiveReasoning =
+          supportedValues.length === 0 || supportedValues.includes(reasoning)
+            ? reasoning
+            : supportedValues.includes(reasoningConfig.currentValue)
+              ? // The active model does not support the requested reasoning effort
+                // (e.g. Copilot Claude models only accept "medium"). Clamp to the
+                // current valid value instead of failing the turn, which also clears
+                // any stale value carried over from a previously selected model.
+                reasoningConfig.currentValue
+              : undefined;
+        if (effectiveReasoning === undefined) {
           return;
         }
         yield* ctx.acp
-          .setConfigOption(reasoningConfig.id, reasoning)
+          .setConfigOption(reasoningConfig.id, effectiveReasoning)
           .pipe(
             Effect.mapError((cause) =>
               mapAcpToAdapterError(PROVIDER, threadId, "session/set_config_option", cause),

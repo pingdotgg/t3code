@@ -12,7 +12,7 @@ import {
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
-import { Cause, Effect, Exit, Queue, Random, Ref, Scope, Stream } from "effect";
+import { Cause, Effect, Exit, Queue, Ref, Scope, Stream } from "effect";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -140,25 +140,23 @@ const buildEventBase = (input: {
     "eventId" | "provider" | "threadId" | "createdAt" | "turnId" | "itemId" | "requestId" | "raw"
   >
 > =>
-  Random.nextUUIDv4.pipe(
-    Effect.map((uuid) => ({
-      eventId: EventId.make(uuid),
-      provider: PROVIDER,
-      threadId: input.threadId,
-      createdAt: input.createdAt ?? nowIso(),
-      ...(input.turnId ? { turnId: input.turnId } : {}),
-      ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
-      ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
-      ...(input.raw !== undefined
-        ? {
-            raw: {
-              source: "opencode.sdk.event",
-              payload: input.raw,
-            },
-          }
-        : {}),
-    })),
-  );
+  Effect.sync(() => ({
+    eventId: EventId.make(crypto.randomUUID()),
+    provider: PROVIDER,
+    threadId: input.threadId,
+    createdAt: input.createdAt ?? nowIso(),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
+    ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
+    ...(input.raw !== undefined
+      ? {
+          raw: {
+            source: "opencode.sdk.event",
+            payload: input.raw,
+          },
+        }
+      : {}),
+  }));
 
 function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   const normalized = toolName.toLowerCase();
@@ -1129,7 +1127,7 @@ export function makeOpenCodeAdapter(
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = ensureSessionContext(sessions, input.threadId);
-      const turnId = TurnId.make(`opencode-turn-${yield* Random.nextUUIDv4}`);
+      const turnId = TurnId.make(`opencode-turn-${crypto.randomUUID()}`);
       const modelSelection =
         input.modelSelection ??
         (context.session.model

@@ -34,6 +34,8 @@ function makeTerminalEvent(
       return { ...base, type, ...overrides } as TerminalEvent;
     case "exited":
       return { ...base, type, exitCode: 0, exitSignal: null, ...overrides } as TerminalEvent;
+    case "closed":
+      return { ...base, type, ...overrides } as TerminalEvent;
     case "started":
     case "restarted":
       return {

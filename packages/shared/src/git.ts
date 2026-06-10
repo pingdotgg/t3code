@@ -5,9 +5,12 @@ import type {
   GitStatusRemoteResult,
   GitStatusResult,
   GitStatusStreamEvent,
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+  VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
@@ -85,8 +88,11 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
-export function buildTemporaryWorktreeBranchName(): string {
-  const token = Effect.runSync(Random.nextUUIDv4).replace(/-/g, "").slice(0, 8).toLowerCase();
+export function buildTemporaryWorktreeBranchName(
+  randomHex?: (byteLength: number) => string,
+): string {
+  const source = randomHex ? randomHex(4) : crypto.randomUUID();
+  const token = source.replace(/-/g, "").slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -318,5 +324,76 @@ export function applyGitStatusStreamEvent(
         );
       }
       return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+  }
+}
+
+const EMPTY_VCS_STATUS_REMOTE: VcsStatusRemoteResult = {
+  hasUpstream: false,
+  aheadCount: 0,
+  behindCount: 0,
+  aheadOfDefaultCount: 0,
+  pr: null,
+};
+
+export function mergeVcsStatusParts(
+  local: VcsStatusLocalResult,
+  remote: VcsStatusRemoteResult | null,
+): VcsStatusResult {
+  return {
+    ...local,
+    ...(remote ?? EMPTY_VCS_STATUS_REMOTE),
+  };
+}
+
+function toRemoteVcsStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
+  return {
+    hasUpstream: status.hasUpstream,
+    aheadCount: status.aheadCount,
+    behindCount: status.behindCount,
+    ...(status.aheadOfDefaultCount === undefined
+      ? {}
+      : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
+    pr: status.pr,
+  };
+}
+
+function toLocalVcsStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
+  return {
+    isRepo: status.isRepo,
+    ...(status.sourceControlProvider
+      ? { sourceControlProvider: status.sourceControlProvider }
+      : {}),
+    hasPrimaryRemote: status.hasPrimaryRemote,
+    isDefaultRef: status.isDefaultRef,
+    refName: status.refName,
+    hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+    workingTree: status.workingTree,
+  };
+}
+
+export function applyVcsStatusStreamEvent(
+  current: VcsStatusResult | null,
+  event: VcsStatusStreamEvent,
+): VcsStatusResult {
+  switch (event._tag) {
+    case "snapshot":
+      return mergeVcsStatusParts(event.local, event.remote);
+    case "localUpdated":
+      return mergeVcsStatusParts(event.local, current ? toRemoteVcsStatusPart(current) : null);
+    case "remoteUpdated":
+      if (current === null) {
+        return mergeVcsStatusParts(
+          {
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: false,
+            refName: null,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          },
+          event.remote,
+        );
+      }
+      return mergeVcsStatusParts(toLocalVcsStatusPart(current), event.remote);
   }
 }

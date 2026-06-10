@@ -284,7 +284,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 ) {
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
-  const env = yield* BuildEnvConfig.asEffect();
+  const env = yield* BuildEnvConfig;
 
   const platform = mergeOptions(
     input.platform,

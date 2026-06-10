@@ -36,7 +36,7 @@ const TelemetryEnvConfig = Config.all({
 });
 
 const makeAnalyticsService = Effect.gen(function* () {
-  const telemetryConfig = yield* TelemetryEnvConfig.asEffect();
+  const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig;
   const identifier = yield* getTelemetryIdentifier;

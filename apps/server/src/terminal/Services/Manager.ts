@@ -10,6 +10,9 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalAttachInput,
+  TerminalAttachStreamEvent,
+  TerminalMetadataStreamEvent,
   TerminalCwdError,
   TerminalError,
   TerminalHistoryError,
@@ -79,6 +82,19 @@ export interface TerminalManagerShape {
   ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
   /**
+   * Open (or attach to an existing) terminal session and stream its initial
+   * snapshot followed by live attach events to the listener.
+   *
+   * Registers the listener before opening so that output produced during the
+   * open is buffered and replayed (deduped against the initial snapshot) rather
+   * than lost. Returns an unsubscribe function.
+   */
+  readonly attachStream: (
+    input: TerminalAttachInput,
+    listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<() => void, TerminalError>;
+
+  /**
    * Write input bytes to a terminal session.
    */
   readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
@@ -116,6 +132,16 @@ export interface TerminalManagerShape {
    */
   readonly subscribe: (
     listener: (event: TerminalEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<() => void>;
+
+  /**
+   * Subscribe to lightweight terminal metadata with an initial full snapshot.
+   *
+   * Emits a `snapshot` of all current terminals, then `upsert`/`remove` events
+   * as sessions change. Returns an unsubscribe function.
+   */
+  readonly subscribeMetadata: (
+    listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
   ) => Effect.Effect<() => void>;
 }
 

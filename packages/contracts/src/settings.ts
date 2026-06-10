@@ -28,6 +28,7 @@ export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 12 as FontSize;
+export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
 
 export const UiDensity = Schema.Literals(["compact", "default", "spacious"]);
 export type UiDensity = typeof UiDensity.Type;
@@ -41,6 +42,11 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const ThreadCompletionNotificationMode = Schema.Literals(["off", "background-only", "all"]);
+export type ThreadCompletionNotificationMode = typeof ThreadCompletionNotificationMode.Type;
+export const DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE: ThreadCompletionNotificationMode =
+  "background-only";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -53,6 +59,7 @@ export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   chatFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_FONT_SIZE))),
   codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
+  inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   sidebarFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_FONT_SIZE)),
   ),
@@ -98,6 +105,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  threadCompletionNotifications: ThreadCompletionNotificationMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -174,12 +184,28 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const ChatExportDetailSettings = Schema.Struct({
+  includeMetadata: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeToolCalls: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeDiffs: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includePlans: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeQueuedTurns: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type ChatExportDetailSettings = typeof ChatExportDetailSettings.Type;
+export const DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS: ChatExportDetailSettings = Schema.decodeSync(
+  ChatExportDetailSettings,
+)({});
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  chatExportDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  chatExportDetail: ChatExportDetailSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS)),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -282,11 +308,21 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const ChatExportDetailSettingsPatch = Schema.Struct({
+  includeMetadata: Schema.optionalKey(Schema.Boolean),
+  includeToolCalls: Schema.optionalKey(Schema.Boolean),
+  includeDiffs: Schema.optionalKey(Schema.Boolean),
+  includePlans: Schema.optionalKey(Schema.Boolean),
+  includeQueuedTurns: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   addProjectBaseDirectory: Schema.optionalKey(Schema.String),
+  chatExportDirectory: Schema.optionalKey(Schema.String),
+  chatExportDetail: Schema.optionalKey(ChatExportDetailSettingsPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({
@@ -315,6 +351,7 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   chatFontSize: Schema.optionalKey(FontSize),
   codeFontSize: Schema.optionalKey(FontSize),
+  inputFontSize: Schema.optionalKey(FontSize),
   sidebarFontSize: Schema.optionalKey(FontSize),
   toolFontSize: Schema.optionalKey(FontSize),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),

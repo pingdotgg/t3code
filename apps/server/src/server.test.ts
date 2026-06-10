@@ -14,7 +14,9 @@ import {
   MOBILE_V1_SERVER_CAPABILITIES,
   MobileServerMessage,
   OpenError,
+  type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type OrchestrationThread,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -24,6 +26,7 @@ import {
   ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
+  TurnId,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -2906,6 +2909,90 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assertFailure(result, openError);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.exportThreadMarkdown", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const exportDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-chat-export-test-",
+      });
+      const readModel = makeDefaultOrchestrationReadModel();
+      const baseThread = readModel.threads[0];
+      const baseProject = readModel.projects[0];
+      if (!baseThread || !baseProject) {
+        throw new Error("Default read model is missing test fixtures.");
+      }
+      const project: OrchestrationProjectShell = {
+        id: baseProject.id,
+        title: baseProject.title,
+        workspaceRoot: baseProject.workspaceRoot,
+        defaultModelSelection: baseProject.defaultModelSelection,
+        scripts: baseProject.scripts,
+        createdAt: baseProject.createdAt,
+        updatedAt: baseProject.updatedAt,
+      };
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("message-user-export"),
+            role: "user" as const,
+            text: "Export this prompt.",
+            turnId: TurnId.make("turn-export"),
+            streaming: false,
+            createdAt: "2026-06-01T07:49:00.000Z",
+            updatedAt: "2026-06-01T07:49:00.000Z",
+          },
+          {
+            id: MessageId.make("message-assistant-export"),
+            role: "assistant" as const,
+            text: "Exported response.",
+            turnId: TurnId.make("turn-export"),
+            streaming: false,
+            createdAt: "2026-06-01T07:49:01.000Z",
+            updatedAt: "2026-06-01T07:49:02.000Z",
+          },
+        ],
+      };
+      let openedInput: { cwd: string; editor: EditorId } | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              chatExportDirectory: exportDirectory,
+            }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailById: () => Effect.succeed(Option.some(thread)),
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+          },
+          open: {
+            openInEditor: (input) =>
+              Effect.sync(() => {
+                openedInput = input;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverExportThreadMarkdown]({
+            threadId: thread.id,
+            editor: "cursor",
+          }),
+        ),
+      );
+
+      const contents = yield* fileSystem.readFileString(result.path);
+      assertInclude(result.filename, "default-thread-");
+      assertInclude(contents, "Export this prompt.");
+      assertInclude(contents, "Exported response.");
+      assert.deepEqual(openedInput, { cwd: result.path, editor: "cursor" });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

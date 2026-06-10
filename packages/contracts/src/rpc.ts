@@ -60,10 +60,13 @@ import {
   ProjectWriteFileResult,
 } from "./project.ts";
 import {
+  TerminalAttachInput,
+  TerminalAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
   TerminalEvent,
+  TerminalMetadataStreamEvent,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalRestartInput,
@@ -73,16 +76,62 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerExportThreadMarkdownError,
+  ServerExportThreadMarkdownInput,
+  ServerExportThreadMarkdownResult,
   ServerLifecycleStreamEvent,
+  ServerProcessDiagnosticsResult,
+  ServerProcessResourceHistoryInput,
+  ServerProcessResourceHistoryResult,
   ServerProviderListCommandsError,
   ServerProviderListCommandsInput,
   ServerProviderListCommandsResult,
+  ServerProviderUpdateError,
+  ServerProviderUpdateInput,
   ServerProviderUpdatedPayload,
   ServerListSkillsResult,
+  ServerRemoveKeybindingInput,
+  ServerRemoveKeybindingResult,
+  ServerSignalProcessInput,
+  ServerSignalProcessResult,
+  ServerTraceDiagnosticsResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  VcsCreateRefInput,
+  VcsCreateRefResult,
+  VcsCreateWorktreeInput,
+  VcsCreateWorktreeResult,
+  VcsInitInput,
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsPullInput,
+  VcsPullResult,
+  VcsRemoveWorktreeInput,
+  VcsStatusInput,
+  VcsStatusResult,
+  VcsStatusStreamEvent,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+} from "./vcsRpc.ts";
+import { VcsError } from "./vcs.ts";
+import {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
+  SourceControlPublishRepositoryInput,
+  SourceControlPublishRepositoryResult,
+  SourceControlRepositoryError,
+  SourceControlRepositoryInfo,
+  SourceControlRepositoryLookupInput,
+} from "./sourceControl.ts";
+import {
+  ReviewDiffPreviewError,
+  ReviewDiffPreviewInput,
+  ReviewDiffPreviewResult,
+} from "./review.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -111,8 +160,28 @@ export const WS_METHODS = {
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
+  // Vcs methods (upstream VCS driver foundation)
+  vcsPull: "vcs.pull",
+  vcsRefreshStatus: "vcs.refreshStatus",
+  vcsListRefs: "vcs.listRefs",
+  vcsCreateWorktree: "vcs.createWorktree",
+  vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsCreateRef: "vcs.createRef",
+  vcsSwitchRef: "vcs.switchRef",
+  vcsInit: "vcs.init",
+
+  // Source control methods
+  serverDiscoverSourceControl: "server.discoverSourceControl",
+  sourceControlLookupRepository: "sourceControl.lookupRepository",
+  sourceControlCloneRepository: "sourceControl.cloneRepository",
+  sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Review methods
+  reviewGetDiffPreview: "review.getDiffPreview",
+
   // Terminal methods
   terminalOpen: "terminal.open",
+  terminalAttach: "terminal.attach",
   terminalWrite: "terminal.write",
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
@@ -125,12 +194,21 @@ export const WS_METHODS = {
   serverListProviderCommands: "server.listProviderCommands",
   serverListSkills: "server.listSkills",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverRemoveKeybinding: "server.removeKeybinding",
+  serverUpdateProvider: "server.updateProvider",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverExportThreadMarkdown: "server.exportThreadMarkdown",
+  serverGetTraceDiagnostics: "server.getTraceDiagnostics",
+  serverGetProcessDiagnostics: "server.getProcessDiagnostics",
+  serverGetProcessResourceHistory: "server.getProcessResourceHistory",
+  serverSignalProcess: "server.signalProcess",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
+  subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
+  subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -182,6 +260,12 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsServerExportThreadMarkdownRpc = Rpc.make(WS_METHODS.serverExportThreadMarkdown, {
+  payload: ServerExportThreadMarkdownInput,
+  success: ServerExportThreadMarkdownResult,
+  error: ServerExportThreadMarkdownError,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -401,6 +485,151 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsVcsPullRpc = Rpc.make(WS_METHODS.vcsPull, {
+  payload: VcsPullInput,
+  success: VcsPullResult,
+  error: GitCommandError,
+});
+
+export const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
+  payload: VcsStatusInput,
+  success: VcsStatusResult,
+  error: GitManagerServiceError,
+});
+
+export const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
+  payload: VcsListRefsInput,
+  success: VcsListRefsResult,
+  error: GitCommandError,
+});
+
+export const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
+  payload: VcsCreateWorktreeInput,
+  success: VcsCreateWorktreeResult,
+  error: GitCommandError,
+});
+
+export const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
+  payload: VcsRemoveWorktreeInput,
+  error: GitCommandError,
+});
+
+export const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
+  payload: VcsCreateRefInput,
+  success: VcsCreateRefResult,
+  error: GitCommandError,
+});
+
+export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
+  payload: VcsSwitchRefInput,
+  success: VcsSwitchRefResult,
+  error: GitCommandError,
+});
+
+export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
+  payload: VcsInitInput,
+  error: VcsError,
+});
+
+export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
+  payload: VcsStatusInput,
+  success: VcsStatusStreamEvent,
+  error: GitManagerServiceError,
+  stream: true,
+});
+
+export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
+  payload: Schema.Struct({}),
+  success: SourceControlDiscoveryResult,
+});
+
+export const WsSourceControlLookupRepositoryRpc = Rpc.make(
+  WS_METHODS.sourceControlLookupRepository,
+  {
+    payload: SourceControlRepositoryLookupInput,
+    success: SourceControlRepositoryInfo,
+    error: SourceControlRepositoryError,
+  },
+);
+
+export const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
+  payload: SourceControlCloneRepositoryInput,
+  success: SourceControlCloneRepositoryResult,
+  error: SourceControlRepositoryError,
+});
+
+export const WsSourceControlPublishRepositoryRpc = Rpc.make(
+  WS_METHODS.sourceControlPublishRepository,
+  {
+    payload: SourceControlPublishRepositoryInput,
+    success: SourceControlPublishRepositoryResult,
+    error: SourceControlRepositoryError,
+  },
+);
+
+export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
+  payload: ReviewDiffPreviewInput,
+  success: ReviewDiffPreviewResult,
+  error: ReviewDiffPreviewError,
+});
+
+export const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
+  payload: TerminalAttachInput,
+  success: TerminalAttachStreamEvent,
+  error: TerminalError,
+  stream: true,
+});
+
+export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMetadata, {
+  payload: Schema.Struct({}),
+  success: TerminalMetadataStreamEvent,
+  stream: true,
+});
+
+export const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, {
+  payload: ServerRemoveKeybindingInput,
+  success: ServerRemoveKeybindingResult,
+  error: KeybindingsConfigError,
+});
+
+export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
+  payload: ServerProviderUpdateInput,
+  success: ServerProviderUpdatedPayload,
+  error: ServerProviderUpdateError,
+});
+
+export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
+  payload: Schema.Struct({}),
+  success: ServerTraceDiagnosticsResult,
+});
+
+export const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDiagnostics, {
+  payload: Schema.Struct({}),
+  success: ServerProcessDiagnosticsResult,
+});
+
+export const WsServerGetProcessResourceHistoryRpc = Rpc.make(
+  WS_METHODS.serverGetProcessResourceHistory,
+  {
+    payload: ServerProcessResourceHistoryInput,
+    success: ServerProcessResourceHistoryResult,
+  },
+);
+
+export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
+  payload: ServerSignalProcessInput,
+  success: ServerSignalProcessResult,
+});
+
+export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+  {
+    payload: OrchestrationRpcSchemas.getArchivedShellSnapshot.input,
+    success: OrchestrationRpcSchemas.getArchivedShellSnapshot.output,
+    error: OrchestrationGetSnapshotError,
+  },
+);
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -409,6 +638,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerExportThreadMarkdownRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
@@ -443,4 +673,27 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsVcsPullRpc,
+  WsVcsRefreshStatusRpc,
+  WsVcsListRefsRpc,
+  WsVcsCreateWorktreeRpc,
+  WsVcsRemoveWorktreeRpc,
+  WsVcsCreateRefRpc,
+  WsVcsSwitchRefRpc,
+  WsVcsInitRpc,
+  WsSubscribeVcsStatusRpc,
+  WsServerDiscoverSourceControlRpc,
+  WsSourceControlLookupRepositoryRpc,
+  WsSourceControlCloneRepositoryRpc,
+  WsSourceControlPublishRepositoryRpc,
+  WsReviewGetDiffPreviewRpc,
+  WsTerminalAttachRpc,
+  WsSubscribeTerminalMetadataRpc,
+  WsServerRemoveKeybindingRpc,
+  WsServerUpdateProviderRpc,
+  WsServerGetTraceDiagnosticsRpc,
+  WsServerGetProcessDiagnosticsRpc,
+  WsServerGetProcessResourceHistoryRpc,
+  WsServerSignalProcessRpc,
 );

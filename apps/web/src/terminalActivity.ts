@@ -7,6 +7,7 @@ export function terminalRunningSubprocessFromEvent(event: TerminalEvent): boolea
     case "started":
     case "restarted":
     case "exited":
+    case "closed":
       return false;
     default:
       return null;

@@ -3,6 +3,7 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
@@ -66,21 +67,23 @@ export function applyCodeFont(font: CodeFont): void {
   document.documentElement.setAttribute(CODE_FONT_ATTRIBUTE, font);
 }
 
-export function applyFontSizes(
-  codeFontSize: FontSize,
-  chatFontSize: FontSize,
-  sidebarFontSize: FontSize,
-  toolFontSize: FontSize,
-): void {
+export function applyFontSizes(sizes: {
+  codeFontSize: FontSize;
+  chatFontSize: FontSize;
+  sidebarFontSize: FontSize;
+  toolFontSize: FontSize;
+  inputFontSize: FontSize;
+}): void {
   if (typeof document === "undefined") {
     return;
   }
 
   const style = document.documentElement.style;
-  style.setProperty("--app-code-font-size", `${codeFontSize}px`);
-  style.setProperty("--app-chat-font-size", `${chatFontSize}px`);
-  style.setProperty("--app-sidebar-font-size", `${sidebarFontSize}px`);
-  style.setProperty("--app-tool-font-size", `${toolFontSize}px`);
+  style.setProperty("--app-code-font-size", `${sizes.codeFontSize}px`);
+  style.setProperty("--app-chat-font-size", `${sizes.chatFontSize}px`);
+  style.setProperty("--app-sidebar-font-size", `${sizes.sidebarFontSize}px`);
+  style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
+  style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
 }
 
 export function applyUiDensity(density: UiDensity): void {
@@ -102,12 +105,13 @@ if (typeof document !== "undefined") {
   applyAppFont(normalizeUiFont(storedSettings?.uiFont));
   applyCodeFont(normalizeCodeFont(storedSettings?.codeFont));
   applyUiDensity(normalizeUiDensity(storedSettings?.uiDensity));
-  applyFontSizes(
-    normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
-    normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
-    normalizeFontSize(storedSettings?.sidebarFontSize, DEFAULT_SIDEBAR_FONT_SIZE),
-    normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
-  );
+  applyFontSizes({
+    codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
+    chatFontSize: normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    sidebarFontSize: normalizeFontSize(storedSettings?.sidebarFontSize, DEFAULT_SIDEBAR_FONT_SIZE),
+    toolFontSize: normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
+    inputFontSize: normalizeFontSize(storedSettings?.inputFontSize, DEFAULT_INPUT_FONT_SIZE),
+  });
 }
 
 export function useAppFont() {
@@ -117,6 +121,7 @@ export function useAppFont() {
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
+  const inputFontSize = useSettings((settings) => settings.inputFontSize);
   const uiDensity = useSettings((settings) => settings.uiDensity);
 
   useEffect(() => {
@@ -128,12 +133,21 @@ export function useAppFont() {
   }, [codeFont]);
 
   useEffect(() => {
-    applyFontSizes(codeFontSize, chatFontSize, sidebarFontSize, toolFontSize);
-  }, [chatFontSize, codeFontSize, sidebarFontSize, toolFontSize]);
+    applyFontSizes({ codeFontSize, chatFontSize, sidebarFontSize, toolFontSize, inputFontSize });
+  }, [chatFontSize, codeFontSize, sidebarFontSize, toolFontSize, inputFontSize]);
 
   useEffect(() => {
     applyUiDensity(uiDensity);
   }, [uiDensity]);
 
-  return { uiFont, codeFont, codeFontSize, chatFontSize, sidebarFontSize, toolFontSize, uiDensity };
+  return {
+    uiFont,
+    codeFont,
+    codeFontSize,
+    chatFontSize,
+    sidebarFontSize,
+    toolFontSize,
+    inputFontSize,
+    uiDensity,
+  };
 }

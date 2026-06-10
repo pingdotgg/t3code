@@ -163,6 +163,33 @@ export function makeAcpPlanUpdatedEvent(input: {
   };
 }
 
+export function makeAcpModeChangedEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly modeId: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "session.configured",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      config: {
+        currentModeId: input.modeId,
+      },
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
 export function makeAcpToolCallEvent(input: {
   readonly stamp: AcpEventStamp;
   readonly provider: ProviderDriverKind;
@@ -225,6 +252,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
+  readonly streamKind?: "assistant_text" | "reasoning_text";
   readonly text: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
@@ -236,7 +264,7 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      streamKind: input.streamKind ?? "assistant_text",
       delta: input.text,
     },
     raw: {

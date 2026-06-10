@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
+  type QueuedTurnId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
   type ServerProvider,
@@ -43,6 +44,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import {
@@ -122,7 +124,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newCommandId, newDraftId, newMessageId, newQueuedTurnId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -660,6 +662,7 @@ function ChatViewBody(
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [isExportingThread, setIsExportingThread] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -2605,14 +2608,7 @@ function ChatViewBody(
       onAdvanceActivePendingUserInput();
       return;
     }
-    if (
-      !canStartThreadTurn({
-        phase,
-        isSendBusy,
-        isConnecting,
-        sendInFlight: sendInFlightRef.current,
-      })
-    ) {
+    if (activePendingApproval) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
@@ -2679,6 +2675,94 @@ function ChatViewBody(
       return;
     }
     if (!activeProject) return;
+    if (phase === "running") {
+      sendInFlightRef.current = true;
+      try {
+        const composerImagesSnapshot = [...composerImages];
+        const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+        const messageTextForQueue = appendTerminalContextsToPrompt(
+          promptForSend,
+          composerTerminalContextsSnapshot,
+        );
+        const firstComposerImageName = composerImagesSnapshot[0]?.name ?? null;
+        let titleSeed = trimmed;
+        if (!titleSeed) {
+          if (firstComposerImageName) {
+            titleSeed = `Image: ${firstComposerImageName}`;
+          } else if (composerTerminalContextsSnapshot.length > 0) {
+            titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+          } else {
+            titleSeed = "Queued message";
+          }
+        }
+        const queuedAttachments = await Promise.all(
+          composerImagesSnapshot.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+        await api.orchestration.dispatchCommand({
+          type: "thread.queued-turn.create",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          queuedTurnId: newQueuedTurnId(),
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: formatOutgoingPrompt({
+              provider: ctxSelectedProvider,
+              model: ctxSelectedModel,
+              models: ctxSelectedProviderModels,
+              effort: ctxSelectedPromptEffort,
+              text: messageTextForQueue || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+            }),
+            attachments: queuedAttachments,
+          },
+          modelSelection: ctxSelectedModelSelection,
+          titleSeed: truncate(titleSeed),
+          runtimeMode,
+          interactionMode,
+          createdAt: new Date().toISOString(),
+        });
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "omitted",
+          );
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: toastCopy.title,
+              description: toastCopy.description,
+            }),
+          );
+        }
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to queue message.",
+        );
+      } finally {
+        sendInFlightRef.current = false;
+      }
+      return;
+    }
+    if (
+      !canStartThreadTurn({
+        phase,
+        isSendBusy,
+        isConnecting,
+        sendInFlight: sendInFlightRef.current,
+      })
+    ) {
+      return;
+    }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -2909,6 +2993,51 @@ function ChatViewBody(
       createdAt: new Date().toISOString(),
     });
   };
+
+  const onUpdateQueuedTurn = useCallback(
+    (queuedTurnId: QueuedTurnId, text: string) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !activeThreadId) return;
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.queued-turn.update",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          queuedTurnId,
+          text,
+          updatedAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to update queued message.",
+          );
+        });
+    },
+    [activeThreadId, environmentId, setThreadError],
+  );
+
+  const onDeleteQueuedTurn = useCallback(
+    (queuedTurnId: QueuedTurnId) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !activeThreadId) return;
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.queued-turn.delete",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          queuedTurnId,
+          deletedAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to delete queued message.",
+          );
+        });
+    },
+    [activeThreadId, environmentId, setThreadError],
+  );
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -3461,6 +3590,84 @@ function ChatViewBody(
     },
     [isServerThread, onDiffPanelOpen, updateDiffSearch],
   );
+
+  const exportThreadDisabledReason = !isServerThread
+    ? "Draft chats can be exported after they start."
+    : null;
+
+  const onExportThread = useCallback(() => {
+    if (!activeThread || !isServerThread || isExportingThread) {
+      return;
+    }
+    if (settings.chatExportDirectory.trim().length === 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Set an export directory first",
+          description: "Choose a chat export directory in Settings > General.",
+        }),
+      );
+      return;
+    }
+    const editor = resolveAndPersistPreferredEditor(availableEditors);
+    if (!editor) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "No editor available",
+          description: "Install or configure an editor so T3 Code can open the exported file.",
+        }),
+      );
+      return;
+    }
+    const api = readEnvironmentApi(activeThread.environmentId);
+    if (!api) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Environment disconnected",
+          description: "Reconnect this environment before exporting the chat.",
+        }),
+      );
+      return;
+    }
+
+    setIsExportingThread(true);
+    void api.server
+      .exportThreadMarkdown({
+        threadId: activeThread.id,
+        editor,
+      })
+      .then((result) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: "Chat exported",
+            description: result.path,
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not export chat",
+            description:
+              error instanceof Error ? error.message : "An error occurred while exporting.",
+          }),
+        );
+      })
+      .finally(() => {
+        setIsExportingThread(false);
+      });
+  }, [
+    activeThread,
+    availableEditors,
+    isExportingThread,
+    isServerThread,
+    settings.chatExportDirectory,
+  ]);
+
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
@@ -3566,6 +3773,8 @@ function ChatViewBody(
           availableEditors={availableEditors}
           terminalAvailable={activeProject !== undefined}
           terminalOpen={terminalState.terminalOpen}
+          exportingThread={isExportingThread}
+          exportThreadDisabledReason={exportThreadDisabledReason}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
@@ -3574,6 +3783,7 @@ function ChatViewBody(
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onExportThread={onExportThread}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
           paneActions={paneActions}
@@ -3681,6 +3891,7 @@ function ChatViewBody(
               activePendingApproval={activePendingApproval}
               pendingApprovals={pendingApprovals}
               pendingUserInputs={pendingUserInputs}
+              queuedTurns={activeThread.queuedTurns ?? []}
               activePendingProgress={activePendingProgress}
               activePendingResolvedAnswers={activePendingResolvedAnswers}
               activePendingIsResponding={activePendingIsResponding}
@@ -3714,6 +3925,8 @@ function ChatViewBody(
               onInterrupt={onInterrupt}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
+              onUpdateQueuedTurn={onUpdateQueuedTurn}
+              onDeleteQueuedTurn={onDeleteQueuedTurn}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
               onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
               onPreviousActivePendingUserInputQuestion={onPreviousActivePendingUserInputQuestion}

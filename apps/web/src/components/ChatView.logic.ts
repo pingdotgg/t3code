@@ -181,6 +181,7 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
+    queuedTurns: [],
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,

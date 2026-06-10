@@ -1,4 +1,8 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import {
+  type DesktopNotificationRequest,
+  type DesktopThreadCompletionNotificationStatus,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import {
   Outlet,
@@ -102,6 +106,7 @@ function RootRouteView() {
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
+        <ThreadCompletionNotificationCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -114,6 +119,141 @@ function RootRouteView() {
         </WebSocketConnectionSurface>
       </AnchoredToastProvider>
     </ToastProvider>
+  );
+}
+
+function ThreadCompletionNotificationCoordinator() {
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const environmentStateById = useStore((store) => store.environmentStateById);
+  const notificationMode = useSettings((settings) => settings.threadCompletionNotifications);
+  const notifiedTurnKeysRef = useRef(new Set<string>());
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    const api = readLocalApi();
+    if (!api) {
+      return;
+    }
+
+    return api.notifications.onClick((click) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: click.environmentId,
+          threadId: click.threadId,
+        },
+      });
+    });
+  }, [navigate]);
+
+  useEffect(() => {
+    if (notificationMode === "off") {
+      return;
+    }
+
+    const api = readLocalApi();
+    if (!api || !window.desktopBridge) {
+      return;
+    }
+
+    const activeThreadKey = parseActiveThreadRouteKey(pathname);
+    for (const environmentState of Object.values(environmentStateById)) {
+      for (const summary of Object.values(environmentState.sidebarThreadSummaryById)) {
+        const latestTurn = summary.latestTurn;
+        if (!latestTurn || !latestTurn.completedAt) {
+          continue;
+        }
+
+        const status = notificationStatusFromTurnState(latestTurn.state);
+        if (!status) {
+          continue;
+        }
+
+        const turnKey = `${summary.environmentId}:${summary.id}:${latestTurn.turnId}`;
+        if (notifiedTurnKeysRef.current.has(turnKey)) {
+          continue;
+        }
+
+        notifiedTurnKeysRef.current.add(turnKey);
+        if (!initializedRef.current) {
+          continue;
+        }
+
+        if (
+          notificationMode === "background-only" &&
+          isThreadVisibleAndFocused(activeThreadKey, summary.environmentId, summary.id)
+        ) {
+          continue;
+        }
+
+        const request: DesktopNotificationRequest = {
+          kind: "thread-turn-completed",
+          environmentId: summary.environmentId,
+          threadId: summary.id,
+          turnId: latestTurn.turnId,
+          title: notificationTitleFromStatus(status),
+          body: summary.title,
+          status,
+          createdAt: latestTurn.completedAt,
+        };
+        void api.notifications.show(request).catch((error) => {
+          console.error("[THREAD_COMPLETION_NOTIFICATION] show failed", error);
+        });
+      }
+    }
+
+    initializedRef.current = true;
+  }, [environmentStateById, notificationMode, pathname]);
+
+  return null;
+}
+
+function notificationStatusFromTurnState(
+  state: string,
+): DesktopThreadCompletionNotificationStatus | null {
+  switch (state) {
+    case "completed":
+      return "completed";
+    case "error":
+      return "failed";
+    case "interrupted":
+      return "interrupted";
+    default:
+      return null;
+  }
+}
+
+function notificationTitleFromStatus(status: DesktopThreadCompletionNotificationStatus): string {
+  switch (status) {
+    case "completed":
+      return "Chat completed";
+    case "failed":
+      return "Chat failed";
+    case "interrupted":
+      return "Chat interrupted";
+    case "cancelled":
+      return "Chat cancelled";
+  }
+}
+
+function parseActiveThreadRouteKey(pathname: string): string | null {
+  const [, environmentId, threadId] = pathname.split("/");
+  if (!environmentId || !threadId) {
+    return null;
+  }
+  return `${decodeURIComponent(environmentId)}:${decodeURIComponent(threadId)}`;
+}
+
+function isThreadVisibleAndFocused(
+  activeThreadKey: string | null,
+  environmentId: string,
+  threadId: string,
+): boolean {
+  return (
+    document.visibilityState === "visible" &&
+    document.hasFocus() &&
+    activeThreadKey === `${environmentId}:${threadId}`
   );
 }
 

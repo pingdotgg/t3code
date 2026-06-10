@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
   DEFAULT_SIDEBAR_FONT_SIZE,
@@ -51,6 +52,22 @@ describe("ClientSettings.sidebarFontSize", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("defaults chat exports to no configured directory", () => {
+    expect(DEFAULT_SERVER_SETTINGS.chatExportDirectory).toBe("");
+    expect(decodeServerSettings({}).chatExportDirectory).toBe("");
+  });
+
+  it("defaults chat exports to full detail", () => {
+    expect(DEFAULT_SERVER_SETTINGS.chatExportDetail).toEqual(DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS);
+    expect(decodeServerSettings({}).chatExportDetail).toEqual({
+      includeMetadata: true,
+      includeToolCalls: true,
+      includeDiffs: true,
+      includePlans: true,
+      includeQueuedTurns: true,
+    });
+  });
+
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
   });
@@ -107,6 +124,21 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettingsPatch.providerInstances", () => {
+  it("accepts chat export directory updates", () => {
+    const patch = decodeServerSettingsPatch({ chatExportDirectory: "~/t3-exports" });
+    expect(patch.chatExportDirectory).toBe("~/t3-exports");
+  });
+
+  it("accepts partial chat export detail updates", () => {
+    const patch = decodeServerSettingsPatch({
+      chatExportDetail: { includeToolCalls: false, includeDiffs: false },
+    });
+    expect(patch.chatExportDetail).toEqual({
+      includeToolCalls: false,
+      includeDiffs: false,
+    });
+  });
+
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});
     expect(patch.providerInstances).toBeUndefined();

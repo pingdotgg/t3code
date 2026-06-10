@@ -11,6 +11,7 @@ import * as AcpError from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
+const mcpLogPath = process.env.T3_ACP_MCP_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
@@ -18,6 +19,8 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const emitThoughtChunk = process.env.T3_ACP_EMIT_THOUGHT_CHUNK === "1";
+const clientToolRequest = process.env.T3_ACP_CLIENT_TOOL_REQUEST;
 const permissionRequestCount = Number.parseInt(
   process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "0",
   10,
@@ -26,6 +29,7 @@ const permissionRequestKind = process.env.T3_ACP_PERMISSION_REQUEST_KIND ?? "exe
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const disableFork = process.env.T3_ACP_DISABLE_FORK === "1";
+const omitModelConfig = process.env.T3_ACP_OMIT_MODEL_CONFIG === "1";
 const ignoreCancel = process.env.T3_ACP_IGNORE_CANCEL === "1";
 const promptDelayMs = Number.parseInt(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0", 10);
 const promptStartedText = process.env.T3_ACP_PROMPT_STARTED_TEXT;
@@ -89,6 +93,9 @@ function reasoningEffortOptionsForModel(): ReadonlyArray<{
   readonly value: string;
   readonly name: string;
 }> {
+  if (/claude/iu.test(currentModelId)) {
+    return [{ value: "medium", name: "Medium" }];
+  }
   return /^gpt-5(?:[.-]|$)/u.test(currentModelId)
     ? [
         { value: "low", name: "Low" },
@@ -125,6 +132,9 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  const maybeFilterModelConfig = (options: ReadonlyArray<AcpSchema.SessionConfigOption>) =>
+    omitModelConfig ? options.filter((option) => option.category !== "model") : options;
+
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -156,7 +166,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
 
     switch (currentModelId) {
       case "gpt-5.4":
-        return [
+        return maybeFilterModelConfig([
           ...baseOptions,
           {
             id: "reasoning_effort",
@@ -188,9 +198,9 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
               { value: "true", name: "Fast" },
             ],
           },
-        ];
+        ]);
       case "composer-2":
-        return [
+        return maybeFilterModelConfig([
           ...baseOptions,
           {
             id: "fast",
@@ -203,9 +213,9 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
               { value: "true", name: "Fast" },
             ],
           },
-        ];
+        ]);
       case "claude-opus-4-6":
-        return [
+        return maybeFilterModelConfig([
           ...baseOptions,
           {
             id: "reasoning_effort",
@@ -222,13 +232,13 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
             type: "boolean",
             currentValue: true,
           },
-        ];
+        ]);
       default:
-        return baseOptions;
+        return maybeFilterModelConfig(baseOptions);
     }
   }
 
-  return [
+  return maybeFilterModelConfig([
     {
       id: "mode",
       name: "Mode",
@@ -263,7 +273,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
       currentValue: currentReasoning,
       options: reasoningEffortOptionsForModel(),
     },
-  ];
+  ]);
 }
 
 const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
@@ -313,17 +323,27 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
-  yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      configOptions: configOptions(),
+  yield* agent.handleCreateSession((request) =>
+    Effect.sync(() => {
+      if (mcpLogPath) {
+        appendFileSync(mcpLogPath, `${JSON.stringify(request.mcpServers)}\n`, "utf8");
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (mcpLogPath) {
+        yield* Effect.sync(() =>
+          appendFileSync(mcpLogPath, `${JSON.stringify(request.mcpServers)}\n`, "utf8"),
+        );
+      }
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -394,6 +414,13 @@ const program = Effect.gen(function* () {
       return {
         configOptions: configOptions(),
       };
+    }),
+  );
+
+  yield* agent.handleSetSessionModel((request) =>
+    Effect.sync(() => {
+      currentModelId = request.modelId;
+      return {};
     }),
   );
 
@@ -538,9 +565,12 @@ const program = Effect.gen(function* () {
           ],
         });
 
+        const selectedOption =
+          permission.outcome.outcome === "selected" ? permission.outcome.optionId : undefined;
         const cancelled =
           cancelledSessions.delete(requestedSessionId) ||
-          permission.outcome.outcome === "cancelled";
+          permission.outcome.outcome === "cancelled" ||
+          selectedOption?.startsWith("reject") === true;
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -683,6 +713,60 @@ const program = Effect.gen(function* () {
               },
             },
             required: ["environment"],
+          },
+        });
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitThoughtChunk) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "thinking from mock" },
+          },
+        });
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (clientToolRequest) {
+        const result = yield* Effect.gen(function* () {
+          switch (clientToolRequest) {
+            case "fs-read":
+              yield* agent.client.readTextFile({
+                sessionId: requestedSessionId,
+                path: "package.json",
+              });
+              return "fs/read_text_file unexpectedly succeeded";
+            case "fs-write":
+              yield* agent.client.writeTextFile({
+                sessionId: requestedSessionId,
+                path: "package.json",
+                content: "{}",
+              });
+              return "fs/write_text_file unexpectedly succeeded";
+            case "terminal":
+              yield* agent.client.createTerminal({
+                sessionId: requestedSessionId,
+                command: "echo hello",
+              });
+              return "terminal/create unexpectedly succeeded";
+            default:
+              return `unknown client tool request ${clientToolRequest}`;
+          }
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.succeed(error instanceof Error ? error.message : String(error)),
+          ),
+        );
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: result },
           },
         });
 

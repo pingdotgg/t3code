@@ -1,6 +1,6 @@
 /**
  * Optional integration check against a real `copilot --acp` install.
- * Enable with: T3_COPILOT_ACP_PROBE=1 bun run test --filter CopilotAcpCliProbe
+ * Enable with: HERMES_COPILOT_ACP_PROBE=1 bun run test --filter CopilotAcpCliProbe
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -15,7 +15,9 @@ import {
   buildCopilotAcpSpawnInput,
 } from "./CopilotAcpSupport.ts";
 
-describe.runIf(process.env.T3_COPILOT_ACP_PROBE === "1")("Copilot ACP CLI probe", () => {
+describe.runIf(
+  process.env.HERMES_COPILOT_ACP_PROBE === "1" || process.env.T3_COPILOT_ACP_PROBE === "1",
+)("Copilot ACP CLI probe", () => {
   it.effect("reports config options for the default client capabilities", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime;

@@ -31,7 +31,6 @@ import {
   FileSystem,
   Option,
   PubSub,
-  Random,
   Scope,
   Semaphore,
   Stream,
@@ -53,6 +52,7 @@ import { type AcpSessionRuntimeShape } from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
   makeAcpContentDeltaEvent,
+  makeAcpModeChangedEvent,
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
@@ -323,7 +323,7 @@ export function makeCursorAdapter(
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-    const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
+    const nextEventId = Effect.sync(() => EventId.make(crypto.randomUUID()));
     const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
@@ -721,6 +721,22 @@ export function makeCursorAdapter(
               Effect.gen(function* () {
                 switch (event._tag) {
                   case "ModeChanged":
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpModeChangedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        modeId: event.modeId,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
                     return;
                   case "AssistantItemStarted":
                     yield* offerRuntimeEvent(
@@ -793,6 +809,7 @@ export function makeCursorAdapter(
                         threadId: ctx.threadId,
                         turnId: ctx.activeTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
+                        streamKind: event.streamKind,
                         text: event.text,
                         rawPayload: event.rawPayload,
                       }),

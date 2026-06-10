@@ -208,6 +208,9 @@ function createMockEnvironmentApi(input: {
     },
     git: {} as EnvironmentApi["git"],
     server: {
+      exportThreadMarkdown: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["server"]["exportThreadMarkdown"],
       listProviderCommands: async () => ({ commands: [] }),
     },
     orchestration: {

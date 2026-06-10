@@ -4,6 +4,7 @@ import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -266,6 +267,26 @@ export const ServerUpsertKeybindingResult = Schema.Struct({
 });
 export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
 
+export const ServerExportThreadMarkdownInput = Schema.Struct({
+  threadId: ThreadId,
+  editor: EditorId,
+});
+export type ServerExportThreadMarkdownInput = typeof ServerExportThreadMarkdownInput.Type;
+
+export const ServerExportThreadMarkdownResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  filename: TrimmedNonEmptyString,
+});
+export type ServerExportThreadMarkdownResult = typeof ServerExportThreadMarkdownResult.Type;
+
+export class ServerExportThreadMarkdownError extends Schema.TaggedErrorClass<ServerExportThreadMarkdownError>()(
+  "ServerExportThreadMarkdownError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviders,
@@ -369,3 +390,209 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerRemoveKeybindingInput = KeybindingRule;
+export type ServerRemoveKeybindingInput = typeof ServerRemoveKeybindingInput.Type;
+
+export const ServerRemoveKeybindingResult = ServerUpsertKeybindingResult;
+export type ServerRemoveKeybindingResult = typeof ServerRemoveKeybindingResult.Type;
+
+export const ServerProviderUpdateInput = Schema.Struct({
+  provider: ProviderDriverKind,
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+});
+export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
+
+export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
+  "ServerProviderUpdateError",
+  {
+    provider: ProviderDriverKind,
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
+export const ServerProcessSignal = Schema.Literals(["SIGINT", "SIGKILL"]);
+export type ServerProcessSignal = typeof ServerProcessSignal.Type;
+
+export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
+  "trace-file-not-found",
+  "trace-file-read-failed",
+]);
+export type ServerTraceDiagnosticsErrorKind = typeof ServerTraceDiagnosticsErrorKind.Type;
+
+export const ServerTraceDiagnosticsSpanSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  failureCount: NonNegativeInt,
+  totalDurationMs: Schema.Number,
+  averageDurationMs: Schema.Number,
+  maxDurationMs: Schema.Number,
+});
+export type ServerTraceDiagnosticsSpanSummary = typeof ServerTraceDiagnosticsSpanSummary.Type;
+
+export const ServerTraceDiagnosticsFailureSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  lastSeenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsFailureSummary = typeof ServerTraceDiagnosticsFailureSummary.Type;
+
+export const ServerTraceDiagnosticsRecentFailure = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsRecentFailure = typeof ServerTraceDiagnosticsRecentFailure.Type;
+
+export const ServerTraceDiagnosticsSpanOccurrence = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsSpanOccurrence = typeof ServerTraceDiagnosticsSpanOccurrence.Type;
+
+export const ServerTraceDiagnosticsLogEvent = Schema.Struct({
+  spanName: TrimmedNonEmptyString,
+  level: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  seenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsLogEvent = typeof ServerTraceDiagnosticsLogEvent.Type;
+
+export const ServerTraceDiagnosticsResult = Schema.Struct({
+  traceFilePath: TrimmedNonEmptyString,
+  scannedFilePaths: Schema.Array(TrimmedNonEmptyString),
+  readAt: Schema.DateTimeUtc,
+  recordCount: NonNegativeInt,
+  parseErrorCount: NonNegativeInt,
+  firstSpanAt: Schema.Option(Schema.DateTimeUtc),
+  lastSpanAt: Schema.Option(Schema.DateTimeUtc),
+  failureCount: NonNegativeInt,
+  interruptionCount: NonNegativeInt,
+  slowSpanThresholdMs: NonNegativeInt,
+  slowSpanCount: NonNegativeInt,
+  logLevelCounts: Schema.Record(TrimmedNonEmptyString, NonNegativeInt),
+  topSpansByCount: Schema.Array(ServerTraceDiagnosticsSpanSummary),
+  slowestSpans: Schema.Array(ServerTraceDiagnosticsSpanOccurrence),
+  commonFailures: Schema.Array(ServerTraceDiagnosticsFailureSummary),
+  latestFailures: Schema.Array(ServerTraceDiagnosticsRecentFailure),
+  latestWarningAndErrorLogs: Schema.Array(ServerTraceDiagnosticsLogEvent),
+  partialFailure: Schema.Option(Schema.Boolean),
+  error: Schema.Option(
+    Schema.Struct({
+      kind: ServerTraceDiagnosticsErrorKind,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerTraceDiagnosticsResult = typeof ServerTraceDiagnosticsResult.Type;
+
+export const ServerProcessDiagnosticsEntry = Schema.Struct({
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  pgid: Schema.Option(Schema.Int),
+  status: TrimmedNonEmptyString,
+  cpuPercent: Schema.Number,
+  rssBytes: NonNegativeInt,
+  elapsed: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  childPids: Schema.Array(PositiveInt),
+});
+export type ServerProcessDiagnosticsEntry = typeof ServerProcessDiagnosticsEntry.Type;
+
+export const ServerProcessDiagnosticsResult = Schema.Struct({
+  serverPid: PositiveInt,
+  readAt: Schema.DateTimeUtc,
+  processCount: NonNegativeInt,
+  totalRssBytes: NonNegativeInt,
+  totalCpuPercent: Schema.Number,
+  processes: Schema.Array(ServerProcessDiagnosticsEntry),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
+
+export const ServerProcessResourceHistoryInput = Schema.Struct({
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryInput = typeof ServerProcessResourceHistoryInput.Type;
+
+export const ServerProcessResourceHistoryBucket = Schema.Struct({
+  startedAt: Schema.DateTimeUtc,
+  endedAt: Schema.DateTimeUtc,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  maxRssBytes: NonNegativeInt,
+  maxProcessCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistoryBucket = typeof ServerProcessResourceHistoryBucket.Type;
+
+export const ServerProcessResourceHistorySummary = Schema.Struct({
+  processKey: TrimmedNonEmptyString,
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  isServerRoot: Schema.Boolean,
+  firstSeenAt: Schema.DateTimeUtc,
+  lastSeenAt: Schema.DateTimeUtc,
+  currentCpuPercent: Schema.Number,
+  avgCpuPercent: Schema.Number,
+  maxCpuPercent: Schema.Number,
+  cpuSecondsApprox: Schema.Number,
+  currentRssBytes: NonNegativeInt,
+  maxRssBytes: NonNegativeInt,
+  sampleCount: NonNegativeInt,
+});
+export type ServerProcessResourceHistorySummary = typeof ServerProcessResourceHistorySummary.Type;
+
+export const ServerProcessResourceHistoryResult = Schema.Struct({
+  readAt: Schema.DateTimeUtc,
+  windowMs: NonNegativeInt,
+  bucketMs: NonNegativeInt,
+  sampleIntervalMs: NonNegativeInt,
+  retainedSampleCount: NonNegativeInt,
+  totalCpuSecondsApprox: Schema.Number,
+  buckets: Schema.Array(ServerProcessResourceHistoryBucket),
+  topProcesses: Schema.Array(ServerProcessResourceHistorySummary),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHistoryResult.Type;
+
+export const ServerSignalProcessInput = Schema.Struct({
+  pid: PositiveInt,
+  signal: ServerProcessSignal,
+});
+export type ServerSignalProcessInput = typeof ServerSignalProcessInput.Type;
+
+export const ServerSignalProcessResult = Schema.Struct({
+  pid: PositiveInt,
+  signal: ServerProcessSignal,
+  signaled: Schema.Boolean,
+  message: Schema.Option(TrimmedNonEmptyString),
+});
+export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;

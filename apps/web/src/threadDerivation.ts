@@ -1,4 +1,4 @@
-import type { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { MessageId, OrchestrationQueuedTurn, ThreadId, TurnId } from "@t3tools/contracts";
 import type { EnvironmentState } from "./store";
 import type {
   ChatMessage,
@@ -14,6 +14,7 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
+const EMPTY_QUEUED_TURNS: readonly OrchestrationQueuedTurn[] = [];
 const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
 const EMPTY_PROPOSED_PLAN_MAP: Record<string, ProposedPlan> = {};
@@ -29,6 +30,7 @@ const threadCache = new WeakMap<
     activities: Thread["activities"];
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
+    queuedTurns: readonly OrchestrationQueuedTurn[];
     thread: Thread;
   }
 >();
@@ -113,6 +115,7 @@ export function getThreadFromEnvironmentState(
   const activities = selectThreadActivities(state, threadId);
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
+  const queuedTurns = state.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS;
   const cached = threadCache.get(shell);
 
   if (
@@ -122,7 +125,8 @@ export function getThreadFromEnvironmentState(
     cached.messages === messages &&
     cached.activities === activities &&
     cached.proposedPlans === proposedPlans &&
-    cached.turnDiffSummaries === turnDiffSummaries
+    cached.turnDiffSummaries === turnDiffSummaries &&
+    cached.queuedTurns === queuedTurns
   ) {
     return cached.thread;
   }
@@ -136,6 +140,7 @@ export function getThreadFromEnvironmentState(
     activities,
     proposedPlans,
     turnDiffSummaries,
+    ...(queuedTurns.length > 0 ? { queuedTurns: [...queuedTurns] } : {}),
   };
 
   threadCache.set(shell, {
@@ -145,6 +150,7 @@ export function getThreadFromEnvironmentState(
     activities,
     proposedPlans,
     turnDiffSummaries,
+    queuedTurns,
     thread,
   });
 

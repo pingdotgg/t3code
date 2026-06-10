@@ -47,6 +47,10 @@ export function makeAcpNativeLoggers(input: {
   readonly provider: ProviderDriverKind;
   readonly threadId: ThreadId;
 }): Pick<AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> {
+  if (!input.nativeEventLogger) {
+    return {};
+  }
+
   return {
     requestLogger: (event) =>
       writeNativeAcpLog({

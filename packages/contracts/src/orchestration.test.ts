@@ -333,6 +333,60 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+it.effect("decodes queued turn commands and events", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.queued-turn.create",
+      commandId: "cmd-queue-create",
+      threadId: "thread-1",
+      queuedTurnId: "queued-turn-1",
+      message: {
+        messageId: "message-queued-1",
+        role: "user",
+        text: "run this next",
+        attachments: [],
+      },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      createdAt: "2026-03-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.queued-turn.create");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-queued-turn-created",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.queued-turn-created",
+      occurredAt: "2026-03-01T00:00:00.000Z",
+      commandId: "cmd-queue-create",
+      causationEventId: null,
+      correlationId: "cmd-queue-create",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        queuedTurn: {
+          id: "queued-turn-1",
+          threadId: "thread-1",
+          message: {
+            messageId: "message-queued-1",
+            role: "user",
+            text: "run this next",
+            attachments: [],
+          },
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+          failedAt: null,
+          failureMessage: null,
+        },
+      },
+    });
+    assert.strictEqual(event.type, "thread.queued-turn-created");
+  }),
+);
+
 it.effect("preserves explicit provider and runtime mode in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

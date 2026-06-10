@@ -1,5 +1,5 @@
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Path, Random } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
@@ -59,7 +59,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
       return persisted;
     }
 
-    const generated = yield* Random.nextUUIDv4;
+    const generated = crypto.randomUUID();
     yield* persistEnvironmentId(generated);
     return generated;
   });

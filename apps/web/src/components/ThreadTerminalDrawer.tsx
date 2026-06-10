@@ -622,6 +622,10 @@ export function TerminalViewport({
         return;
       }
 
+      if (event.type === "closed") {
+        return;
+      }
+
       const details = [
         typeof event.exitCode === "number" ? `code ${event.exitCode}` : null,
         typeof event.exitSignal === "number" ? `signal ${event.exitSignal}` : null,

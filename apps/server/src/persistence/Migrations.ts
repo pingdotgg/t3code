@@ -45,6 +45,7 @@ import Migration0029 from "./Migrations/026_ProjectionThreadSessionResumeCursor.
 import Migration0030 from "./Migrations/027_ProjectionThreadsPendingRuntimeMode.ts";
 import Migration0031 from "./Migrations/028_ProjectionTurnScopedFiles.ts";
 import Migration0032 from "./Migrations/032_EnsureProviderInstanceIdColumns.ts";
+import Migration0033 from "./Migrations/033_ProjectionQueuedTurns.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -89,6 +90,7 @@ export const migrationEntries = [
   [30, "ProjectionThreadsPendingRuntimeMode", Migration0030],
   [31, "ProjectionTurnScopedFiles", Migration0031],
   [32, "EnsureProviderInstanceIdColumns", Migration0032],
+  [33, "ProjectionQueuedTurns", Migration0033],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

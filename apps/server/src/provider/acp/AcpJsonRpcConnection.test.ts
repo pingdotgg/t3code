@@ -251,6 +251,51 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("streams ACP thought chunks without opening assistant message segments", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime;
+      yield* runtime.start();
+
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      expect(promptResult).toMatchObject({ stopReason: "end_turn" });
+
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 1)));
+      expect(notes).toEqual([
+        {
+          _tag: "ContentDelta",
+          streamKind: "reasoning_text",
+          text: "thinking from mock",
+          rawPayload: {
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "thinking from mock" },
+            },
+          },
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: bunExe,
+            args: [mockAgentPath],
+            env: {
+              T3_ACP_EMIT_THOUGHT_CHUNK: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime;
@@ -362,6 +407,49 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: bunExe,
             args: [mockAgentPath],
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("falls back to ACP session/set_model when no model config option is advertised", () => {
+    const requestEvents: Array<AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime;
+      const started = yield* runtime.start();
+
+      expect(started.modelConfigId).toBeUndefined();
+      yield* runtime.setModel("gpt-5.4");
+
+      expect(
+        requestEvents.some(
+          (event) => event.method === "session/set_model" && event.status === "started",
+        ),
+      ).toBe(true);
+      expect(
+        requestEvents.some(
+          (event) => event.method === "session/set_config_option" && event.status === "started",
+        ),
+      ).toBe(false);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: bunExe,
+            args: [mockAgentPath],
+            env: {
+              T3_ACP_OMIT_MODEL_CONFIG: "1",
+            },
           },
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },

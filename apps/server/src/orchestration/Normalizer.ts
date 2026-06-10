@@ -63,7 +63,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
-    if (command.type !== "thread.turn.start") {
+    if (command.type !== "thread.turn.start" && command.type !== "thread.queued-turn.create") {
       return command as OrchestrationCommand;
     }
 
@@ -131,6 +131,16 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         }),
       { concurrency: 1 },
     );
+
+    if (command.type === "thread.turn.start") {
+      return {
+        ...command,
+        message: {
+          ...command.message,
+          attachments: normalizedAttachments,
+        },
+      } satisfies OrchestrationCommand;
+    }
 
     return {
       ...command,

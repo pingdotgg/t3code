@@ -42,6 +42,7 @@ import {
   type StartupPresentation,
 } from "./config.ts";
 import { readBootstrapEnvelope } from "./bootstrap.ts";
+import { runMcpServer } from "./mcpServer.ts";
 import { expandHomePath, resolveBaseDir } from "./os-jank.ts";
 import { runServer } from "./server.ts";
 import { AuthControlPlaneRuntimeLive } from "./auth/Layers/AuthControlPlane.ts";
@@ -118,6 +119,14 @@ const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-fro
     "Create a project for the current working directory on startup when missing.",
   ),
   Flag.optional,
+);
+const mcpCwdFlag = Flag.string("cwd").pipe(
+  Flag.withDescription("Workspace root exposed to MCP tools."),
+  Flag.withDefault(process.cwd()),
+);
+const mcpToolsetsFlag = Flag.string("toolsets").pipe(
+  Flag.withDescription("Comma-separated MCP toolsets to expose."),
+  Flag.withDefault("read_file,search_files,skills_list"),
 );
 const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withDescription(
@@ -1096,6 +1105,19 @@ const projectCommand = Command.make("project").pipe(
   Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
 );
 
+const mcpServeCommand = Command.make("serve", {
+  cwd: mcpCwdFlag,
+  toolsets: mcpToolsetsFlag,
+}).pipe(
+  Command.withDescription("Run the T3 Code MCP stdio server."),
+  Command.withHandler(({ cwd, toolsets }) => runMcpServer({ cwd, toolsets })),
+);
+
+const mcpCommand = Command.make("mcp").pipe(
+  Command.withDescription("Expose selected T3 Code tools over MCP."),
+  Command.withSubcommands([mcpServeCommand]),
+);
+
 const runServerCommand = (
   flags: CliServerFlags,
   options?: {
@@ -1129,5 +1151,5 @@ const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe
 export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription("Run the T3 Code server."),
   Command.withHandler((flags) => runServerCommand(flags)),
-  Command.withSubcommands([startCommand, serveCommand, authCommand, projectCommand]),
+  Command.withSubcommands([startCommand, serveCommand, authCommand, projectCommand, mcpCommand]),
 );

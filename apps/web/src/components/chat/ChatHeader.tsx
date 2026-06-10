@@ -9,8 +9,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo, type ReactNode } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FileDownIcon, LoaderIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
@@ -32,6 +33,8 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   terminalAvailable: boolean;
   terminalOpen: boolean;
+  exportingThread: boolean;
+  exportThreadDisabledReason: string | null;
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
@@ -40,6 +43,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onExportThread: () => void;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
   paneActions?: ReactNode;
@@ -59,6 +63,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   terminalAvailable,
   terminalOpen,
+  exportingThread,
+  exportThreadDisabledReason,
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
@@ -67,6 +73,7 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onExportThread,
   onToggleTerminal,
   onToggleDiff,
   paneActions,
@@ -128,6 +135,29 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                className="shrink-0"
+                variant="outline"
+                size="icon-xs"
+                onClick={onExportThread}
+                aria-label="Export chat"
+                disabled={exportingThread || exportThreadDisabledReason !== null}
+              >
+                {exportingThread ? (
+                  <LoaderIcon className="size-3 animate-spin" />
+                ) : (
+                  <FileDownIcon className="size-3" />
+                )}
+              </Button>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {exportThreadDisabledReason ?? (exportingThread ? "Exporting chat..." : "Export chat")}
+          </TooltipPopup>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={

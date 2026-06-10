@@ -1,4 +1,11 @@
-import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  FolderOpenIcon,
+  LoaderIcon,
+  PlusIcon,
+  RefreshCwIcon,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -12,15 +19,19 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   DEFAULT_CHAT_FONT_SIZE,
+  DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
+  DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
   DEFAULT_UNIFIED_SETTINGS,
   type CodeFont,
   type FontSize,
+  type ThreadCompletionNotificationMode,
   type UiDensity,
   type UiFont,
 } from "@t3tools/contracts/settings";
@@ -112,6 +123,15 @@ const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint:
   { value: "compact", label: "Compact", hint: "— tighter spacing" },
   { value: "default", label: "Default", hint: "— balanced" },
   { value: "spacious", label: "Spacious", hint: "— more breathing room" },
+];
+
+const THREAD_COMPLETION_NOTIFICATION_OPTIONS: ReadonlyArray<{
+  value: ThreadCompletionNotificationMode;
+  label: string;
+}> = [
+  { value: "background-only", label: "Background only" },
+  { value: "all", label: "All completions" },
+  { value: "off", label: "Off" },
 ];
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -520,6 +540,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
         ? ["Chat font size"]
         : []),
+      ...(settings.inputFontSize !== DEFAULT_UNIFIED_SETTINGS.inputFontSize
+        ? ["Input font size"]
+        : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
         : []),
@@ -547,6 +570,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.threadCompletionNotifications !==
+      DEFAULT_UNIFIED_SETTINGS.threadCompletionNotifications
+        ? ["Completion notifications"]
+        : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
@@ -556,6 +583,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.autoOpenPlanSidebar,
       settings.chatFontSize,
       settings.codeFontSize,
+      settings.inputFontSize,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -564,6 +592,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.sidebarFontSize,
+      settings.threadCompletionNotifications,
       settings.timestampFormat,
       settings.toolFontSize,
       settings.uiDensity,
@@ -605,6 +634,7 @@ export function GeneralSettingsPanel() {
     Partial<Record<"keybindings" | "logsDirectory", string | null>>
   >({});
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isPickingChatExportDirectory, setIsPickingChatExportDirectory] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   // Collapsible state per provider-instance card, keyed by the instance id.
   // `Record<string, boolean>` so we don't need to preseed an entry for every
@@ -716,6 +746,44 @@ export function GeneralSettingsPanel() {
   const openLogsDirectory = useCallback(() => {
     openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
   }, [logsDirectoryPath, openInPreferredEditor]);
+
+  const chooseChatExportDirectory = useCallback(async () => {
+    if (isPickingChatExportDirectory) {
+      return;
+    }
+    setIsPickingChatExportDirectory(true);
+    try {
+      const pickedPath = await ensureLocalApi().dialogs.pickFolder(
+        settings.chatExportDirectory ? { initialPath: settings.chatExportDirectory } : undefined,
+      );
+      if (pickedPath) {
+        updateSettings({ chatExportDirectory: pickedPath });
+      }
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to choose export directory",
+          description:
+            error instanceof Error ? error.message : "An error occurred while opening the picker.",
+        }),
+      );
+    } finally {
+      setIsPickingChatExportDirectory(false);
+    }
+  }, [isPickingChatExportDirectory, settings.chatExportDirectory, updateSettings]);
+
+  const updateChatExportDetail = useCallback(
+    (patch: Partial<typeof settings.chatExportDetail>) => {
+      updateSettings({
+        chatExportDetail: {
+          ...settings.chatExportDetail,
+          ...patch,
+        },
+      });
+    },
+    [settings.chatExportDetail, updateSettings],
+  );
 
   const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
   const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
@@ -1220,6 +1288,47 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
+          title="Input font size"
+          description="Font size for the message composer, its controls, and menus."
+          resetAction={
+            settings.inputFontSize !== DEFAULT_INPUT_FONT_SIZE ? (
+              <SettingResetButton
+                label="input font size"
+                onClick={() =>
+                  updateSettings({
+                    inputFontSize: DEFAULT_INPUT_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.inputFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ inputFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Input font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.inputFontSize)
+                    ?.label ?? `${DEFAULT_INPUT_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           title="Sidebar font size"
           description="Font size for project and chat titles in the sidebar."
           resetAction={
@@ -1356,6 +1465,49 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Completion notifications"
+          description="Show macOS notifications when a chat finishes."
+          resetAction={
+            settings.threadCompletionNotifications !==
+            DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE ? (
+              <SettingResetButton
+                label="completion notifications"
+                onClick={() =>
+                  updateSettings({
+                    threadCompletionNotifications: DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.threadCompletionNotifications}
+              onValueChange={(value) => {
+                if (value === "off" || value === "background-only" || value === "all") {
+                  updateSettings({ threadCompletionNotifications: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Completion notifications">
+                <SelectValue>
+                  {THREAD_COMPLETION_NOTIFICATION_OPTIONS.find(
+                    (option) => option.value === settings.threadCompletionNotifications,
+                  )?.label ?? "Background only"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THREAD_COMPLETION_NOTIFICATION_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
           title="Task sidebar"
           description="Open the plan and task sidebar automatically when steps appear."
           resetAction={
@@ -1447,6 +1599,120 @@ export function GeneralSettingsPanel() {
               spellCheck={false}
               aria-label="Add project base directory"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Chat export directory"
+          description="Markdown chat exports are saved here before opening in your preferred editor."
+          resetAction={
+            settings.chatExportDirectory !== DEFAULT_UNIFIED_SETTINGS.chatExportDirectory ? (
+              <SettingResetButton
+                label="chat export directory"
+                onClick={() =>
+                  updateSettings({
+                    chatExportDirectory: DEFAULT_UNIFIED_SETTINGS.chatExportDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <DraftInput
+                className="w-full sm:w-72"
+                value={settings.chatExportDirectory}
+                onCommit={(next) => updateSettings({ chatExportDirectory: next })}
+                placeholder="~/t3-chat-exports"
+                spellCheck={false}
+                aria-label="Chat export directory"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void chooseChatExportDirectory()}
+                disabled={isPickingChatExportDirectory}
+              >
+                {isPickingChatExportDirectory ? (
+                  <LoaderIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <FolderOpenIcon className="size-3.5" />
+                )}
+                Choose
+              </Button>
+            </div>
+          }
+        />
+
+        <SettingsRow
+          title="Chat export details"
+          description="Choose which extra sections are included in exported Markdown chat files."
+          resetAction={
+            !Equal.equals(settings.chatExportDetail, DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS) ? (
+              <SettingResetButton
+                label="chat export details"
+                onClick={() =>
+                  updateSettings({
+                    chatExportDetail: DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="grid w-full gap-2 sm:w-80">
+              <label className="flex items-center justify-between gap-4 text-xs text-foreground">
+                <span>Thread and session metadata</span>
+                <Switch
+                  checked={settings.chatExportDetail.includeMetadata}
+                  onCheckedChange={(checked) =>
+                    updateChatExportDetail({ includeMetadata: Boolean(checked) })
+                  }
+                  aria-label="Include metadata in chat exports"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-xs text-foreground">
+                <span>Tool calls and activity</span>
+                <Switch
+                  checked={settings.chatExportDetail.includeToolCalls}
+                  onCheckedChange={(checked) =>
+                    updateChatExportDetail({ includeToolCalls: Boolean(checked) })
+                  }
+                  aria-label="Include tool calls in chat exports"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-xs text-foreground">
+                <span>Diffs and checkpoints</span>
+                <Switch
+                  checked={settings.chatExportDetail.includeDiffs}
+                  onCheckedChange={(checked) =>
+                    updateChatExportDetail({ includeDiffs: Boolean(checked) })
+                  }
+                  aria-label="Include diffs in chat exports"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-xs text-foreground">
+                <span>Proposed plans</span>
+                <Switch
+                  checked={settings.chatExportDetail.includePlans}
+                  onCheckedChange={(checked) =>
+                    updateChatExportDetail({ includePlans: Boolean(checked) })
+                  }
+                  aria-label="Include proposed plans in chat exports"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 text-xs text-foreground">
+                <span>Queued turns</span>
+                <Switch
+                  checked={settings.chatExportDetail.includeQueuedTurns}
+                  onCheckedChange={(checked) =>
+                    updateChatExportDetail({ includeQueuedTurns: Boolean(checked) })
+                  }
+                  aria-label="Include queued turns in chat exports"
+                />
+              </label>
+            </div>
           }
         />
 

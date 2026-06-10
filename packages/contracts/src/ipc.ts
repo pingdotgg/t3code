@@ -28,6 +28,8 @@ import type {
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
+  ServerExportThreadMarkdownInput,
+  ServerExportThreadMarkdownResult,
   ServerListSkillsResult,
   ServerProviderListCommandsInput,
   ServerProviderListCommandsResult,
@@ -59,9 +61,10 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import type { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
+import { Schema } from "effect";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -150,6 +153,34 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+export const DesktopThreadCompletionNotificationStatus = Schema.Literals([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
+export type DesktopThreadCompletionNotificationStatus =
+  typeof DesktopThreadCompletionNotificationStatus.Type;
+
+export const DesktopNotificationRequest = Schema.Struct({
+  kind: Schema.Literal("thread-turn-completed"),
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  title: Schema.String,
+  body: Schema.String,
+  status: DesktopThreadCompletionNotificationStatus,
+  createdAt: IsoDateTime,
+});
+export type DesktopNotificationRequest = typeof DesktopNotificationRequest.Type;
+
+export interface DesktopNotificationClick {
+  kind: "thread-turn-completed";
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  turnId: TurnId;
+}
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
@@ -183,6 +214,8 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  showNotification: (request: DesktopNotificationRequest) => Promise<boolean>;
+  onNotificationClick: (listener: (click: DesktopNotificationClick) => void) => () => void;
 }
 
 /**
@@ -209,6 +242,10 @@ export interface LocalApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+  };
+  notifications: {
+    show: (request: DesktopNotificationRequest) => Promise<boolean>;
+    onClick: (listener: (click: DesktopNotificationClick) => void) => () => void;
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;
@@ -238,6 +275,9 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    exportThreadMarkdown: (
+      input: ServerExportThreadMarkdownInput,
+    ) => Promise<ServerExportThreadMarkdownResult>;
   };
 }
 
@@ -289,6 +329,9 @@ export interface EnvironmentApi {
     ) => () => void;
   };
   server: {
+    exportThreadMarkdown: (
+      input: ServerExportThreadMarkdownInput,
+    ) => Promise<ServerExportThreadMarkdownResult>;
     listProviderCommands: (
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;

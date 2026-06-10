@@ -46,6 +46,7 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
       readonly modeId: string;
+      readonly rawPayload: unknown;
     }
   | {
       readonly _tag: "AssistantItemStarted";
@@ -68,6 +69,7 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
+      readonly streamKind: "assistant_text" | "reasoning_text";
       readonly text: string;
       readonly rawPayload: unknown;
     };
@@ -427,6 +429,7 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         events.push({
           _tag: "ModeChanged",
           modeId,
+          rawPayload: params,
         });
       }
       break;
@@ -475,6 +478,18 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
           _tag: "ContentDelta",
+          streamKind: "assistant_text",
+          text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "agent_thought_chunk": {
+      if (upd.content.type === "text" && upd.content.text.length > 0) {
+        events.push({
+          _tag: "ContentDelta",
+          streamKind: "reasoning_text",
           text: upd.content.text,
           rawPayload: params,
         });

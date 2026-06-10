@@ -47,6 +47,7 @@ export interface AcpSessionRuntimeOptions {
   /** @deprecated Provide `auth.methodId` instead. */
   readonly authMethodId?: string;
   readonly modeSwitchMethod?: "set_config_option" | "set_mode";
+  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -170,6 +171,7 @@ const makeAcpSessionRuntime = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const sessionMcpServers = options.mcpServers ?? [];
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
@@ -387,6 +389,23 @@ const makeAcpSessionRuntime = (
         }),
       );
 
+    const setModelViaSessionMethod = (
+      modelId: string,
+    ): Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError> =>
+      getStartedState.pipe(
+        Effect.flatMap((started) => {
+          const requestPayload = {
+            sessionId: started.sessionId,
+            modelId,
+          } satisfies EffectAcpSchema.SetSessionModelRequest;
+          return runLoggedRequest(
+            "session/set_model",
+            requestPayload,
+            acp.agent.setSessionModel(requestPayload),
+          );
+        }),
+      );
+
     const startOnce = Effect.gen(function* () {
       const initializePayload = {
         protocolVersion: 1,
@@ -445,7 +464,7 @@ const makeAcpSessionRuntime = (
         const loadPayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: [],
+          mcpServers: sessionMcpServers,
         } satisfies EffectAcpSchema.LoadSessionRequest;
         const resumed = yield* runLoggedRequest(
           "session/load",
@@ -460,7 +479,7 @@ const makeAcpSessionRuntime = (
         } else {
           const createPayload = {
             cwd: options.cwd,
-            mcpServers: [],
+            mcpServers: sessionMcpServers,
           } satisfies EffectAcpSchema.NewSessionRequest;
           const created = yield* runLoggedRequest(
             "session/new",
@@ -473,7 +492,7 @@ const makeAcpSessionRuntime = (
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: [],
+          mcpServers: sessionMcpServers,
         } satisfies EffectAcpSchema.NewSessionRequest;
         const created = yield* runLoggedRequest(
           "session/new",
@@ -624,8 +643,11 @@ const makeAcpSessionRuntime = (
       setConfigOption,
       setModel: (model) =>
         getStartedState.pipe(
-          Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
-          Effect.asVoid,
+          Effect.flatMap((started) =>
+            started.modelConfigId
+              ? setConfigOption(started.modelConfigId, model).pipe(Effect.asVoid)
+              : setModelViaSessionMethod(model).pipe(Effect.asVoid),
+          ),
         ),
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
@@ -705,6 +727,10 @@ const handleSessionUpdate = ({
         continue;
       }
       if (event._tag === "ContentDelta") {
+        if (event.streamKind === "reasoning_text") {
+          yield* Queue.offer(queue, event);
+          continue;
+        }
         if (event.text.trim().length === 0) {
           const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
           if (!assistantSegmentState.activeItemId) {

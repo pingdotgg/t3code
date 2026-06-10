@@ -2,6 +2,7 @@ import type {
   ApprovalRequestId,
   EnvironmentId,
   ModelSelection,
+  OrchestrationQueuedTurn,
   ProjectEntry,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -17,6 +18,7 @@ import {
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  QueuedTurnId,
 } from "@t3tools/contracts";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -69,6 +71,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { QueuedMessagesPanel } from "./QueuedMessagesPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -235,7 +238,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           <RuntimeModeIcon className="size-4" />
           <SelectValue>{runtimeModeOption.label}</SelectValue>
         </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false}>
+        <SelectPopup alignItemWithTrigger={false} className="composer-input-font">
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];
             const OptionIcon = option.icon;
@@ -246,7 +249,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                     <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     {option.label}
                   </span>
-                  <span className="text-muted-foreground text-xs leading-4">
+                  <span className="composer-input-font-secondary text-muted-foreground leading-4">
                     {option.description}
                   </span>
                 </div>
@@ -398,6 +401,7 @@ export interface ChatComposerProps {
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
+  queuedTurns: OrchestrationQueuedTurn[];
   activePendingProgress: {
     questionIndex: number;
     isLastQuestion: boolean;
@@ -456,6 +460,8 @@ export interface ChatComposerProps {
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<void>;
+  onUpdateQueuedTurn: (queuedTurnId: QueuedTurnId, text: string) => void;
+  onDeleteQueuedTurn: (queuedTurnId: QueuedTurnId) => void;
   onSelectActivePendingUserInputOption: (questionId: string, optionLabel: string) => void;
   onAdvanceActivePendingUserInput: () => void;
   onPreviousActivePendingUserInputQuestion: () => void;
@@ -503,6 +509,7 @@ export const ChatComposer = memo(
       activePendingApproval,
       pendingApprovals,
       pendingUserInputs,
+      queuedTurns,
       activePendingProgress,
       activePendingResolvedAnswers,
       activePendingIsResponding,
@@ -536,6 +543,8 @@ export const ChatComposer = memo(
       onInterrupt,
       onImplementPlanInNewThread,
       onRespondToApproval,
+      onUpdateQueuedTurn,
+      onDeleteQueuedTurn,
       onSelectActivePendingUserInputOption,
       onAdvanceActivePendingUserInput,
       onPreviousActivePendingUserInputQuestion,
@@ -1055,8 +1064,9 @@ export const ChatComposer = memo(
       [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
     );
     const collapsedComposerPrimaryActionDisabled =
-      phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
-    const collapsedComposerPrimaryActionLabel = "Send message";
+      isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    const collapsedComposerPrimaryActionLabel =
+      phase === "running" ? "Queue message" : "Send message";
     const showMobilePendingAnswerActions =
       isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1988,6 +1998,14 @@ export const ChatComposer = memo(
             }}
             onBlurCapture={scheduleComposerCollapseCheck}
           >
+            {activePendingApproval || pendingUserInputs.length > 0 ? null : (
+              <QueuedMessagesPanel
+                queuedTurns={queuedTurns}
+                onUpdateQueuedTurn={onUpdateQueuedTurn}
+                onDeleteQueuedTurn={onDeleteQueuedTurn}
+              />
+            )}
+
             {activePendingApproval ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                 <ComposerPendingApprovalPanel
@@ -2023,7 +2041,7 @@ export const ChatComposer = memo(
                 <button
                   type="button"
                   className={cn(
-                    "min-w-0 flex-1 truncate bg-transparent p-0 text-left text-[14px] focus:outline-none",
+                    "composer-input-font min-w-0 flex-1 truncate bg-transparent p-0 text-left focus:outline-none",
                     (activePendingProgress ? activePendingProgress.customAnswer : prompt.trim())
                       ? "text-foreground"
                       : "text-muted-foreground/35",

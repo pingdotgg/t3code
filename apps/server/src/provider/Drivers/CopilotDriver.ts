@@ -35,6 +35,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("copilot");
+const NATIVE_DRIVER_KIND = ProviderDriverKind.make("copilot-acp-native");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.hours(1);
 
 export type CopilotDriverEnv =
@@ -50,11 +51,12 @@ const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly driverKind: ProviderDriverKind;
   }) =>
   (snapshot: ServerProvider): ServerProvider => ({
     ...snapshot,
     instanceId: input.instanceId,
-    driver: DRIVER_KIND,
+    driver: input.driverKind,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     continuation: { groupKey: input.continuationGroupKey },
@@ -75,10 +77,13 @@ const CopilotTextGeneration: TextGenerationShape = {
   generateThreadTitle: () => unsupportedTextGeneration("generateThreadTitle"),
 };
 
-export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = {
-  driverKind: DRIVER_KIND,
+const makeCopilotDriver = (input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+}): ProviderDriver<CopilotSettings, CopilotDriverEnv> => ({
+  driverKind: input.driverKind,
   metadata: {
-    displayName: "GitHub Copilot",
+    displayName: input.displayName,
     supportsMultipleInstances: false,
   },
   configSchema: CopilotSettings,
@@ -89,7 +94,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
       const eventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
       const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
+        driverKind: input.driverKind,
         instanceId,
       });
       const stampIdentity = withInstanceIdentity({
@@ -97,6 +102,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        driverKind: input.driverKind,
       });
       const effectiveConfig = { ...config, enabled } satisfies CopilotSettings;
 
@@ -134,7 +140,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
 
       return {
         instanceId,
-        driverKind: DRIVER_KIND,
+        driverKind: input.driverKind,
         continuationIdentity,
         displayName,
         accentColor,
@@ -144,4 +150,15 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         textGeneration: CopilotTextGeneration,
       } satisfies ProviderInstance;
     }),
-};
+});
+
+export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = makeCopilotDriver({
+  driverKind: DRIVER_KIND,
+  displayName: "GitHub Copilot",
+});
+
+export const CopilotAcpNativeDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> =
+  makeCopilotDriver({
+    driverKind: NATIVE_DRIVER_KIND,
+    displayName: "GitHub Copilot ACP Native (Experimental)",
+  });

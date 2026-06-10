@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  QueuedTurnId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -175,6 +176,9 @@ function makeState(thread: Thread): AppState {
         thread.turnDiffSummaries.map((summary) => [summary.turnId, summary] as const),
       ) as EnvironmentState["turnDiffSummaryByThreadId"][ThreadId],
     },
+    queuedTurnsByThreadId: {
+      [thread.id]: thread.queuedTurns ?? [],
+    },
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };
@@ -200,6 +204,7 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
     proposedPlanByThreadId: {},
     turnDiffIdsByThreadId: {},
     turnDiffSummaryByThreadId: {},
+    queuedTurnsByThreadId: {},
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };
@@ -503,6 +508,74 @@ describe("incremental orchestration updates", () => {
 
     expect(nextAfterProjectDelete).toBe(state);
     expect(nextAfterThreadDelete).toBe(state);
+  });
+
+  it("applies the queued-turn lifecycle to thread.queuedTurns", () => {
+    const threadId = ThreadId.make("thread-1");
+    const queuedTurnId = QueuedTurnId.make("queued-1");
+    const state = makeState(makeThread({ id: threadId }));
+
+    const queuedTurn = {
+      id: queuedTurnId,
+      threadId,
+      message: {
+        messageId: MessageId.make("queued-message-1"),
+        role: "user" as const,
+        text: "hello",
+        attachments: [],
+      },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      createdAt: "2026-02-27T00:00:00.000Z",
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      failedAt: null,
+      failureMessage: null,
+    };
+
+    const afterCreate = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.queued-turn-created", { threadId, queuedTurn }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(afterCreate)[0]?.queuedTurns?.map((turn) => turn.message.text)).toEqual([
+      "hello",
+    ]);
+
+    const afterUpdate = applyOrchestrationEvent(
+      afterCreate,
+      makeEvent("thread.queued-turn-updated", {
+        threadId,
+        queuedTurnId,
+        text: "hello again",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(afterUpdate)[0]?.queuedTurns?.[0]?.message.text).toBe("hello again");
+
+    const afterFailed = applyOrchestrationEvent(
+      afterUpdate,
+      makeEvent("thread.queued-turn-failed", {
+        threadId,
+        queuedTurnId,
+        failureMessage: "boom",
+        failedAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(afterFailed)[0]?.queuedTurns?.[0]?.failureMessage).toBe("boom");
+
+    const afterDispatch = applyOrchestrationEvent(
+      afterFailed,
+      makeEvent("thread.queued-turn-dispatched", {
+        threadId,
+        queuedTurnId,
+        messageId: MessageId.make("dispatched-message-1"),
+        dispatchedAt: "2026-02-27T00:00:03.000Z",
+      }),
+      localEnvironmentId,
+    );
+    expect(threadsOf(afterDispatch)[0]?.queuedTurns ?? []).toEqual([]);
   });
 
   it("reuses an existing project row when project.created arrives with a new id for the same cwd", () => {

@@ -281,45 +281,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
-  it("renders subagent work entries as clickable cards", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "acp-alpha",
-              tone: "tool",
-              itemType: "collab_agent_tool_call",
-              subagent: {
-                id: "call-subagent-1",
-                name: "acp-alpha",
-                description: "Alpha read-only result",
-                agentType: "explore",
-                prompt: "Inspect the API surface and report back.",
-                promptPreview: "Inspect the API surface and report back.",
-                result: "Alpha found the relevant flow.",
-                resultPreview: "Alpha found the relevant flow.",
-                status: "completed",
-              },
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("acp-alpha");
-    expect(markup).toContain("Completed");
-    expect(markup).toContain("Alpha read-only result");
-    expect(markup).toContain("Alpha found the relevant flow.");
-  });
-
   it("collapses completed tool-call groups to an expandable header", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

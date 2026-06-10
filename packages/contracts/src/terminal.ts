@@ -90,7 +90,10 @@ export const TerminalSessionSnapshot = Schema.Struct({
   history: Schema.String,
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
+  /** Server-computed display title (idle shell vs subprocess command). Optional on this fork. */
+  label: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
   updatedAt: Schema.String,
+  sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
@@ -142,16 +145,95 @@ const TerminalActivityEvent = Schema.Struct({
   hasRunningSubprocess: Schema.Boolean,
 });
 
+const TerminalClosedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("closed"),
+});
+
 export const TerminalEvent = Schema.Union([
   TerminalStartedEvent,
   TerminalOutputEvent,
   TerminalExitedEvent,
+  TerminalClosedEvent,
   TerminalErrorEvent,
   TerminalClearedEvent,
   TerminalRestartedEvent,
   TerminalActivityEvent,
 ]);
 export type TerminalEvent = typeof TerminalEvent.Type;
+
+export const TerminalAttachInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  cwd: Schema.optional(TrimmedNonEmptyStringSchema),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
+  cols: Schema.optional(TerminalColsSchema),
+  rows: Schema.optional(TerminalRowsSchema),
+  env: Schema.optional(TerminalEnvSchema),
+  restartIfNotRunning: Schema.optional(Schema.Boolean),
+});
+export type TerminalAttachInput = Schema.Codec.Encoded<typeof TerminalAttachInput>;
+/**
+ * Decoded shape of {@link TerminalAttachInput} (i.e. `terminalId` is required
+ * because the schema applies a decoding default). This is the type RPC clients
+ * receive as the `attach` input parameter.
+ */
+export type TerminalAttachInputDecoded = typeof TerminalAttachInput.Type;
+
+export const TerminalSummary = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  cwd: Schema.String.check(Schema.isNonEmpty()),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  status: TerminalSessionStatus,
+  pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  exitCode: Schema.NullOr(Schema.Int),
+  exitSignal: Schema.NullOr(Schema.Int),
+  hasRunningSubprocess: Schema.Boolean,
+  /** Server-computed display title (idle shell vs subprocess command). */
+  label: Schema.String.check(Schema.isMaxLength(128)),
+  updatedAt: Schema.String,
+});
+export type TerminalSummary = typeof TerminalSummary.Type;
+
+const TerminalMetadataSnapshotEvent = Schema.Struct({
+  type: Schema.Literal("snapshot"),
+  terminals: Schema.Array(TerminalSummary),
+});
+
+const TerminalMetadataUpsertEvent = Schema.Struct({
+  type: Schema.Literal("upsert"),
+  terminal: TerminalSummary,
+});
+
+const TerminalMetadataRemoveEvent = Schema.Struct({
+  type: Schema.Literal("remove"),
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+});
+
+export const TerminalMetadataStreamEvent = Schema.Union([
+  TerminalMetadataSnapshotEvent,
+  TerminalMetadataUpsertEvent,
+  TerminalMetadataRemoveEvent,
+]);
+export type TerminalMetadataStreamEvent = typeof TerminalMetadataStreamEvent.Type;
+
+const TerminalAttachSnapshotEvent = Schema.Struct({
+  type: Schema.Literal("snapshot"),
+  snapshot: TerminalSessionSnapshot,
+});
+
+export const TerminalAttachStreamEvent = Schema.Union([
+  TerminalAttachSnapshotEvent,
+  TerminalOutputEvent,
+  TerminalExitedEvent,
+  TerminalClosedEvent,
+  TerminalErrorEvent,
+  TerminalClearedEvent,
+  TerminalRestartedEvent,
+  TerminalActivityEvent,
+]);
+export type TerminalAttachStreamEvent = typeof TerminalAttachStreamEvent.Type;
 
 export class TerminalCwdError extends Schema.TaggedErrorClass<TerminalCwdError>()(
   "TerminalCwdError",

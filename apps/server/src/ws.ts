@@ -1,4 +1,18 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import * as NodePath from "node:path";
+
+import {
+  Cause,
+  DateTime,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
@@ -21,11 +35,33 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   ServerProviderListCommandsError,
+  ServerExportThreadMarkdownError,
   ThreadId,
   type TerminalEvent,
+  type TerminalError,
+  type TerminalAttachStreamEvent,
+  type TerminalMetadataStreamEvent,
+  type VcsError,
+  GitCommandError,
+  SourceControlRepositoryError,
+  ServerProviderUpdateError,
+  KeybindingsConfigError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import {
+  gitCheckoutResultToVcs,
+  gitCommandErrorToVcs,
+  gitCreateBranchResultToVcs,
+  gitCreateWorktreeResultToVcs,
+  gitListBranchesToVcs,
+  gitPullResultToVcs,
+  gitStatusStreamEventToVcs,
+  gitStatusToVcs,
+  vcsCreateRefInputToGit,
+  vcsCreateWorktreeInputToGit,
+  vcsListRefsInputToGit,
+} from "./git/VcsBridge.ts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -45,6 +81,11 @@ import {
 } from "./orchestration/gatedDispatch.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
+import {
+  createThreadMarkdownExportFilename,
+  formatThreadMarkdownExport,
+} from "./orchestration/threadMarkdownExport.ts";
 import {
   observeRpcEffect,
   observeRpcStream,
@@ -73,27 +114,26 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { expandHomePath } from "./pathExpansion.ts";
 
-function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
+async function writeThreadMarkdownExportFile(input: {
+  readonly directory: string;
+  readonly filename: string;
+  readonly contents: string;
+}): Promise<string> {
+  const directoryPath = NodePath.resolve(expandHomePath(input.directory));
+  const targetPath = NodePath.join(directoryPath, input.filename);
+  const tempPath = NodePath.join(directoryPath, `.${input.filename}.${crypto.randomUUID()}.tmp`);
+
+  await mkdir(directoryPath, { recursive: true });
+  try {
+    await writeFile(tempPath, input.contents, "utf8");
+    await rename(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
   }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
+  return targetPath;
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
@@ -835,6 +875,95 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverExportThreadMarkdown]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverExportThreadMarkdown,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerExportThreadMarkdownError({
+                      message: cause.message,
+                      cause,
+                    }),
+                ),
+              );
+              const exportDirectory = settings.chatExportDirectory.trim();
+              if (exportDirectory.length === 0) {
+                return yield* new ServerExportThreadMarkdownError({
+                  message: "Set a chat export directory in Settings before exporting.",
+                });
+              }
+
+              const threadOption = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ServerExportThreadMarkdownError({
+                        message: "Unable to load the chat for export.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(threadOption)) {
+                return yield* new ServerExportThreadMarkdownError({
+                  message: "Chat not found.",
+                });
+              }
+
+              const thread = threadOption.value;
+              const projectOption = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ServerExportThreadMarkdownError({
+                        message: "Unable to load project metadata for export.",
+                        cause,
+                      }),
+                  ),
+                );
+              const exportedAt = new Date();
+              const filename = createThreadMarkdownExportFilename({
+                title: thread.title,
+                exportedAt,
+              });
+              const path = yield* Effect.tryPromise({
+                try: () =>
+                  writeThreadMarkdownExportFile({
+                    directory: exportDirectory,
+                    filename,
+                    contents: formatThreadMarkdownExport({
+                      thread,
+                      project: Option.isSome(projectOption) ? projectOption.value : null,
+                      exportedAt,
+                      detail: settings.chatExportDetail,
+                    }),
+                  }),
+                catch: (cause) =>
+                  new ServerExportThreadMarkdownError({
+                    message: "Unable to write chat export file.",
+                    cause,
+                  }),
+              });
+
+              yield* open.openInEditor({ cwd: path, editor: input.editor }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerExportThreadMarkdownError({
+                      message: `Chat exported to ${path}, but it could not be opened.`,
+                      cause,
+                    }),
+                ),
+              );
+
+              return { path, filename };
+            }),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -981,6 +1110,274 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             WS_METHODS.gitInit,
             git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+            projectionSnapshotQuery.getShellSnapshot().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load archived orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        // VCS RPCs delegate to the fork's git layers and translate result
+        // shapes through VcsBridge (the fork is git-first).
+        [WS_METHODS.subscribeVcsStatus]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeVcsStatus,
+            gitStatusBroadcaster.streamStatus(input).pipe(Stream.map(gitStatusStreamEventToVcs)),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsRefreshStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsRefreshStatus,
+            gitStatusBroadcaster.refreshStatus(input.cwd).pipe(Effect.map(gitStatusToVcs)),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPull]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPull,
+            git.pullCurrentBranch(input.cwd).pipe(
+              Effect.map(gitPullResultToVcs),
+              Effect.matchCauseEffect({
+                onFailure: (cause) => Effect.failCause(cause),
+                onSuccess: (result) =>
+                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+              }),
+            ),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsListRefs]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsListRefs,
+            git.listBranches(vcsListRefsInputToGit(input)).pipe(Effect.map(gitListBranchesToVcs)),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsCreateWorktree]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsCreateWorktree,
+            git.createWorktree(vcsCreateWorktreeInputToGit(input)).pipe(
+              Effect.map(gitCreateWorktreeResultToVcs),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsRemoveWorktree]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsRemoveWorktree,
+            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsCreateRef]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsCreateRef,
+            git.createBranch(vcsCreateRefInputToGit(input)).pipe(
+              Effect.map(gitCreateBranchResultToVcs),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsSwitchRef]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsSwitchRef,
+            Effect.scoped(git.checkoutBranch({ cwd: input.cwd, branch: input.refName })).pipe(
+              Effect.map(gitCheckoutResultToVcs),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsInit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsInit,
+            git.initRepo({ cwd: input.cwd }).pipe(
+              Effect.mapError((error): VcsError => gitCommandErrorToVcs(error)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
+            { "rpc.aggregate": "vcs" },
+          ),
+        // Source-control provider integration is not implemented in the
+        // git-first fork; report empty discovery and fail explicit operations.
+        [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverDiscoverSourceControl,
+            Effect.succeed({ versionControlSystems: [], sourceControlProviders: [] }),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.sourceControlLookupRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlLookupRepository,
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: input.provider,
+                operation: "lookupRepository",
+                detail: "Source-control provider integration is not available on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.sourceControlCloneRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlCloneRepository,
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: input.provider ?? "github",
+                operation: "cloneRepository",
+                detail: "Source-control provider integration is not available on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.sourceControlPublishRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlPublishRepository,
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: input.provider,
+                operation: "publishRepository",
+                detail: "Source-control provider integration is not available on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.reviewGetDiffPreview]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            Effect.fail(
+              new GitCommandError({
+                operation: "reviewGetDiffPreview",
+                command: "review",
+                cwd: input.cwd,
+                detail: "Live diff preview is not available on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "review" },
+          ),
+        [WS_METHODS.serverUpdateProvider]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateProvider,
+            Effect.fail(
+              new ServerProviderUpdateError({
+                provider: input.provider,
+                reason: "Provider self-update is not available on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRemoveKeybinding]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRemoveKeybinding,
+            Effect.fail(
+              new KeybindingsConfigError({
+                configPath: config.keybindingsConfigPath,
+                detail: "Removing keybindings is not supported on this server.",
+              }),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        // Process/trace diagnostics are not instrumented in the fork; return
+        // well-formed empty snapshots so the client renders an empty state.
+        [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetTraceDiagnostics,
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              return {
+                traceFilePath: "unavailable",
+                scannedFilePaths: [],
+                readAt: now,
+                recordCount: 0,
+                parseErrorCount: 0,
+                firstSpanAt: Option.none(),
+                lastSpanAt: Option.none(),
+                failureCount: 0,
+                interruptionCount: 0,
+                slowSpanThresholdMs: 0,
+                slowSpanCount: 0,
+                logLevelCounts: {},
+                topSpansByCount: [],
+                slowestSpans: [],
+                commonFailures: [],
+                latestFailures: [],
+                latestWarningAndErrorLogs: [],
+                partialFailure: Option.none(),
+                error: Option.none(),
+              };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetProcessDiagnostics]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetProcessDiagnostics,
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              return {
+                serverPid: process.pid,
+                readAt: now,
+                processCount: 0,
+                totalRssBytes: 0,
+                totalCpuPercent: 0,
+                processes: [],
+                error: Option.none(),
+              };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetProcessResourceHistory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetProcessResourceHistory,
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              return {
+                readAt: now,
+                windowMs: input.windowMs,
+                bucketMs: input.bucketMs,
+                sampleIntervalMs: 0,
+                retainedSampleCount: 0,
+                totalCpuSecondsApprox: 0,
+                buckets: [],
+                topProcesses: [],
+                error: Option.none(),
+              };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSignalProcess]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSignalProcess,
+            Effect.succeed({
+              pid: input.pid,
+              signal: input.signal,
+              signaled: false,
+              message: Option.some("Process signaling is not supported on this server."),
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.terminalAttach]: (input) =>
+          observeRpcStream(
+            WS_METHODS.terminalAttach,
+            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
+            ),
+            { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeTerminalMetadata,
+            Stream.callback<TerminalMetadataStreamEvent>((queue) =>
+              Effect.acquireRelease(
+                terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ),
+            ),
+            { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
