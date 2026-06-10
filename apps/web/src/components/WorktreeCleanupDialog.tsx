@@ -65,8 +65,11 @@ export function WorktreeCleanupDialog({
   const liveThreads = useStore(
     useShallow((state) => selectThreadsForEnvironment(state, environmentId)),
   );
-  const { snapshots: archivedSnapshots, isLoading: archivedLoading } =
-    useArchivedThreadSnapshots(environmentIds);
+  const {
+    snapshots: archivedSnapshots,
+    isLoading: archivedLoading,
+    error: archivedError,
+  } = useArchivedThreadSnapshots(environmentIds);
   const threadRefs = useMemo<WorktreeThreadRef[]>(() => {
     const live = liveThreads.map((thread) => ({
       worktreePath: thread.worktreePath,
@@ -232,6 +235,11 @@ export function WorktreeCleanupDialog({
           <p className="px-1 py-4 text-sm text-destructive">
             Could not load worktrees: {loadError}
           </p>
+        ) : archivedError ? (
+          <p className="px-1 py-4 text-sm text-destructive">
+            Could not load archived threads, so worktrees cannot be safely classified:{" "}
+            {archivedError}
+          </p>
         ) : rows.length === 0 ? (
           <p className="px-1 py-4 text-sm text-muted-foreground">Nothing to clean up.</p>
         ) : (
@@ -295,7 +303,13 @@ export function WorktreeCleanupDialog({
             onClick={() => {
               void handleConfirm();
             }}
-            disabled={removing || loading || archivedLoading || removableCount === 0}
+            disabled={
+              removing ||
+              loading ||
+              archivedLoading ||
+              archivedError !== null ||
+              removableCount === 0
+            }
           >
             {removing ? "Removing…" : `Remove ${removableCount}`}
           </Button>

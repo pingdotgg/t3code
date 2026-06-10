@@ -2190,11 +2190,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.listManagedWorktrees",
       input.cwd,
       ["worktree", "list", "--porcelain"],
-      { timeoutMs: 10_000, allowNonZeroExit: true },
+      { timeoutMs: 10_000, fallbackErrorMessage: "git worktree list failed" },
     );
-    if (result.exitCode !== 0) {
-      return { worktrees: [] };
-    }
 
     const realWorktreesDir = yield* resolveRealPath(worktreesDir);
     const isUnderWorktreesDir = (candidate: string): boolean =>
