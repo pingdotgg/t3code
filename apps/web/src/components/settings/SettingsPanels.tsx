@@ -739,6 +739,49 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Worktree cleanup scope"
+          description="Which worktrees are pre-selected when cleaning up a repository."
+          resetAction={
+            settings.worktreeCleanupScope !== DEFAULT_UNIFIED_SETTINGS.worktreeCleanupScope ? (
+              <SettingResetButton
+                label="worktree cleanup scope"
+                onClick={() =>
+                  updateSettings({
+                    worktreeCleanupScope: DEFAULT_UNIFIED_SETTINGS.worktreeCleanupScope,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.worktreeCleanupScope}
+              onValueChange={(value) => {
+                if (value === "orphaned" || value === "orphaned-archived") {
+                  updateSettings({ worktreeCleanupScope: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Worktree cleanup scope">
+                <SelectValue>
+                  {settings.worktreeCleanupScope === "orphaned-archived"
+                    ? "Orphaned + archived"
+                    : "Orphaned only"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="orphaned">
+                  Orphaned only
+                </SelectItem>
+                <SelectItem hideIndicator value="orphaned-archived">
+                  Orphaned + archived
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
           title="Add project starts in"
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
