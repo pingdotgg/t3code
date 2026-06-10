@@ -10,7 +10,7 @@ import type {
 import {
   detectComposerTrigger,
   replaceTextRange,
-  serializeComposerMentionPath,
+  serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import { TextInputWrapper } from "expo-paste-input";
@@ -31,6 +31,12 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import {
+  ComposerToolbarButton,
+  ComposerToolbarRow,
+  ComposerToolbarScroller,
+  ComposerToolbarTrigger,
+} from "../../components/ComposerToolbarTrigger";
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
@@ -67,7 +73,7 @@ export const COMPOSER_EXPANDED_CHROME = 174;
  * Used by the feed inset because KeyboardAvoidingLegendList only accounts for
  * keyboard height; the floating toolbar remains an additional overlay.
  */
-export const COMPOSER_EXPANDED_TOOLBAR_CHROME = 54;
+export const COMPOSER_EXPANDED_TOOLBAR_CHROME = 60;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -85,7 +91,6 @@ export interface ThreadComposerProps {
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
-  readonly onRefresh: () => Promise<void>;
   readonly onStopThread: () => Promise<void>;
   readonly onSendMessage: () => void;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => Promise<void>;
@@ -145,6 +150,10 @@ function withModelSelectionOption(
   };
 }
 
+function formatTitleCase(value: string): string {
+  return value.length === 0 ? value : `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const themePlaceholderColor = useThemeColor("--color-placeholder");
@@ -184,10 +193,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.queueCount > 0;
 
   const sendLabel = props.activeThreadBusy || props.queueCount > 0 ? "Queue" : "Send";
-  const modelProvider = props.selectedThread.modelSelection?.instanceId ?? null;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
+  const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (
@@ -409,7 +419,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
       let replacement = "";
       if (item.type === "path") {
-        replacement = `@${serializeComposerMentionPath(item.path)} `;
+        replacement = `${serializeComposerFileLink(item.path)} `;
       } else if (item.type === "skill") {
         replacement = `$${item.skill.name} `;
       } else if (item.type === "slash-command") {
@@ -431,11 +441,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
 
   // ── Model menu ───────────────────────────────────────────
-  const providerGroups = useMemo(() => {
-    const options = buildModelOptions(props.serverConfig, currentModelSelection);
-    return groupByProvider(options);
-  }, [props.serverConfig, currentModelSelection]);
-
+  const modelOptions = useMemo(
+    () => buildModelOptions(props.serverConfig, currentModelSelection),
+    [props.serverConfig, currentModelSelection],
+  );
+  const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  const currentModelOption =
+    modelOptions.find(
+      (option) =>
+        option.selection.instanceId === currentModelSelection.instanceId &&
+        option.selection.model === currentModelSelection.model,
+    ) ?? null;
+  const configurationLabel = useMemo(() => {
+    const parts = [
+      formatTitleCase(currentEffort),
+      currentFastMode ? "Fast" : null,
+      currentContextWindow !== "1M" ? currentContextWindow : null,
+    ].filter((part): part is string => Boolean(part));
+    return parts.length > 0 ? parts.join(" · ") : "Configuration";
+  }, [currentContextWindow, currentEffort, currentFastMode]);
   const modelMenuActions = useMemo(
     () =>
       providerGroups.map((group) => ({
@@ -546,8 +570,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       return;
     }
     const modelKey = event.slice("model:".length);
-    const options = buildModelOptions(props.serverConfig, currentModelSelection);
-    const option = options.find((o) => o.key === modelKey);
+    const option = modelOptions.find((o) => o.key === modelKey);
     if (option) {
       void props.onUpdateModelSelection(option.selection);
     }
@@ -753,44 +776,56 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
         {/* Toolbar row — matches draft page layout (expanded only) */}
         {isExpanded ? (
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingTop: 10,
-              gap: 8,
-            }}
-          >
-            <ControlPill icon="plus" onPress={() => void props.onPickDraftImages()} />
-            <ControlPillMenu
-              actions={modelMenuActions}
-              onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+          <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+            <ComposerToolbarScroller
+              fadeOpaque={toolbarFadeOpaque}
+              fadeTransparent={toolbarFadeTransparent}
             >
-              <ControlPill iconNode={<ProviderIcon provider={modelProvider} size={16} />} />
-            </ControlPillMenu>
-            <ControlPillMenu
-              actions={optionsMenuActions}
-              onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-            >
-              <ControlPill icon="slider.horizontal.3" />
-            </ControlPillMenu>
-            <ControlPill icon="arrow.clockwise" onPress={() => void props.onRefresh()} />
-            {showStopAction ? (
-              <ControlPill
-                icon="stop.fill"
-                variant="danger"
-                onPress={() => void props.onStopThread()}
+              <ComposerToolbarButton
+                icon="plus"
+                onPress={() => void props.onPickDraftImages()}
+                showChevron={false}
               />
-            ) : null}
-            <ControlPill
+              <ControlPillMenu
+                actions={modelMenuActions}
+                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Model"
+                  iconNode={
+                    <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                  }
+                  label={currentModelOption?.label ?? currentModelSelection.model}
+                />
+              </ControlPillMenu>
+              <ControlPillMenu
+                actions={optionsMenuActions}
+                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+              >
+                <ComposerToolbarTrigger
+                  accessibilityLabel="Configuration"
+                  icon="slider.horizontal.3"
+                  label={configurationLabel}
+                />
+              </ControlPillMenu>
+              {showStopAction ? (
+                <ComposerToolbarButton
+                  icon="stop.fill"
+                  variant="danger"
+                  onPress={() => void props.onStopThread()}
+                  showChevron={false}
+                />
+              ) : null}
+            </ComposerToolbarScroller>
+            <ComposerToolbarButton
+              accessibilityLabel={sendLabel}
               icon="arrow.up"
-              label={sendLabel}
               variant="primary"
               disabled={!canSend}
               onPress={handleSend}
+              showChevron={false}
             />
-          </View>
+          </ComposerToolbarRow>
         ) : null}
 
         {/* Queue count */}

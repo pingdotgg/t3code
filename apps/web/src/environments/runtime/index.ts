@@ -16,6 +16,7 @@ export {
 
 export {
   addSavedEnvironment,
+  addManagedRelayEnvironment,
   connectDesktopSshEnvironment,
   disconnectSavedEnvironment,
   ensureEnvironmentConnectionBootstrapped,

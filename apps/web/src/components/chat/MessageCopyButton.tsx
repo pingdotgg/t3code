@@ -68,11 +68,11 @@ export const MessageCopyButton = memo(function MessageCopyButton({
             type="button"
             size={size}
             variant={variant}
-            className={cn(className)}
+            className={cn("text-muted-foreground hover:text-foreground", className)}
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+        {isCopied ? <CheckIcon className="size-3 text-primary" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup>
         <p>Copy to clipboard</p>

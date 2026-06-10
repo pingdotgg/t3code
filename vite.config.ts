@@ -4,17 +4,22 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   test: {
     environment: "node",
+    exclude: [
+      "**/.repos/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/dist-electron/**",
+      "**/.{idea,git,cache,output,temp}/**",
+    ],
     hookTimeout: 60_000,
     testTimeout: 60_000,
-  },
-  staged: {
-    "*": "vp check --fix",
   },
   fmt: {
     ignorePatterns: [
       ".reference",
       ".repos/**",
       ".plans",
+      ".alchemy",
       "dist",
       "dist-electron",
       "node_modules",
@@ -86,6 +91,7 @@ export default defineConfig({
       "typescript/restrict-template-expressions": "off",
       "typescript/unbound-method": "off",
       "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-manual-effect-runtime-in-tests": "error",
     },
     options: {
       // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.

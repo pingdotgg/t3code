@@ -195,6 +195,31 @@ const buildCmd = Command.make(
 // publish subcommand
 // ---------------------------------------------------------------------------
 
+interface PublishCommandConfig {
+  readonly access: string;
+  readonly tag: string;
+  readonly provenance: boolean;
+  readonly dryRun: boolean;
+}
+
+const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
+  const args = [
+    "publish",
+    "--filter",
+    "t3",
+    "--access",
+    config.access,
+    "--tag",
+    config.tag,
+    "--no-git-checks",
+  ];
+
+  if (config.provenance) args.push("--provenance");
+  if (config.dryRun) args.push("--dry-run");
+
+  return args;
+};
+
 const publishCmd = Command.make(
   "publish",
   {
@@ -260,17 +285,16 @@ const publishCmd = Command.make(
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
           return { iconBackups };
         }),
-        // Use: npm publish
+        // Use: pnpm publish from the workspace root so pnpm-only workspace
+        // config, including override selectors, is interpreted correctly.
         () =>
           Effect.gen(function* () {
-            const args = ["publish", "--access", config.access, "--tag", config.tag];
-            if (config.provenance) args.push("--provenance");
-            if (config.dryRun) args.push("--dry-run");
+            const args = createVpPmPublishArgs(config);
 
-            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make("npm", [...args], {
-                cwd: serverDir,
+              ChildProcess.make("vp", ["pm", ...args], {
+                cwd: repoRoot,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
                 // Windows needs shell mode to resolve .cmd shims.

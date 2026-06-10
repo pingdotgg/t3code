@@ -196,7 +196,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
     .pipe(
       Effect.timeoutOption(input.timeout),
       Effect.map(Option.getOrElse(() => "")),
-      Effect.catch(() => Effect.succeed("")),
+      Effect.orElseSucceed(() => ""),
     );
 });
 

@@ -63,10 +63,13 @@ export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
  *   app after bootstrap/pairing
  * - `bearer-access-token`: scoped token suitable for non-cookie or
  *   non-browser clients
+ * - `dpop-access-token`: scoped proof-of-possession token used by managed
+ *   relay connections
  */
 export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",
   "bearer-access-token",
+  "dpop-access-token",
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
@@ -184,7 +187,7 @@ export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 export const AuthAccessTokenResult = Schema.Struct({
   access_token: TrimmedNonEmptyString,
   issued_token_type: Schema.Literal(AuthAccessTokenType),
-  token_type: Schema.Literal("Bearer"),
+  token_type: Schema.Literals(["Bearer", "DPoP"]),
   expires_in: Schema.Number,
   scope: TrimmedNonEmptyString,
 });

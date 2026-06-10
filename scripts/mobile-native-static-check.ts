@@ -73,7 +73,7 @@ const commandExists = Effect.fn("commandExists")(function* (command: string) {
   return yield* spawner.spawn(lookupCommand).pipe(
     Effect.flatMap((child) => child.exitCode),
     Effect.map((exitCode) => exitCode === 0),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
 });
 

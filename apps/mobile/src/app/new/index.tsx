@@ -8,7 +8,6 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { NewTaskSheetHeader } from "../../features/threads/NewTaskSheetHeader";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { type RemoteCatalogState, useRemoteCatalog } from "../../state/use-remote-catalog";
 import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
@@ -102,9 +101,14 @@ export default function NewTaskRoute() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <Stack.Screen options={{ headerShown: false }} />
-
-      <NewTaskSheetHeader title="Choose project" />
+      <Stack.Screen options={{ title: "Choose project" }} />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          icon="plus"
+          onPress={() => router.push("/new/add-project")}
+          separateBackground
+        />
+      </Stack.Toolbar>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -148,6 +152,7 @@ export default function NewTaskRoute() {
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
             {items.map((item, index) => {
               const isFirst = index === 0;
+              const isLast = index === items.length - 1;
 
               return (
                 <Link
@@ -166,25 +171,33 @@ export default function NewTaskRoute() {
                     className="bg-card"
                     style={{
                       paddingHorizontal: 16,
-                      paddingVertical: 18,
+                      paddingVertical: 14,
                       borderTopWidth: isFirst ? 0 : 1,
                       borderTopColor: borderSubtleColor,
                       borderTopLeftRadius: isFirst ? 24 : 0,
                       borderTopRightRadius: isFirst ? 24 : 0,
-                      borderBottomLeftRadius: 0,
-                      borderBottomRightRadius: 0,
+                      borderBottomLeftRadius: isLast ? 24 : 0,
+                      borderBottomRightRadius: isLast ? 24 : 0,
                     }}
                   >
                     <View className="flex-row items-center justify-between gap-3">
-                      <ProjectFavicon
-                        size={22}
-                        projectTitle={item.title}
-                        httpBaseUrl={savedConnectionsById[item.environmentId]?.httpBaseUrl ?? null}
-                        workspaceRoot={item.workspaceRoot}
-                        bearerToken={savedConnectionsById[item.environmentId]?.bearerToken ?? null}
-                      />
+                      <View className="h-7 w-7 items-center justify-center">
+                        <ProjectFavicon
+                          size={20}
+                          projectTitle={item.title}
+                          httpBaseUrl={
+                            savedConnectionsById[item.environmentId]?.httpBaseUrl ?? null
+                          }
+                          workspaceRoot={item.workspaceRoot}
+                          bearerToken={
+                            savedConnectionsById[item.environmentId]?.bearerToken ?? null
+                          }
+                        />
+                      </View>
                       <View className="flex-1">
-                        <Text className="text-[18px] font-t3-bold">{item.title}</Text>
+                        <Text className="text-[16px] leading-[21px] font-t3-bold">
+                          {item.title}
+                        </Text>
                       </View>
                       <SymbolView
                         name="chevron.right"
@@ -197,33 +210,6 @@ export default function NewTaskRoute() {
                 </Link>
               );
             })}
-            <Pressable
-              className="bg-card"
-              style={{
-                paddingHorizontal: 16,
-                paddingVertical: 18,
-                borderTopWidth: 1,
-                borderTopColor: borderSubtleColor,
-                borderBottomLeftRadius: 24,
-                borderBottomRightRadius: 24,
-              }}
-              onPress={() => router.push("/new/add-project")}
-            >
-              <View className="flex-row items-center justify-between gap-3">
-                <View className="h-[22px] w-[22px] items-center justify-center rounded-full bg-subtle">
-                  <SymbolView name="plus" size={13} tintColor={accentColor} type="monochrome" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[18px] font-t3-bold">Add new project</Text>
-                </View>
-                <SymbolView
-                  name="chevron.right"
-                  size={14}
-                  tintColor={chevronColor}
-                  type="monochrome"
-                />
-              </View>
-            </Pressable>
           </View>
         )}
       </ScrollView>

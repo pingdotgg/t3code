@@ -14,6 +14,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthReviewWriteScope,
+  AuthRelayWriteScope,
   AuthTerminalOperateScope,
   AuthAccessReadScope,
   AuthAccessStreamError,
@@ -34,6 +35,8 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  RelayClientInstallFailedError,
+  type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   EnvironmentAuthorizationError,
@@ -96,6 +99,7 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
@@ -145,6 +149,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
+  [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
@@ -260,6 +266,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -429,7 +436,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   repositoryIdentity,
                 },
               } satisfies OrchestrationEvent;
-            }).pipe(Effect.catch(() => Effect.succeed(event)));
+            }).pipe(Effect.orElseSucceed(() => event));
           default:
             return Effect.succeed(event);
         }
@@ -452,7 +459,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   project: nextProject,
                 })),
               ),
-              Effect.catch(() => Effect.succeed(Option.none())),
+              Effect.orElseSucceed(() => Option.none()),
             );
           case "project.deleted":
             return Effect.succeed(
@@ -480,7 +487,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   thread: nextThread,
                 })),
               ),
-              Effect.catch(() => Effect.succeed(Option.none())),
+              Effect.orElseSucceed(() => Option.none()),
             );
           default:
             if (event.aggregateKind !== "thread") {
@@ -496,7 +503,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     thread: nextThread,
                   })),
                 ),
-                Effect.catch(() => Effect.succeed(Option.none())),
+                Effect.orElseSucceed(() => Option.none()),
               );
         }
       };
@@ -770,7 +777,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                               thread.session !== null && thread.session.status !== "stopped",
                           }),
                         ),
-                        Effect.catch(() => Effect.succeed(false)),
+                        Effect.orElseSucceed(() => false),
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
@@ -1070,6 +1077,39 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
+            "rpc.aggregate": "cloud",
+          }),
+        [WS_METHODS.cloudInstallRelayClient]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.cloudInstallRelayClient,
+            Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>(
+              (queue) =>
+                relayClient
+                  .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
+                  .pipe(
+                    Effect.flatMap((status) =>
+                      Queue.offer(queue, {
+                        type: "complete",
+                        status,
+                      }),
+                    ),
+                    Effect.catchTag("RelayClientInstallError", (error) =>
+                      Queue.fail(
+                        queue,
+                        new RelayClientInstallFailedError({
+                          reason: error.reason,
+                          message: error.message,
+                        }),
+                      ),
+                    ),
+                    Effect.andThen(Queue.end(queue)),
+                    Effect.forkScoped,
+                  ),
+            ),
+            { "rpc.aggregate": "cloud" },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,

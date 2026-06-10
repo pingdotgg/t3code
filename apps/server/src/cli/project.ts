@@ -116,12 +116,8 @@ const failLiveServerRequest = (cause: unknown) => {
 };
 
 const makeLiveServerClient = (origin: string) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    return yield* HttpApiClient.makeWith(EnvironmentHttpApi, {
-      baseUrl: origin,
-      httpClient,
-    });
+  HttpApiClient.make(EnvironmentHttpApi, {
+    baseUrl: origin,
   });
 
 const normalizeWorkspaceRootForProjectCommand = Effect.fn(

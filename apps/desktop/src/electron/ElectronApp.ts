@@ -29,6 +29,13 @@ export interface ElectronAppShape {
     options: Electron.AboutPanelOptionsOptions,
   ) => Effect.Effect<void>;
   readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
+  readonly requestSingleInstanceLock: Effect.Effect<boolean>;
+  readonly isDefaultProtocolClient: (protocol: string) => Effect.Effect<boolean>;
+  readonly setAsDefaultProtocolClient: (
+    protocol: string,
+    path?: string,
+    args?: readonly string[],
+  ) => Effect.Effect<boolean>;
   readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
   readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
   readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
@@ -92,6 +99,16 @@ const make = ElectronApp.of({
   setAppUserModelId: (id) =>
     Effect.sync(() => {
       Electron.app.setAppUserModelId(id);
+    }),
+  requestSingleInstanceLock: Effect.sync(() => Electron.app.requestSingleInstanceLock()),
+  isDefaultProtocolClient: (protocol) =>
+    Effect.sync(() => Electron.app.isDefaultProtocolClient(protocol)),
+  setAsDefaultProtocolClient: (protocol, path, args) =>
+    Effect.sync(() => {
+      if (path === undefined) {
+        return Electron.app.setAsDefaultProtocolClient(protocol);
+      }
+      return Electron.app.setAsDefaultProtocolClient(protocol, path, [...(args ?? [])]);
     }),
   setDesktopName: (desktopName) =>
     Effect.sync(() => {

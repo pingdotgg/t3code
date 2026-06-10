@@ -1,7 +1,8 @@
 const OAUTH_SCOPE_TOKEN = /^[\u0021\u0023-\u005b\u005d-\u007e]+$/u;
 
 /**
- * Decodes an RFC 6749 `scope` value as a set while preserving first-seen order.
+ * Decodes an RFC 6749 `scope` value as a set while preserving its first-seen
+ * order for canonical responses and logs.
  */
 export function parseOAuthScope(value: string): ReadonlyArray<string> | null {
   if (value.length === 0) {
@@ -23,6 +24,15 @@ export function encodeOAuthScope(scopes: ReadonlyArray<string>): string {
     throw new Error("OAuth scopes must be non-empty, valid, and unique.");
   }
   return encoded;
+}
+
+export function oauthScopeSetEquals(value: string, expectedScopes: ReadonlyArray<string>): boolean {
+  const scopes = parseOAuthScope(value);
+  return (
+    scopes !== null &&
+    scopes.length === new Set(expectedScopes).size &&
+    scopes.every((scope) => expectedScopes.includes(scope))
+  );
 }
 
 export function parseAllowedOAuthScope<Scope extends string>(input: {

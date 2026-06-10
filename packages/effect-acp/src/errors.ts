@@ -4,7 +4,7 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 
 export class AcpSpawnError extends Schema.TaggedErrorClass<AcpSpawnError>()("AcpSpawnError", {
   command: Schema.optional(Schema.String),
-  cause: Schema.Defect,
+  cause: Schema.Defect(),
 }) {
   override get message() {
     return this.command
@@ -17,7 +17,7 @@ export class AcpProcessExitedError extends Schema.TaggedErrorClass<AcpProcessExi
   "AcpProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
@@ -31,7 +31,7 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
   "AcpProtocolParseError",
   {
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
@@ -43,7 +43,7 @@ export class AcpTransportError extends Schema.TaggedErrorClass<AcpTransportError
   "AcpTransportError",
   {
     detail: Schema.String,
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
   },
 ) {}
 

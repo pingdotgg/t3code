@@ -1,0 +1,30 @@
+{
+  "name": "t3code-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "node -- scripts/deploy.ts",
+    "destroy": "alchemy destroy",
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@clerk/backend": "3.4.14",
+    "@effect/sql-pg": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "alchemy": "https://pkg.ing/alchemy/078ff00",
+    "drizzle-orm": "1.0.0-rc.3",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "drizzle-kit": "1.0.0-rc.3",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

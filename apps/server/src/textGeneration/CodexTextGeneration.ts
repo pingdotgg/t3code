@@ -140,9 +140,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
         continue;
       }
-      const fileInfo = yield* fileSystem
-        .stat(resolvedPath)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const fileInfo = yield* fileSystem.stat(resolvedPath).pipe(Effect.orElseSucceed(() => null));
       if (!fileInfo || fileInfo.type !== "File") {
         continue;
       }
