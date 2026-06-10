@@ -9,10 +9,15 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ExternalIntegrationRepository } from "../persistence/Services/ExternalIntegrations.ts";
 import { ExternalChat } from "./ExternalChat.ts";
 import { extractGitHubPullRequests } from "./github.ts";
-import { postableReplyBody } from "./postableReply.ts";
+import { postableReplyBody, postableUserInputRequest } from "./postableReply.ts";
+import { derivePendingExternalUserInputs } from "./userInputSlack.ts";
 
 type AssistantMessageEvent = Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 type ThreadSessionSetEvent = Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+type ThreadActivityAppendedEvent = Extract<
+  OrchestrationEvent,
+  { type: "thread.activity-appended" }
+>;
 
 interface AssistantTurnRelayState {
   readonly threadId: ThreadId;
@@ -212,6 +217,71 @@ const make = Effect.gen(function* () {
       }
     });
 
+  const relayUserInputRequestToSlack = (event: ThreadActivityAppendedEvent) =>
+    Effect.gen(function* () {
+      if (event.payload.activity.kind !== "user-input.requested") {
+        return;
+      }
+
+      const pending = derivePendingExternalUserInputs([event.payload.activity])[0];
+      if (pending === undefined) {
+        return;
+      }
+
+      const links = yield* repository.listThreadLinksByThread(event.payload.threadId);
+      const now = nowIso();
+      for (const link of links) {
+        if (link.source !== "slack" || link.muted) continue;
+        const deliveryKey = `user-input-request:${String(pending.requestId)}:${link.externalThreadId}`;
+        const existing = yield* repository.getDeliveryReceipt({
+          source: "slack",
+          deliveryKey,
+        });
+        if (Option.isSome(existing) && existing.value.status === "completed") {
+          continue;
+        }
+
+        const posted = yield* externalChat
+          .postToThread({
+            source: "slack",
+            externalThreadId: link.externalThreadId,
+            message: postableUserInputRequest({
+              kind: "slack_thread",
+              questions: pending.questions,
+            }),
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("external intake failed to relay user input request to Slack", {
+                threadId: String(event.payload.threadId),
+                requestId: String(pending.requestId),
+                externalThreadId: link.externalThreadId,
+                error: error instanceof Error ? error.message : String(error),
+              }).pipe(Effect.as(null)),
+            ),
+          );
+        if (posted === null) {
+          continue;
+        }
+
+        yield* repository.upsertDeliveryReceipt({
+          source: "slack",
+          deliveryKey,
+          status: "completed",
+          externalMessageId: posted.externalMessageId,
+          metadata: {
+            t3ThreadId: String(event.payload.threadId),
+            requestId: String(pending.requestId),
+          },
+          createdAt: Option.getOrElse(
+            Option.map(existing, (receipt) => receipt.createdAt),
+            () => now,
+          ),
+          updatedAt: nowIso(),
+        });
+      }
+    });
+
   const finalizeAssistantTurnsForThread = (event: ThreadSessionSetEvent) =>
     Effect.gen(function* () {
       if (event.payload.session.status === "running") {
@@ -233,6 +303,18 @@ const make = Effect.gen(function* () {
         return finalizeAssistantTurnsForThread(event).pipe(
           Effect.catch((error) =>
             Effect.logWarning("external intake reactor failed to finalize Slack assistant relay", {
+              eventId: String(event.eventId),
+              threadId: String(event.payload.threadId),
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          ),
+        );
+      }
+
+      if (event.type === "thread.activity-appended") {
+        return relayUserInputRequestToSlack(event).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("external intake reactor failed to relay user input request", {
               eventId: String(event.eventId),
               threadId: String(event.payload.threadId),
               error: error instanceof Error ? error.message : String(error),

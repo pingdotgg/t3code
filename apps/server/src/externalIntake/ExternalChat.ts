@@ -485,9 +485,15 @@ const makeExternalChat = Effect.gen(function* () {
         ),
       );
       if (result.status === "created") {
-        yield* Effect.promise(() =>
-          input.thread.createSentMessageFromMessage(input.message).addReaction("eyes"),
-        ).pipe(Effect.ignoreCause({ log: true }));
+        const sentMessage = input.thread.createSentMessageFromMessage(input.message);
+        yield* Effect.promise(() => sentMessage.addReaction("eyes")).pipe(
+          Effect.ignoreCause({ log: true }),
+        );
+        if (result.projectReaction !== undefined) {
+          yield* Effect.promise(() => sentMessage.addReaction(result.projectReaction!)).pipe(
+            Effect.ignoreCause({ log: true }),
+          );
+        }
         const environment = yield* serverEnvironment.getDescriptor;
         const threadUrl = t3ThreadUrl({
           baseUrl: process.env.T3_WEB_APP_BASE_URL ?? process.env.T3CODE_PUBLIC_BASE_URL,

@@ -24,6 +24,11 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
+## Environment and Prompt Hygiene
+
+- Do not hardcode personal, host-specific, or machine-specific details in committed code, prompts, docs, or tests unless the value is intentionally part of the product contract.
+- Avoid embedding usernames, home directories, local paths, hostnames, private URLs, API keys, tokens, or secret file locations. Use generic capability statements, configuration names, or environment variable references instead.
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.

@@ -1,3 +1,4 @@
+import type { UserInputQuestion } from "@t3tools/contracts";
 import { Actions, Card, CardText, LinkButton, type PostableMessage } from "chat";
 
 export type ReplyLinkKind = "slack_thread";
@@ -19,6 +20,11 @@ export interface SupportEmailNotificationMessage {
   readonly preview: string;
   readonly status?: string | undefined;
   readonly t3ThreadUrl?: string | undefined;
+}
+
+export interface UserInputRequestMessage {
+  readonly kind: ReplyLinkKind;
+  readonly questions: ReadonlyArray<UserInputQuestion>;
 }
 
 function isMarkdownTableSeparator(line: string): boolean {
@@ -108,6 +114,38 @@ export function postableReplyBody(input: {
   readonly body: string;
 }): PostableMessage {
   return { markdown: toSlackMarkdown(input.body) };
+}
+
+function formatUserInputQuestion(question: UserInputQuestion, index: number) {
+  const title = question.header.trim() || `Question ${index + 1}`;
+  const lines = [`${index + 1}. **${title}**`, question.question.trim()];
+  if (question.options.length > 0) {
+    lines.push(
+      "",
+      "Options:",
+      ...question.options.map((option, optionIndex) => {
+        const description = option.description.trim();
+        return `${optionIndex + 1}. ${option.label}${description ? ` - ${description}` : ""}`;
+      }),
+    );
+  }
+  return lines.join("\n");
+}
+
+export function postableUserInputRequest(input: UserInputRequestMessage): PostableMessage {
+  const answerHint =
+    input.questions.length === 1
+      ? "Reply in this thread with the answer."
+      : "Reply in this thread with numbered answers, one per line.";
+  const markdown = [
+    "Claude needs input to continue.",
+    "",
+    ...input.questions.map(formatUserInputQuestion),
+    "",
+    answerHint,
+  ].join("\n");
+
+  return { markdown: toSlackMarkdown(markdown) };
 }
 
 export function postableTaskStartedStatus(input: TaskStartedStatusMessage): PostableMessage {

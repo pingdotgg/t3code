@@ -1,4 +1,5 @@
 import {
+  ApprovalRequestId,
   CommandId,
   MessageId,
   ProjectId,
@@ -33,6 +34,7 @@ import {
   defaultIntakeProfile,
   type IntakeProjectProfile,
   loadIntakeProfiles,
+  profileRoutingAliases,
   setupScriptToProjectScript,
 } from "./profiles.ts";
 import {
@@ -46,6 +48,7 @@ import {
   buildDefaultSupportEmailTriagePrompt,
   supportEmailContextFromEnv,
 } from "./supportEmail.ts";
+import { buildSlackUserInputAnswers, derivePendingExternalUserInputs } from "./userInputSlack.ts";
 
 type ResolvedProject = Pick<
   OrchestrationProject | OrchestrationProjectShell,
@@ -101,6 +104,7 @@ export type ExternalIntakeResult =
       readonly branch: string;
       readonly worktreePath: string;
       readonly acceptedAt: string;
+      readonly projectReaction?: string | undefined;
       readonly environmentId?: string | undefined;
     };
 
@@ -130,6 +134,7 @@ const EXTERNAL_INTAKE_AGENT_PROMPT = [
   "Operational rules:",
   "- Before making code changes or running project commands in a task worktree, run the worktree setup script from the worktree root when it exists. Prefer `bash scripts/worktree-setup.sh`; if that file is not present, use `bash .t3code/worktree-setup.sh`. If the setup script fails, inspect the script, perform its setup steps manually from the worktree root, report the workaround you used, and continue with the task once the equivalent setup is complete.",
   "- For data questions, use production data when available: PlanetScale MCP for SQL-backed data and Convex prod for Convex-backed data. Start read-only; ask before writes or destructive operations.",
+  "- PostHog CLI is available as `posthog-cli`.",
   "- If you make code changes, commit them and push the branch before finishing.",
   "- If substantial code changes have been made and Linear MCP tools are available, ask the requester whether they want a Linear issue created or updated to track the task before finishing. Do not create or update a Linear issue unless the requester explicitly approves it. If they approve, include the task summary, changed code areas, verification performed, current branch name, and commit/PR URLs when available. If the issue is created before the PR, include the Linear issue identifier in the PR title or description so Linear's GitHub integration can correlate the work. If the branch already exists without a Linear issue identifier, do not rename it unless that is clearly safe; instead record the branch and PR URL in the Linear issue and include the issue identifier in the PR title or description when possible.",
   "- As soon as there are code changes, create or update a GitHub pull request targeting `dev`.",
@@ -331,7 +336,7 @@ const makeExternalIntake = Effect.gen(function* () {
       const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
       const hintText = `${input.projectHintText ?? ""}\n${input.text}`.toLowerCase();
       const profile = profiles.find((candidate) =>
-        candidate.aliases.some((alias) => textMentionsAlias(hintText, alias)),
+        profileRoutingAliases(candidate).some((alias) => textMentionsAlias(hintText, alias)),
       );
       if (profile !== undefined) {
         const existing = yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(
@@ -435,6 +440,31 @@ const makeExternalIntake = Effect.gen(function* () {
     readonly now: string;
   }) =>
     Effect.gen(function* () {
+      const detail = yield* projectionSnapshotQuery.getThreadDetailById(input.threadId);
+      const thread = Option.getOrNull(detail);
+      const pendingUserInput =
+        thread === null ? undefined : derivePendingExternalUserInputs(thread.activities)[0];
+      if (pendingUserInput !== undefined) {
+        const answers = buildSlackUserInputAnswers(pendingUserInput.questions, input.message.text);
+        if (answers !== null) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.user-input.respond",
+            commandId: CommandId.make(
+              `external-intake:user-input:respond:${input.message.externalMessageId}`,
+            ),
+            threadId: input.threadId,
+            requestId: ApprovalRequestId.make(String(pendingUserInput.requestId)),
+            answers,
+            createdAt: input.now,
+          });
+          return {
+            status: "continued" as const,
+            t3ThreadId: input.threadId,
+            acceptedAt: input.now,
+          };
+        }
+      }
+
       const messageNonce = randomUUID();
       const attachments = yield* normalizeMessageAttachments({
         threadId: input.threadId,
@@ -580,6 +610,7 @@ const makeExternalIntake = Effect.gen(function* () {
         branch: worktree.worktree.refName,
         worktreePath: worktree.worktree.path,
         acceptedAt: now,
+        projectReaction: resolvedProject.profile?.slackEmoji,
         environmentId: String(environment.environmentId),
       };
     });

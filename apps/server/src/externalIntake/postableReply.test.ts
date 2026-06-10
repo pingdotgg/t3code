@@ -6,6 +6,7 @@ import {
   postableReplyBody,
   postableSupportEmailNotification,
   postableTaskStartedStatus,
+  postableUserInputRequest,
   protectSlackPackageScopes,
 } from "./postableReply.ts";
 
@@ -62,6 +63,41 @@ describe("postableTaskStartedStatus", () => {
     expect(JSON.stringify(message)).toContain(
       "https://t3.example.com/environment-local/thread-123",
     );
+  });
+});
+
+describe("postableUserInputRequest", () => {
+  it("formats Claude questions for Slack replies", () => {
+    expect(
+      postableUserInputRequest({
+        kind: "slack_thread",
+        questions: [
+          {
+            id: "Which framework?",
+            header: "Framework",
+            question: "Which framework?",
+            options: [
+              { label: "React", description: "React.js" },
+              { label: "Vue", description: "Vue.js" },
+            ],
+            multiSelect: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      markdown: [
+        "Claude needs input to continue.",
+        "",
+        "1. **Framework**",
+        "Which framework?",
+        "",
+        "Options:",
+        "1. React - React.js",
+        "2. Vue - Vue.js",
+        "",
+        "Reply in this thread with the answer.",
+      ].join("\n"),
+    });
   });
 });
 

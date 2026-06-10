@@ -23,6 +23,7 @@ export interface IntakeProjectProfile {
   readonly title?: string;
   readonly workspaceRoot: string;
   readonly aliases: readonly string[];
+  readonly slackEmoji?: string;
   readonly primary?: boolean;
   readonly defaultBaseRef?: string;
   readonly setupScript?: IntakeSetupScriptProfile;
@@ -69,6 +70,13 @@ function stringField(record: Record<string, unknown>, field: string): string | u
 function booleanField(record: Record<string, unknown>, field: string): boolean | undefined {
   const value = record[field];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function slackEmojiField(record: Record<string, unknown>): string | undefined {
+  const value = stringField(record, "slackEmoji");
+  if (value === undefined) return undefined;
+  const normalized = value.replace(/^:/, "").replace(/:$/, "").trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function stringArrayField(record: Record<string, unknown>, field: string): string[] {
@@ -130,6 +138,7 @@ function normalizeProfile(value: unknown, fallbackId: string): IntakeProjectProf
   const title = stringField(record, "title");
   const primary = booleanField(record, "primary");
   const defaultBaseRef = stringField(record, "defaultBaseRef");
+  const slackEmoji = slackEmojiField(record);
   const setupScript = setupScriptField(record);
   const supportEmail = supportEmailField(record);
   const aliases = stringArrayField(record, "aliases");
@@ -138,6 +147,7 @@ function normalizeProfile(value: unknown, fallbackId: string): IntakeProjectProf
     ...(title !== undefined ? { title } : {}),
     workspaceRoot: expandHomePath(workspaceRoot),
     aliases: aliases.length > 0 ? aliases : [id],
+    ...(slackEmoji !== undefined ? { slackEmoji } : {}),
     ...(primary !== undefined ? { primary } : {}),
     ...(defaultBaseRef !== undefined ? { defaultBaseRef } : {}),
     ...(setupScript !== undefined ? { setupScript } : {}),
@@ -212,6 +222,13 @@ export function loadIntakeProfiles(): IntakeProjectProfile[] {
   const profiles = parseProfilesJson();
   const legacySupport = legacySupportEmailProfile();
   return legacySupport === null ? profiles : [...profiles, legacySupport];
+}
+
+export function profileRoutingAliases(profile: IntakeProjectProfile): readonly string[] {
+  return [
+    ...profile.aliases,
+    ...(profile.slackEmoji !== undefined ? [`:${profile.slackEmoji}:`] : []),
+  ];
 }
 
 export function defaultIntakeProfile(

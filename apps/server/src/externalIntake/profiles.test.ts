@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { defaultIntakeProfile, loadIntakeProfiles } from "./profiles.ts";
+import { defaultIntakeProfile, loadIntakeProfiles, profileRoutingAliases } from "./profiles.ts";
 
 const ORIGINAL_ENV = {
   T3_INTAKE_DEFAULT_PROFILE_ID: process.env.T3_INTAKE_DEFAULT_PROFILE_ID,
@@ -68,5 +68,23 @@ describe("defaultIntakeProfile", () => {
     expect(() => defaultIntakeProfile(loadIntakeProfiles())).toThrow(
       "Only one intake profile can set primary: true.",
     );
+  });
+});
+
+describe("loadIntakeProfiles", () => {
+  it("normalizes Slack emoji names on intake profiles", () => {
+    clearLegacySupportProfileEnv();
+    process.env.T3_INTAKE_PROFILES_JSON = JSON.stringify([
+      {
+        id: "affil",
+        workspaceRoot: "~/code/affil",
+        aliases: ["affil"],
+        slackEmoji: ":affil:",
+      },
+    ]);
+
+    const profile = loadIntakeProfiles()[0];
+    expect(profile?.slackEmoji).toBe("affil");
+    expect(profile ? profileRoutingAliases(profile) : []).toEqual(["affil", ":affil:"]);
   });
 });
