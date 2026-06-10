@@ -22,6 +22,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -529,7 +530,118 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
   });
 
-  it("skips Copilot title generation while starting the first Copilot turn", async () => {
+  it("waits for first-turn thread title generation when draining", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const seededTitle = "Please investigate reconnect failures after restar...";
+    const releaseTitleGeneration = await runtime!.runPromise(Deferred.make<void>());
+    harness.generateThreadTitle.mockReturnValue(
+      Deferred.await(releaseTitleGeneration).pipe(
+        Effect.as({
+          title: "Generated title",
+        }),
+      ),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-drain-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-title-drain"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-title-drain"),
+          role: "user",
+          text: "Please investigate reconnect failures after restarting the session.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    let drained = false;
+    const drainPromise = harness.drain().then(() => {
+      drained = true;
+    });
+    await runtime!.runPromise(Effect.yieldNow);
+    expect(drained).toBe(false);
+
+    await runtime!.runPromise(
+      Deferred.succeed(releaseTitleGeneration, undefined).pipe(Effect.orDie),
+    );
+    await drainPromise;
+
+    expect(harness.sendTurn).toHaveBeenCalledOnce();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Generated title");
+  });
+
+  it("retries transient first-turn thread title generation failures", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const seededTitle = "Please investigate reconnect failures after restar...";
+    harness.generateThreadTitle
+      .mockReturnValueOnce(
+        Effect.fail(
+          new TextGenerationError({
+            operation: "generateThreadTitle",
+            detail: "transient provider error",
+          }),
+        ),
+      )
+      .mockReturnValueOnce(Effect.succeed({ title: "Generated after retry" }));
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-retry-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-title-retry"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-title-retry"),
+          role: "user",
+          text: "Please investigate reconnect failures after restarting the session.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 2);
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Generated after retry");
+  });
+
+  it("generates a Copilot thread title while starting the first Copilot turn", async () => {
     const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
     const harness = await createHarness({
       threadModelSelection: copilotSelection,
@@ -569,10 +681,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     await harness.drain();
 
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe(seededTitle);
+    expect(thread?.title).toBe("Generated title");
   });
 
   it("does not overwrite an existing custom thread title on the first turn", async () => {
@@ -664,6 +776,59 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Reconnect spinner resume bug");
+  });
+
+  it("replaces provider-expanded first prompt titles that match the truncated client seed", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const fullPromptTitle =
+      "Please investigate reconnect failures after restarting the session and make the startup path reliable.";
+    const seededTitle = "Please investigate reconnect failures after restar...";
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({
+        title: "Reconnect startup reliability",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-provider-expanded-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        title: fullPromptTitle,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-title-provider-expanded-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-title-provider-expanded-prompt"),
+          role: "user",
+          text: fullPromptTitle,
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+        "Reconnect startup reliability"
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Reconnect startup reliability");
   });
 
   it("generates a worktree branch name for the first turn", async () => {
