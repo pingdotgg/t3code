@@ -1212,11 +1212,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const primaryRemoteName =
-      upstream?.remoteName ??
-      (yield* resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null)));
-    const defaultBranch =
-      primaryRemoteName === null ? null : yield* resolveDefaultBranchName(cwd, primaryRemoteName);
+    const defaultBranch = yield* resolveDefaultBranchName(cwd, "origin");
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
