@@ -202,7 +202,13 @@ describe("buildClosedDiffSearch", () => {
     expect(
       retainDiff({
         search: { diff: "1" },
-        next: (search) => buildClosedDiffSearch(search),
+        next: ((search: DiffRouteSearch, collectMeta?: true) => {
+          const nextSearch = buildClosedDiffSearch(search);
+          if (collectMeta) {
+            return { search: nextSearch, meta: {} };
+          }
+          return nextSearch;
+        }) as (search: DiffRouteSearch) => DiffRouteSearch,
       }),
     ).toEqual({
       diff: undefined,

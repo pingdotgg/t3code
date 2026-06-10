@@ -106,7 +106,7 @@ describe("resolveInitialServerAuthGateState", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:3773/api/auth/session");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:3773/api/auth/bootstrap");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://localhost:3773/api/auth/browser-session");
     expect(fetchMock.mock.calls[2]?.[0]).toBe("http://localhost:3773/api/auth/session");
   });
 
@@ -371,7 +371,7 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(submitServerAuthCredential("bad-token")).rejects.toThrow(
       "Invalid pairing token. Check the token and try again.",
     );
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost/api/auth/bootstrap", {
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/api/auth/browser-session", {
       body: JSON.stringify({ credential: "bad-token" }),
       credentials: "include",
       headers: {
