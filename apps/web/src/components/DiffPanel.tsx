@@ -53,6 +53,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  --diffs-header-font-family: var(--font-sans) !important;
+  --diffs-font-family: var(--font-mono) !important;
   --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
@@ -93,6 +95,37 @@ const DIFF_PANEL_UNSAFE_CSS = `
   z-index: 4;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
+  align-items: center !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  min-height: 32px !important;
+  padding-block: 6px !important;
+}
+
+[data-diffs-header] [data-header-content] {
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-metadata] {
+  align-items: center !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-diffs-header] [data-additions-count],
+[data-diffs-header] [data-deletions-count] {
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-change-icon],
+[data-diffs-header] [data-rename-icon] {
+  display: block;
+  flex-shrink: 0;
 }
 
 [data-title] {
@@ -103,6 +136,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   text-decoration: underline;
   text-decoration-color: transparent;
   text-underline-offset: 2px;
+  font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
@@ -488,7 +522,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         inferredCheckpointTurnCountByTurnId[summary.turnId] ??
                         "?"}
                     </span>
-                    <span className="text-[9px] leading-tight opacity-70">
+                    <span className="text-[9px] leading-tight opacity-70 tabular-nums">
                       {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                     </span>
                   </div>
