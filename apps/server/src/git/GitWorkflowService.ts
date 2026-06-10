@@ -19,6 +19,12 @@ import {
   type GitPullRequestRefInput,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsListManagedWorktreesInput,
+  type VcsListManagedWorktreesResult,
+  type VcsWorktreeSizeInput,
+  type VcsWorktreeSizeResult,
+  type VcsRemoveWorktreesInput,
+  type VcsRemoveWorktreesResult,
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -61,6 +67,15 @@ export interface GitWorkflowServiceShape {
     input: VcsCreateWorktreeInput,
   ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
   readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
+  readonly listManagedWorktrees: (
+    input: VcsListManagedWorktreesInput,
+  ) => Effect.Effect<VcsListManagedWorktreesResult, GitCommandError>;
+  readonly worktreeSize: (
+    input: VcsWorktreeSizeInput,
+  ) => Effect.Effect<VcsWorktreeSizeResult, GitCommandError>;
+  readonly removeWorktrees: (
+    input: VcsRemoveWorktreesInput,
+  ) => Effect.Effect<VcsRemoveWorktreesResult, GitCommandError>;
   readonly createRef: (
     input: VcsCreateRefInput,
   ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
@@ -297,6 +312,15 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
+      ),
+    listManagedWorktrees: (input) =>
+      ensureGitCommand("GitWorkflowService.listManagedWorktrees", input.cwd).pipe(
+        Effect.andThen(git.listManagedWorktrees(input)),
+      ),
+    worktreeSize: (input) => git.worktreeSize(input),
+    removeWorktrees: (input) =>
+      ensureGitCommand("GitWorkflowService.removeWorktrees", input.cwd).pipe(
+        Effect.andThen(git.removeWorktrees(input)),
       ),
     createRef: (input) =>
       ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
