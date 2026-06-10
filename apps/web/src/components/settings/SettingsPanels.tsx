@@ -17,7 +17,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { type AppFont, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
@@ -102,6 +102,13 @@ const THEME_OPTIONS = [
     label: "Dark",
   },
 ] as const;
+
+const FONT_OPTIONS = [
+  { value: "mono", label: "Fira Code" },
+  { value: "dm-sans", label: "DM Sans" },
+  { value: "sans", label: "System sans" },
+  { value: "serif", label: "System serif" },
+] as const satisfies ReadonlyArray<{ value: AppFont; label: string }>;
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -384,6 +391,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.appFont !== DEFAULT_UNIFIED_SETTINGS.appFont ? ["App font"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -427,6 +435,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isGitWritingModelDirty,
       settings.autoOpenPlanSidebar,
+      settings.appFont,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -454,6 +463,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
     setTheme("system");
     updateSettings({
+      appFont: DEFAULT_UNIFIED_SETTINGS.appFont,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -541,6 +551,43 @@ export function GeneralSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="App font"
+          description="Choose the typeface used throughout the app."
+          resetAction={
+            settings.appFont !== DEFAULT_UNIFIED_SETTINGS.appFont ? (
+              <SettingResetButton
+                label="app font"
+                onClick={() => updateSettings({ appFont: DEFAULT_UNIFIED_SETTINGS.appFont })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.appFont}
+              onValueChange={(value) => {
+                if (FONT_OPTIONS.some((option) => option.value === value)) {
+                  updateSettings({ appFont: value as AppFont });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="App font">
+                <SelectValue>
+                  {FONT_OPTIONS.find((option) => option.value === settings.appFont)?.label ??
+                    "Fira Code"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
