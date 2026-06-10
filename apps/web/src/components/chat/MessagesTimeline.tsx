@@ -10,6 +10,7 @@ import {
   use,
   useCallback,
   useEffect,
+  Fragment,
   useMemo,
   useRef,
   useState,
@@ -859,6 +860,32 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {
+  const renderInlineMarkdownSegment = (text: string, key: string) => {
+    const leadingWhitespace = /^\s+/.exec(text)?.[0] ?? "";
+    const textWithoutLeadingWhitespace = text.slice(leadingWhitespace.length);
+    const trailingWhitespace = /\s+$/.exec(textWithoutLeadingWhitespace)?.[0] ?? "";
+    const content = textWithoutLeadingWhitespace.slice(
+      0,
+      textWithoutLeadingWhitespace.length - trailingWhitespace.length,
+    );
+
+    return (
+      <Fragment key={key}>
+        {leadingWhitespace ? <span aria-hidden="true">{leadingWhitespace}</span> : null}
+        {content ? (
+          <ChatMarkdown
+            text={content}
+            cwd={props.markdownCwd}
+            skills={props.skills}
+            className="text-foreground"
+            lineBreaks
+          />
+        ) : null}
+        {trailingWhitespace ? <span aria-hidden="true">{trailingWhitespace}</span> : null}
+      </Fragment>
+    );
+  };
+
   const reviewCommentSegments = parseReviewCommentMessageSegments(props.text);
   if (reviewCommentSegments.some((segment) => segment.kind === "review-comment")) {
     return (
@@ -904,14 +931,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
         if (matchIndex > cursor) {
           inlineNodes.push(
-            <ChatMarkdown
-              key={`user-terminal-context-inline-before:${context.header}:${cursor}`}
-              text={props.text.slice(cursor, matchIndex)}
-              cwd={props.markdownCwd}
-              skills={props.skills}
-              className="text-foreground"
-              lineBreaks
-            />,
+            renderInlineMarkdownSegment(
+              props.text.slice(cursor, matchIndex),
+              `user-terminal-context-inline-before:${context.header}:${cursor}`,
+            ),
           );
         }
         inlineNodes.push(
@@ -926,14 +949,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       if (inlineNodes.length > 0) {
         if (cursor < props.text.length) {
           inlineNodes.push(
-            <ChatMarkdown
-              key={`user-message-terminal-context-inline-rest:${cursor}`}
-              text={props.text.slice(cursor)}
-              cwd={props.markdownCwd}
-              skills={props.skills}
-              className="text-foreground"
-              lineBreaks
-            />,
+            renderInlineMarkdownSegment(
+              props.text.slice(cursor),
+              `user-message-terminal-context-inline-rest:${cursor}`,
+            ),
           );
         }
 

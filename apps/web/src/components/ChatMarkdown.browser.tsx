@@ -135,6 +135,50 @@ describe("ChatMarkdown", () => {
       await expect.element(link).toBeInTheDocument();
       await expect.element(link).toHaveAttribute("href", "https://openai.com/docs");
       await expect.element(link).toHaveAttribute("target", "_blank");
+      const favicon = link.element().querySelector<HTMLElement>(".chat-markdown-link-favicon");
+      const leading = link.element().querySelector<HTMLElement>(".chat-markdown-link-leading");
+      expect(favicon).not.toBeNull();
+      expect(leading).not.toBeNull();
+      expect(leading?.contains(favicon)).toBe(true);
+      expect(getComputedStyle(leading!).display).toBe("inline");
+      expect(getComputedStyle(leading!).whiteSpace).toBe("nowrap");
+      expect(getComputedStyle(favicon!).verticalAlign).not.toBe("baseline");
+      expect(leading?.textContent).toBe("O");
+      expect(link.element().textContent).toBe("OpenAI");
+      expect(getComputedStyle(link.element()).textDecorationLine).toBe("none");
+      expect(link.element().querySelector("img, svg")?.getBoundingClientRect().width).toBe(14);
+      await link.hover();
+      expect(getComputedStyle(link.element()).backgroundImage).not.toBe("none");
+      await expect.element(page.getByText("https://openai.com/docs")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps a favicon with the leading segment of a wrapping URL", async () => {
+    const url = "https://github.com/pingdotgg/t3code/pull/3017/changes";
+    const screen = await render(
+      <div style={{ width: 180 }}>
+        <ChatMarkdown text={`[${url}](${url})`} cwd="/repo/project" />
+      </div>,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: url });
+      const leading = link.element().querySelector<HTMLElement>(".chat-markdown-link-leading");
+      const favicon = link.element().querySelector<HTMLElement>(".chat-markdown-link-favicon");
+      expect(leading).not.toBeNull();
+      expect(favicon).not.toBeNull();
+      expect(leading?.contains(favicon)).toBe(true);
+      expect(leading?.textContent).toBe("https://");
+      expect(getComputedStyle(leading!).display).toBe("inline");
+      expect(getComputedStyle(leading!).whiteSpace).toBe("nowrap");
+      expect(getComputedStyle(favicon!).verticalAlign).not.toBe("baseline");
+      expect(link.element().textContent).toBe(url);
+      expect(link.element().querySelectorAll("wbr").length).toBeGreaterThan(0);
+      const markdownRoot = link.element().closest<HTMLElement>(".chat-markdown");
+      expect(markdownRoot).not.toBeNull();
+      expect(markdownRoot!.scrollWidth).toBeLessThanOrEqual(markdownRoot!.clientWidth);
     } finally {
       await screen.unmount();
     }
