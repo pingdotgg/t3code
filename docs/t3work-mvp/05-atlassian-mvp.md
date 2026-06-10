@@ -72,7 +72,9 @@ Draft flow:
 
 ## Deferred Atlassian Scope
 
-- Confluence page search/fetch
+- Confluence page search/fetch — specced as the first expansion in
+  [Epic 26 (Knowledge Workbench)](./26-knowledge-workbench.md); Confluence shares this same
+  Atlassian connection rather than requiring a separate one
 - Jira transitions
 - issue field editing
 - board and sprint modeling

@@ -13,6 +13,13 @@ to the existing T3 Code runtime.
 
 ## Product Thesis
 
+`t3work` is an **extensible work platform**: it turns the systems you already work in into
+guided, AI-accelerated workspaces, and lets users extend it along two axes — **Sources**
+(connect any back-end as a first-class data provider) and **Surfaces** (compose
+role-specific pages and recipes for how you work). Atlassian/Jira and the QA profile are
+the first Source and the first Surface, not the definition of the product. See the full
+[Vision & Extensibility Model](./00-vision.md).
+
 T3 Code should remain a local-first agent runtime with strong provider orchestration.
 `t3work` adds a guided layer on top:
 
@@ -46,6 +53,7 @@ The user should be able to:
 
 ## Epic Documents
 
+- [Vision & Extensibility Model](./00-vision.md)
 - [Epic 01: Product Scope](./01-product-scope.md)
 - [Epic 02: Additive Architecture](./02-additive-architecture.md)
 - [Epic 03: Project Browser](./03-project-browser.md)
@@ -70,6 +78,8 @@ The user should be able to:
 - [Epic 22: GitHub Pull Request Workspace](./22-github-pull-request-workspace.md)
 - [Epic 23: Project Setup Preflight UI](./23-project-setup-preflight-ui.md)
 - [Epic 24: Tiered Message Composition (proposal)](./24-tiered-message-composition.md)
+- [Epic 25: Workflow Engine](./25-workflow-engine.md)
+- [Epic 26: Knowledge Workbench](./26-knowledge-workbench.md)
 
 ## Supporting Docs
 
@@ -81,6 +91,8 @@ The user should be able to:
 
 - Do not fork T3 Code into a separate long-lived product.
 - Do not build a full Jira replacement.
+- Do not build a full Confluence replacement; the knowledge layer accelerates, it does not
+  replicate.
 - Do not require every project to have a Git repository.
 - Do not silently create autonomous memory or recipes without user confirmation.
 - Do not let skills mutate external systems without a reviewable UI.

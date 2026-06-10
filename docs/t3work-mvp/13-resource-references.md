@@ -175,7 +175,7 @@ Use the shared `t3work` resource model.
 
 ```ts
 type ResourceRef = {
-  provider: "atlassian" | "github" | "linear" | "local";
+  provider: string; // open connector slug — e.g. "atlassian", "github", "linear", "local"
   kind: string;
   id: string;
   displayId?: string;
@@ -184,6 +184,9 @@ type ResourceRef = {
   projectId?: string;
 };
 ```
+
+`provider` is an open slug, not a closed union — a user-authored connector
+([Epic 04](./04-integration-platform.md)) must be referenceable without editing this type.
 
 For Jira:
 
@@ -198,6 +201,43 @@ const ref = {
   projectId: "abc",
 };
 ```
+
+## Cross-Provider Links (Embedded References)
+
+Everything above covers references the **user types** into the composer. The platform also
+extracts references that are **already embedded inside fetched resource data** — and
+promotes them to first-class, openable resources.
+
+This is what makes "the Confluence pages linked from this Jira ticket" real: a Confluence
+URL in a ticket description, a Jira remote link, or an Atlassian smart-link is not left as
+opaque text — it is normalized into a typed relation that resolves across connectors.
+
+### Relation model
+
+```ts
+type ResourceRelation = {
+  from: ResourceRef;        // e.g. the Jira issue
+  to: ResourceRef;          // e.g. @confluence:ENG/runbook-release
+  kind: string;             // "links" | "mentions" | "remote-link" | "child-of" | ...
+  source: "body" | "remote-link" | "smart-link" | "field";
+};
+```
+
+- **Extraction** — a connector's `extractRelations`
+  ([Epic 04](./04-integration-platform.md)) parses a fetched snapshot (issue body, remote
+  links, page body) and emits relations. Extraction runs at sync/fetch time, not at render
+  time.
+- **Cross-Source resolution** — `to` may target a different connector. A relation to
+  `@confluence:SPACE/page` resolves through Atlassian; one to `@github:owner/repo#1`
+  through a GitHub connector. The graph spans Sources.
+- **Rendering** — relations render as resource chips (open inline) and populate the
+  "linked resources" sections on Resource Detail and Page Detail
+  ([Epic 03](./03-project-browser.md), [Epic 26](./26-knowledge-workbench.md)).
+- **Maintenance signal** — an unresolved `to` is a stale-link finding for knowledge
+  maintenance ([Epic 26](./26-knowledge-workbench.md)).
+
+The cross-provider graph is the connective tissue of the [vision](./00-vision.md); the
+[Knowledge Workbench](./26-knowledge-workbench.md) is its primary consumer.
 
 ## Thread Attachment Behavior
 
@@ -290,9 +330,13 @@ Implement first:
 - structured Jira issue attachment on send
 - stale/unresolved visual state
 
+Next (with the [Knowledge Workbench](./26-knowledge-workbench.md), Epic 26):
+
+- Confluence references (`@confluence:SPACE/page`)
+- embedded cross-provider link extraction (`ResourceRelation`) and inline resolution
+
 Defer:
 
-- Confluence references
 - GitHub PR/issue references
 - cross-project references
 - bulk references

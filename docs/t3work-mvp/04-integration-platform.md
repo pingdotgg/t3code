@@ -3,9 +3,13 @@
 ## Purpose
 
 The integration platform allows projects to be created from external systems and lets
-skills read external context through a stable tool surface.
+skills read external context through a stable tool surface. It is the **Sources** axis of
+the [vision](./00-vision.md): the platform owns the plumbing (auth, caching, sync,
+normalization, reviewable mutations, the cross-provider graph) so that connecting a new
+back-end is plugin code, not a new product.
 
-Atlassian is the first implementation, not the abstraction.
+Atlassian is the first implementation, not the abstraction. A back-end is made available
+by a **connector**; Atlassian is the first connector.
 
 ## Core Concepts
 
@@ -89,6 +93,59 @@ type IntegrationProvider = {
 };
 ```
 
+## Connectors — Authoring a Source
+
+The `IntegrationProvider` interface above is the runtime contract. Today connectors are
+**team-authored TypeScript** living in `packages/integrations-*` (with the abstraction in
+`integrations-core` and Atlassian in `integrations-atlassian`).
+
+The North Star is that a connector is a **plugin module authored with `defineConnector`** —
+a peer of `defineRecipe` in the same SDK — and ultimately authorable **in the app, by the
+user's own agent** (the `create-recipe` / `edit-plugin-module` pattern generalized to
+connectors). Adding a Source becomes the same act as adding a recipe: write a typed module,
+review it, run it.
+
+### Open provider slug
+
+`provider` is an **open branded slug**, not a closed enum — mirroring `ProviderDriverKind`
+on the AI-runtime side, which is already open. Adding a Source must never require editing a
+central union. (See `packages/contracts/src/providerInstance.ts` for the existing
+open-slug precedent.)
+
+### One connector can span a product family
+
+A connector is not limited to one resource kind. The **Atlassian connector exposes both
+Jira issues and Confluence pages** under a single account/site connection — see
+[Epic 26 — Knowledge Workbench](./26-knowledge-workbench.md). Resource domains are
+declared by the connector; the platform routes by `(provider, kind)`.
+
+### Platform owns the plumbing; the author owns the back-end
+
+A connector author implements only the back-end-specific behavior. The platform supplies
+auth, the queryable cache (`Queryable<T>`), background sync, freshness polling, the
+reviewable mutation flow, and cross-provider link resolution.
+
+```ts
+// Illustrative North-Star shape — peer to defineRecipe.
+const atlassian = defineConnector({
+  id: "atlassian",                 // open slug; unique per project
+  label: "Atlassian",
+  domains: ["jira-issue", "confluence-page"], // product family
+  auth: oauthSite({ /* platform-managed */ }),
+  listProjects,                    // back-end-specific reads...
+  listResources,
+  getResource,
+  search,
+  getAvailableActions,
+  extractRelations,                // link extraction → cross-provider graph (Epic 13)
+  prepareMutation,
+  commitMutation,
+});
+```
+
+MVP ships Atlassian as a team-authored connector; the SDK surface and in-app authoring are
+the planned path, not the first slice.
+
 ## Mutation Design
 
 All external writes should be two-step:
@@ -127,7 +184,7 @@ The t3work-Atlassian backlog cache
 ([apps/server/src/t3work-atlassian-backlog-cacheReadWrite.ts](../../apps/server/src/t3work-atlassian-backlog-cacheReadWrite.ts))
 is the existing template for new providers.
 
-## Future Providers
+## Future Connectors
 
 The same model should fit:
 
@@ -137,3 +194,7 @@ The same model should fit:
 - Notion databases/pages
 - Zendesk groups/tickets
 - local file collections
+
+These are the connectors the team may ship; the **long tail is user-authored** — any
+back-end becomes a Source via a `defineConnector` module, without the platform shipping it
+first.

@@ -1,5 +1,9 @@
 # Epic 01: Product Scope
 
+> This epic scopes the **first shippable slice** (Jira/QA). For the product identity it is
+> the first instance of — the extensible work platform and its two axes — see the
+> [Vision & Extensibility Model](./00-vision.md).
+
 ## Problem
 
 Non-developer users often do not know what to type into a blank AI chat. They know their
@@ -85,7 +89,8 @@ They need help with:
 - personal or company-wide recipe collections
 - silent autonomous recipe creation
 - autonomous project memory writes
-- Confluence-heavy knowledge workbench
+- Confluence / knowledge workbench — planned as the first expansion beyond the MVP
+  ([Epic 26](./26-knowledge-workbench.md))
 - multi-integration dependency graphs
 - full external workflow automation
 - direct ticket editing beyond comments
