@@ -54,6 +54,14 @@
   * {
     @apply border-border outline-ring/50;
   }
+  :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus,
+  :where(
+    [data-slot="menu-popup"],
+    [data-slot="select-popup"],
+    [data-slot="popover-popup"]
+  ):focus-visible {
+    @apply outline-none ring-0;
+  }
   html {
     background-color: var(--app-chrome-background);
   }

@@ -208,9 +208,11 @@ function ComboboxItem({
       </ComboboxPrimitive.ItemIndicator>
       <div
         className={cn(
+          "[&_svg:not([class*='text-'])]:text-muted-foreground",
           hideIndicator ? "col-start-1 col-span-full" : "col-start-2",
           contentClassName,
         )}
+        data-slot="combobox-item-content"
       >
         {children}
       </div>
