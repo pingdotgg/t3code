@@ -2341,7 +2341,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const runButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
-            (button) => button.title === "Run Lint",
+            (button) => button.getAttribute("aria-label") === "Run Lint",
           ) as HTMLButtonElement | null,
         "Unable to find Run Lint button.",
       );
@@ -2420,7 +2420,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const runButton = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("button")).find(
-            (button) => button.title === "Run Test",
+            (button) => button.getAttribute("aria-label") === "Run Test",
           ) as HTMLButtonElement | null,
         "Unable to find Run Test button.",
       );
@@ -3160,7 +3160,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.title).toContain("enter plan mode");
+      expect(initialModeButton.getAttribute("aria-label")).toContain("enter plan mode");
+      expect(initialModeButton.hasAttribute("title")).toBe(false);
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -3172,7 +3173,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await waitForLayout();
 
-      expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+      expect((await waitForInteractionModeButton("Build")).getAttribute("aria-label")).toContain(
+        "enter plan mode",
+      );
 
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
@@ -3187,7 +3190,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
+          expect((await waitForInteractionModeButton("Plan")).getAttribute("aria-label")).toContain(
             "return to normal build mode",
           );
         },
@@ -3205,7 +3208,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+          expect(
+            (await waitForInteractionModeButton("Build")).getAttribute("aria-label"),
+          ).toContain("enter plan mode");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3587,13 +3592,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      await waitForComposerText("hi @package.json there");
+      await waitForComposerText("hi [package.json](package.json) there");
       await setComposerSelectionByTextOffsets({
         start: "hi package.json ".length,
         end: "hi package.json there".length,
       });
       await pressComposerKey("(");
-      await waitForComposerText("hi @package.json (there)");
+      await waitForComposerText("hi [package.json](package.json) (there)");
     } finally {
       await mounted.cleanup();
     }
@@ -3620,6 +3625,47 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await selectAllComposerContent();
       await pressComposerKey("(");
       await waitForComposerText("(");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("stores selected file tags as markdown links while keeping the composer chip", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_REF, "@pack");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-file-tag-encoding" as MessageId,
+        targetText: "file tag encoding",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag !== WS_METHODS.projectsSearchEntries) {
+          return undefined;
+        }
+        return {
+          entries: [
+            {
+              path: "path/to/package.json",
+              kind: "file",
+              parentPath: "path/to",
+            },
+          ],
+          truncated: false,
+        };
+      },
+    });
+
+    try {
+      const item = await waitForComposerMenuItem("path:file:path/to/package.json");
+      item.click();
+
+      await waitForComposerText("[package.json](path/to/package.json) ");
+      const chip = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-mention-chip="true"]'),
+        "Unable to find rendered composer file chip.",
+      );
+      expect(chip.textContent).toContain("package.json");
     } finally {
       await mounted.cleanup();
     }
