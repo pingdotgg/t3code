@@ -1416,13 +1416,15 @@ async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
   return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
 }
 
-function findButtonContainingText(text: string): HTMLButtonElement | null {
-  return (Array.from(document.querySelectorAll("button")).find((button) =>
-    button.textContent?.includes(text),
-  ) ?? null) as HTMLButtonElement | null;
+function findButtonContainingText(text: string): HTMLElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"]')).find((button) =>
+      button.textContent?.includes(text),
+    ) ?? null
+  );
 }
 
-async function waitForButtonContainingText(text: string): Promise<HTMLButtonElement> {
+async function waitForButtonContainingText(text: string): Promise<HTMLElement> {
   return waitForElement(
     () => findButtonContainingText(text),
     `Unable to find button containing "${text}".`,
@@ -3215,6 +3217,89 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("focuses the composer and inserts printable text typed from the page background", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-type-to-focus" as MessageId,
+        targetText: "type-to-focus target",
+      }),
+    });
+
+    const backgroundTarget = document.createElement("div");
+    backgroundTarget.tabIndex = -1;
+    document.body.append(backgroundTarget);
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      backgroundTarget.focus();
+      expect(document.activeElement).not.toBe(composerEditor);
+
+      const event = new KeyboardEvent("keydown", {
+        key: "h",
+        bubbles: true,
+        cancelable: true,
+      });
+      backgroundTarget.dispatchEvent(event);
+
+      await waitForComposerText("h");
+      expect(event.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(composerEditor);
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "i",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitForComposerText("hi");
+    } finally {
+      backgroundTarget.remove();
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not steal printable keys from editable targets or shortcut modifiers", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-type-to-focus-guards" as MessageId,
+        targetText: "type-to-focus guards target",
+      }),
+    });
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    try {
+      input.focus();
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "x",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitForLayout();
+      expect(useComposerDraftStore.getState().draftsByThreadKey[THREAD_KEY]?.prompt ?? "").toBe("");
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "k",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitForLayout();
+      expect(useComposerDraftStore.getState().draftsByThreadKey[THREAD_KEY]?.prompt ?? "").toBe("");
+    } finally {
+      input.remove();
       await mounted.cleanup();
     }
   });
