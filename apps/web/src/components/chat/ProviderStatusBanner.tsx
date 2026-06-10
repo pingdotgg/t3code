@@ -3,6 +3,7 @@ import { memo } from "react";
 import { InfoIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,
@@ -39,9 +40,14 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         <InfoIcon className="size-4 shrink-0" aria-hidden />
         <div className="flex min-w-0 flex-col gap-1">
           <div className="font-medium">{title}</div>
-          <div className="line-clamp-3 text-muted-foreground" title={message}>
-            {message}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
+            />
+            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
+              {message}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </div>
     </div>

@@ -11,6 +11,7 @@ export type ComposerPromptSegment =
   | {
       type: "mention";
       path: string;
+      source: string;
     }
   | {
       type: "skill";
@@ -23,6 +24,9 @@ export type ComposerPromptSegment =
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
+const FILE_LINK_TOKEN_REGEX = /(^|\s)\[((?:\\.|[^\]\\])*)\]\(([^)\s]+)\)(?=\s)/g;
+const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 
 function rangeIncludesIndex(start: number, end: number, index: number): boolean {
   return start <= index && index < end;
@@ -56,6 +60,29 @@ type MentionTokenMatch = Extract<InlineTokenMatch, { type: "mention" }>;
 
 function collectMentionTokenMatches(text: string): MentionTokenMatch[] {
   const matches: MentionTokenMatch[] = [];
+
+  for (const match of text.matchAll(FILE_LINK_TOKEN_REGEX)) {
+    const fullMatch = match[0];
+    const prefix = match[1] ?? "";
+    const label = (match[2] ?? "").replace(/\\(.)/g, "$1");
+    const encodedPath = match[3] ?? "";
+    let path = encodedPath;
+    try {
+      path = decodeURIComponent(encodedPath);
+    } catch {
+      // Keep the source value when malformed percent escapes are present.
+    }
+    const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+    const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
+    if (!path || hasExternalScheme || label !== basename) {
+      continue;
+    }
+    const matchIndex = match.index ?? 0;
+    const start = matchIndex + prefix.length;
+    const end = start + fullMatch.length - prefix.length;
+    matches.push({ type: "mention", value: path, start, end });
+  }
 
   for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
     const fullMatch = match[0];
@@ -189,7 +216,11 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
     }
 
     if (match.type === "mention") {
-      segments.push({ type: "mention", path: match.value });
+      segments.push({
+        type: "mention",
+        path: match.value,
+        source: text.slice(match.start, match.end),
+      });
     } else {
       segments.push({ type: "skill", name: match.value });
     }

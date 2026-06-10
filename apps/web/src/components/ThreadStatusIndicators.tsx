@@ -102,32 +102,45 @@ export function ThreadStatusLabel({
 }) {
   if (compact) {
     return (
-      <span
-        title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
-      >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
-        <span className="sr-only">{status.label}</span>
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              aria-label={status.label}
+              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+            />
+          }
+        >
+          <span
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-pulse" : ""
+            }`}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{status.label}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <span
-      title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden md:inline">{status.label}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={status.label}
+            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+          />
+        }
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-pulse" : ""
+          }`}
+        />
+        <span className="hidden md:inline">{status.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -220,14 +233,20 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       {terminalStatus ? (
-        <span
-          role="img"
-          aria-label={terminalStatus.label}
-          title={terminalStatus.label}
-          className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-        >
-          <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              />
+            }
+          >
+            <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {isRemoteThread ? (
         <Tooltip>

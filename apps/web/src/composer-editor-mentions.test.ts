@@ -10,7 +10,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
@@ -24,7 +24,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("keeps newlines around mention tokens", () => {
     expect(splitPromptIntoComposerSegments("one\n@src/index.ts \ntwo")).toEqual([
       { type: "text", text: "one\n" },
-      { type: "mention", path: "src/index.ts" },
+      { type: "mention", path: "src/index.ts", source: "@src/index.ts" },
       { type: "text", text: " \ntwo" },
     ]);
   });
@@ -32,7 +32,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits quoted mention tokens containing whitespace", () => {
     expect(splitPromptIntoComposerSegments('Inspect @"My File.md" please')).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: "My File.md" },
+      { type: "mention", path: "My File.md", source: '@"My File.md"' },
       { type: "text", text: " please" },
     ]);
   });
@@ -40,8 +40,50 @@ describe("splitPromptIntoComposerSegments", () => {
   it("unescapes quoted mention token content", () => {
     expect(splitPromptIntoComposerSegments('Inspect @"docs/My \\"File\\".md" please')).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "mention", path: 'docs/My "File".md' },
+      {
+        type: "mention",
+        path: 'docs/My "File".md',
+        source: '@"docs/My \\"File\\".md"',
+      },
       { type: "text", text: " please" },
+    ]);
+  });
+
+  it("splits generated markdown file links into mention segments", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Inspect [package.json](path/to/package.json) before continuing",
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "path/to/package.json",
+        source: "[package.json](path/to/package.json)",
+      },
+      { type: "text", text: " before continuing" },
+    ]);
+  });
+
+  it("does not turn normal web links into file mention segments", () => {
+    expect(
+      splitPromptIntoComposerSegments("Read [the docs](https://example.com/docs) first"),
+    ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
+  });
+
+  it("decodes reserved path characters from generated links", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "Inspect [config#draft?.json](config%23draft%3F.json) before continuing",
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "config#draft?.json",
+        source: "[config#draft?.json](config%23draft%3F.json)",
+      },
+      { type: "text", text: " before continuing" },
     ]);
   });
 
@@ -67,7 +109,7 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([
       { type: "text", text: "Inspect " },
       { type: "terminal-context", context: null },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
@@ -94,7 +136,7 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "terminal-context", context: null },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " after " },
-      { type: "mention", path: "AGENTS.md" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },
     ]);
   });
@@ -148,6 +190,17 @@ describe("selectionTouchesMentionBoundary", () => {
         'hi @"My File.md" there',
         'hi @"My File.md"'.length,
         'hi @"My File.md" there'.length,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when selection includes whitespace after a markdown file link", () => {
+    const prompt = "hi [package.json](path/to/package.json) there";
+    expect(
+      selectionTouchesMentionBoundary(
+        prompt,
+        "hi [package.json](path/to/package.json)".length,
+        prompt.length,
       ),
     ).toBe(true);
   });

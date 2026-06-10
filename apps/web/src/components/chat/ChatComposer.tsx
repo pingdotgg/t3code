@@ -17,7 +17,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
@@ -187,6 +187,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
+  const interactionModeTooltip =
+    props.interactionMode === "plan"
+      ? "Plan mode — click to return to normal build mode"
+      : "Default mode — click to enter plan mode";
+  const planSidebarTooltip = props.planSidebarOpen
+    ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
+    : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`;
 
   return (
     <>
@@ -194,86 +201,98 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
       {props.showInteractionModeToggle ? (
         <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                  size="sm"
+                  type="button"
+                  onClick={props.onToggleInteractionMode}
+                  aria-label={interactionModeTooltip}
+                />
+              }
+            >
+              <BotIcon />
+              <span className="sr-only sm:not-sr-only">
+                {props.interactionMode === "plan" ? "Plan" : "Build"}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
+          </Tooltip>
 
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
         </>
       ) : null}
 
-      <Select
-        value={props.runtimeMode}
-        onValueChange={(value) => props.onRuntimeModeChange(value!)}
-      >
-        <SelectTrigger
-          variant="ghost"
-          size="sm"
-          className="font-medium"
-          aria-label="Runtime mode"
-          title={runtimeModeOption.description}
+      <Tooltip>
+        <Select
+          value={props.runtimeMode}
+          onValueChange={(value) => props.onRuntimeModeChange(value!)}
         >
-          <RuntimeModeIcon className="size-4" />
-          <SelectValue>{runtimeModeOption.label}</SelectValue>
-        </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false}>
-          {runtimeModeOptions.map((mode) => {
-            const option = runtimeModeConfig[mode];
-            const OptionIcon = option.icon;
-            return (
-              <SelectItem key={mode} value={mode} className="min-w-64 py-2">
-                <div className="grid min-w-0 gap-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                    <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    {option.label}
-                  </span>
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
-                  </span>
-                </div>
-              </SelectItem>
-            );
-          })}
-        </SelectPopup>
-      </Select>
+          <TooltipTrigger
+            render={
+              <SelectTrigger
+                variant="ghost"
+                size="sm"
+                className="font-medium"
+                aria-label="Runtime mode"
+              />
+            }
+          >
+            <RuntimeModeIcon className="size-4" />
+            <SelectValue>{runtimeModeOption.label}</SelectValue>
+          </TooltipTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            {runtimeModeOptions.map((mode) => {
+              const option = runtimeModeConfig[mode];
+              const OptionIcon = option.icon;
+              return (
+                <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                  <div className="grid min-w-0 gap-0.5">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                      <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                      {option.label}
+                    </span>
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {option.description}
+                    </span>
+                  </div>
+                </SelectItem>
+              );
+            })}
+          </SelectPopup>
+        </Select>
+        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+      </Tooltip>
 
       {props.showPlanToggle ? (
         <>
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          <Button
-            variant="ghost"
-            className={cn(
-              "shrink-0 whitespace-nowrap px-2 sm:px-3",
-              props.planSidebarOpen
-                ? "text-blue-400 hover:text-blue-300"
-                : "text-muted-foreground/70 hover:text-foreground/80",
-            )}
-            size="sm"
-            type="button"
-            onClick={props.onTogglePlanSidebar}
-            title={
-              props.planSidebarOpen
-                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
-            }
-          >
-            <ListTodoIcon />
-            <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                    props.planSidebarOpen
+                      ? "text-blue-400 hover:text-blue-300"
+                      : "text-muted-foreground/70 hover:text-foreground/80",
+                  )}
+                  size="sm"
+                  type="button"
+                  onClick={props.onTogglePlanSidebar}
+                  aria-label={planSidebarTooltip}
+                />
+              }
+            >
+              <ListTodoIcon />
+              <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{planSidebarTooltip}</TooltipPopup>
+          </Tooltip>
         </>
       ) : null}
     </>
@@ -1472,7 +1491,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
-        const replacement = `@${serializeComposerMentionPath(item.path)} `;
+        const replacement = `${serializeComposerFileLink(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
