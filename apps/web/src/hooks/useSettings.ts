@@ -11,6 +11,7 @@
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import { applyAppFont } from "../appFont";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
@@ -49,6 +50,7 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  applyAppFont(settings.appFont);
   emitClientSettingsChange();
 }
 

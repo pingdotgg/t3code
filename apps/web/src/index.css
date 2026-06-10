@@ -85,6 +85,7 @@
 
 :root {
   color-scheme: light;
+  --app-font-family: "Fira Code", monospace;
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
@@ -145,13 +146,7 @@
 }
 
 body {
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  font-family: var(--app-font-family);
   margin: 0;
   padding: 0;
 }
