@@ -11,12 +11,7 @@ import {
   type TerminalSessionState,
   type TerminalAttachSessionInput,
 } from "@t3tools/client-runtime";
-import type {
-  EnvironmentId,
-  TerminalAttachStreamEvent,
-  TerminalMetadataStreamEvent,
-  TerminalSessionSnapshot,
-} from "@t3tools/contracts";
+import type { EnvironmentId, TerminalMetadataStreamEvent } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
@@ -39,9 +34,11 @@ export function subscribeTerminalMetadata(input: {
   return terminalSessionManager.subscribeMetadata(input);
 }
 
-export function attachTerminalSession(input: TerminalAttachSessionInput & {
-  readonly environmentId: EnvironmentId;
-}) {
+export function attachTerminalSession(
+  input: TerminalAttachSessionInput & {
+    readonly environmentId: EnvironmentId;
+  },
+) {
   return terminalSessionManager.attach({
     environmentId: input.environmentId,
     client: input.client,

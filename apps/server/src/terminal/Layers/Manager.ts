@@ -15,7 +15,6 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { isManagedRuntimeEnvKey } from "../../launchEnv/launchEnvUtils.ts";
 import { LaunchEnv, type LaunchEnvShape } from "../../launchEnv/Services/LaunchEnv.ts";
-import { LaunchEnvProjectLookupError, LaunchEnvThreadLookupError } from "../../launchEnv/Services/LaunchEnvErrors.ts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -2375,80 +2374,80 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         input.threadId,
         runWithLaunchEnv(input, (input: TerminalRestartInput) =>
           Effect.gen(function* () {
-          yield* increment(terminalRestartsTotal, { scope: "thread" });
-          const terminalId = input.terminalId;
-          yield* assertValidCwd(input.cwd);
-          const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
+            yield* increment(terminalRestartsTotal, { scope: "thread" });
+            const terminalId = input.terminalId;
+            yield* assertValidCwd(input.cwd);
+            const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
 
-          const sessionKey = toSessionKey(input.threadId, terminalId);
-          const existingSession = yield* getSession(input.threadId, terminalId);
-          let session: TerminalSessionState;
-          if (Option.isNone(existingSession)) {
-            const cols = input.cols ?? DEFAULT_OPEN_COLS;
-            const rows = input.rows ?? DEFAULT_OPEN_ROWS;
-            session = {
-              threadId: input.threadId,
-              terminalId,
-              cwd: input.cwd,
-              worktreePath: input.worktreePath ?? null,
-              status: "starting",
-              pid: null,
-              history: "",
-              pendingHistoryControlSequence: "",
-              pendingProcessEvents: [],
-              pendingProcessEventIndex: 0,
-              processEventDrainRunning: false,
-              exitCode: null,
-              exitSignal: null,
-              updatedAt: yield* nowIso,
-              eventSequence: 0,
-              cols,
-              rows,
-              process: null,
-              unsubscribeData: null,
-              unsubscribeExit: null,
-              hasRunningSubprocess: false,
-              childCommandLabel: null,
-              runtimeEnv: nextRuntimeEnv,
-            };
-            const createdSession = session;
-            yield* modifyManagerState((state) => {
-              const sessions = new Map(state.sessions);
-              sessions.set(sessionKey, createdSession);
-              return [undefined, { ...state, sessions }] as const;
-            });
-            yield* evictInactiveSessionsIfNeeded();
-          } else {
-            session = existingSession.value;
-            yield* stopProcess(session);
-            session.cwd = input.cwd;
-            session.worktreePath = input.worktreePath ?? null;
-            session.runtimeEnv = nextRuntimeEnv;
-          }
+            const sessionKey = toSessionKey(input.threadId, terminalId);
+            const existingSession = yield* getSession(input.threadId, terminalId);
+            let session: TerminalSessionState;
+            if (Option.isNone(existingSession)) {
+              const cols = input.cols ?? DEFAULT_OPEN_COLS;
+              const rows = input.rows ?? DEFAULT_OPEN_ROWS;
+              session = {
+                threadId: input.threadId,
+                terminalId,
+                cwd: input.cwd,
+                worktreePath: input.worktreePath ?? null,
+                status: "starting",
+                pid: null,
+                history: "",
+                pendingHistoryControlSequence: "",
+                pendingProcessEvents: [],
+                pendingProcessEventIndex: 0,
+                processEventDrainRunning: false,
+                exitCode: null,
+                exitSignal: null,
+                updatedAt: yield* nowIso,
+                eventSequence: 0,
+                cols,
+                rows,
+                process: null,
+                unsubscribeData: null,
+                unsubscribeExit: null,
+                hasRunningSubprocess: false,
+                childCommandLabel: null,
+                runtimeEnv: nextRuntimeEnv,
+              };
+              const createdSession = session;
+              yield* modifyManagerState((state) => {
+                const sessions = new Map(state.sessions);
+                sessions.set(sessionKey, createdSession);
+                return [undefined, { ...state, sessions }] as const;
+              });
+              yield* evictInactiveSessionsIfNeeded();
+            } else {
+              session = existingSession.value;
+              yield* stopProcess(session);
+              session.cwd = input.cwd;
+              session.worktreePath = input.worktreePath ?? null;
+              session.runtimeEnv = nextRuntimeEnv;
+            }
 
-          const cols = input.cols ?? session.cols;
-          const rows = input.rows ?? session.rows;
+            const cols = input.cols ?? session.cols;
+            const rows = input.rows ?? session.rows;
 
-          session.history = "";
-          session.pendingHistoryControlSequence = "";
-          session.pendingProcessEvents = [];
-          session.pendingProcessEventIndex = 0;
-          session.processEventDrainRunning = false;
-          yield* persistHistory(input.threadId, terminalId, session.history);
-          yield* startSession(
-            session,
-            {
-              threadId: input.threadId,
-              terminalId,
-              cwd: input.cwd,
-              ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-              cols,
-              rows,
-              ...(input.env ? { env: input.env } : {}),
-            },
-            "restarted",
-          );
-          return snapshot(session);
+            session.history = "";
+            session.pendingHistoryControlSequence = "";
+            session.pendingProcessEvents = [];
+            session.pendingProcessEventIndex = 0;
+            session.processEventDrainRunning = false;
+            yield* persistHistory(input.threadId, terminalId, session.history);
+            yield* startSession(
+              session,
+              {
+                threadId: input.threadId,
+                terminalId,
+                cwd: input.cwd,
+                ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+                cols,
+                rows,
+                ...(input.env ? { env: input.env } : {}),
+              },
+              "restarted",
+            );
+            return snapshot(session);
           }),
         ),
       );

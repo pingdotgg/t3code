@@ -1,6 +1,10 @@
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 
-import { isManagedRuntimeEnvKey, stripManagedRuntimeEnvKeys, type EnvRecord } from "../launchEnv/launchEnvUtils.ts";
+import {
+  isManagedRuntimeEnvKey,
+  stripManagedRuntimeEnvKeys,
+  type EnvRecord,
+} from "../launchEnv/launchEnvUtils.ts";
 
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,

@@ -9,9 +9,9 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { TerminalSessionLookupError } from "../../terminal/Services/Manager.ts";
-import { LaunchEnv } from "../Services/LaunchEnv.ts";
 import { LaunchEnvTestLayer } from "../Layers/LaunchEnvTest.ts";
+import { LaunchEnvThreadLookupError } from "../Services/LaunchEnvErrors.ts";
+import { LaunchEnv } from "../Services/LaunchEnv.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -121,7 +121,7 @@ describe("LaunchEnv.resolveForThread", () => {
         }),
       );
 
-      assert.instanceOf(error, TerminalSessionLookupError);
+      assert.instanceOf(error, LaunchEnvThreadLookupError);
     }).pipe(Effect.provide(makeTestLayer([]))),
   );
 

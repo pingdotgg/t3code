@@ -8,9 +8,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { LaunchEnv, type LaunchEnvShape, type ResolvedLaunchEnvForThread } from "../Services/LaunchEnv.ts";
-import { LaunchEnvProjectLookupError, LaunchEnvThreadLookupError } from "../Services/LaunchEnvErrors.ts";
-import { mergeResolvedLaunchEnv, type LaunchEnvContextInput } from "../launchEnvUtils.ts";
+import {
+  LaunchEnv,
+  type LaunchEnvShape,
+  type ResolvedLaunchEnvForThread,
+} from "../Services/LaunchEnv.ts";
+import {
+  LaunchEnvProjectLookupError,
+  LaunchEnvThreadLookupError,
+} from "../Services/LaunchEnvErrors.ts";
+import { mergeResolvedLaunchEnv } from "../launchEnvUtils.ts";
 
 export type LaunchEnvTestFixtures = {
   readonly t3Home: string;
@@ -25,18 +32,19 @@ const toThreadMap = (threads: ReadonlyArray<OrchestrationThreadShell> | undefine
   new Map((threads ?? []).map((thread) => [thread.id, thread] as const));
 
 export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchEnvShape => {
-  const resolve: LaunchEnvShape["resolve"] = Effect.fn("LaunchEnv.resolve")(function* (input) {
-    return mergeResolvedLaunchEnv({
-      t3Home: fixtures.t3Home,
-      ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
-      context: {
-        projectRoot: input.projectRoot,
-        projectId: String(input.projectId),
-        threadId: String(input.threadId),
-        worktreePath: input.worktreePath ?? undefined,
-      },
-    });
-  });
+  const resolve: LaunchEnvShape["resolve"] = (input) =>
+    Effect.succeed(
+      mergeResolvedLaunchEnv({
+        t3Home: fixtures.t3Home,
+        ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
+        context: {
+          projectRoot: input.projectRoot,
+          projectId: String(input.projectId),
+          threadId: String(input.threadId),
+          worktreePath: input.worktreePath ?? undefined,
+        },
+      }),
+    );
 
   const projectsById = toProjectMap(fixtures.projects);
   const threadsById = toThreadMap(fixtures.threads);
@@ -52,8 +60,7 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
       onSome: (thread) =>
         Effect.succeed({
           projectId: thread.projectId,
-          worktreePath:
-            input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath,
+          worktreePath: input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath,
         }),
       onNone: () => {
         if (input.projectId === undefined) {
@@ -72,9 +79,7 @@ export const makeLaunchEnvTestShape = (fixtures: LaunchEnvTestFixtures): LaunchE
       },
     });
 
-    const project = yield* Effect.succeed(
-      Option.fromNullishOr(projectsById.get(projectId)),
-    ).pipe(
+    const project = yield* Effect.succeed(Option.fromNullishOr(projectsById.get(projectId))).pipe(
       Effect.flatMap((projectOption) =>
         Option.match(projectOption, {
           onSome: Effect.succeed,
@@ -114,18 +119,19 @@ export const launchEnvTestStub = (fixtures: {
   readonly t3Home: string;
   readonly projectId: ProjectId;
 }): LaunchEnvShape => {
-  const resolve: LaunchEnvShape["resolve"] = Effect.fn("LaunchEnv.resolve")(function* (input) {
-    return mergeResolvedLaunchEnv({
-      t3Home: fixtures.t3Home,
-      ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
-      context: {
-        projectRoot: input.projectRoot,
-        projectId: String(input.projectId),
-        threadId: input.threadId,
-        ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-      },
-    });
-  });
+  const resolve: LaunchEnvShape["resolve"] = (input) =>
+    Effect.succeed(
+      mergeResolvedLaunchEnv({
+        t3Home: fixtures.t3Home,
+        ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
+        context: {
+          projectRoot: input.projectRoot,
+          projectId: String(input.projectId),
+          threadId: input.threadId,
+          ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+        },
+      }),
+    );
 
   return {
     resolve,

@@ -138,7 +138,58 @@ export class ManagedRelayClient extends Context.Service<
 >()("@t3tools/client-runtime/managedRelay/ManagedRelayClient") {}
 
 function relayClientError(message: string, cause?: unknown): ManagedRelayClientError {
-  return new ManagedRelayClientError({ message, ...(cause === undefined ? {} : { cause }) });
+  return new ManagedRelayClientError({
+    message,
+    ...(cause === undefined ? {} : { cause: summarizeRelayClientCause(cause) }),
+  });
+}
+
+function summarizeRelayClientCause(cause: unknown, depth = 0): unknown {
+  if (depth > 4 || typeof cause !== "object" || cause === null) {
+    return cause;
+  }
+
+  const record = cause as Record<string, unknown>;
+  if (typeof record._tag === "string") {
+    const summary: Record<string, unknown> = { _tag: record._tag };
+    for (const key of ["message", "code", "reason", "traceId", "description"] as const) {
+      if (typeof record[key] === "string") {
+        summary[key] = record[key];
+      }
+    }
+    if ("cause" in record) {
+      summary.cause = summarizeRelayClientCause(record.cause, depth + 1);
+    }
+    if (typeof record.reason === "object" && record.reason !== null) {
+      summary.reason = summarizeRelayClientCause(record.reason, depth + 1);
+    }
+    return summary;
+  }
+
+  if (cause instanceof Error) {
+    return {
+      name: cause.name,
+      message: cause.message,
+      ...("cause" in cause ? { cause: summarizeRelayClientCause(cause.cause, depth + 1) } : {}),
+    };
+  }
+
+  if (ArrayBuffer.isView(cause)) {
+    return {
+      type: Object.getPrototypeOf(cause)?.constructor?.name ?? "TypedArray",
+    };
+  }
+
+  if ("cause" in record) {
+    return {
+      type: Object.getPrototypeOf(cause)?.constructor?.name ?? "Object",
+      cause: summarizeRelayClientCause(record.cause, depth + 1),
+    };
+  }
+
+  return {
+    type: Object.getPrototypeOf(cause)?.constructor?.name ?? "Object",
+  };
 }
 
 function timeoutRelayRequest(message: string) {

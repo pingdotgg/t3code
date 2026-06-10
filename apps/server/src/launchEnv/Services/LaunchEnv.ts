@@ -1,9 +1,4 @@
-import {
-  ProjectId,
-  ThreadId,
-  type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
-} from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -36,7 +31,10 @@ export interface LaunchEnvShape {
   readonly resolve: (input: ResolveLaunchEnvInput) => Effect.Effect<Record<string, string>>;
   readonly resolveForThread: (
     input: ResolveLaunchEnvForThreadInput,
-  ) => Effect.Effect<ResolvedLaunchEnvForThread, LaunchEnvProjectLookupError | LaunchEnvThreadLookupError>;
+  ) => Effect.Effect<
+    ResolvedLaunchEnvForThread,
+    LaunchEnvProjectLookupError | LaunchEnvThreadLookupError
+  >;
 }
 
 export class LaunchEnv extends Context.Service<LaunchEnv, LaunchEnvShape>()(

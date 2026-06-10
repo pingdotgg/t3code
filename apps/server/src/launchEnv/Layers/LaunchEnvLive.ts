@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -6,25 +6,29 @@ import * as Option from "effect/Option";
 import { ServerConfig } from "../../config.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { LaunchEnv, type LaunchEnvShape } from "../Services/LaunchEnv.ts";
-import { mergeResolvedLaunchEnv, type LaunchEnvContextInput } from "../launchEnvUtils.ts";
-import { LaunchEnvProjectLookupError, LaunchEnvThreadLookupError } from "../Services/LaunchEnvErrors.ts";
+import { mergeResolvedLaunchEnv } from "../launchEnvUtils.ts";
+import {
+  LaunchEnvProjectLookupError,
+  LaunchEnvThreadLookupError,
+} from "../Services/LaunchEnvErrors.ts";
 
 export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
   const serverConfig = yield* ServerConfig;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
-  const resolve: LaunchEnvShape["resolve"] = Effect.fn("LaunchEnv.resolve")(function* (input) {
-    return mergeResolvedLaunchEnv({
-      t3Home: serverConfig.baseDir,
-      ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
-      context: {
-        projectRoot: input.projectRoot,
-        projectId: String(input.projectId),
-        threadId: String(input.threadId),
-        worktreePath: input.worktreePath ?? undefined,
-      },
-    });
-  });
+  const resolve: LaunchEnvShape["resolve"] = (input) =>
+    Effect.succeed(
+      mergeResolvedLaunchEnv({
+        t3Home: serverConfig.baseDir,
+        ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
+        context: {
+          projectRoot: input.projectRoot,
+          projectId: String(input.projectId),
+          threadId: String(input.threadId),
+          worktreePath: input.worktreePath ?? undefined,
+        },
+      }),
+    );
 
   const resolveForThread: LaunchEnvShape["resolveForThread"] = Effect.fn(
     "LaunchEnv.resolveForThread",
@@ -46,8 +50,7 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       onSome: (thread) =>
         Effect.succeed({
           projectId: thread.projectId,
-          worktreePath:
-            input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath,
+          worktreePath: input.worktreePath !== undefined ? input.worktreePath : thread.worktreePath,
         }),
       onNone: () => {
         if (input.projectId === undefined) {
@@ -66,30 +69,27 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       },
     });
 
-    const project = yield* projectionSnapshotQuery
-      .getProjectShellById(projectId)
-      .pipe(
-        Effect.flatMap((projectOption) =>
-          Option.match(projectOption, {
-            onSome: Effect.succeed,
-            onNone: () =>
-              Effect.fail(
-                new LaunchEnvProjectLookupError({
-                  projectId: String(projectId),
-                  reason: "notFound",
-                }),
-              ),
+    const projectOption = yield* projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LaunchEnvProjectLookupError({
+            projectId: String(projectId),
+            reason: "statFailed",
+            cause,
+          }),
+      ),
+    );
+
+    const project = yield* Option.match(projectOption, {
+      onSome: Effect.succeed,
+      onNone: () =>
+        Effect.fail(
+          new LaunchEnvProjectLookupError({
+            projectId: String(projectId),
+            reason: "notFound",
           }),
         ),
-        Effect.mapError(
-          (cause) =>
-            new LaunchEnvProjectLookupError({
-              projectId: String(projectId),
-              reason: "statFailed",
-              cause,
-            }),
-        ),
-      );
+    });
 
     const env: Record<string, string> = yield* resolve({
       ...(input.extraEnv !== undefined ? { extraEnv: input.extraEnv } : {}),
@@ -103,7 +103,13 @@ export const makeLaunchEnv = Effect.fn("makeLaunchEnv")(function* () {
       projectId,
       worktreePath,
       env,
-    } satisfies typeof input extends { projectId?: infer P } ? { projectId: P | typeof projectId; worktreePath?: string | null | undefined; env: Record<string, string> } : never;
+    } satisfies typeof input extends { projectId?: infer P }
+      ? {
+          projectId: P | typeof projectId;
+          worktreePath?: string | null | undefined;
+          env: Record<string, string>;
+        }
+      : never;
   });
 
   return {
