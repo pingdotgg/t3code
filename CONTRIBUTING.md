@@ -1,17 +1,5 @@
 # Contributing
 
-## Read This First
-
-We are not actively accepting contributions right now.
-
-You can still open an issue or PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
-
-If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
-
-PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
-
-If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
-
 ## What We Are Most Likely To Accept
 
 Small, focused bug fixes.
@@ -46,8 +34,6 @@ Do not mix unrelated fixes together.
 
 If the PR makes anything resembling a UI change, include clear before/after images.
 
-If the change depends on motion, timing, transitions, or interaction details, include a short video.
-
 If we have to guess what changed, we are much less likely to review it.
 
 ## Issues First
@@ -55,11 +41,3 @@ If we have to guess what changed, we are much less likely to review it.
 If you are thinking about a non-trivial change, open an issue first.
 
 That still does not mean we will want the PR, but it gives you a chance to avoid wasting your time.
-
-## Be Realistic
-
-Opening a PR does not create an obligation on our side.
-
-We may close it. We may ignore it. We may ask you to shrink it. We may reimplement the idea ourselves later.
-
-If you are fine with that, proceed.
