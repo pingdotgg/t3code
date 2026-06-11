@@ -50,6 +50,7 @@ overrides:
   '@effect/vitest': 4.0.0-beta.78
   '@effect/vitest>@vitest/runner': '-'
   '@effect/vitest>vitest': '-'
+  '@expo/metro-config': 56.0.13
   '@types/node': 24.12.4
   effect: 4.0.0-beta.78
   vite: npm:@voidzero-dev/vite-plus-core@0.1.24
@@ -12620,7 +12621,7 @@ snapshots:
       '@babel/plugin-transform-private-methods': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-private-property-in-object': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-react-display-name': 7.29.7(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx': 7.29.7(@babel/core@7.29.7)
+      '@babel/plugin-transform-react-jsx': 7.28.6(@babel/core@7.29.7)
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-react-jsx-source': 7.29.7(@babel/core@7.29.7)
       '@babel/plugin-transform-regenerator': 7.29.7(@babel/core@7.29.7)

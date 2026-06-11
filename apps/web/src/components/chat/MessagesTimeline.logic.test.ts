@@ -451,8 +451,8 @@ describe("deriveMessagesTimelineRows", () => {
     );
     expect(foldRow?.turnId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
-    // First fold entry (00:00:05) → terminal message completedAt (00:00:22).
-    expect(foldRow?.label).toBe("Worked for 17s");
+    // User message boundary (00:00:00) → terminal message completedAt (00:00:22).
+    expect(foldRow?.label).toBe("Worked for 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -478,6 +478,100 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+  });
+
+  it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
+    // A steer ends the previous turn early: its only message completes the
+    // instant it is created, and trailing work entries land after it. The
+    // fold duration must span from the user message that started the turn to
+    // the last entry, not message createdAt → message completedAt (~0ms).
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "do it once more",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:09Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant" as const,
+            text: "Kicking off call 1.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:09Z",
+            completedAt: "2026-01-01T00:00:09Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry-1",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:12Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:12Z",
+            turnId: "turn-1" as never,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "steer-user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:14Z",
+          message: {
+            id: "user-2" as never,
+            role: "user" as const,
+            text: "actually do 15",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:14Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-next-turn-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:17Z",
+          message: {
+            id: "assistant-next" as never,
+            role: "assistant" as const,
+            text: "One down — adjusting.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:00:17Z",
+            streaming: true,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:14Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:14Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const foldRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "turn-fold" }> =>
+        row.kind === "turn-fold",
+    );
+    // User message (00:00:00) → trailing work entry (00:00:12).
+    expect(foldRow?.turnId).toBe("turn-1");
+    expect(foldRow?.label).toBe("Worked for 12s");
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {

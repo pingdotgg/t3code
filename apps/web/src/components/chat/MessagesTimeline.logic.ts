@@ -12,6 +12,16 @@ function computeElapsedMs(startIso: string, endIso: string): number | null {
   return Math.max(0, end - start);
 }
 
+function maxIsoTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
 export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -167,10 +177,22 @@ function deriveTurnFolds(input: {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
+    /**
+     * The user message that kicked the turn off. Entry timestamps alone
+     * undercount the duration (the first entry appears only once the
+     * provider starts producing output), and a turn cut short by a steer may
+     * hold a single instantaneous commentary message.
+     */
+    startBoundary: string | null;
   }
   const groupsByTurnId = new Map<TurnId, TurnGroup>();
 
+  let pendingUserBoundary: string | null = null;
   for (const entry of input.timelineEntries) {
+    if (entry.kind === "message" && entry.message.role === "user") {
+      pendingUserBoundary = entry.message.createdAt;
+      continue;
+    }
     const turnId =
       entry.kind === "message" && entry.message.role === "assistant"
         ? (entry.message.turnId ?? null)
@@ -180,11 +202,20 @@ function deriveTurnFolds(input: {
     if (!turnId) {
       continue;
     }
-    const group = groupsByTurnId.get(turnId) ?? {
-      entries: [],
-      terminalEntry: null,
-      hasStreamingMessage: false,
-    };
+    let group = groupsByTurnId.get(turnId);
+    if (!group) {
+      group = {
+        entries: [],
+        terminalEntry: null,
+        hasStreamingMessage: false,
+        // Each user boundary starts at most one turn; a second turn after the
+        // same user message (e.g. a steer-superseded continuation) falls back
+        // to its own first entry.
+        startBoundary: pendingUserBoundary,
+      };
+      pendingUserBoundary = null;
+      groupsByTurnId.set(turnId, group);
+    }
     group.entries.push(entry);
     if (entry.kind === "message") {
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
@@ -194,7 +225,6 @@ function deriveTurnFolds(input: {
         group.hasStreamingMessage = true;
       }
     }
-    groupsByTurnId.set(turnId, group);
   }
 
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
@@ -223,17 +253,21 @@ function deriveTurnFolds(input: {
 
     const isLatestInterruptedTurn =
       input.latestTurn?.turnId === turnId && input.latestTurn.state === "interrupted";
+    // A turn cut short by a steer leaves trailing work entries behind its
+    // terminal message — take whichever ended last.
+    const lastEntryEnd =
+      lastEntry.kind === "message"
+        ? (lastEntry.message.completedAt ?? lastEntry.createdAt)
+        : lastEntry.createdAt;
     const elapsedMs =
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
       input.latestTurn.completedAt
         ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
         : computeElapsedMs(
-            firstEntry.createdAt,
-            group.terminalEntry?.message.completedAt ??
-              (lastEntry.kind === "message"
-                ? (lastEntry.message.completedAt ?? lastEntry.createdAt)
-                : lastEntry.createdAt),
+            group.startBoundary ?? firstEntry.createdAt,
+            maxIsoTimestamp(group.terminalEntry?.message.completedAt ?? null, lastEntryEnd) ??
+              lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn

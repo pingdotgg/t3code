@@ -56,6 +56,10 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>@vitest/runner": "-"
   "@effect/vitest>vitest": "-"
+  # Pinned to the version the patch in patchedDependencies targets — a fresh
+  # resolve (e.g. release-smoke regenerating the lockfile) must not drift to a
+  # newer release and orphan the patch (ERR_PNPM_UNUSED_PATCH).
+  "@expo/metro-config": "56.0.13"
   "@types/node": "catalog:"
   effect: "catalog:"
   vite: "catalog:"
