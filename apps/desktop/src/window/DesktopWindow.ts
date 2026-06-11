@@ -171,6 +171,7 @@ const make = Effect.gen(function* () {
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     backendHttpUrl: URL,
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+    previewViewManager.getBrowserSession();
     const applicationUrl = environment.isDevelopment
       ? yield* resolveDesktopDevServerUrl(environment)
       : backendHttpUrl.href;

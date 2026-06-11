@@ -12,6 +12,7 @@ import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateSt
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
+import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
@@ -41,6 +42,7 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
   const previewState = usePreviewStateStore((state) =>
     selectThreadPreviewState(state.byThreadKey, threadRef),
   );
+  const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
   const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
   const addElementContext = useComposerDraftStore((store) => store.addElementContext);
 
@@ -74,15 +76,19 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
           await previewBridge.navigate(tabId, next);
           rememberUrl(threadRef, next);
         } else {
-          const resolved = await api.preview.open({ threadId: threadRef.threadId, url: next });
-          const resolvedUrl = resolved.navStatus._tag === "Idle" ? next : resolved.navStatus.url;
-          rememberUrl(threadRef, resolvedUrl);
+          await openPreviewSession({
+            previewApi: api.preview,
+            threadRef,
+            url: next,
+            applyServerSnapshot,
+            rememberUrl,
+          });
         }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [rememberUrl, tabId, threadRef],
+    [applyServerSnapshot, rememberUrl, tabId, threadRef],
   );
 
   const handleRefresh = useCallback(() => {

@@ -8,6 +8,17 @@ import * as Ref from "effect/Ref";
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
+vi.mock("electron", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("electron")>()),
+  session: {
+    fromPartition: vi.fn(() => ({
+      getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
+      setPermissionRequestHandler: vi.fn(),
+      setUserAgent: vi.fn(),
+    })),
+  },
+}));
+
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";

@@ -42,7 +42,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   recentlySeenUrls: [] as string[],
 });
 
-interface PreviewStateStoreState {
+export interface PreviewStateStoreState {
   byThreadKey: Record<string, ThreadPreviewState>;
   applyServerEvent: (ref: ScopedThreadRef, event: PreviewEvent) => void;
   applyServerSnapshot: (ref: ScopedThreadRef, snapshot: PreviewSessionSnapshot | null) => void;

@@ -9,7 +9,6 @@ import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview-webview-preferences.t
 import * as IpcChannels from "../channels.ts";
 import type { DesktopIpcMethod } from "../DesktopIpc.ts";
 
-previewViewManager.getBrowserSession();
 previewViewManager.onStateChange((tabId, state) => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
