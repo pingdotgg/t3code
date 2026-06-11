@@ -1,3 +1,16 @@
+/**
+ * CopilotDriver — `ProviderDriver` for the GitHub Copilot SDK runtime.
+ *
+ * Mirrors the other provider drivers: a plain value whose `create()` returns
+ * one `ProviderInstance` bundling `snapshot` / `adapter` / `textGeneration`
+ * closures captured over the per-instance `CopilotSettings`.
+ *
+ * Each instance owns an isolated Copilot home directory under server state and
+ * a per-instance SDK client, so sessions and persisted cursors do not leak
+ * across configured Copilot providers.
+ *
+ * @module provider/Drivers/CopilotDriver
+ */
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, Path, Schema, Stream } from "effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +25,11 @@ import {
 } from "../Layers/CopilotProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -60,10 +77,10 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const effectiveConfig = { ...config, enabled } satisfies CopilotSettings;
       const baseDirectory = path.join(serverConfig.stateDir, "providers", "copilot", instanceId);
-      const continuationIdentity = {
+      const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
-        continuationKey: `copilot:home:${baseDirectory}`,
-      };
+        instanceId,
+      });
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,

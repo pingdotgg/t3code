@@ -1142,7 +1142,7 @@ describe("deriveWorkLogEntries", () => {
       }),
     ];
 
-    const [entry] = deriveWorkLogEntries(activities, undefined);
+    const [entry] = deriveWorkLogEntries(activities);
     expect(entry).toMatchObject({
       command: "git status --short",
       detail: "M apps/server/src/provider/Layers/CopilotAdapter.ts",

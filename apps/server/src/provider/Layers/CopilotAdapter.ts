@@ -29,11 +29,10 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { DateTime, Deferred, Effect, Layer, Path, Predicate, PubSub, Stream } from "effect";
+import { DateTime, Deferred, Effect, Path, Predicate, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -41,7 +40,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
+import { type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { createCopilotClient, trimOrUndefined } from "../copilotRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -61,7 +60,7 @@ type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permiss
 type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
 type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
 
-interface CopilotAdapterLiveOptions {
+export interface CopilotAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
   readonly baseDirectory?: string;
@@ -2773,19 +2772,3 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     },
   } satisfies CopilotAdapterShape;
 });
-
-export function makeCopilotAdapterLive(options?: CopilotAdapterLiveOptions) {
-  return Layer.effect(
-    CopilotAdapter,
-    Effect.gen(function* () {
-      const serverSettingsService = yield* ServerSettingsService;
-      const settings = yield* Effect.map(
-        serverSettingsService.getSettings,
-        (serverSettings) => serverSettings.providers.copilot,
-      ).pipe(Effect.orDie);
-      return yield* makeCopilotAdapter(settings, options);
-    }),
-  );
-}
-
-export const CopilotAdapterLive = makeCopilotAdapterLive();
