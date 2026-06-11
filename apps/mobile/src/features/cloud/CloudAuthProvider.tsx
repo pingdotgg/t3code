@@ -66,9 +66,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 }
 
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {
-  const config = resolveCloudPublicConfig();
-  const publishableKey = config.clerk.publishableKey;
-  const relayUrl = config.relay.url;
+  const { clerkPublishableKey: publishableKey, relayUrl } = resolveCloudPublicConfig();
 
   useEffect(() => {
     if (!publishableKey || !relayUrl) {

@@ -94,9 +94,11 @@ function buildProps() {
   return {
     isWorking: false,
     activeTurnInProgress: false,
+    activeTurnId: null,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
-    latestTurn: null,
+    completionDividerBeforeEntryId: null,
+    completionSummary: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
@@ -186,8 +188,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Terminal 1 lines 1-5");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("yoo what&#x27;s</p>");
-    expect(markup).toContain('<span aria-hidden="true"> </span>');
+    expect(markup).toContain("yoo what&#x27;s ");
     expect(markup).toContain("Show full message");
   }, 20_000);
 
@@ -227,7 +228,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("work log");
+    expect(markup).toContain("Work log");
   });
 
   it("formats changed file paths from the workspace root", async () => {
@@ -294,32 +295,5 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain(">Review comment<");
     expect(markup).not.toContain("&lt;review_comment");
     expect(markup).not.toContain("&lt;/review_comment&gt;");
-  });
-
-  it("renders a failure marker for failed tool lifecycle entries", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Glob",
-              tone: "tool",
-              toolLifecycleStatus: "failed",
-              detail: "No files found",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
   });
 });

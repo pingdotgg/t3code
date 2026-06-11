@@ -69,7 +69,7 @@ import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { connectHttpApiLayer, reconcileDesiredCloudLink } from "./cloud/http.ts";
+import { cloudHttpApiLayer, reconcileDesiredCloudLink } from "./cloud/http.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
@@ -321,7 +321,7 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 export const makeRoutesLayer = Layer.mergeAll(
   HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
     Layer.provide(authHttpApiLayer),
-    Layer.provide(connectHttpApiLayer),
+    Layer.provide(cloudHttpApiLayer),
     Layer.provide(orchestrationHttpApiLayer),
     Layer.provide(serverEnvironmentHttpApiLayer),
     Layer.provide(environmentAuthenticatedAuthLayer),
@@ -429,9 +429,9 @@ export const makeServerLayer = Layer.unwrap(
           Effect.sleep("250 millis").pipe(
             Effect.andThen(reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`)),
             Effect.retry({ times: 4 }),
-            Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+            Effect.tap(() => Effect.logInfo("T3 Cloud desired link reconciled on startup")),
             Effect.catch((cause) =>
-              Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+              Effect.logWarning("Failed to reconcile T3 Cloud desired link on startup", {
                 cause,
               }),
             ),

@@ -31,10 +31,6 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
-    "./httpObservability": {
-      "types": "./src/httpObservability.ts",
-      "import": "./src/httpObservability.ts"
-    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"

@@ -32,7 +32,7 @@ function makeFakeCodexBinary(
     exitCode?: number;
     stderr?: string;
     requireImage?: boolean;
-    requireServiceTier?: string;
+    requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
@@ -52,7 +52,7 @@ function makeFakeCodexBinary(
         "#!/bin/sh",
         'output_path=""',
         'seen_image="0"',
-        'seen_service_tier=""',
+        'seen_fast_service_tier="0"',
         'seen_reasoning_effort=""',
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
@@ -65,11 +65,9 @@ function makeFakeCodexBinary(
         "  fi",
         '  if [ "$1" = "--config" ]; then',
         "    shift",
-        '    case "$1" in',
-        "      service_tier=*)",
-        '        seen_service_tier="$1"',
-        "        ;;",
-        "    esac",
+        '    if [ "$1" = "service_tier=\\"fast\\"" ]; then',
+        '      seen_fast_service_tier="1"',
+        "    fi",
         '    case "$1" in',
         "      model_reasoning_effort=*)",
         '        seen_reasoning_effort="$1"',
@@ -95,10 +93,10 @@ function makeFakeCodexBinary(
               "fi",
             ]
           : []),
-        ...(input.requireServiceTier
+        ...(input.requireFastServiceTier
           ? [
-              `if [ "$seen_service_tier" != "service_tier=\\"${input.requireServiceTier}\\"" ]; then`,
-              '  printf "%s\\n" "unexpected service tier config: $seen_service_tier" >&2',
+              'if [ "$seen_fast_service_tier" != "1" ]; then',
+              '  printf "%s\\n" "missing fast service tier config" >&2',
               `  exit 5`,
               "fi",
             ]
@@ -163,7 +161,7 @@ function withFakeCodexEnv<A, E, R>(
     exitCode?: number;
     stderr?: string;
     requireImage?: boolean;
-    requireServiceTier?: string;
+    requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
@@ -211,7 +209,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
   );
 
   it.effect(
-    "forwards codex service tier and non-default reasoning effort into codex exec config",
+    "forwards codex fast mode and non-default reasoning effort into codex exec config",
     () =>
       withFakeCodexEnv(
         {
@@ -219,7 +217,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             subject: "Add important change",
             body: "",
           }),
-          requireServiceTier: "priority",
+          requireFastServiceTier: true,
           requireReasoningEffort: "xhigh",
           stdinMustNotContain: "branch must be a short semantic git branch fragment",
         },
@@ -231,7 +229,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
               { id: "reasoningEffort", value: "xhigh" },
-              { id: "serviceTier", value: "priority" },
+              { id: "fastMode", value: true },
             ]),
           }),
       ),

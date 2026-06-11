@@ -96,7 +96,7 @@ const make = Effect.gen(function* () {
 
   const clear = secrets
     .remove(CLOUD_CLI_OAUTH_TOKEN_SECRET)
-    .pipe(wrapError("Could not remove the stored T3 Connect CLI credential."));
+    .pipe(wrapError("Could not remove the stored T3 Cloud CLI credential."));
 
   const read = Effect.fn("cloud.cli_token.read")(function* () {
     const encoded = yield* secrets.get(CLOUD_CLI_OAUTH_TOKEN_SECRET);
@@ -146,7 +146,7 @@ const make = Effect.gen(function* () {
         const url = new URL(request.originalUrl, metadata.redirectUri);
         const code = url.searchParams.get("code");
         if (url.searchParams.get("state") !== state || !code) {
-          return HttpServerResponse.text("Invalid T3 Connect authorization callback.", {
+          return HttpServerResponse.text("Invalid T3 Cloud authorization callback.", {
             status: 400,
           });
         }
@@ -154,7 +154,7 @@ const make = Effect.gen(function* () {
         return yield* HttpServerResponse.html`
 <html>
   <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-    <h1>T3 Connect authorization complete</h1>
+    <h1>T3 Cloud authorization complete</h1>
     <p>You can close this window and return to your terminal.</p>
   </body>
 </html>
@@ -182,13 +182,13 @@ const make = Effect.gen(function* () {
     authorizationUrl.searchParams.set("state", state);
     authorizationUrl.searchParams.set("code_challenge", challenge);
     authorizationUrl.searchParams.set("code_challenge_method", "S256");
-    yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl.toString()}\n`);
+    yield* Console.log(`Open this URL to authorize T3 Cloud:\n${authorizationUrl.toString()}\n`);
     const code = yield* Deferred.await(callback).pipe(
       Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
       Effect.catchTag("TimeoutError", () =>
         Effect.fail(
           new CloudCliTokenManagerError({
-            message: "Timed out waiting for T3 Connect authorization.",
+            message: "Timed out waiting for T3 Cloud authorization.",
           }),
         ),
       ),
@@ -213,12 +213,12 @@ const make = Effect.gen(function* () {
   });
 
   const getExisting = semaphore.withPermits(1)(
-    getExistingNoLock().pipe(wrapError("Could not refresh the T3 Connect CLI credential.")),
+    getExistingNoLock().pipe(wrapError("Could not refresh the T3 Cloud CLI credential.")),
   );
   const hasCredential = semaphore.withPermits(1)(
     read().pipe(
       Effect.map(Option.isSome),
-      wrapError("Could not read the stored T3 Connect CLI credential."),
+      wrapError("Could not read the stored T3 Cloud CLI credential."),
     ),
   );
   const get = semaphore.withPermits(1)(
@@ -227,7 +227,7 @@ const make = Effect.gen(function* () {
       return Option.isSome(token)
         ? token.value
         : yield* Effect.scoped(login()).pipe(Effect.flatMap(persist));
-    }).pipe(wrapError("Could not authorize the T3 Connect CLI.")),
+    }).pipe(wrapError("Could not authorize the T3 Cloud CLI.")),
   );
 
   return CloudCliTokenManager.of({ get, getExisting, hasCredential, clear });

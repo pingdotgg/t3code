@@ -181,10 +181,6 @@ describe("relay request tracing", () => {
         const request = HttpServerRequest.fromWeb(
           new Request("https://relay.test/v1/mobile/devices?client=mobile", {
             method: "POST",
-            headers: {
-              authorization: "Bearer secret",
-              dpop: "signed-proof",
-            },
           }),
         );
 
@@ -196,8 +192,6 @@ describe("relay request tracing", () => {
         expect(spans[0]?.kind).toBe("server");
         expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
         expect(spans[0]?.attributes.get("http.response.status_code")).toBe(204);
-        expect(spans[0]?.attributes.get("http.request.header.authorization")).toBe("<redacted>");
-        expect(spans[0]?.attributes.get("http.request.header.dpop")).toBe("<redacted>");
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),

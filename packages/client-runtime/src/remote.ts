@@ -15,7 +15,6 @@ import type {
   EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
-import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -112,10 +111,7 @@ export type RemoteEnvironmentAuthError =
 export const remoteHttpClientLayer = (
   fetchFn: typeof globalThis.fetch,
 ): Layer.Layer<HttpClient.HttpClient> =>
-  Layer.merge(
-    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
-    httpHeaderRedactionLayer,
-  );
+  FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)));
 
 const failRemoteRequest = (
   requestUrl: string,

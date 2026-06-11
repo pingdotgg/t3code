@@ -439,9 +439,9 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
+export class EnvironmentCloudHttpApi extends HttpApiGroup.make("cloud")
   .add(
-    HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
+    HttpApiEndpoint.post("linkProof", "/api/cloud/link-proof", {
       headers: OptionalBearerHeaders,
       payload: RelayLinkProofRequest,
       success: RelayEnvironmentLinkProof,
@@ -449,7 +449,7 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("relayConfig", "/api/connect/relay-config", {
+    HttpApiEndpoint.post("relayConfig", "/api/cloud/relay-config", {
       headers: OptionalBearerHeaders,
       payload: RelayEnvironmentConfigRequest,
       success: EnvironmentCloudRelayConfigResult,
@@ -457,21 +457,21 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.get("linkState", "/api/connect/link-state", {
+    HttpApiEndpoint.get("linkState", "/api/cloud/link-state", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudLinkStateResult,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("unlink", "/api/connect/unlink", {
+    HttpApiEndpoint.post("unlink", "/api/cloud/unlink", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudRelayConfigResult,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("preferences", "/api/connect/preferences", {
+    HttpApiEndpoint.post("preferences", "/api/cloud/preferences", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentCloudPreferencesRequest,
       success: EnvironmentCloudLinkStateResult,
@@ -479,21 +479,21 @@ export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("health", "/api/t3-connect/health", {
+    HttpApiEndpoint.post("health", "/api/t3-cloud/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("mintCredential", "/api/connect/mint-credential", {
+    HttpApiEndpoint.post("mintCredential", "/api/cloud/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("t3MintCredential", "/api/t3-connect/mint-credential", {
+    HttpApiEndpoint.post("t3MintCredential", "/api/t3-cloud/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,
@@ -504,4 +504,4 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentCloudHttpApi) {}

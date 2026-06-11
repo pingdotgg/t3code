@@ -17,7 +17,7 @@ import {
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const UPSTREAM_REF = "b39f943a634a6e7ba86c3d6e8cf6d5f35e612566";
+const UPSTREAM_REF = "07b695190f30a450e4921f71f77473e564395c59";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -348,7 +348,6 @@ function resolveResponseTypeName(
   const overrides: Record<string, string> = {
     "account/logout": "LogoutAccountResponse",
     "account/rateLimits/read": "GetAccountRateLimitsResponse",
-    "account/usage/read": "GetAccountTokenUsageResponse",
     "config/batchWrite": "ConfigWriteResponse",
     "config/mcpServer/reload": "McpServerRefreshResponse",
     "config/value/write": "ConfigWriteResponse",
@@ -746,16 +745,14 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   yield* Effect.log(`Generated Codex App Server schemas from ${UPSTREAM_REF}`);
 
   yield* Effect.service(ChildProcessSpawner.ChildProcessSpawner).pipe(
-    Effect.flatMap((spawner) =>
-      spawner.spawn(ChildProcess.make("vp", ["fmt", generatedDir, "--write"])),
-    ),
+    Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make("bun", ["oxfmt", generatedDir]))),
     Effect.flatMap((child) => child.exitCode),
     Effect.tap((code) =>
       code === 0
         ? Effect.void
         : Effect.fail(
             new GeneratorError({
-              detail: `vp fmt failed with exit code ${code}`,
+              detail: `oxfmt failed with exit code ${code}`,
             }),
           ),
     ),

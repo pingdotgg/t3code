@@ -32,8 +32,10 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import {
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -179,7 +181,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
-      const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const command = ChildProcess.make(
         codexConfig.binaryPath || "codex",
         [
@@ -192,7 +193,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           modelSelection.model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
-          ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
+          ...(getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
+            ? ["--config", `service_tier="fast"`]
+            : []),
           "--output-schema",
           schemaPath,
           "--output-last-message",

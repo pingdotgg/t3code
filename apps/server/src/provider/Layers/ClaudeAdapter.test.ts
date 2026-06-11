@@ -447,29 +447,6 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("preserves xhigh effort for Claude Fable 5", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-fable-5",
-          [{ id: "effort", value: "xhigh" }],
-        ),
-        runtimeMode: "full-access",
-      });
-
-      const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "xhigh");
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
   it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

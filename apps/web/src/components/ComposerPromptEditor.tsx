@@ -6,7 +6,7 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
   $createRangeSelection,
@@ -64,14 +64,14 @@ import {
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { basenameOfPath } from "~/vscode-icons";
+import { basenameOfPath, getVscodeIconUrlForEntry, inferEntryKindFromPath } from "~/vscode-icons";
 import {
+  COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
-import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -132,12 +132,19 @@ function ComposerMentionDecorator(props: { path: string }) {
   const theme = resolvedThemeFromDocument();
   const chip = (
     <span
-      className={FILE_TAG_CHIP_CLASS_NAME}
+      className={COMPOSER_INLINE_CHIP_CLASS_NAME}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
     >
-      <FileTagChipContent path={props.path} label={basenameOfPath(props.path)} theme={theme} />
+      <img
+        alt=""
+        aria-hidden="true"
+        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+        loading="lazy"
+        src={getVscodeIconUrlForEntry(props.path, inferEntryKindFromPath(props.path), theme)}
+      />
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{basenameOfPath(props.path)}</span>
     </span>
   );
 
@@ -168,7 +175,8 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
   constructor(path: string, key?: NodeKey) {
     super(key);
-    this.__path = path;
+    const normalizedPath = path.startsWith("@") ? path.slice(1) : path;
+    this.__path = normalizedPath;
   }
 
   override exportJSON(): SerializedComposerMentionNode {
@@ -191,7 +199,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   }
 
   override getTextContent(): string {
-    return serializeComposerFileLink(this.__path);
+    return `@${serializeComposerMentionPath(this.__path)}`;
   }
 
   override isInline(): true {

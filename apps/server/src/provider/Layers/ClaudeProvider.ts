@@ -48,29 +48,60 @@ const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
 } as const;
-const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 
+const CLAUDE_EFFORT_OPTIONS = {
+  opus48: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "xhigh", label: "Extra High" },
+    { value: "max", label: "Max" },
+    { value: "ultracode", label: "Ultracode" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  opus47: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  opus46: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  sonnet46: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  opus45: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+  ],
+} as const;
+
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "claude-fable-5",
-    name: "Claude Fable 5",
+    slug: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
     isCustom: false,
     capabilities: createModelCapabilities({
       optionDescriptors: [
         buildSelectOptionDescriptor({
           id: "effort",
           label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
+          options: CLAUDE_EFFORT_OPTIONS.opus48,
           promptInjectedValues: ["ultrathink"],
         }),
         buildSelectOptionDescriptor({
@@ -85,33 +116,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     }),
   },
   {
-    slug: "claude-opus-4-8",
-    name: "Claude Opus 4.8",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-      ],
-    }),
-  },
-  {
     slug: "claude-opus-4-7",
     name: "Claude Opus 4.7",
     isCustom: false,
@@ -120,19 +124,16 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "effort",
           label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "xhigh", label: "Extra High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
+          options: CLAUDE_EFFORT_OPTIONS.opus47,
           promptInjectedValues: ["ultrathink"],
         }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
+        buildSelectOptionDescriptor({
+          id: "contextWindow",
+          label: "Context Window",
+          options: [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ],
         }),
       ],
     }),
@@ -146,13 +147,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "effort",
           label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
+          options: CLAUDE_EFFORT_OPTIONS.opus46,
           promptInjectedValues: ["ultrathink"],
         }),
         buildBooleanOptionDescriptor({
@@ -179,12 +174,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "effort",
           label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-          ],
+          options: CLAUDE_EFFORT_OPTIONS.opus45,
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
@@ -202,13 +192,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         buildSelectOptionDescriptor({
           id: "effort",
           label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
+          options: CLAUDE_EFFORT_OPTIONS.sonnet46,
           promptInjectedValues: ["ultrathink"],
         }),
         buildSelectOptionDescriptor({
@@ -237,10 +221,6 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-function supportsClaudeFable5(version: string | null | undefined): boolean {
-  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_FABLE_5_VERSION) >= 0 : false;
-}
-
 function supportsClaudeOpus48(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_8_VERSION) >= 0 : false;
 }
@@ -253,9 +233,6 @@ function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   return BUILT_IN_MODELS.filter((model) => {
-    if (model.slug === "claude-fable-5") {
-      return supportsClaudeFable5(version);
-    }
     if (model.slug === "claude-opus-4-8") {
       return supportsClaudeOpus48(version);
     }
@@ -264,11 +241,6 @@ function getBuiltInClaudeModelsForVersion(
     }
     return true;
   });
-}
-
-function formatClaudeFable5UpgradeMessage(version: string | null): string {
-  const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for Claude Fable 5. Upgrade to v${MINIMUM_CLAUDE_FABLE_5_VERSION} or newer to access it.`;
 }
 
 function formatClaudeOpus48UpgradeMessage(version: string | null): string {
@@ -322,7 +294,7 @@ export function normalizeClaudeCliEffort(
   if (effort === "ultracode") {
     return "xhigh";
   }
-  if (effort === "xhigh" && model !== "claude-fable-5" && model !== "claude-opus-4-8") {
+  if (effort === "xhigh" && model !== "claude-opus-4-8") {
     return "max";
   }
   if (effort === "max" && model === "claude-sonnet-4-6") {
@@ -716,13 +688,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = supportsClaudeFable5(parsedVersion)
+  const versionUpgradeMessage = supportsClaudeOpus48(parsedVersion)
     ? undefined
-    : supportsClaudeOpus48(parsedVersion)
-      ? formatClaudeFable5UpgradeMessage(parsedVersion)
-      : supportsClaudeOpus47(parsedVersion)
-        ? formatClaudeOpus48UpgradeMessage(parsedVersion)
-        : formatClaudeOpus47UpgradeMessage(parsedVersion);
+    : supportsClaudeOpus47(parsedVersion)
+      ? formatClaudeOpus48UpgradeMessage(parsedVersion)
+      : formatClaudeOpus47UpgradeMessage(parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))

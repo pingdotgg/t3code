@@ -50,7 +50,7 @@ export function normalizeRelayBaseUrl(value: string | null | undefined): string 
 }
 
 function readRelayUrl(): string | null {
-  return resolveCloudPublicConfig().relay.url;
+  return resolveCloudPublicConfig().relayUrl;
 }
 
 export class CloudEnvironmentLinkError extends Data.TaggedError("CloudEnvironmentLinkError")<{
@@ -301,7 +301,7 @@ export function linkEnvironmentToCloud(input: {
         ),
       );
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
-    const proof = yield* environmentClient.connect
+    const proof = yield* environmentClient.cloud
       .linkProof({
         headers: { authorization: `Bearer ${localBearerToken}` },
         payload: {
@@ -336,7 +336,7 @@ export function linkEnvironmentToCloud(input: {
       link,
     });
 
-    yield* environmentClient.connect
+    yield* environmentClient.cloud
       .relayConfig({
         headers: { authorization: `Bearer ${localBearerToken}` },
         payload: {

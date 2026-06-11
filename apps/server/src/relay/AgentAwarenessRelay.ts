@@ -303,7 +303,7 @@ const make = Effect.gen(function* () {
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity publish skipped; T3 Connect config missing", {
+      yield* Effect.logDebug("agent activity publish skipped; T3 Cloud config missing", {
         threadId,
       });
       return;
@@ -421,7 +421,7 @@ const make = Effect.gen(function* () {
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity snapshot skipped; T3 Connect config missing");
+      yield* Effect.logDebug("agent activity snapshot skipped; T3 Cloud config missing");
       return false;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
@@ -459,7 +459,7 @@ const make = Effect.gen(function* () {
     function* () {
       const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
       if (!relayConfig) {
-        yield* Effect.logInfo("agent activity publishing standby; T3 Connect config missing");
+        yield* Effect.logInfo("agent activity publishing standby; T3 Cloud config missing");
       } else {
         yield* Effect.logInfo("agent activity publishing enabled", {
           relayUrl: relayConfig.url,

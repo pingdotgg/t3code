@@ -451,7 +451,7 @@ export function readPrimaryCloudLinkState(): Effect.Effect<
       return null;
     }
     const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
-    return yield* client.connect
+    return yield* client.cloud
       .linkState({ headers: {} })
       .pipe(
         withPrimaryEnvironmentRequestInit,
@@ -465,7 +465,7 @@ export function updatePrimaryCloudPreferences(input: {
 }): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> {
   return Effect.gen(function* () {
     const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
-    return yield* client.connect
+    return yield* client.cloud
       .preferences({
         headers: {},
         payload: input,
@@ -488,7 +488,7 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
       });
     }
     const client = yield* makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/"));
-    yield* client.connect
+    yield* client.cloud
       .unlink({ headers: {} })
       .pipe(
         withPrimaryEnvironmentRequestInit,
@@ -568,7 +568,7 @@ export function linkEnvironmentToCloud(input: {
           ),
         ),
       );
-    const proof = yield* environmentClient.connect
+    const proof = yield* environmentClient.cloud
       .linkProof({
         headers,
         payload: {
@@ -604,7 +604,7 @@ export function linkEnvironmentToCloud(input: {
       link,
     });
 
-    yield* environmentClient.connect
+    yield* environmentClient.cloud
       .relayConfig({
         headers,
         payload: {
@@ -656,7 +656,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
           ),
         ),
       );
-    const proof = yield* environmentClient.connect
+    const proof = yield* environmentClient.cloud
       .linkProof({
         headers: {},
         payload: {
@@ -695,7 +695,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
       link,
     });
 
-    yield* environmentClient.connect
+    yield* environmentClient.cloud
       .relayConfig({
         headers: {},
         payload: {

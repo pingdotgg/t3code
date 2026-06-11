@@ -509,7 +509,7 @@ const relayClientRequest = <A>(
     Effect.mapError(
       (cause) =>
         new EnvironmentHttpInternalServerError({
-          message: `T3 Connect relay request failed: ${String(cause)}`,
+          message: `T3 Cloud relay request failed: ${String(cause)}`,
         }),
     ),
   );
@@ -535,7 +535,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
           onNone: () =>
             Effect.fail(
               new EnvironmentHttpUnauthorizedError({
-                message: "Run `t3 connect link` to authorize this environment.",
+                message: "Run `t3 cloud link` to authorize this environment.",
               }),
             ),
           onSome: Effect.succeed,
@@ -595,7 +595,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
     CloudCliTokenManagerError: (error) =>
       failEnvironmentCloudInternalError(error.message)(error.cause),
     SecretStoreError: failEnvironmentCloudInternalError(
-      "Could not persist desired T3 Connect link state.",
+      "Could not persist desired T3 Cloud link state.",
     ),
   }),
 );
@@ -874,7 +874,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
       scopes: AuthStandardClientScopes,
       subject: "cloud-connect",
       ttl: Duration.minutes(2),
-      label: "T3 Connect connect",
+      label: "T3 Cloud connect",
       proofKeyThumbprint: proof.clientProofKeyThumbprint,
     });
     const responsePayload = {
@@ -924,9 +924,9 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
   }),
 );
 
-export const connectHttpApiLayer = HttpApiBuilder.group(
+export const cloudHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
-  "connect",
+  "cloud",
   Effect.fnUntraced(function* (handlers) {
     const dependencies = yield* cloudHttpDependencies;
     return handlers

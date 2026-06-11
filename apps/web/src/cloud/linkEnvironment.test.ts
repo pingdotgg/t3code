@@ -514,7 +514,7 @@ describe("web cloud link environment client", () => {
         expect(fetchMock.mock.calls[0]?.[1]?.credentials).not.toBe("include");
 
         expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-          "http://127.0.0.1:3000/api/connect/link-proof",
+          "http://127.0.0.1:3000/api/cloud/link-proof",
         );
         expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
           method: "POST",
@@ -553,7 +553,7 @@ describe("web cloud link environment client", () => {
         });
 
         expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
-          "http://127.0.0.1:3000/api/connect/relay-config",
+          "http://127.0.0.1:3000/api/cloud/relay-config",
         );
         expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
           method: "POST",
@@ -615,7 +615,7 @@ describe("web cloud link environment client", () => {
         publishAgentActivity: false,
       });
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-        "http://127.0.0.1:3000/api/connect/link-state",
+        "http://127.0.0.1:3000/api/cloud/link-state",
       );
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "GET",
@@ -654,7 +654,7 @@ describe("web cloud link environment client", () => {
         }),
       );
 
-      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/cloud/unlink");
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "POST",
         credentials: "include",
@@ -698,7 +698,7 @@ describe("web cloud link environment client", () => {
       );
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/connect/unlink");
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:3000/api/cloud/unlink");
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         method: "POST",
         credentials: "include",

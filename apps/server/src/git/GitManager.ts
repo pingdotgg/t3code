@@ -747,7 +747,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     );
   const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (cwd: string) {
     const details = yield* gitCore
-      .statusDetailsRemote(cwd)
+      .statusDetails(cwd)
       .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
     if (details === null || !details.isRepo) {
       return null;
