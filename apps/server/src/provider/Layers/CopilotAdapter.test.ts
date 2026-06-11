@@ -805,6 +805,119 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not render the task-agent completion fallback as assistant text", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-task-agent-fallback-filter");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "delegate this task",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-task-agent-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-task-agent",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-task-agent-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-task-agent",
+          toolName: "Task",
+          arguments: {
+            description: "delegate the task",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-task-agent-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-task-agent",
+          success: true,
+          result: {
+            content: "✓ Task completed: Updated the implementation.",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-task-agent-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-task-agent",
+        },
+      } as SessionEvent);
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.ok(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "item.completed" &&
+            event.payload.itemType === "collab_agent_tool_call" &&
+            event.payload.detail === "✓ Task completed: Updated the implementation.",
+        ),
+      );
+
+      const thread = yield* adapter.readThread(threadId);
+      const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
+      assert.ok(turnSnapshot);
+      const assistantItems = turnSnapshot.items.filter(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "type" in item &&
+          item.type === "assistant_message",
+      );
+      assert.deepStrictEqual(assistantItems, []);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits a turn diff update when a Copilot file-change turn completes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
