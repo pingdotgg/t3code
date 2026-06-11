@@ -53,7 +53,39 @@ function relayTurnKey(input: {
   return `${String(input.threadId)}:${input.turnId ?? `message:${input.messageId}`}`;
 }
 
-const make = Effect.gen(function* () {
+export function assistantTextDeliveryKey(input: {
+  readonly phase: "first" | "final";
+  readonly threadId: ThreadId | string;
+  readonly turnId: string | null;
+  readonly messageId: string;
+  readonly externalThreadId: string;
+}) {
+  return `assistant-message:${input.phase}:${relayTurnKey(input)}:${input.externalThreadId}`;
+}
+
+export function assistantAttachmentDeliveryKey(input: {
+  readonly phase: "first" | "final";
+  readonly threadId: ThreadId | string;
+  readonly turnId: string | null;
+  readonly messageId: string;
+  readonly attachmentId: string;
+  readonly externalThreadId: string;
+}) {
+  return `assistant-attachment:${input.phase}:${relayTurnKey(input)}:${input.attachmentId}:${input.externalThreadId}`;
+}
+
+export function shouldFinalizeAssistantRelayFromMessage(input: {
+  readonly streaming: boolean;
+  readonly turnId: string | null;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}) {
+  return (
+    input.streaming === false &&
+    (input.turnId === null || (input.attachments !== undefined && input.attachments.length > 0))
+  );
+}
+
+export const makeExternalIntakeReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const repository = yield* ExternalIntegrationRepository;
   const externalChat = yield* ExternalChat;
@@ -116,6 +148,7 @@ const make = Effect.gen(function* () {
               return null;
             }
             return {
+              attachment,
               name: attachment.name,
               mimeType: attachment.mimeType,
               data,
@@ -128,6 +161,7 @@ const make = Effect.gen(function* () {
             (
               file,
             ): file is {
+              readonly attachment: ChatAttachment;
               readonly name: string;
               readonly mimeType: string;
               readonly data: Uint8Array;
@@ -137,45 +171,103 @@ const make = Effect.gen(function* () {
       );
       for (const link of links) {
         if (link.source !== "slack" || link.muted) continue;
-        const deliveryKey = `assistant-message:${input.phase}:${relayTurnKey(input)}:${link.externalThreadId}`;
-        const existing = yield* repository.getDeliveryReceipt({
-          source: "slack",
-          deliveryKey,
+        const textDeliveryKey = assistantTextDeliveryKey({
+          ...input,
+          externalThreadId: link.externalThreadId,
         });
-        if (Option.isSome(existing) && existing.value.status === "completed") {
-          continue;
-        }
-        let externalMessageId: string | null = null;
+        const existingTextDelivery = yield* repository.getDeliveryReceipt({
+          source: "slack",
+          deliveryKey: textDeliveryKey,
+        });
         if (input.text.trim().length > 0) {
-          const posted = yield* externalChat
-            .postToThread({
-              source: "slack",
-              externalThreadId: link.externalThreadId,
-              message: postableReplyBody({
-                kind: "slack_thread",
-                body: input.text,
-              }),
-            })
-            .pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("external intake failed to relay assistant message to Slack", {
-                  threadId: String(input.threadId),
-                  messageId: input.messageId,
-                  externalThreadId: link.externalThreadId,
+          if (
+            Option.isNone(existingTextDelivery) ||
+            existingTextDelivery.value.status !== "completed"
+          ) {
+            const posted = yield* externalChat
+              .postToThread({
+                source: "slack",
+                externalThreadId: link.externalThreadId,
+                message: postableReplyBody({
+                  kind: "slack_thread",
+                  body: input.text,
+                }),
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("external intake failed to relay assistant message to Slack", {
+                    threadId: String(input.threadId),
+                    messageId: input.messageId,
+                    externalThreadId: link.externalThreadId,
+                    phase: input.phase,
+                    error: error instanceof Error ? error.message : String(error),
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+            if (posted !== null) {
+              yield* repository.upsertDeliveryReceipt({
+                source: "slack",
+                deliveryKey: textDeliveryKey,
+                status: "completed",
+                externalMessageId: posted.externalMessageId,
+                metadata: {
+                  t3ThreadId: String(input.threadId),
+                  t3MessageId: input.messageId,
+                  t3TurnId: input.turnId,
                   phase: input.phase,
-                  error: error instanceof Error ? error.message : String(error),
-                }).pipe(Effect.as(null)),
-              ),
-            );
-          externalMessageId = posted?.externalMessageId ?? null;
+                },
+                createdAt: Option.getOrElse(
+                  Option.map(existingTextDelivery, (receipt) => receipt.createdAt),
+                  () => now,
+                ),
+                updatedAt: nowIso(),
+              });
+            }
+          }
         }
 
         if (attachmentFiles.length > 0) {
+          const pendingAttachmentFiles: Array<{
+            readonly deliveryKey: string;
+            readonly existingCreatedAt: string | null;
+            readonly attachment: ChatAttachment;
+            readonly name: string;
+            readonly mimeType: string;
+            readonly data: Uint8Array;
+          }> = [];
+          for (const file of attachmentFiles) {
+            const deliveryKey = assistantAttachmentDeliveryKey({
+              ...input,
+              attachmentId: file.attachment.id,
+              externalThreadId: link.externalThreadId,
+            });
+            const existing = yield* repository.getDeliveryReceipt({
+              source: "slack",
+              deliveryKey,
+            });
+            if (Option.isSome(existing) && existing.value.status === "completed") {
+              continue;
+            }
+            pendingAttachmentFiles.push({
+              deliveryKey,
+              existingCreatedAt: Option.getOrNull(
+                Option.map(existing, (receipt) => receipt.createdAt),
+              ),
+              ...file,
+            });
+          }
+          if (pendingAttachmentFiles.length === 0) {
+            continue;
+          }
           const uploaded = yield* externalChat
             .uploadFilesToThread({
               source: "slack",
               externalThreadId: link.externalThreadId,
-              files: attachmentFiles,
+              files: pendingAttachmentFiles.map(({ name, mimeType, data }) => ({
+                name,
+                mimeType,
+                data,
+              })),
               ...(input.text.trim().length === 0 ? { initialComment: "Attached files." } : {}),
             })
             .pipe(
@@ -189,35 +281,35 @@ const make = Effect.gen(function* () {
                 }).pipe(Effect.as(null)),
               ),
             );
-          externalMessageId ??= uploaded?.externalFileIds[0] ?? null;
+          if (uploaded === null) {
+            continue;
+          }
+          yield* Effect.forEach(
+            pendingAttachmentFiles,
+            (file, index) =>
+              repository.upsertDeliveryReceipt({
+                source: "slack",
+                deliveryKey: file.deliveryKey,
+                status: "completed",
+                externalMessageId: uploaded.externalFileIds[index] ?? null,
+                metadata: {
+                  t3ThreadId: String(input.threadId),
+                  t3MessageId: input.messageId,
+                  t3TurnId: input.turnId,
+                  phase: input.phase,
+                  attachment: {
+                    id: file.attachment.id,
+                    name: file.attachment.name,
+                    mimeType: file.attachment.mimeType,
+                    sizeBytes: file.attachment.sizeBytes,
+                  },
+                },
+                createdAt: file.existingCreatedAt ?? now,
+                updatedAt: nowIso(),
+              }),
+            { concurrency: 1 },
+          );
         }
-
-        if (externalMessageId === null) {
-          continue;
-        }
-        yield* repository.upsertDeliveryReceipt({
-          source: "slack",
-          deliveryKey,
-          status: "completed",
-          externalMessageId,
-          metadata: {
-            t3ThreadId: String(input.threadId),
-            t3MessageId: input.messageId,
-            t3TurnId: input.turnId,
-            phase: input.phase,
-            attachments: (input.attachments ?? []).map((attachment) => ({
-              id: attachment.id,
-              name: attachment.name,
-              mimeType: attachment.mimeType,
-              sizeBytes: attachment.sizeBytes,
-            })),
-          },
-          createdAt: Option.getOrElse(
-            Option.map(existing, (receipt) => receipt.createdAt),
-            () => now,
-          ),
-          updatedAt: nowIso(),
-        });
       }
     });
 
@@ -238,17 +330,20 @@ const make = Effect.gen(function* () {
 
   const relayFinalAssistantMessage = (state: AssistantTurnRelayState) =>
     Effect.gen(function* () {
-      if (state.lastMessageId === null || state.finalRelayedText !== null) {
+      if (state.lastMessageId === null) {
         return;
       }
       const finalText = normalizedAssistantText(
         state.messageTextById.get(state.lastMessageId) ?? "",
       );
       const attachments = state.messageAttachmentsById.get(state.lastMessageId) ?? [];
-      if (
-        (finalText === null || finalText === state.firstRelayedText) &&
-        attachments.length === 0
-      ) {
+      const textToRelay =
+        finalText !== null &&
+        finalText !== state.firstRelayedText &&
+        finalText !== state.finalRelayedText
+          ? finalText
+          : "";
+      if (textToRelay.length === 0 && attachments.length === 0) {
         return;
       }
       if (finalText !== null) {
@@ -258,11 +353,13 @@ const make = Effect.gen(function* () {
         threadId: state.threadId,
         turnId: state.turnId,
         messageId: state.lastMessageId,
-        text: finalText === state.firstRelayedText ? "" : (finalText ?? ""),
+        text: textToRelay,
         attachments,
         phase: "final",
       });
-      state.finalRelayedText = finalText ?? "";
+      if (finalText !== null) {
+        state.finalRelayedText = finalText;
+      }
     });
 
   const relayAssistantMessageToSlack = (event: AssistantMessageEvent) =>
@@ -310,9 +407,17 @@ const make = Effect.gen(function* () {
         state.lastMessageId = messageId;
       }
 
-      if (event.payload.streaming === false && turnId === null) {
+      if (
+        shouldFinalizeAssistantRelayFromMessage({
+          streaming: event.payload.streaming,
+          turnId,
+          attachments: event.payload.attachments,
+        })
+      ) {
         yield* relayFinalAssistantMessage(state);
-        assistantRelayStateByTurn.delete(key);
+        if (turnId === null) {
+          assistantRelayStateByTurn.delete(key);
+        }
       }
     });
 
@@ -451,4 +556,4 @@ const make = Effect.gen(function* () {
   );
 });
 
-export const ExternalIntakeReactorLive = Layer.effectDiscard(make);
+export const ExternalIntakeReactorLive = Layer.effectDiscard(makeExternalIntakeReactor);
