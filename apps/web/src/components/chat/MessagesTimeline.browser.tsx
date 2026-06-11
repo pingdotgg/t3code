@@ -201,6 +201,45 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("keeps supplemental tool detail visible after expanding command rows", async () => {
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "work-command",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-command",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              detail: "Fetched dependency metadata",
+              command: "pnpm outdated --json",
+              stdout: "[]",
+              exitCode: 0,
+              durationMs: 250,
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      expect(document.body.textContent).not.toContain("Fetched dependency metadata");
+
+      const row = page.getByRole("button", { name: "Expand Ran command" });
+      await row.click();
+
+      await expect.element(page.getByText("Fetched dependency metadata")).toBeVisible();
+      expect(document.body.textContent).toContain("pnpm outdated --json");
+      await expect.element(page.getByText("[]")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("snaps to the bottom when timeline rows appear after an initially empty render", async () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")

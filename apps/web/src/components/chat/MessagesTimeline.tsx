@@ -1408,11 +1408,16 @@ function hasExpandableWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
 function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
   const showCommandDetails = hasCommandWorkEntryDetails(workEntry);
   const showFileChangeDetails = hasFileChangeWorkEntryDetails(workEntry);
+  const supplementalDetails =
+    showCommandDetails || showFileChangeDetails
+      ? buildSupplementalToolDetailBody(workEntry)
+      : null;
   if (showCommandDetails || showFileChangeDetails) {
     return (
       <>
         {showCommandDetails && <CommandEntryDetails workEntry={workEntry} />}
         {showFileChangeDetails && <FileChangeEntryDetails workEntry={workEntry} />}
+        {supplementalDetails ? <GenericToolEntryDetails value={supplementalDetails} /> : null}
       </>
     );
   }
@@ -1439,6 +1444,19 @@ function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
       )}
     </div>
   );
+}
+
+function buildSupplementalToolDetailBody(workEntry: TimelineWorkEntry): string | null {
+  const detail = workEntry.detail?.trim();
+  if (!detail) {
+    return null;
+  }
+  const command = workEntry.command?.trim();
+  const rawCommand = workEntry.rawCommand?.trim();
+  if (detail === command || detail === rawCommand) {
+    return null;
+  }
+  return detail;
 }
 
 function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
