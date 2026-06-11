@@ -299,10 +299,12 @@ function toolOnlyCompletionText(
   if (itemTypes.has("file_change")) {
     return "Done. I completed the requested file changes.";
   }
-  if (itemTypes.has("collab_agent_tool_call")) {
-    return "Done. I completed the requested task.";
-  }
-  if (itemTypes.size === 1 && itemTypes.has("command_execution")) {
+  if (
+    itemTypes.size > 0 &&
+    [...itemTypes].every(
+      (itemType) => itemType === "command_execution" || itemType === "collab_agent_tool_call",
+    )
+  ) {
     return undefined;
   }
   return "Done. I completed the requested tool work.";
