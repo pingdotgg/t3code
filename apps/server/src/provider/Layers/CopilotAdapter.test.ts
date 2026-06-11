@@ -805,10 +805,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("does not render the task-agent completion fallback as assistant text", () =>
+  it.effect("does not render the generic completion fallback after a task-completed result", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
-      const threadId = asThreadId("copilot-task-agent-fallback-filter");
+      const threadId = asThreadId("copilot-generic-fallback-task-completed-filter");
 
       yield* adapter.startSession({
         provider: COPILOT_DRIVER,
@@ -836,34 +836,34 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const timestamp = yield* nowIso;
 
       emit({
-        id: "evt-copilot-task-agent-turn-start",
+        id: "evt-copilot-generic-task-completed-turn-start",
         timestamp,
         parentId: null,
         type: "assistant.turn_start",
         data: {
-          turnId: "sdk-turn-task-agent",
+          turnId: "sdk-turn-generic-task-completed",
         },
       } as SessionEvent);
       emit({
-        id: "evt-copilot-task-agent-start",
+        id: "evt-copilot-generic-task-completed-start",
         timestamp,
         parentId: null,
         type: "tool.execution_start",
         data: {
-          toolCallId: "tool-task-agent",
-          toolName: "Task",
+          toolCallId: "tool-finish-work",
+          toolName: "finish_work",
           arguments: {
-            description: "delegate the task",
+            description: "finish the work",
           },
         },
       } as SessionEvent);
       emit({
-        id: "evt-copilot-task-agent-complete",
+        id: "evt-copilot-generic-task-completed-complete",
         timestamp,
         parentId: null,
         type: "tool.execution_complete",
         data: {
-          toolCallId: "tool-task-agent",
+          toolCallId: "tool-finish-work",
           success: true,
           result: {
             content: "✓ Task completed: Updated the implementation.",
@@ -871,12 +871,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
-        id: "evt-copilot-task-agent-turn-end",
+        id: "evt-copilot-generic-task-completed-turn-end",
         timestamp,
         parentId: null,
         type: "assistant.turn_end",
         data: {
-          turnId: "sdk-turn-task-agent",
+          turnId: "sdk-turn-generic-task-completed",
         },
       } as SessionEvent);
 
@@ -897,7 +897,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeEvents.some(
           (event) =>
             event.type === "item.completed" &&
-            event.payload.itemType === "collab_agent_tool_call" &&
+            event.payload.itemType === "dynamic_tool_call" &&
             event.payload.detail === "✓ Task completed: Updated the implementation.",
         ),
       );
