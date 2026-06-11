@@ -945,6 +945,82 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("ignores background task change events when Copilot cannot list tasks", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-background-tasks-missing-list");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "delegate the investigation",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const session = runtimeMock.state.lastSession as unknown as {
+        rpc: { backgroundTasks?: unknown };
+      };
+      delete session.rpc.backgroundTasks;
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-background-tasks-without-list",
+        timestamp,
+        parentId: null,
+        ephemeral: true,
+        type: "session.background_tasks_changed",
+        data: {},
+      } as SessionEvent);
+      config.onEvent({
+        id: "evt-copilot-background-tasks-drain-marker",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-after-background-tasks",
+        },
+      } as SessionEvent);
+
+      let markerEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && markerEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        markerEvent = runtimeEvents.find(
+          (event) =>
+            event.type === "session.state.changed" &&
+            event.payload.reason === "Copilot turn started",
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(markerEvent?.type, "session.state.changed");
+      assert.equal(
+        runtimeEvents.find((event) => event.type === "turn.plan.updated"),
+        undefined,
+      );
+      assert.equal(
+        runtimeEvents.find((event) => event.type === "runtime.error"),
+        undefined,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits command metadata separately from command output", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

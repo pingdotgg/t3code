@@ -658,12 +658,11 @@ function isTaskCompleteTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "taskcomplete";
 }
 
-function copilotBackgroundTasksList(session: CopilotSession): () => Promise<CopilotTaskList> {
+function copilotBackgroundTasksList(
+  session: CopilotSession,
+): (() => Promise<CopilotTaskList>) | undefined {
   const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).backgroundTasks
     ?.list;
-  if (!list) {
-    throw new Error("Copilot runtime does not expose background task listing.");
-  }
   return list;
 }
 
@@ -1033,9 +1032,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }),
     readBackgroundTasks: (
       context: CopilotSessionContext,
-    ): Effect.Effect<CopilotTaskList, ProviderAdapterRequestError> =>
+    ): Effect.Effect<CopilotTaskList | undefined, ProviderAdapterRequestError> =>
       Effect.tryPromise({
-        try: () => copilotBackgroundTasksList(context.sdkSession)(),
+        try: () => copilotBackgroundTasksList(context.sdkSession)?.() ?? Promise.resolve(undefined),
         catch: (cause) =>
           new ProviderAdapterRequestError({
             provider: PROVIDER,
@@ -1505,6 +1504,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       const taskList = yield* copilotSdk.readBackgroundTasks(context);
+      if (!taskList) {
+        return;
+      }
       yield* emit({
         ...createBaseEvent({
           threadId: context.threadId,
