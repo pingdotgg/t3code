@@ -30,10 +30,12 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -55,19 +57,32 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
+const BOOT_SNAPSHOT_FALLBACK_BUDGET = Duration.millis(100);
+
+const loadProviderWithinBootBudget = (
+  providerSource: ProviderSnapshotSource,
+): Effect.Effect<Option.Option<ServerProvider>> =>
+  providerSource.getSnapshot.pipe(
+    Effect.flatMap((snapshot) => correlateSnapshotWithSource(providerSource, snapshot)),
+    Effect.timeoutOption(BOOT_SNAPSHOT_FALLBACK_BUDGET),
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterruptsOnly(cause)) {
+        return Effect.interrupt;
+      }
+      return Effect.logWarning("provider boot snapshot failed; using fallback state", {
+        instanceId: providerSource.instanceId,
+        driver: providerSource.driverKind,
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(Option.none<ServerProvider>()));
+    }),
+  );
+
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
 ): Effect.Effect<ReadonlyArray<ServerProvider>> =>
-  Effect.forEach(
-    providerSources,
-    (providerSource) =>
-      providerSource.getSnapshot.pipe(
-        Effect.flatMap((snapshot) => correlateSnapshotWithSource(providerSource, snapshot)),
-      ),
-    {
-      concurrency: "unbounded",
-    },
-  );
+  Effect.forEach(providerSources, loadProviderWithinBootBudget, {
+    concurrency: "unbounded",
+  }).pipe(Effect.map((providers) => providers.flatMap(Option.toArray)));
 
 const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind) =>
   makeManualOnlyProviderMaintenanceCapabilities({
@@ -184,6 +199,21 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   streamChanges: instance.snapshot.streamChanges,
 });
 
+const buildPendingSnapshot = (instance: ProviderInstance): ServerProvider => ({
+  instanceId: instance.instanceId,
+  driver: instance.driverKind,
+  displayName: instance.displayName,
+  enabled: instance.enabled,
+  installed: false,
+  version: null,
+  status: "pending",
+  auth: { status: "unknown" },
+  checkedAt: "1970-01-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+});
+
 export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,
   Effect.gen(function* () {
@@ -207,17 +237,14 @@ export const ProviderRegistryLive = Layer.effect(
     const bootInstances = yield* instanceRegistry.listInstances;
     const bootSources = bootInstances.map(buildSnapshotSource);
     const fallbackProviders = yield* loadProviders(bootSources);
-    const fallbackByInstance = new Map<ProviderInstanceId, ServerProvider>();
-    for (let index = 0; index < fallbackProviders.length; index++) {
-      const provider = fallbackProviders[index];
-      const source = bootSources[index];
-      if (provider === undefined || source === undefined) {
-        continue;
-      }
-      fallbackByInstance.set(source.instanceId, provider);
-    }
+    const fallbackByInstance = new Map(
+      fallbackProviders.map((provider) => [provider.instanceId, provider] as const),
+    );
+    const bootInstanceByInstanceId = new Map(
+      bootInstances.map((instance) => [instance.instanceId, instance] as const),
+    );
 
-    const cachedProviders = yield* Effect.forEach(
+    const hydratedBootProviders = yield* Effect.forEach(
       bootSources,
       (source) =>
         Effect.gen(function* () {
@@ -231,15 +258,15 @@ export const ProviderRegistryLive = Layer.effect(
             cacheDir: config.providerStatusCacheDir,
             instanceId: source.instanceId,
           }).pipe(Effect.provideService(Path.Path, path));
-          const fallbackProvider = fallbackByInstance.get(source.instanceId);
-          if (fallbackProvider === undefined) {
-            return undefined;
-          }
+          const instance = bootInstanceByInstanceId.get(source.instanceId);
+          if (instance === undefined) return undefined;
+          const fallbackProvider =
+            fallbackByInstance.get(source.instanceId) ?? buildPendingSnapshot(instance);
           return yield* readProviderStatusCache(filePath).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.flatMap((cachedProvider) => {
               if (cachedProvider === undefined) {
-                return Effect.void.pipe(Effect.as(undefined as ServerProvider | undefined));
+                return Effect.succeed(fallbackProvider);
               }
               const correlation = {
                 cachedProvider,
@@ -266,7 +293,7 @@ export const ProviderRegistryLive = Layer.effect(
         ),
       ),
     );
-    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
+    const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(hydratedBootProviders);
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -556,17 +583,19 @@ export const ProviderRegistryLive = Layer.effect(
         // Snapshot current state without starting a probe. Managed providers
         // launch their startup refresh independently, so this closes the
         // subscription race without putting external work on the registry
-        // or HTTP server construction path.
+        // or HTTP server construction path. Keep this bounded because a
+        // third-party driver can still accidentally make getSnapshot slow.
         yield* Effect.forEach(
           newlyAdded,
           ([, instance]) =>
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
-              const provider = yield* source.getSnapshot;
-              yield* correlateSnapshotWithSource(source, provider).pipe(
-                Effect.flatMap(syncProvider),
-              );
-            }).pipe(Effect.ignoreCause({ log: true })),
+              const maybeProvider = yield* loadProviderWithinBootBudget(source);
+              if (Option.isNone(maybeProvider)) {
+                return;
+              }
+              yield* syncProvider(maybeProvider.value);
+            }),
           { concurrency: "unbounded", discard: true },
         );
         yield* upsertProviders(unavailableProviders, {
@@ -621,13 +650,14 @@ export const ProviderRegistryLive = Layer.effect(
       }),
     );
 
-    // Seed `providersRef` with the boot-time fallback snapshots so
-    // consumers calling `getProviders` immediately after layer build see
-    // a populated list — even before the first `syncLiveSources` refresh
-    // resolves. Cached snapshots (already in `providersRef`) merge with
-    // these via `upsertProviders` so on-disk state wins where present
-    // and pending fallbacks fill the gaps.
-    yield* upsertProviders(fallbackProviders, { publish: false });
+    // `providersRef` already contains cache-hydrated snapshots or a pending
+    // placeholder for every configured instance. Unavailable instances do
+    // not have live snapshot sources, so merge them explicitly at boot.
+    yield* upsertProviders(yield* instanceRegistry.listUnavailable, {
+      persist: false,
+      replace: true,
+      publish: false,
+    });
     // Subscribe to registry mutations BEFORE running the initial sync.
     // `subscribeChanges` acquires the dequeue synchronously in this
     // fibre; the subscription is active the instant this `yield*`
