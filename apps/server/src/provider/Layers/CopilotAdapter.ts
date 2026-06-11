@@ -275,6 +275,10 @@ function isCopilotToolExecutionItem(item: unknown): item is CopilotToolExecution
   );
 }
 
+function isTaskCompletedDetail(detail: string | undefined): boolean {
+  return detail?.trim().startsWith("✓ Task completed:") ?? false;
+}
+
 function toolOnlyCompletionText(
   context: CopilotSessionContext,
   turnId: TurnId,
@@ -292,6 +296,10 @@ function toolOnlyCompletionText(
     if (context.turnIdsWithFileChangeEvidence.has(turnId)) {
       return "Done. I completed the requested file changes.";
     }
+    return undefined;
+  }
+
+  if (completedTools.some((item) => isTaskCompletedDetail(item.detail))) {
     return undefined;
   }
 
