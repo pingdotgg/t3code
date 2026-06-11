@@ -1026,9 +1026,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
             // turn rather than the last assistant message.
-            const settledTurnState = settledTurnStateForSessionStatus(
-              event.payload.session.status,
-            );
+            const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
             if (settledTurnState === null) {
               return;
             }
@@ -1062,8 +1060,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           yield* Effect.forEach(
             otherRunningTurns.filter(
-              (turn) =>
-                turn.turnId !== null && turn.turnId !== turnId && turn.state === "running",
+              (turn) => turn.turnId !== null && turn.turnId !== turnId && turn.state === "running",
             ),
             (turn) =>
               turn.turnId === null

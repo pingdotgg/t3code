@@ -943,9 +943,7 @@ describe("ClaudeAdapterLive", () => {
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
-      const turnCompletedEvents = runtimeEvents.filter(
-        (event) => event.type === "turn.completed",
-      );
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
 
       // One turn boundary for the whole run: the steer produced no
       // turn.completed/turn.started pair.
