@@ -470,9 +470,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
         {elementContextState.contexts.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContextState.contexts.map((context, index) => (
+            {elementContextState.contexts.map((context) => (
               <UserMessageElementContextChip
-                key={`${context.header}:${index}`}
+                key={`${context.header}:${context.body}`}
                 context={context}
               />
             ))}
@@ -579,10 +579,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 <TooltipTrigger
                   render={<p className="text-muted-foreground text-xs tabular-nums" />}
                 >
-                  {formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  {formatShortTimestamp(
+                    row.message.completedAt ?? row.message.createdAt,
+                    ctx.timestampFormat,
+                  )}
                 </TooltipTrigger>
                 <TooltipPopup>
-                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
+                  {formatChatTimestampTooltip(
+                    row.message.completedAt ?? row.message.createdAt,
+                    ctx.timestampFormat,
+                  )}
                 </TooltipPopup>
               </Tooltip>
             )}

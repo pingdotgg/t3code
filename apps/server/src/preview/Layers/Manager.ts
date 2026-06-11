@@ -21,7 +21,7 @@ import {
   normalizePreviewUrl,
   PreviewUrlNormalizationError,
 } from "@t3tools/shared/preview";
-import { Effect, Layer, PubSub, Stream, SynchronizedRef } from "effect";
+import { DateTime, Effect, Layer, PubSub, Stream, SynchronizedRef } from "effect";
 
 import { PreviewManager, type PreviewManagerShape } from "../Services/Manager.ts";
 
@@ -66,30 +66,34 @@ const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlEr
       }),
   });
 
+const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
 const buildLoadingSnapshot = (input: {
   readonly threadId: string;
   readonly tabId: string;
   readonly url: string;
   readonly title: string;
+  readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
   tabId: input.tabId,
   navStatus: { _tag: "Loading", url: input.url, title: input.title },
   canGoBack: false,
   canGoForward: false,
-  updatedAt: new Date().toISOString(),
+  updatedAt: input.updatedAt,
 });
 
 const buildIdleSnapshot = (input: {
   readonly threadId: string;
   readonly tabId: string;
+  readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
   tabId: input.tabId,
   navStatus: { _tag: "Idle" },
   canGoBack: false,
   canGoForward: false,
-  updatedAt: new Date().toISOString(),
+  updatedAt: input.updatedAt,
 });
 
 export const makePreviewManager = Effect.gen(function* () {
@@ -152,14 +156,16 @@ export const makePreviewManager = Effect.gen(function* () {
   const open: PreviewManagerShape["open"] = (input) =>
     Effect.gen(function* () {
       const tabId = newPreviewTabId();
+      const updatedAt = yield* currentIsoTimestamp;
       const snapshot = input.url
         ? buildLoadingSnapshot({
             threadId: input.threadId,
             tabId,
             url: yield* normalizeUrl(input.url),
             title: "",
+            updatedAt,
           })
-        : buildIdleSnapshot({ threadId: input.threadId, tabId });
+        : buildIdleSnapshot({ threadId: input.threadId, tabId, updatedAt });
       yield* SynchronizedRef.update(stateRef, (state) => {
         const sessions = new Map(state.sessions);
         sessions.set(compositeKey(input.threadId, tabId), {
@@ -183,7 +189,8 @@ export const makePreviewManager = Effect.gen(function* () {
     Effect.gen(function* () {
       const url = yield* normalizeUrl(input.url);
       return yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          const updatedAt = yield* currentIsoTimestamp;
           const previousTitle =
             session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
           const resolvedTitle = input.resolvedTitle ?? previousTitle;
@@ -193,7 +200,7 @@ export const makePreviewManager = Effect.gen(function* () {
             navStatus: { _tag: "Success", url, title: resolvedTitle },
             canGoBack: session.snapshot.canGoBack,
             canGoForward: session.snapshot.canGoForward,
-            updatedAt: new Date().toISOString(),
+            updatedAt,
           };
           return {
             next: { ...session, snapshot },
@@ -212,14 +219,15 @@ export const makePreviewManager = Effect.gen(function* () {
 
   const reportStatus: PreviewManagerShape["reportStatus"] = (input) =>
     mutateExistingSession(input.threadId, input.tabId, (session) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const updatedAt = yield* currentIsoTimestamp;
         const snapshot: PreviewSessionSnapshot = {
           threadId: session.threadId,
           tabId: session.tabId,
           navStatus: input.navStatus,
           canGoBack: input.canGoBack,
           canGoForward: input.canGoForward,
-          updatedAt: new Date().toISOString(),
+          updatedAt,
         };
         const emit: PreviewEvent =
           input.navStatus._tag === "LoadFailed"
@@ -256,8 +264,9 @@ export const makePreviewManager = Effect.gen(function* () {
     );
 
   const close: PreviewManagerShape["close"] = (input) =>
-    Effect.flatMap(
-      SynchronizedRef.modify(stateRef, (state) => {
+    Effect.gen(function* () {
+      const createdAt = yield* currentIsoTimestamp;
+      const events = yield* SynchronizedRef.modify(stateRef, (state) => {
         const eventsToEmit: PreviewEvent[] = [];
         const sessions = new Map(state.sessions);
         const targets = input.tabId
@@ -271,21 +280,20 @@ export const makePreviewManager = Effect.gen(function* () {
             type: "closed",
             threadId: target.threadId,
             tabId: target.tabId,
-            createdAt: new Date().toISOString(),
+            createdAt,
           });
         }
         if (eventsToEmit.length === 0) {
           return [eventsToEmit, state] as const;
         }
         return [eventsToEmit, { sessions }] as const;
-      }),
-      (events) =>
-        events.length === 0
-          ? Effect.void
-          : Effect.forEach(events, (event) => PubSub.publish(eventsPubSub, event), {
-              discard: true,
-            }),
-    );
+      });
+      if (events.length > 0) {
+        yield* Effect.forEach(events, (event) => PubSub.publish(eventsPubSub, event), {
+          discard: true,
+        });
+      }
+    });
 
   const list: PreviewManagerShape["list"] = (input) =>
     SynchronizedRef.get(stateRef).pipe(

@@ -668,25 +668,25 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(PreviewManager)({
-          open: () => Effect.die("PreviewManager not stubbed in this test"),
-          navigate: () => Effect.die("PreviewManager not stubbed in this test"),
-          reportStatus: () => Effect.void,
-          refresh: () => Effect.void,
-          close: () => Effect.void,
-          list: () => Effect.succeed({ sessions: [] }),
-          events: Stream.empty,
-          subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
-            PubSub.subscribe(pubsub),
-          ),
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(PreviewPortScanner)({
-          scan: () => Effect.succeed([]),
-          subscribe: () => Effect.succeed(() => {}),
-          retain: () => Effect.succeed(() => {}),
-        }),
+        Layer.mergeAll(
+          Layer.mock(PreviewManager)({
+            open: () => Effect.die("PreviewManager not stubbed in this test"),
+            navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            reportStatus: () => Effect.void,
+            refresh: () => Effect.void,
+            close: () => Effect.void,
+            list: () => Effect.succeed({ sessions: [] }),
+            events: Stream.empty,
+            subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          }),
+          Layer.mock(PreviewPortScanner)({
+            scan: () => Effect.succeed([]),
+            subscribe: () => Effect.succeed(() => {}),
+            retain: () => Effect.succeed(() => {}),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(OrchestrationEngineService)({

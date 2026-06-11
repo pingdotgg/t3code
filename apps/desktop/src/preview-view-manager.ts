@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off
 /**
  * PreviewViewManager — desktop side of the in-app browser preview.
  *

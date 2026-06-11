@@ -1,12 +1,18 @@
 import * as net from "node:net";
 
-import { Effect } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { it as effectIt } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { PreviewPortScanner } from "../Services/PortScanner.ts";
+import { COMMON_DEV_PORTS, PreviewPortScanner } from "../Services/PortScanner.ts";
+import { ProcessRunner } from "../../processRunner.ts";
 import { __testing, PreviewPortScannerLive } from "./PortScanner.ts";
 
 const { parseLsofOutput, parsePortFromLsofName, serversEqual } = __testing;
+const TestProcessRunner = Layer.succeed(ProcessRunner, {
+  run: () => Effect.die("ProcessRunner should not be used by Windows TCP probe tests"),
+});
+const TestPreviewPortScannerLive = PreviewPortScannerLive.pipe(Layer.provide(TestProcessRunner));
 
 describe("parsePortFromLsofName", () => {
   it("parses *:port", () => {
@@ -121,16 +127,25 @@ describe("serversEqual", () => {
 describe("PreviewPortScanner integration (TCP probe path)", () => {
   let originalPlatform: NodeJS.Platform;
   let server: net.Server;
+  let port: number;
 
   beforeEach(async () => {
     originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-    // 3001 is in COMMON_DEV_PORTS so the TCP-probe pass will check it.
-    server = net.createServer();
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(3001, "127.0.0.1", () => resolve());
-    });
+    for (const candidate of COMMON_DEV_PORTS) {
+      const candidateServer = net.createServer();
+      const listening = await new Promise<boolean>((resolve) => {
+        candidateServer.once("error", () => resolve(false));
+        candidateServer.listen(candidate, "127.0.0.1", () => resolve(true));
+      });
+      if (listening) {
+        server = candidateServer;
+        port = candidate;
+        return;
+      }
+      candidateServer.close();
+    }
+    throw new Error("No common development port was available for the preview scanner test");
   });
 
   afterEach(async () => {
@@ -141,40 +156,29 @@ describe("PreviewPortScanner integration (TCP probe path)", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("scan() returns a server we just opened on a curated dev port", async () => {
-    const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const scanner = yield* PreviewPortScanner;
-          return yield* scanner.scan();
-        }).pipe(Effect.provide(PreviewPortScannerLive)),
-      ),
-    );
-    const found = result.find((s) => s.port === 3001);
-    expect(found).toBeDefined();
-    expect(found?.host).toBe("localhost");
-  });
+  effectIt.effect("scan() returns a server we just opened on a curated dev port", () =>
+    Effect.gen(function* () {
+      const scanner = yield* PreviewPortScanner;
+      const result = yield* scanner.scan();
+      const found = result.find((server) => server.port === port);
+      expect(found).toBeDefined();
+      expect(found?.host).toBe("localhost");
+    }).pipe(Effect.provide(TestPreviewPortScannerLive)),
+  );
 
-  it("retain() drives an immediate broadcast to subscribers", async () => {
+  effectIt.effect("retain() drives an immediate broadcast to subscribers", () => {
     const received: number[] = [];
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const scanner = yield* PreviewPortScanner;
-          const unsubscribe = yield* scanner.subscribe((servers) =>
-            Effect.sync(() => {
-              for (const server of servers) received.push(server.port);
-            }),
-          );
-          const release = yield* scanner.retain();
-          // The retain() pollTick is fire-and-forget within Effect, so wait
-          // a frame for the broadcast to land.
-          yield* Effect.sleep("100 millis");
-          unsubscribe();
-          release();
-        }).pipe(Effect.provide(PreviewPortScannerLive)),
-      ),
-    );
-    expect(received).toContain(3001);
+    return Effect.gen(function* () {
+      const scanner = yield* PreviewPortScanner;
+      const unsubscribe = yield* scanner.subscribe((servers) =>
+        Effect.sync(() => {
+          for (const server of servers) received.push(server.port);
+        }),
+      );
+      const release = yield* scanner.retain();
+      unsubscribe();
+      release();
+      expect(received).toContain(port);
+    }).pipe(Effect.provide(TestPreviewPortScannerLive));
   });
 });

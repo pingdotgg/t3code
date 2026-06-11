@@ -28,7 +28,7 @@ export interface PreviewPortScannerShape {
 export class PreviewPortScanner extends Context.Service<
   PreviewPortScanner,
   PreviewPortScannerShape
->()("t3/preview/Services/PortScanner") {}
+>()("t3/preview/Services/PortScanner/PreviewPortScanner") {}
 
 /** Curated list of common dev-server ports for the Windows TCP-probe fallback. */
 export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([

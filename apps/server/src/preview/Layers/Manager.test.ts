@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { Effect, PubSub } from "effect";
-import { expect } from "vitest";
+import { expect } from "vite-plus/test";
 
 import { PreviewManager } from "../Services/Manager.ts";
 import { PreviewManagerLive } from "./Manager.ts";

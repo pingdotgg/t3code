@@ -480,38 +480,40 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
 export const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
   payload: PreviewOpenInput,
   success: PreviewSessionSnapshot,
-  error: PreviewError,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsPreviewNavigateRpc = Rpc.make(WS_METHODS.previewNavigate, {
   payload: PreviewNavigateInput,
   success: PreviewSessionSnapshot,
-  error: PreviewError,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   payload: PreviewRefreshInput,
-  error: PreviewError,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   payload: PreviewCloseInput,
-  error: PreviewError,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   payload: PreviewListInput,
   success: PreviewListResult,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   payload: PreviewReportStatusInput,
-  error: PreviewError,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
+  error: EnvironmentAuthorizationError,
   stream: true,
 });
 
@@ -520,6 +522,7 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   {
     payload: Schema.Struct({}),
     success: DiscoveredLocalServerList,
+    error: EnvironmentAuthorizationError,
     stream: true,
   },
 );

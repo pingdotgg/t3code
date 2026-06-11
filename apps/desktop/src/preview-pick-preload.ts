@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off
 /**
  * Preview pick preload — runs in the isolated world of the Chromium
  * `<webview>` that hosts the in-app browser. Loaded via the

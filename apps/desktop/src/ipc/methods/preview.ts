@@ -1,7 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { BrowserWindow } from "electron";
-import * as NodeFileSystem from "node:fs";
-import * as NodePath from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { previewViewManager } from "../../preview-view-manager.ts";
@@ -29,18 +29,38 @@ const tabIdFrom = (raw: unknown): string => {
   return tabId;
 };
 
-const method = (channel: string, handler: (raw: unknown) => unknown | Promise<unknown>): DesktopIpcMethod<unknown, never> => ({
+class PreviewIpcError extends Data.TaggedError("PreviewIpcError")<{
+  readonly cause: unknown;
+}> {}
+
+const method = (
+  channel: string,
+  handler: (raw: unknown) => unknown | Promise<unknown>,
+): DesktopIpcMethod<PreviewIpcError, never> => ({
   channel,
-  handler: (raw) => Effect.tryPromise({ try: () => Promise.resolve(handler(raw)), catch: (error) => error }),
+  handler: (raw) =>
+    Effect.tryPromise({
+      try: () => Promise.resolve(handler(raw)),
+      catch: (cause) => new PreviewIpcError({ cause }),
+    }),
 });
 
 export const previewMethods = [
-  method(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, (raw) => previewViewManager.createTab(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, (raw) => previewViewManager.closeTab(tabIdFrom(raw))),
+  method(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, (raw) =>
+    previewViewManager.createTab(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, (raw) =>
+    previewViewManager.closeTab(tabIdFrom(raw)),
+  ),
   method(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, (raw) => {
     const tabId = tabIdFrom(raw);
-    const webContentsId = typeof raw === "object" && raw !== null && "webContentsId" in raw ? raw.webContentsId : null;
-    if (typeof webContentsId !== "number" || !Number.isInteger(webContentsId) || webContentsId <= 0) {
+    const webContentsId =
+      typeof raw === "object" && raw !== null && "webContentsId" in raw ? raw.webContentsId : null;
+    if (
+      typeof webContentsId !== "number" ||
+      !Number.isInteger(webContentsId) ||
+      webContentsId <= 0
+    ) {
       throw new Error("preview webContentsId must be a positive integer");
     }
     return previewViewManager.registerWebview(tabId, webContentsId);
@@ -52,21 +72,29 @@ export const previewMethods = [
     return previewViewManager.navigate(tabId, url);
   }),
   method(IpcChannels.PREVIEW_GO_BACK_CHANNEL, (raw) => previewViewManager.goBack(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, (raw) => previewViewManager.goForward(tabIdFrom(raw))),
+  method(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, (raw) =>
+    previewViewManager.goForward(tabIdFrom(raw)),
+  ),
   method(IpcChannels.PREVIEW_REFRESH_CHANNEL, (raw) => previewViewManager.refresh(tabIdFrom(raw))),
   method(IpcChannels.PREVIEW_ZOOM_IN_CHANNEL, (raw) => previewViewManager.zoomIn(tabIdFrom(raw))),
   method(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, (raw) => previewViewManager.zoomOut(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, (raw) => previewViewManager.resetZoom(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, (raw) => previewViewManager.hardReload(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, (raw) => previewViewManager.openDevTools(tabIdFrom(raw))),
+  method(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, (raw) =>
+    previewViewManager.resetZoom(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, (raw) =>
+    previewViewManager.hardReload(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, (raw) =>
+    previewViewManager.openDevTools(tabIdFrom(raw)),
+  ),
   method(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () => previewViewManager.clearCookies()),
   method(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () => previewViewManager.clearCache()),
   method(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, () => {
-    const preloadPath = NodePath.join(__dirname, "preview-pick-preload.cjs");
+    const preloadPath = `${__dirname}/preview-pick-preload.cjs`;
     return {
       partition: previewViewManager.getBrowserPartition(),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: NodeFileSystem.existsSync(preloadPath) ? pathToFileURL(preloadPath).href : null,
+      preloadUrl: pathToFileURL(preloadPath).href,
     };
   }),
   method(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, (raw) =>

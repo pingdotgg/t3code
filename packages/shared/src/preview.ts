@@ -5,16 +5,15 @@
  */
 
 const TAB_ID_PREFIX = "tab_";
+let nextPreviewTabSequence = 0;
 
 /**
  * Generate a fresh preview tab id. Lives in shared (not contracts) because
  * the contracts package is schema-only — runtime helpers belong here.
  */
 export function newPreviewTabId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${TAB_ID_PREFIX}${crypto.randomUUID()}`;
-  }
-  return `${TAB_ID_PREFIX}${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  nextPreviewTabSequence += 1;
+  return `${TAB_ID_PREFIX}${nextPreviewTabSequence.toString(36)}`;
 }
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);

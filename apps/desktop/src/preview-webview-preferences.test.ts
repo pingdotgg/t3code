@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { PREVIEW_WEBVIEW_PREFERENCES } from "./preview-webview-preferences.ts";
 

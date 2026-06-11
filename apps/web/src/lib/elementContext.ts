@@ -198,12 +198,11 @@ export function appendElementContextsToPrompt(
 }
 
 const ELEMENT_CONTEXT_ID_PREFIX = "el_";
+let nextElementContextSequence = 0;
 
 export function newElementContextId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${ELEMENT_CONTEXT_ID_PREFIX}${crypto.randomUUID()}`;
-  }
-  return `${ELEMENT_CONTEXT_ID_PREFIX}${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  nextElementContextSequence += 1;
+  return `${ELEMENT_CONTEXT_ID_PREFIX}${nextElementContextSequence.toString(36)}`;
 }
 
 /**

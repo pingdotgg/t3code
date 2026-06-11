@@ -17,7 +17,7 @@ import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import { Cause, Data, Duration, Effect, Layer, Ref, Schedule } from "effect";
 
-import { runProcess } from "../../processRunner.ts";
+import { ProcessRunner, type ProcessRunnerShape } from "../../processRunner.ts";
 import {
   COMMON_DEV_PORTS,
   PreviewPortScanner,
@@ -91,20 +91,22 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const probeLsof = (): Effect.Effect<ReadonlyArray<DiscoveredLocalServer> | null> =>
-  Effect.tryPromise({
-    try: () =>
-      runProcess("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"], {
-        timeoutMs: LSOF_TIMEOUT_MS,
-        allowNonZeroExit: true,
-        maxBufferBytes: 1024 * 1024,
-        outputMode: "truncate",
-      }),
-    catch: (cause) => new LsofProbeError({ cause }),
-  }).pipe(
-    Effect.map((result) => parseLsofOutput(result.stdout)),
-    Effect.catch(() => Effect.succeed(null)),
-  );
+const probeLsof = (
+  processRunner: ProcessRunnerShape,
+): Effect.Effect<ReadonlyArray<DiscoveredLocalServer> | null> =>
+  processRunner
+    .run({
+      command: "lsof",
+      args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
+      timeout: Duration.millis(LSOF_TIMEOUT_MS),
+      maxOutputBytes: 1024 * 1024,
+      outputMode: "truncate",
+    })
+    .pipe(
+      Effect.mapError((cause) => new LsofProbeError({ cause })),
+      Effect.map((result) => parseLsofOutput(result.stdout)),
+      Effect.orElseSucceed(() => null),
+    );
 
 const probeTcpPort = (port: number): Promise<boolean> =>
   new Promise((resolve) => {
@@ -162,6 +164,7 @@ const serversEqual = (
 };
 
 export const makePreviewPortScanner = Effect.gen(function* () {
+  const processRunner = yield* ProcessRunner;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
   });
@@ -176,7 +179,7 @@ export const makePreviewPortScanner = Effect.gen(function* () {
       if (process.platform === "win32") {
         return yield* probeCommonPorts();
       }
-      const lsof = yield* probeLsof();
+      const lsof = yield* probeLsof(processRunner);
       if (lsof !== null) return lsof;
       return yield* probeCommonPorts();
     });
