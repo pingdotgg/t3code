@@ -257,6 +257,7 @@ export const layer = Layer.effect(
     const makeRemoteRefreshLoop = (
       cwd: string,
       automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
+      refreshImmediately: boolean,
     ) => {
       return Effect.gen(function* () {
         const consecutiveFailuresRef = yield* Ref.make(0);
@@ -289,6 +290,15 @@ export const layer = Layer.effect(
           return nextDelay;
         });
 
+        if (!refreshImmediately) {
+          const configuredInterval = yield* automaticRemoteRefreshInterval;
+          yield* Effect.sleep(
+            Duration.isZero(configuredInterval)
+              ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
+              : configuredInterval,
+          );
+        }
+
         return yield* refreshRemoteStatusIfEnabled.pipe(
           Effect.repeat(
             Schedule.identity<Duration.Duration>().pipe(
@@ -303,6 +313,7 @@ export const layer = Layer.effect(
     const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
       cwd: string,
       automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
+      refreshImmediately: boolean,
     ) {
       yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
         const existing = activePollers.get(cwd);
@@ -315,7 +326,7 @@ export const layer = Layer.effect(
           return Effect.succeed([undefined, nextPollers] as const);
         }
 
-        return makeRemoteRefreshLoop(cwd, automaticRemoteRefreshInterval).pipe(
+        return makeRemoteRefreshLoop(cwd, automaticRemoteRefreshInterval, refreshImmediately).pipe(
           Effect.forkIn(broadcasterScope),
           Effect.map((fiber) => {
             const nextPollers = new Map(activePollers);
@@ -363,11 +374,13 @@ export const layer = Layer.effect(
           const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
           const subscription = yield* PubSub.subscribe(changesPubSub);
           const initialLocal = yield* getOrLoadLocalStatus(cwd);
-          const initialRemote = (yield* getCachedStatus(cwd))?.remote?.value ?? null;
+          const cachedStatus = yield* getCachedStatus(cwd);
+          const initialRemote = cachedStatus?.remote?.value ?? null;
           yield* retainRemotePoller(
             cwd,
             options?.automaticRemoteRefreshInterval ??
               Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
+            cachedStatus?.remote === null || cachedStatus?.remote === undefined,
           );
 
           const release = releaseRemotePoller(cwd).pipe(Effect.ignore, Effect.asVoid);
