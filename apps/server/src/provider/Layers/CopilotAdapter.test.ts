@@ -798,6 +798,134 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("emits a turn diff update when a Copilot write permission is approved", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-write-permission-turn-diff");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "update the README",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      assert.ok(config.onPermissionRequest);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      const requestId = "permission-write-readme";
+      const permissionRequest = {
+        kind: "write",
+        toolCallId: "tool-write-readme",
+        fileName: "README.md",
+        diff: "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n",
+        intention: "Update README",
+        canOfferSessionApproval: true,
+      } as PermissionRequest;
+
+      emit({
+        id: "evt-copilot-write-permission-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-write-permission",
+        },
+      } as SessionEvent);
+
+      const resultPromise = Promise.resolve(
+        config.onPermissionRequest(permissionRequest, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      emit({
+        id: "evt-copilot-write-permission-requested",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+          promptRequest: undefined,
+        },
+      } as unknown as SessionEvent);
+
+      let opened: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && opened === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        opened = runtimeEvents.find(
+          (event) => event.type === "request.opened" && String(event.requestId) === requestId,
+        );
+      }
+      assert.equal(opened?.type, "request.opened");
+      if (opened?.type === "request.opened") {
+        assert.equal(opened.payload.requestType, "file_change_approval");
+        assert.equal(String(opened.turnId), String(turn.turnId));
+      }
+
+      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
+      const approvalResult = yield* Effect.promise(() => resultPromise);
+      assert.deepStrictEqual(approvalResult, { kind: "approve-once" });
+
+      emit({
+        id: "evt-copilot-write-permission-completed",
+        timestamp,
+        parentId: null,
+        type: "permission.completed",
+        data: {
+          requestId,
+          result: approvalResult,
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-write-permission-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-write-permission",
+        },
+      } as SessionEvent);
+
+      let turnDiffEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && turnDiffEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        turnDiffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(turnDiffEvent?.type, "turn.diff.updated");
+      if (turnDiffEvent?.type === "turn.diff.updated") {
+        assert.equal(turnDiffEvent.threadId, threadId);
+        assert.equal(String(turnDiffEvent.turnId), String(turn.turnId));
+        assert.equal(
+          String(turnDiffEvent.itemId),
+          `copilot-tool-completion-${String(turn.turnId)}`,
+        );
+        assert.deepStrictEqual(turnDiffEvent.payload, {
+          unifiedDiff: "",
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits thread metadata updates from Copilot title changes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
