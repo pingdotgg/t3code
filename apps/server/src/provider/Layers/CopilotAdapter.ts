@@ -59,6 +59,24 @@ type SessionUserInputRequestedEvent = Extract<SessionEvent, { type: "user_input.
 type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permissionRequest"];
 type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
 type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
+type CopilotTaskStatus = "running" | "idle" | "completed" | "failed" | "cancelled";
+type CopilotTaskInfo = {
+  readonly description: string;
+  readonly status: CopilotTaskStatus;
+};
+type CopilotTaskList = {
+  readonly tasks: ReadonlyArray<CopilotTaskInfo>;
+};
+type CopilotBackgroundTasksRpc = {
+  readonly backgroundTasks?: {
+    readonly list?: () => Promise<CopilotTaskList>;
+  };
+};
+
+type PlanStep = {
+  step: string;
+  status: "pending" | "inProgress" | "completed";
+};
 
 export interface CopilotAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -640,6 +658,51 @@ function isTaskCompleteTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "taskcomplete";
 }
 
+function copilotBackgroundTasksList(session: CopilotSession): () => Promise<CopilotTaskList> {
+  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).backgroundTasks
+    ?.list;
+  if (!list) {
+    throw new Error("Copilot runtime does not expose background task listing.");
+  }
+  return list;
+}
+
+function normalizeCopilotTaskStatus(status: CopilotTaskStatus): PlanStep["status"] {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "running":
+    case "idle":
+      return "inProgress";
+    case "failed":
+    case "cancelled":
+      return "pending";
+  }
+}
+
+function copilotTaskStatusSuffix(status: CopilotTaskStatus): string {
+  switch (status) {
+    case "failed":
+      return " (failed)";
+    case "cancelled":
+      return " (cancelled)";
+    case "running":
+    case "idle":
+    case "completed":
+      return "";
+  }
+}
+
+function planStepsFromCopilotTasks(tasks: ReadonlyArray<CopilotTaskInfo>): PlanStep[] {
+  return tasks.map((task) => {
+    const description = trimOrUndefined(task.description) ?? "Task";
+    return {
+      step: `${description}${copilotTaskStatusSuffix(task.status)}`,
+      status: normalizeCopilotTaskStatus(task.status),
+    };
+  });
+}
+
 function toolStreamKind(
   itemType: ToolMeta["itemType"] | undefined,
 ): "command_output" | "file_change_output" | "unknown" {
@@ -965,6 +1028,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             provider: PROVIDER,
             method: "session.plan.read",
             detail: detailFromCause(cause, "Failed to read Copilot plan."),
+            cause,
+          }),
+      }),
+    readBackgroundTasks: (
+      context: CopilotSessionContext,
+    ): Effect.Effect<CopilotTaskList, ProviderAdapterRequestError> =>
+      Effect.tryPromise({
+        try: () => copilotBackgroundTasksList(context.sdkSession)(),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session.backgroundTasks.list",
+            detail: detailFromCause(cause, "Failed to read Copilot background tasks."),
             cause,
           }),
       }),
@@ -1419,6 +1495,30 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
     });
 
+  const emitBackgroundTasksPlanSnapshot = (
+    context: CopilotSessionContext,
+    raw: SessionEvent,
+  ): Effect.Effect<void, ProviderAdapterRequestError> =>
+    Effect.gen(function* () {
+      const turnId = context.activeTurnId ?? latestTurnId(context);
+      if (!turnId) {
+        return;
+      }
+      const taskList = yield* copilotSdk.readBackgroundTasks(context);
+      yield* emit({
+        ...createBaseEvent({
+          threadId: context.threadId,
+          turnId,
+          raw,
+        }),
+        type: "turn.plan.updated",
+        payload: {
+          explanation: "Copilot Tasks",
+          plan: planStepsFromCopilotTasks(taskList.tasks),
+        },
+      });
+    });
+
   const onPermissionRequest = (
     context: CopilotSessionContext,
     request: PermissionRequest,
@@ -1795,6 +1895,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             usage: usageSnapshotFromUsageInfo(event),
           },
         });
+        return;
+      }
+      case "session.background_tasks_changed": {
+        await runWithContext(emitBackgroundTasksPlanSnapshot(context, event));
         return;
       }
       case "assistant.turn_start": {
