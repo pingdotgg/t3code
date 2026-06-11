@@ -6,6 +6,11 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --font-sans:
+    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --font-mono:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -49,6 +54,14 @@
   * {
     @apply border-border outline-ring/50;
   }
+  :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus,
+  :where(
+    [data-slot="menu-popup"],
+    [data-slot="select-popup"],
+    [data-slot="popover-popup"]
+  ):focus-visible {
+    @apply outline-none ring-0;
+  }
   html {
     background-color: var(--app-chrome-background);
   }
@@ -85,10 +98,8 @@
 
 :root {
   color-scheme: light;
-  --app-font-family: "Fira Code", monospace;
   --radius: 0.625rem;
   --background: var(--color-white);
-  --terminal-background: var(--color-neutral-100);
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
@@ -118,7 +129,6 @@
   @variant dark {
     color-scheme: dark;
     --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
-    --terminal-background: color-mix(in srgb, var(--background) 94%, var(--color-white));
     --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
@@ -148,7 +158,14 @@
 }
 
 body {
-  font-family: var(--app-font-family);
+  font-family:
+    "DM Sans Variable",
+    "DM Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
   margin: 0;
   padding: 0;
 }
@@ -188,7 +205,8 @@ body::after {
 
 pre,
 code {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 /* Window drag region (frameless titlebar) */
@@ -287,8 +305,42 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown ol,
 .chat-markdown blockquote,
 .chat-markdown pre,
-.chat-markdown table {
+.chat-markdown .chat-markdown-table-container {
   margin: 0.65rem 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 1.25rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+
+.chat-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.chat-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.chat-markdown h3 {
+  font-size: 1rem;
+}
+
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.875rem;
+}
+
+.chat-markdown h6 {
+  color: var(--muted-foreground);
 }
 
 .chat-markdown ul {
@@ -321,20 +373,74 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0.25rem;
 }
 
-.chat-markdown a {
-  color: var(--info-foreground);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--info-foreground) 40%, transparent);
+/* GitHub-style task lists: the checkbox replaces the list marker. */
+.chat-markdown li.task-list-item {
+  list-style-type: none;
 }
 
-.chat-markdown a:hover {
-  opacity: 0.8;
+.chat-markdown li.task-list-item input[type="checkbox"] {
+  margin: 0 0.35em 0.15em -1.25rem;
+  vertical-align: middle;
+}
+
+.chat-markdown a {
+  color: var(--info-foreground);
+  text-decoration: none;
+}
+
+.chat-markdown a:not(.chat-markdown-file-link):hover,
+.chat-markdown a:not(.chat-markdown-file-link):focus-visible {
+  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+}
+
+.chat-markdown .chat-markdown-link-favicon {
+  @apply inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-inline: 0.25em 0.2em;
+  vertical-align: -0.125em;
+}
+
+.chat-markdown .chat-markdown-link-leading {
+  white-space: nowrap;
 }
 
 .chat-markdown blockquote {
   border-left: 2px solid var(--border);
   padding-left: 0.8rem;
   color: var(--muted-foreground);
+}
+
+.chat-markdown section[data-footnotes] {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.chat-markdown section[data-footnotes] ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.chat-markdown section[data-footnotes] li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-markdown a[data-footnote-ref],
+.chat-markdown a[data-footnote-backref] {
+  display: inline-flex;
+  min-width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
 .chat-markdown :not(pre) > code {
@@ -346,45 +452,19 @@ label:has(> select#reasoning-effort) select {
   font-size: 0.75rem;
 }
 
-.chat-markdown-file-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
-  border-radius: 0.375rem;
-  background: color-mix(in srgb, var(--muted) 88%, var(--background));
-  padding: 0.08rem 0.34rem;
+.chat-markdown a.chat-markdown-file-link {
   color: var(--foreground);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.75rem;
-  line-height: 1.15;
-  vertical-align: text-bottom;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    opacity 120ms ease;
+  text-decoration: none;
 }
 
-.chat-markdown-file-link:hover {
-  opacity: 1;
+.chat-markdown a.chat-markdown-file-link:hover {
   color: var(--foreground);
-  border-color: color-mix(in srgb, var(--border) 65%, var(--foreground));
-  background: color-mix(in srgb, var(--muted) 72%, var(--background));
+  text-decoration: none;
 }
 
-.chat-markdown-file-link:focus-visible {
+.chat-markdown a.chat-markdown-file-link:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 70%, transparent);
-}
-
-.chat-markdown-file-link-icon {
-  opacity: 0.72;
-}
-
-.chat-markdown-file-link-label {
-  color: color-mix(in srgb, var(--foreground) 88%, transparent);
-  line-height: 1.1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
 }
 
 .chat-markdown pre {
@@ -401,6 +481,24 @@ label:has(> select#reasoning-effort) select {
   background: transparent;
   padding: 0;
   font-size: 0.75rem;
+}
+
+.chat-markdown pre {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.chat-markdown pre::-webkit-scrollbar {
+  height: 7px;
+}
+
+.chat-markdown pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-markdown pre::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .markdown-file-link-tooltip-scroll {
@@ -422,64 +520,113 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-codeblock {
-  --chat-markdown-codeblock-copy-button-space: 1.5rem;
-  position: relative;
   margin: 0.65rem 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+}
+
+.chat-markdown .chat-markdown-codeblock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.25rem 0.375rem 0.25rem 0.7rem;
+  color: var(--muted-foreground);
+}
+
+.chat-markdown .chat-markdown-codeblock-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.6875rem;
+}
+
+.chat-markdown .chat-markdown-chrome-action {
+  color: var(--muted-foreground);
+}
+
+.chat-markdown .chat-markdown-chrome-action:hover {
+  color: var(--foreground);
+}
+
+.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
   margin: 0;
-  padding-right: calc(0.9rem + var(--chat-markdown-codeblock-copy-button-space));
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
-.chat-markdown .chat-markdown-copy-button {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 1.5rem;
-  width: 1.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--background) 82%, transparent);
-  color: var(--muted-foreground);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-}
-
-.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
-.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.chat-markdown .chat-markdown-copy-button:hover {
-  color: var(--foreground);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground));
+.chat-markdown .chat-markdown-codeblock[data-wrap="true"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
-  background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
+  background: transparent !important;
 }
 
+/* Diagnostics-style tables: row separators only, uppercase headers, and a
+   scroll-fade container for horizontal overflow. The root chat-markdown
+   wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
+   characters and defeat the overflow — restore word-boundary wrapping so the
+   min column width is the longest word. */
 .chat-markdown table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.75rem;
 }
 
 .chat-markdown th,
 .chat-markdown td {
-  border: 1px solid var(--border);
-  padding: 0.35rem 0.45rem;
+  padding: 0.45rem 0.75rem;
   text-align: left;
+}
+
+.chat-markdown thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding-block: 0.55rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-markdown tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Collapsed (default): single-line cells truncate so arbitrary chat content
+   cannot blow the column out; the footer toggle expands cells to wrap. */
+.chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
+.chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
+  overflow: hidden;
+  max-width: 24rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown .chat-markdown-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.125rem;
 }
 
 @keyframes provider-update-pill-countdown {
@@ -538,6 +685,7 @@ label:has(> select#reasoning-effort) select {
   );
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;
+  filter: saturate(0.82) brightness(0.92);
   animation: ultrathink-rainbow 10s linear infinite;
 }
 

@@ -88,6 +88,7 @@ export default defineConfig({
       "typescript/restrict-template-expressions": "off",
       "typescript/unbound-method": "off",
       "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-manual-effect-runtime-in-tests": "error",
     },
     options: {
       // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.

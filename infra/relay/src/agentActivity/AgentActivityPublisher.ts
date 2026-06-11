@@ -101,8 +101,13 @@ const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
-      const activeStates = yield* rows.listForUser({ userId: input.userId });
-      const targets = yield* liveActivities.listTargets({ userId: input.userId });
+      const { activeStates, targets } = yield* Effect.all(
+        {
+          activeStates: rows.listForUser({ userId: input.userId }),
+          targets: liveActivities.listTargets({ userId: input.userId }),
+        },
+        { concurrency: 2 },
+      );
       const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
       if (target === null) {
         return null;

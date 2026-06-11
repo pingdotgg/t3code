@@ -647,6 +647,7 @@ function OpenCommandPaletteDialog() {
       buildProjectActionItems({
         projects,
         valuePrefix: "new-thread-in",
+        shortcutCommand: "chat.new",
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
@@ -1570,61 +1571,78 @@ function OpenCommandPaletteDialog() {
             onKeyDown={handleKeyDown}
           />
           {addProjectCloneFlow?.step === "repository" ? (
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
-              aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-              disabled={!canSubmitRemoteProjectFlow}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitAddProjectCloneFlow();
-              }}
-              title={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-            >
-              <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
-              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-                <Kbd>Enter</Kbd>
-              </KbdGroup>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    tabIndex={-1}
+                    className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+                    aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
+                    disabled={!canSubmitRemoteProjectFlow}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() => {
+                      void submitAddProjectCloneFlow();
+                    }}
+                  />
+                }
+              >
+                <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
+                <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                  <Kbd>Enter</Kbd>
+                </KbdGroup>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {remoteProjectButtonLabel ?? "Continue"} (Enter)
+              </TooltipPopup>
+            </Tooltip>
           ) : isBrowsing ? (
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
-              )}
-              aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={
-                relativePathNeedsActiveProject || (isCloneDestinationStep && isRemoteProjectPending)
-              }
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (relativePathNeedsActiveProject) {
-                  return;
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    tabIndex={-1}
+                    className={cn(
+                      "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                      hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+                    )}
+                    aria-label={`${submitActionLabel} (${addShortcutLabel})`}
+                    disabled={
+                      relativePathNeedsActiveProject ||
+                      (isCloneDestinationStep && isRemoteProjectPending)
+                    }
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() => {
+                      if (relativePathNeedsActiveProject) {
+                        return;
+                      }
+                      if (isCloneDestinationStep) {
+                        void submitAddProjectCloneFlow(resolvedAddProjectPath);
+                      } else {
+                        void handleAddProject(resolvedAddProjectPath);
+                      }
+                    }}
+                  />
                 }
-                if (isCloneDestinationStep) {
-                  void submitAddProjectCloneFlow(resolvedAddProjectPath);
-                } else {
-                  void handleAddProject(resolvedAddProjectPath);
-                }
-              }}
-              title={`${submitActionLabel} (${addShortcutLabel})`}
-            >
-              <span>
-                {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
-              </span>
-              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-                <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-              </KbdGroup>
-            </Button>
+              >
+                <span>
+                  {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+                </span>
+                <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                  <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+                </KbdGroup>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {submitActionLabel} ({addShortcutLabel})
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
         </div>
         <CommandPanel className="max-h-[min(28rem,70vh)]">

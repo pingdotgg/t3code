@@ -19,6 +19,7 @@ import {
   ChevronDownIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
+  GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
@@ -1611,7 +1612,10 @@ export default function GitActionsControl({
             void initAction.run();
           }}
         >
-          {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          <GitBranchPlusIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">
+            {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          </span>
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">

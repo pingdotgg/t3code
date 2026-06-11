@@ -16,7 +16,7 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
-T3 Cloud is optional and disabled in a fresh clone. Public configuration belongs in the
+T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
 repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 [`../../.env.example`](../../.env.example).
 

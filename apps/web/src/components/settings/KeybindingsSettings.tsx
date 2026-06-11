@@ -805,9 +805,19 @@ function KeybindingTableRow({
     <div className="grid grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] items-center px-4 py-1.5 text-sm even:bg-muted/15 hover:bg-accent/40">
       <div className="min-w-0 pr-4">
         <div className="flex min-w-0 items-center gap-1.5">
-          <div className="truncate text-[13px] font-medium text-foreground" title={row.command}>
-            {commandLabel(row.command)}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div
+                  aria-label={row.command}
+                  className="truncate text-[13px] font-medium text-foreground"
+                />
+              }
+            >
+              {commandLabel(row.command)}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{row.command}</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
       <div className="flex min-w-0 items-center gap-2 pr-4">

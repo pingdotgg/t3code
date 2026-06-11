@@ -129,7 +129,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
-    const axiomIngestToken = yield* observability.ingestToken.token;
+    const axiomIngestToken = yield* observability.workerIngestToken.token;
     const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
 
     const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");

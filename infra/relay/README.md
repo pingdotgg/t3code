@@ -1,22 +1,22 @@
-# more Code Cloud Relay
+# T3 Connect Relay
 
 > [!WARNING]
-> more Code Cloud is currently in private beta. Join the waitlist in the app under Settings > T3 Cloud.
+> T3 Connect is currently in private beta. Join the waitlist in the app under Settings > T3 Connect.
 
-The relay is the hosted control plane for more Code Cloud. It helps clients discover and connect to
+The relay is the hosted control plane for T3 Connect. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers
 optional mobile notifications and Live Activities.
 
-The relay is intentionally not in the hot path for normal more Code traffic. After a client connects,
+The relay is intentionally not in the hot path for normal T3 Code traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
-See the [cloud architecture overview](../../docs/t3-code-cloud-auth-flow.html) for the larger system
+See the [T3 Connect architecture overview](../../docs/cloud/t3-code-connect-auth-flow.html) for the larger system
 design.
 
 ## Responsibilities
 
 The relay currently owns:
 
-- Linking more Code environments to a cloud account.
+- Linking T3 Code environments to a cloud account.
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments and registered mobile devices for an account.
@@ -159,8 +159,8 @@ and hosted web builds.
 
 See:
 
-- [T3 Cloud Clerk Setup](../../docs/t3-cloud-clerk.md) for Clerk keys, JWT templates, and waitlist
+- [T3 Connect Clerk Setup](../../docs/cloud/t3-connect-clerk.md) for Clerk keys, JWT templates, and waitlist
   setup.
 - [Relay Observability](../../docs/relay-observability.md) for deployment tracing and diagnostics.
-- [Cloud Architecture Overview](../../docs/t3-code-cloud-auth-flow.html) for the full link,
+- [T3 Connect Architecture Overview](../../docs/cloud/t3-code-connect-auth-flow.html) for the full link,
   connect, endpoint, and notification flows.

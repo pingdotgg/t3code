@@ -18,9 +18,15 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const permissionOptionIds = {
+  allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
+  allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
+  rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
+};
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
@@ -237,6 +243,21 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
+  { modelId: "grok-build", name: "Grok Build" },
+  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+];
+
+function modelState(): AcpSchema.SessionModelState {
+  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+    ? currentModelId
+    : "grok-build";
+  return {
+    currentModelId: modelId,
+    availableModels: grokAcpModels,
+  };
+}
+
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
 
@@ -257,6 +278,7 @@ const program = Effect.gen(function* () {
     Effect.succeed({
       sessionId,
       modes: modeState(),
+      models: modelState(),
       configOptions: configOptions(),
     }),
   );
@@ -273,9 +295,26 @@ const program = Effect.gen(function* () {
       .pipe(
         Effect.as({
           modes: modeState(),
+          models: modelState(),
           configOptions: configOptions(),
         }),
       ),
+  );
+
+  yield* agent.handleSetSessionModel((request) =>
+    Effect.gen(function* () {
+      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+        return yield* AcpError.AcpRequestError.invalidParams(
+          `Unknown mock model id: ${request.modelId}`,
+          {
+            method: "session/set_model",
+            params: request,
+          },
+        );
+      }
+      currentModelId = request.modelId;
+      return {};
+    }),
   );
 
   yield* agent.handleSetSessionConfigOption((request) =>
@@ -419,9 +458,13 @@ const program = Effect.gen(function* () {
             ],
           },
           options: [
-            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-            { optionId: "allow-always", name: "Allow always", kind: "allow_always" },
-            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+            {
+              optionId: permissionOptionIds.allowAlways,
+              name: "Allow always",
+              kind: "allow_always",
+            },
+            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
           ],
         });
 
@@ -510,6 +553,43 @@ const program = Effect.gen(function* () {
             },
           ],
         });
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiAskUserQuestion) {
+        const result = yield* agent.client.extRequest("_x.ai/ask_user_question", {
+          method: "x.ai/ask_user_question",
+          params: {
+            sessionId: requestedSessionId,
+            toolCallId: "ask-user-question-tool-call-1",
+            questions: [
+              {
+                question: "Which scope should Grok use?",
+                multiSelect: null,
+                options: [
+                  { label: "Workspace", description: "Use the current workspace" },
+                  { label: "Session", description: "Only use this session" },
+                ],
+              },
+            ],
+            mode: "default",
+          },
+        });
+        if (typeof result !== "object" || result === null || !("outcome" in result)) {
+          throw new Error("Expected _x.ai/ask_user_question response outcome.");
+        }
+        if (result.outcome === "cancelled") {
+          return { stopReason: "end_turn" };
+        }
+        if (
+          result.outcome !== "accepted" ||
+          !("answers" in result) ||
+          typeof result.answers !== "object" ||
+          result.answers === null
+        ) {
+          throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
+        }
 
         return { stopReason: "end_turn" };
       }

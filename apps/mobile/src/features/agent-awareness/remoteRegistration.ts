@@ -41,7 +41,7 @@ export function normalizeAgentAwarenessRelayBaseUrl(
 }
 
 function readRelayConfig(): { readonly url: string } | null {
-  const relayUrl = resolveCloudPublicConfig().relayUrl;
+  const relayUrl = resolveCloudPublicConfig().relay.url;
   if (!relayUrl) {
     logRegistrationDebug("relay registration skipped; relay config missing");
     return null;

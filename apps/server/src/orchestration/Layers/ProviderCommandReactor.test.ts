@@ -28,6 +28,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
@@ -40,6 +41,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -142,7 +144,7 @@ describe("ProviderCommandReactor", () => {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
-    readonly sectionContext?: string;
+    readonly requiresNewThreadForModelChange?: boolean;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -281,6 +283,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const providerSnapshots = [
+      {
+        instanceId: modelSelection.instanceId,
+        ...(input?.requiresNewThreadForModelChange === true
+          ? { requiresNewThreadForModelChange: true }
+          : {}),
+      },
+    ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -336,6 +346,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService)({
           renameBranch,
@@ -376,9 +387,6 @@ describe("ProviderCommandReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
-        ...(input?.sectionContext !== undefined
-          ? { kind: "section" as const, contextMarkdown: input.sectionContext }
-          : {}),
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -455,63 +463,6 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
-  });
-
-  it("sends section context with only the first user turn", async () => {
-    const harness = await createHarness({
-      sectionContext: "Use the configured Jellyfin tools and never delete media.",
-    });
-    const now = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-section-turn-start-1"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("section-user-message-1"),
-          role: "user",
-          text: "Recommend a movie.",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      input: `<task_section_context title="Provider Project" version="1">
-Use the configured Jellyfin tools and never delete media.
-</task_section_context>
-
-<user_request>
-Recommend a movie.
-</user_request>`,
-    });
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-section-turn-start-2"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("section-user-message-2"),
-          role: "user",
-          text: "Something shorter.",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
-      input: "Something shorter.",
-    });
   });
 
   it("generates a thread title on the first turn", async () => {
@@ -939,6 +890,80 @@ Recommend a movie.
       },
     });
   });
+
+  effectIt.effect(
+    "rejects changing models after start when the provider requires a new thread",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ requiresNewThreadForModelChange: true }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-restricted-1"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-restricted-1"),
+            role: "user",
+            text: "first",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-restricted-2"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-restricted-2"),
+            role: "user",
+            text: "second",
+            attachments: [],
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.1-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const readModel = await harness.readModel();
+            const thread = readModel.threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return (
+              thread?.activities.some(
+                (activity) => activity.kind === "provider.turn.start.failed",
+              ) ?? false
+            );
+          }),
+        );
+
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        expect(
+          thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+        ).toMatchObject({
+          payload: {
+            detail: expect.stringContaining(
+              "cannot switch models after the conversation has started",
+            ),
+          },
+        });
+      }),
+  );
 
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {
     const harness = await createHarness({

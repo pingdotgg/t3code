@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.24",
+  "version": "0.0.27",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,8 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@effect/atom-react": "catalog:",
+    "@fontsource-variable/dm-sans": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "3.0.0-beta.44",
     "@lexical/react": "^0.41.0",
@@ -41,6 +43,9 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.11"

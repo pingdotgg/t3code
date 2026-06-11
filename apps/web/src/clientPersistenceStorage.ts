@@ -184,7 +184,7 @@ export function writeBrowserSavedEnvironmentSecret(
         return record;
       }
       found = true;
-      const nextRecord = {
+      const nextRecord: BrowserSavedEnvironmentRecord = {
         environmentId: record.environmentId,
         label: record.label,
         httpBaseUrl: record.httpBaseUrl,

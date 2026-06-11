@@ -1,4 +1,0 @@
-d /var/lib/morecode 0750 morecode morecode -
-d /var/lib/morecode/state 0750 morecode morecode -
-d /var/lib/morecode/workspace 0750 morecode morecode -
-
