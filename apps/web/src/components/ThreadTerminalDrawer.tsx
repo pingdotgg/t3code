@@ -1122,7 +1122,7 @@ export default function ThreadTerminalDrawer({
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
-        className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-neutral-100/60 dark:bg-neutral-900/60"
+        className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-[var(--terminal-background)]"
         style={{ height: `${drawerHeight}px` }}
       >
         <div
@@ -1150,7 +1150,7 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-neutral-100/60 dark:bg-neutral-900/60"
+      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-[var(--terminal-background)]"
       style={{ height: `${drawerHeight}px` }}
     >
       <div

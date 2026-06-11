@@ -98,11 +98,18 @@ import { retainThreadDetailSubscription } from "../environments/runtime/service"
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
+  formatSectionContext,
+  makeSectionCredential,
+  parseSectionContext,
+  type SectionCredentialType,
+} from "../lib/sectionCredentials";
+import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { SectionCredentialsFields } from "./SectionCredentialsFields";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
@@ -1071,6 +1078,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
   const [projectRenameContext, setProjectRenameContext] = useState("");
+  const [projectRenameCredentialType, setProjectRenameCredentialType] =
+    useState<SectionCredentialType>("none");
+  const [projectRenameCredentialUsername, setProjectRenameCredentialUsername] = useState("");
+  const [projectRenameCredentialPassword, setProjectRenameCredentialPassword] = useState("");
+  const [projectRenameCredentialSecretKey, setProjectRenameCredentialSecretKey] = useState("");
   const [projectGroupingTarget, setProjectGroupingTarget] =
     useState<SidebarProjectGroupMember | null>(null);
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
@@ -1279,9 +1291,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const openProjectRenameDialog = useCallback((member: SidebarProjectGroupMember) => {
+    const parsedContext = parseSectionContext(member.contextMarkdown ?? "");
     setProjectRenameTarget(member);
     setProjectRenameTitle(member.name);
-    setProjectRenameContext(member.contextMarkdown ?? "");
+    setProjectRenameContext(parsedContext.context);
+    setProjectRenameCredentialType(parsedContext.credential?.type ?? "none");
+    setProjectRenameCredentialUsername(
+      parsedContext.credential?.type === "username-password"
+        ? parsedContext.credential.username
+        : "",
+    );
+    setProjectRenameCredentialPassword(
+      parsedContext.credential?.type === "username-password"
+        ? parsedContext.credential.password
+        : "",
+    );
+    setProjectRenameCredentialSecretKey(
+      parsedContext.credential?.type === "secret-key" ? parsedContext.credential.key : "",
+    );
   }, []);
 
   const openProjectGroupingDialog = useCallback(
@@ -1830,6 +1857,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     setProjectRenameTarget(null);
     setProjectRenameTitle("");
     setProjectRenameContext("");
+    setProjectRenameCredentialType("none");
+    setProjectRenameCredentialUsername("");
+    setProjectRenameCredentialPassword("");
+    setProjectRenameCredentialSecretKey("");
   }, []);
 
   const submitProjectRename = useCallback(async () => {
@@ -1846,10 +1877,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return;
     }
 
+    const credential = makeSectionCredential({
+      type: projectRenameCredentialType,
+      username: projectRenameCredentialUsername,
+      password: projectRenameCredentialPassword,
+      secretKey: projectRenameCredentialSecretKey,
+    });
+    const formattedContext = formatSectionContext({
+      context: projectRenameContext,
+      credential,
+    });
+
     if (
       trimmed === projectRenameTarget.name &&
       (projectRenameTarget.kind !== "section" ||
-        projectRenameContext === (projectRenameTarget.contextMarkdown ?? ""))
+        formattedContext === (projectRenameTarget.contextMarkdown ?? ""))
     ) {
       closeProjectRenameDialog();
       return;
@@ -1873,9 +1915,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         commandId: newCommandId(),
         projectId: projectRenameTarget.id,
         title: trimmed,
-        ...(projectRenameTarget.kind === "section"
-          ? { contextMarkdown: projectRenameContext }
-          : {}),
+        ...(projectRenameTarget.kind === "section" ? { contextMarkdown: formattedContext } : {}),
       });
       closeProjectRenameDialog();
     } catch (error) {
@@ -1887,7 +1927,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }),
       );
     }
-  }, [closeProjectRenameDialog, projectRenameContext, projectRenameTarget, projectRenameTitle]);
+  }, [
+    closeProjectRenameDialog,
+    projectRenameContext,
+    projectRenameCredentialPassword,
+    projectRenameCredentialSecretKey,
+    projectRenameCredentialType,
+    projectRenameCredentialUsername,
+    projectRenameTarget,
+    projectRenameTitle,
+  ]);
 
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);
@@ -2165,16 +2214,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               />
             </div>
             {projectRenameTarget?.kind === "section" ? (
-              <div className="grid gap-1.5">
-                <span className="text-xs font-medium text-foreground">Shared context</span>
-                <Textarea
-                  aria-label="Shared context"
-                  className="min-h-48"
-                  value={projectRenameContext}
-                  onChange={(event) => setProjectRenameContext(event.target.value)}
+              <>
+                <div className="grid gap-1.5">
+                  <span className="text-xs font-medium text-foreground">Shared context</span>
+                  <Textarea
+                    aria-label="Shared context"
+                    className="min-h-48"
+                    value={projectRenameContext}
+                    onChange={(event) => setProjectRenameContext(event.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Changes apply only to new tasks.</p>
+                </div>
+                <SectionCredentialsFields
+                  type={projectRenameCredentialType}
+                  username={projectRenameCredentialUsername}
+                  password={projectRenameCredentialPassword}
+                  secretKey={projectRenameCredentialSecretKey}
+                  onTypeChange={setProjectRenameCredentialType}
+                  onUsernameChange={setProjectRenameCredentialUsername}
+                  onPasswordChange={setProjectRenameCredentialPassword}
+                  onSecretKeyChange={setProjectRenameCredentialSecretKey}
                 />
-                <p className="text-xs text-muted-foreground">Changes apply only to new tasks.</p>
-              </div>
+              </>
             ) : null}
             {projectRenameTarget?.environmentLabel ? (
               <p className="text-xs text-muted-foreground">
@@ -2927,6 +2988,10 @@ export default function Sidebar() {
   const [sectionDialogOpen, setSectionDialogOpen] = useState(false);
   const [sectionTitle, setSectionTitle] = useState("");
   const [sectionContext, setSectionContext] = useState("");
+  const [sectionCredentialType, setSectionCredentialType] = useState<SectionCredentialType>("none");
+  const [sectionCredentialUsername, setSectionCredentialUsername] = useState("");
+  const [sectionCredentialPassword, setSectionCredentialPassword] = useState("");
+  const [sectionCredentialSecretKey, setSectionCredentialSecretKey] = useState("");
   const [sectionSubmitting, setSectionSubmitting] = useState(false);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
@@ -3205,6 +3270,12 @@ export default function Sidebar() {
     setSectionSubmitting(true);
     try {
       const projectId = newProjectId();
+      const credential = makeSectionCredential({
+        type: sectionCredentialType,
+        username: sectionCredentialUsername,
+        password: sectionCredentialPassword,
+        secretKey: sectionCredentialSecretKey,
+      });
       await api.orchestration.dispatchCommand({
         type: "project.create",
         commandId: newCommandId(),
@@ -3212,7 +3283,7 @@ export default function Sidebar() {
         title,
         workspaceRoot: ".",
         kind: "section",
-        contextMarkdown: sectionContext,
+        contextMarkdown: formatSectionContext({ context: sectionContext, credential }),
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: DEFAULT_MODEL,
@@ -3222,6 +3293,10 @@ export default function Sidebar() {
       setSectionDialogOpen(false);
       setSectionTitle("");
       setSectionContext("");
+      setSectionCredentialType("none");
+      setSectionCredentialUsername("");
+      setSectionCredentialPassword("");
+      setSectionCredentialSecretKey("");
       await handleNewThread(scopeProjectRef(primaryEnvironmentId, projectId), { envMode: "local" });
     } catch (error) {
       toastManager.add({
@@ -3232,7 +3307,16 @@ export default function Sidebar() {
     } finally {
       setSectionSubmitting(false);
     }
-  }, [handleNewThread, primaryEnvironmentId, sectionContext, sectionTitle]);
+  }, [
+    handleNewThread,
+    primaryEnvironmentId,
+    sectionContext,
+    sectionCredentialPassword,
+    sectionCredentialSecretKey,
+    sectionCredentialType,
+    sectionCredentialUsername,
+    sectionTitle,
+  ]);
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3659,6 +3743,16 @@ export default function Sidebar() {
                 Context updates apply to newly created tasks.
               </p>
             </div>
+            <SectionCredentialsFields
+              type={sectionCredentialType}
+              username={sectionCredentialUsername}
+              password={sectionCredentialPassword}
+              secretKey={sectionCredentialSecretKey}
+              onTypeChange={setSectionCredentialType}
+              onUsernameChange={setSectionCredentialUsername}
+              onPasswordChange={setSectionCredentialPassword}
+              onSecretKeyChange={setSectionCredentialSecretKey}
+            />
           </DialogPanel>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSectionDialogOpen(false)}>
