@@ -1451,7 +1451,17 @@ function buildSupplementalToolDetailBody(workEntry: TimelineWorkEntry): string |
   }
   const command = workEntry.command?.trim();
   const rawCommand = workEntry.rawCommand?.trim();
-  if (detail === command || detail === rawCommand) {
+  const hasStreamOutput =
+    hasRenderableCommandOutput(workEntry.stdout) || hasRenderableCommandOutput(workEntry.stderr);
+  const renderedOutputs = [
+    workEntry.stdout,
+    workEntry.stderr,
+    !hasStreamOutput ? workEntry.output : undefined,
+  ];
+  const renderedOutputMatchesDetail = renderedOutputs.some(
+    (value) => getRenderableCommandOutputLines(value).join("\n") === detail,
+  );
+  if (detail === command || detail === rawCommand || renderedOutputMatchesDetail) {
     return null;
   }
   return detail;

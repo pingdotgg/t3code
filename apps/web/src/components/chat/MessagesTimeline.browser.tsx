@@ -240,6 +240,44 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("does not duplicate supplemental detail that matches command output", async () => {
+    const duplicateOutput = "No changes detected";
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "work-command",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-command",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              detail: duplicateOutput,
+              command: "git diff --check",
+              stdout: duplicateOutput,
+              exitCode: 0,
+              durationMs: 250,
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const row = page.getByRole("button", { name: "Expand Ran command" });
+      await row.click();
+
+      await expect.element(page.getByText(duplicateOutput)).toBeVisible();
+      const occurrences = document.body.textContent?.match(new RegExp(duplicateOutput, "gu")) ?? [];
+      expect(occurrences).toHaveLength(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("snaps to the bottom when timeline rows appear after an initially empty render", async () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")
