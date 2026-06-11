@@ -10,11 +10,12 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
-import { DateTime, Effect, Fiber, Layer, Stream } from "effect";
+import { Context, DateTime, Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { beforeEach, vi } from "vitest";
 
 import {
   ApprovalRequestId,
+  CopilotSettings,
   type ProviderRuntimeEvent,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -22,10 +23,15 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
+import type { CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
-import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
+import { makeCopilotAdapter } from "./CopilotAdapter.ts";
+
+const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
+
+class CopilotAdapter extends Context.Service<CopilotAdapter, CopilotAdapterShape>()(
+  "t3/provider/Layers/CopilotAdapter.test/CopilotAdapter",
+) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
@@ -131,13 +137,15 @@ const nativeEventLogger = {
   close: vi.fn(() => Effect.void),
 } satisfies EventNdjsonLogger;
 
-const CopilotAdapterTestLayer = makeCopilotAdapterLive({ nativeEventLogger }).pipe(
+const CopilotAdapterTestLayer = Layer.effect(
+  CopilotAdapter,
+  makeCopilotAdapter(decodeCopilotSettings({}), { nativeEventLogger }),
+).pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-copilot-adapter-test-",
     }),
   ),
-  Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(NodeServices.layer),
 );
 
