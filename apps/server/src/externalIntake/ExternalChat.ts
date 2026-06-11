@@ -238,18 +238,24 @@ async function fetchAttachmentData(attachment: Attachment): Promise<Buffer> {
   return fetchSlackFileUrl(url, botToken);
 }
 
-async function slackApi<T>(
+async function slackFormApi<T>(
   token: string,
   method: string,
-  body: Record<string, unknown>,
+  body: Record<string, number | string | undefined>,
 ): Promise<T> {
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== undefined) {
+      form.set(key, String(value));
+    }
+  }
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: JSON.stringify(body),
+    body: form,
   });
   if (!response.ok) {
     throw new Error(`Slack ${method} failed: ${response.status} ${response.statusText}`);
@@ -261,7 +267,7 @@ async function slackApi<T>(
   return payload as T;
 }
 
-async function uploadSlackFiles(input: {
+export async function uploadSlackFiles(input: {
   readonly token: string;
   readonly channelId: string;
   readonly threadTs: string;
@@ -274,7 +280,7 @@ async function uploadSlackFiles(input: {
 }): Promise<ReadonlyArray<string>> {
   const files: Array<{ id: string; title: string }> = [];
   for (const file of input.files) {
-    const prepared = await slackApi<{
+    const prepared = await slackFormApi<{
       readonly file_id: string;
       readonly upload_url: string;
     }>(input.token, "files.getUploadURLExternal", {
@@ -300,8 +306,8 @@ async function uploadSlackFiles(input: {
     return [];
   }
 
-  await slackApi(input.token, "files.completeUploadExternal", {
-    files,
+  await slackFormApi(input.token, "files.completeUploadExternal", {
+    files: JSON.stringify(files),
     channel_id: input.channelId,
     thread_ts: input.threadTs,
     ...(input.initialComment ? { initial_comment: input.initialComment } : {}),
