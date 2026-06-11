@@ -107,6 +107,7 @@ interface PendingPermissionBinding {
     | "command_execution_approval"
     | "file_read_approval"
     | "file_change_approval";
+  readonly turnId?: TurnId | undefined;
   readonly permissionRequest: SessionPermissionRequest;
   readonly promptRequest: SessionPermissionRequestedEvent["data"]["promptRequest"] | undefined;
   readonly deferred: Deferred.Deferred<PermissionRequestResult>;
@@ -171,6 +172,7 @@ interface CopilotSessionContext {
   readonly assistantItemIdByTurnId: Map<TurnId, string>;
   readonly pendingTaskCompletionTextByTurnId: Map<TurnId, string>;
   readonly turnIdsWithAssistantText: Set<TurnId>;
+  readonly turnIdsWithFileChangeEvidence: Set<TurnId>;
   readonly turnDiffEmittedTurnIds: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   activeTurnId: TurnId | undefined;
@@ -287,6 +289,9 @@ function toolOnlyCompletionText(
       (item): item is CopilotToolExecutionItem => isCopilotToolExecutionItem(item) && item.success,
     ) ?? [];
   if (completedTools.length === 0) {
+    if (context.turnIdsWithFileChangeEvidence.has(turnId)) {
+      return "Done. I completed the requested file changes.";
+    }
     return undefined;
   }
 
@@ -304,6 +309,10 @@ function toolOnlyCompletionText(
 }
 
 function turnHasSuccessfulFileChange(context: CopilotSessionContext, turnId: TurnId): boolean {
+  if (context.turnIdsWithFileChangeEvidence.has(turnId)) {
+    return true;
+  }
+
   const turn = context.turns.find((entry) => entry.id === turnId);
   return (
     turn?.items.some(
@@ -337,6 +346,10 @@ function turnDiffEmittedTurnIdsForContext(context: CopilotSessionContext): Set<T
   };
   mutable.turnDiffEmittedTurnIds ??= new Set();
   return mutable.turnDiffEmittedTurnIds;
+}
+
+function markTurnHasFileChangeEvidence(context: CopilotSessionContext, turnId: TurnId): void {
+  context.turnIdsWithFileChangeEvidence.add(turnId);
 }
 
 function processError(
@@ -423,6 +436,17 @@ function mapPermissionRequestType(
     default:
       return "command_execution_approval";
   }
+}
+
+function toolCallIdFromPermissionRequest(request: SessionPermissionRequest): string | undefined {
+  if (!Predicate.hasProperty(request, "toolCallId") || !Predicate.isString(request.toolCallId)) {
+    return undefined;
+  }
+  return trimOrUndefined(request.toolCallId);
+}
+
+function permissionResultApproves(result: PermissionRequestResult): boolean {
+  return result.kind !== "reject";
 }
 
 function permissionDetail(request: SessionPermissionRequest): string | undefined {
@@ -616,7 +640,72 @@ function deltaFromBufferedText(previous: string | undefined, next: string): stri
   return next.slice(commonPrefixLength(previous ?? "", next));
 }
 
-function toolItemType(toolName: string, mcpServerName?: string): ToolMeta["itemType"] {
+function toolArgumentsLookLikeFileChange(arguments_: unknown): boolean {
+  const args = stringRecord(arguments_);
+  if (!args) {
+    return false;
+  }
+
+  const filePathKeys = [
+    "path",
+    "filePath",
+    "file_path",
+    "file",
+    "fileName",
+    "filename",
+    "targetFile",
+    "target_file",
+  ];
+  const editPayloadKeys = [
+    "content",
+    "newContent",
+    "new_content",
+    "oldString",
+    "old_string",
+    "newString",
+    "new_string",
+    "diff",
+    "patch",
+    "edits",
+  ];
+  const hasFilePath = filePathKeys.some((key) => {
+    const value = args[key];
+    return typeof value === "string" && trimOrUndefined(value) !== undefined;
+  });
+  const hasEditPayload = editPayloadKeys.some((key) => args[key] !== undefined);
+  return hasFilePath && hasEditPayload;
+}
+
+function toolNameImpliesFileChange(toolName: string, arguments_: unknown): boolean {
+  const normalized = toolName.toLowerCase();
+  if (
+    normalized.includes("write") ||
+    normalized.includes("edit") ||
+    normalized.includes("patch") ||
+    normalized.includes("replace")
+  ) {
+    return true;
+  }
+
+  if (
+    normalized.includes("create") ||
+    normalized.includes("delete") ||
+    normalized.includes("remove") ||
+    normalized.includes("modify") ||
+    normalized.includes("update") ||
+    normalized.includes("insert")
+  ) {
+    return normalized.includes("file") || toolArgumentsLookLikeFileChange(arguments_);
+  }
+
+  return false;
+}
+
+function toolItemType(
+  toolName: string,
+  mcpServerName?: string,
+  arguments_?: unknown,
+): ToolMeta["itemType"] {
   const normalized = toolName.toLowerCase();
   if (mcpServerName) {
     return "mcp_tool_call";
@@ -629,12 +718,7 @@ function toolItemType(toolName: string, mcpServerName?: string): ToolMeta["itemT
   ) {
     return "command_execution";
   }
-  if (
-    normalized.includes("write") ||
-    normalized.includes("edit") ||
-    normalized.includes("patch") ||
-    normalized.includes("replace")
-  ) {
+  if (toolNameImpliesFileChange(toolName, arguments_)) {
     return "file_change";
   }
   if (normalized.includes("search") || normalized.includes("fetch") || normalized.includes("web")) {
@@ -1336,6 +1420,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     emit({
       ...createBaseEvent({
         threadId: context.threadId,
+        turnId: pending.turnId,
         requestId: pending.requestId,
         raw: {
           ...({
@@ -1368,6 +1453,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     emit({
       ...createBaseEvent({
         threadId: context.threadId,
+        turnId: pending.turnId,
         requestId: pending.requestId,
         raw,
       }),
@@ -1426,9 +1512,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const handler = pendingHandlers.shift()!;
         const eventData = pendingEvents.shift()!;
         const requestId = eventData.requestId.trim();
+        const turnId = resolveTurnIdForEvent(context, {
+          providerItemId: toolCallIdFromPermissionRequest(eventData.permissionRequest),
+          sdkTurnId: context.activeSdkTurnId,
+        });
         context.pendingPermissionBindings.set(requestId, {
           requestId,
           requestType: mapPermissionRequestType(eventData.permissionRequest),
+          ...(turnId ? { turnId } : {}),
           permissionRequest: eventData.permissionRequest,
           promptRequest: eventData.promptRequest,
           deferred: handler.deferred,
@@ -2144,7 +2235,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
-        const itemType = toolItemType(event.data.toolName, event.data.mcpServerName);
+        const itemType = toolItemType(
+          event.data.toolName,
+          event.data.mcpServerName,
+          event.data.arguments,
+        );
         const command =
           itemType === "command_execution"
             ? commandFromToolArguments(event.data.arguments)
@@ -2241,7 +2336,17 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
-        const toolMeta = context.toolMetaById.get(event.data.toolCallId);
+        const eventData = stringRecord(event.data);
+        const eventToolName = trimOrUndefined(
+          typeof eventData?.toolName === "string" ? eventData.toolName : undefined,
+        );
+        const fallbackToolMeta: ToolMeta | undefined = eventToolName
+          ? {
+              toolName: eventToolName,
+              itemType: toolItemType(eventToolName, undefined, eventData?.arguments),
+            }
+          : undefined;
+        const toolMeta = context.toolMetaById.get(event.data.toolCallId) ?? fallbackToolMeta;
         const detail =
           trimOrUndefined(event.data.result?.detailedContent) ??
           trimOrUndefined(event.data.result?.content) ??
@@ -2277,6 +2382,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ...(detail ? { detail } : {}),
         };
         appendTurnItem(context, turnId, toolItem);
+        if (event.data.success && toolMeta?.itemType === "file_change") {
+          markTurnHasFileChangeEvidence(context, turnId);
+        }
         if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
           context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
         }
@@ -2299,6 +2407,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.pendingPermissionBindings.delete(event.data.requestId);
+        if (
+          binding.requestType === "file_change_approval" &&
+          binding.turnId &&
+          permissionResultApproves(event.data.result)
+        ) {
+          markTurnHasFileChangeEvidence(context, binding.turnId);
+        }
         await runWithContext(
           emitPermissionRequestResolved(
             context,
@@ -2523,6 +2638,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         assistantItemIdByTurnId: new Map(),
         pendingTaskCompletionTextByTurnId: new Map(),
         turnIdsWithAssistantText: new Set(),
+        turnIdsWithFileChangeEvidence: new Set(),
         turnDiffEmittedTurnIds: new Set(),
         startedItemIds: new Set(),
         activeTurnId: undefined,
@@ -2738,6 +2854,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               : DENIED_PERMISSION_RESULT;
       yield* emitPermissionRequestResolved(context, binding, decision, result);
       context.pendingPermissionBindings.delete(requestId);
+      if (
+        binding.requestType === "file_change_approval" &&
+        binding.turnId &&
+        permissionResultApproves(result)
+      ) {
+        markTurnHasFileChangeEvidence(context, binding.turnId);
+      }
       yield* Deferred.succeed(binding.deferred, result);
     },
   );
