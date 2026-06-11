@@ -5,6 +5,8 @@ import type {
 } from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
+import * as Encoding from "effect/Encoding";
+import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
 
@@ -20,12 +22,13 @@ export function resolveSessionCookieName(input: {
 }
 
 export function base64UrlEncode(input: string | Uint8Array): string {
-  const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : Buffer.from(input);
-  return buffer.toString("base64url");
+  return typeof input === "string"
+    ? Encoding.encodeBase64Url(new TextEncoder().encode(input))
+    : Encoding.encodeBase64Url(input);
 }
 
 export function base64UrlDecodeUtf8(input: string): string {
-  return Buffer.from(input, "base64url").toString("utf8");
+  return Result.getOrThrow(Encoding.decodeBase64UrlString(input));
 }
 
 export function signPayload(payload: string, secret: Uint8Array): string {

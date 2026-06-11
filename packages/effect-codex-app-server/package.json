@@ -26,9 +26,9 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run",
-    "generate": "bun run scripts/generate.ts",
-    "probe": "bun run test/examples/codex-app-server-probe.ts"
+    "test": "vp test run",
+    "generate": "node scripts/generate.ts",
+    "probe": "node test/examples/codex-app-server-probe.ts"
   },
   "dependencies": {
     "effect": "catalog:"
@@ -38,6 +38,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

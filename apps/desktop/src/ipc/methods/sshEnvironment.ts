@@ -3,8 +3,11 @@ import {
   fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
   issueRemoteWebSocketTicket,
+  RemoteEnvironmentAuthUndeclaredStatusError,
+  type RemoteEnvironmentAuthError,
 } from "@t3tools/client-runtime";
 import {
+  EnvironmentAuthInvalidError,
   DesktopDiscoveredSshHostSchema,
   DesktopSshBearerBootstrapInputSchema,
   DesktopSshBearerRequestInputSchema,
@@ -15,10 +18,15 @@ import {
   DesktopSshPasswordPromptCancelledType,
   DesktopSshPasswordPromptResolutionInputSchema,
   ExecutionEnvironmentDescriptor,
+  EnvironmentInternalError,
+  EnvironmentOperationForbiddenError,
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
   AuthAccessTokenResult,
   AuthSessionState,
   AuthWebSocketTicketResult,
 } from "@t3tools/contracts";
+import { SshHttpBridgeError } from "@t3tools/ssh/errors";
 import { resolveLoopbackSshHttpBaseUrl } from "@t3tools/ssh/tunnel";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -35,26 +43,68 @@ type DesktopSshEnvironmentRequestOperation =
   | "fetch-session-state"
   | "issue-websocket-ticket";
 
+type DesktopSshEnvironmentRequestCause = RemoteEnvironmentAuthError | SshHttpBridgeError;
+
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
+const isEnvironmentInternalError = Schema.is(EnvironmentInternalError);
+const isEnvironmentOperationForbiddenError = Schema.is(EnvironmentOperationForbiddenError);
+const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
+const isEnvironmentScopeRequiredError = Schema.is(EnvironmentScopeRequiredError);
+
+function readSshHttpStatus(cause: DesktopSshEnvironmentRequestCause): number | null {
+  if (
+    cause instanceof RemoteEnvironmentAuthUndeclaredStatusError ||
+    cause instanceof SshHttpBridgeError
+  ) {
+    return cause.status ?? null;
+  }
+  if (isEnvironmentRequestInvalidError(cause)) {
+    return 400;
+  }
+  if (isEnvironmentAuthInvalidError(cause)) {
+    return 401;
+  }
+  if (isEnvironmentScopeRequiredError(cause)) {
+    return 403;
+  }
+  if (isEnvironmentOperationForbiddenError(cause)) {
+    return 403;
+  }
+  if (isEnvironmentInternalError(cause)) {
+    return 500;
+  }
+  return null;
+}
+
 export class DesktopSshEnvironmentRequestError extends Data.TaggedError(
   "DesktopSshEnvironmentRequestError",
 )<{
   readonly operation: DesktopSshEnvironmentRequestOperation;
-  readonly cause: unknown;
+  readonly cause: DesktopSshEnvironmentRequestCause;
+  readonly sshHttpStatus: number | null;
 }> {
   override get message() {
-    return `SSH remote API request failed during ${this.operation}.`;
+    const prefix = this.sshHttpStatus === null ? "" : `[ssh_http:${this.sshHttpStatus}] `;
+    return `${prefix}SSH remote API request failed during ${this.operation}.`;
   }
 }
 
 const withLoopbackSshApi =
-  <A, E, R>(
+  <A, R>(
     operation: DesktopSshEnvironmentRequestOperation,
-    use: (httpBaseUrl: string) => Effect.Effect<A, E, R>,
+    use: (httpBaseUrl: string) => Effect.Effect<A, RemoteEnvironmentAuthError, R>,
   ) =>
   (httpBaseUrl: string): Effect.Effect<A, DesktopSshEnvironmentRequestError, R> =>
     resolveLoopbackSshHttpBaseUrl(httpBaseUrl).pipe(
       Effect.flatMap(use),
-      Effect.mapError((cause) => new DesktopSshEnvironmentRequestError({ operation, cause })),
+      Effect.mapError(
+        (cause) =>
+          new DesktopSshEnvironmentRequestError({
+            operation,
+            cause,
+            sshHttpStatus: readSshHttpStatus(cause),
+          }),
+      ),
     );
 
 export const discoverSshHosts = makeIpcMethod({

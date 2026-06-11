@@ -23,7 +23,6 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     return yield* processRunner.run({
       command: "git",
       args: ["-C", cwd, ...args],
-      shell: process.platform === "win32",
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 

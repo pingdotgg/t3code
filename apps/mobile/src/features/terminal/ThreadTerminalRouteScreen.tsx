@@ -8,16 +8,7 @@ import type { KnownTerminalSession } from "@t3tools/client-runtime";
 import { SymbolView } from "expo-symbols";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  Text as RNText,
-  View,
-  useColorScheme,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from "react-native";
+import { Pressable, Text as RNText, View, useColorScheme } from "react-native";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -25,6 +16,11 @@ import {
   useKeyboardState,
 } from "react-native-keyboard-controller";
 
+import {
+  ComposerToolbarButton,
+  ComposerToolbarRow,
+  ComposerToolbarScroller,
+} from "../../components/ComposerToolbarTrigger";
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -79,7 +75,6 @@ import {
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
 const TERMINAL_ACCESSORY_HEIGHT = 52;
-const TERMINAL_ACCESSORY_FADE_WIDTH = 18;
 
 type PendingModifier = "ctrl" | "meta";
 type HostPlatform = "mac" | "linux" | "windows" | "unknown";
@@ -93,47 +88,6 @@ type TerminalToolbarAction =
       readonly label: string;
       readonly modifier: PendingModifier;
     };
-
-function getTerminalStatusTone(input: {
-  readonly status: TerminalMenuSession["status"];
-  readonly hasRunningSubprocess?: boolean;
-}): {
-  readonly tintColor: string;
-  readonly textColor: string;
-} {
-  if (input.status === "running") {
-    if (input.hasRunningSubprocess) {
-      return {
-        tintColor: "#fbbf24",
-        textColor: "#a3a3a3",
-      };
-    }
-
-    return {
-      tintColor: "#34d399",
-      textColor: "#a3a3a3",
-    };
-  }
-
-  if (input.status === "starting") {
-    return {
-      tintColor: "#f59e0b",
-      textColor: "#a3a3a3",
-    };
-  }
-
-  if (input.status === "error") {
-    return {
-      tintColor: "#ef4444",
-      textColor: "#fca5a5",
-    };
-  }
-
-  return {
-    tintColor: "#ef4444",
-    textColor: "#a3a3a3",
-  };
-}
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -184,10 +138,6 @@ function applyCtrlModifier(input: string): string {
   if (firstCharacter === "?") return "\u007f";
 
   return input;
-}
-
-function withAlpha(hexColor: string, alpha: string): string {
-  return /^#[0-9a-f]{6}$/i.test(hexColor) ? `${hexColor}${alpha}` : hexColor;
 }
 
 function pickRunningTerminalSessionForBootstrap(
@@ -248,15 +198,6 @@ export function ThreadTerminalRouteScreen() {
   const [fontSize, setFontSize] = useState(cachedFontSize ?? DEFAULT_TERMINAL_FONT_SIZE);
   const [keyboardFocusRequest, setKeyboardFocusRequest] = useState(0);
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
-  const toolbarScrollGeometryRef = useRef({
-    contentWidth: 0,
-    offsetX: 0,
-    viewportWidth: 0,
-  });
-  const [toolbarScrollEdges, setToolbarScrollEdges] = useState({
-    showLeftFade: false,
-    showRightFade: false,
-  });
   const hasOpenedRef = useRef(false);
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attachStreamLogCountRef = useRef(0);
@@ -370,14 +311,6 @@ export function ThreadTerminalRouteScreen() {
     activeKnownSummary: activeKnownSession?.state.summary ?? null,
   };
 
-  const terminalStatusTone = useMemo(
-    () =>
-      getTerminalStatusTone({
-        status: terminal.status,
-        hasRunningSubprocess: terminal.hasRunningSubprocess,
-      }),
-    [terminal.hasRunningSubprocess, terminal.status],
-  );
   const terminalTheme = getPierreTerminalTheme(appearanceScheme);
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
@@ -964,47 +897,6 @@ export function ThreadTerminalRouteScreen() {
     [handleClearTerminal, pendingModifier, terminalId, writeInput],
   );
 
-  const updateToolbarScrollEdges = useCallback(
-    (patch: Partial<(typeof toolbarScrollGeometryRef)["current"]>) => {
-      const nextGeometry = { ...toolbarScrollGeometryRef.current, ...patch };
-      toolbarScrollGeometryRef.current = nextGeometry;
-      const nextEdges = {
-        showLeftFade: nextGeometry.offsetX > 1,
-        showRightFade:
-          nextGeometry.offsetX + nextGeometry.viewportWidth < nextGeometry.contentWidth - 1,
-      };
-
-      setToolbarScrollEdges((current) =>
-        current.showLeftFade === nextEdges.showLeftFade &&
-        current.showRightFade === nextEdges.showRightFade
-          ? current
-          : nextEdges,
-      );
-    },
-    [],
-  );
-
-  const handleToolbarLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      updateToolbarScrollEdges({ viewportWidth: event.nativeEvent.layout.width });
-    },
-    [updateToolbarScrollEdges],
-  );
-
-  const handleToolbarContentSizeChange = useCallback(
-    (contentWidth: number) => {
-      updateToolbarScrollEdges({ contentWidth });
-    },
-    [updateToolbarScrollEdges],
-  );
-
-  const handleToolbarScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      updateToolbarScrollEdges({ offsetX: event.nativeEvent.contentOffset.x });
-    },
-    [updateToolbarScrollEdges],
-  );
-
   const handleDismissKeyboard = useCallback(() => {
     setIsAccessoryDismissed(true);
     void KeyboardController.dismiss();
@@ -1089,17 +981,7 @@ export function ThreadTerminalRouteScreen() {
       />
 
       <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Menu
-          icon="circle.fill"
-          style={{
-            color: terminalStatusTone.textColor,
-            fontFamily: "DMSans_700Bold",
-            fontSize: 12,
-            fontWeight: "700",
-          }}
-          tintColor={terminalStatusTone.tintColor}
-          title="Terminal options"
-        >
+        <Stack.Toolbar.Menu icon="terminal" title="Terminal options" separateBackground>
           <Stack.Toolbar.Label>
             {getTerminalStatusLabel({
               status: terminal.status,
@@ -1170,127 +1052,43 @@ export function ThreadTerminalRouteScreen() {
                 borderTopColor: terminalTheme.border,
                 borderTopWidth: 1,
                 minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                paddingBottom: 4,
-                paddingHorizontal: 8,
-                paddingTop: 4,
               }}
             >
-              <View style={{ alignItems: "center", flexDirection: "row", gap: 6 }}>
-                <View style={{ flex: 1, position: "relative" }}>
-                  <ScrollView
-                    horizontal
-                    contentContainerStyle={{ alignItems: "center", gap: 6, paddingRight: 2 }}
-                    onContentSizeChange={handleToolbarContentSizeChange}
-                    onLayout={handleToolbarLayout}
-                    onScroll={handleToolbarScroll}
-                    scrollEventThrottle={16}
-                    showsHorizontalScrollIndicator={false}
-                  >
-                    {terminalToolbarActions.map((action) => {
-                      const active =
-                        action.kind === "modifier" && pendingModifier === action.modifier;
-
-                      return (
-                        <Pressable
-                          key={action.key}
-                          onPress={() => handleToolbarActionPress(action)}
-                          style={({ pressed }) => ({
-                            alignItems: "center",
-                            backgroundColor: active
-                              ? withAlpha(
-                                  terminalTheme.palette[10] ?? terminalTheme.foreground,
-                                  "2e",
-                                )
-                              : pressed
-                                ? withAlpha(terminalTheme.foreground, "1f")
-                                : withAlpha(terminalTheme.foreground, "12"),
-                            borderColor: active
-                              ? withAlpha(
-                                  terminalTheme.palette[10] ?? terminalTheme.foreground,
-                                  "52",
-                                )
-                              : terminalTheme.border,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            justifyContent: "center",
-                            minWidth: action.label.length > 1 ? 46 : 38,
-                            paddingHorizontal: 11,
-                            paddingVertical: 8,
-                          })}
-                        >
-                          <RNText
-                            style={{
-                              color: active
-                                ? (terminalTheme.palette[10] ?? terminalTheme.foreground)
-                                : terminalTheme.foreground,
-                              fontFamily: "DMSans_700Bold",
-                              fontSize: 12,
-                              fontWeight: "700",
-                              textTransform:
-                                action.kind === "modifier" || action.kind === "clear"
-                                  ? "uppercase"
-                                  : "none",
-                            }}
-                          >
-                            {action.label}
-                          </RNText>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                  {toolbarScrollEdges.showLeftFade ? (
-                    <View
-                      pointerEvents="none"
-                      style={{
-                        bottom: 0,
-                        experimental_backgroundImage: `linear-gradient(to right, ${terminalTheme.background} 0%, ${withAlpha(terminalTheme.background, "00")} 100%)`,
-                        left: 0,
-                        position: "absolute",
-                        top: 0,
-                        width: TERMINAL_ACCESSORY_FADE_WIDTH,
-                      }}
-                    />
-                  ) : null}
-                  {toolbarScrollEdges.showRightFade ? (
-                    <View
-                      pointerEvents="none"
-                      style={{
-                        bottom: 0,
-                        experimental_backgroundImage: `linear-gradient(to right, ${withAlpha(terminalTheme.background, "00")} 0%, ${terminalTheme.background} 100%)`,
-                        position: "absolute",
-                        right: 0,
-                        top: 0,
-                        width: TERMINAL_ACCESSORY_FADE_WIDTH,
-                      }}
-                    />
-                  ) : null}
-                </View>
-                <Pressable
-                  accessibilityLabel="Dismiss keyboard"
-                  accessibilityRole="button"
-                  onPress={handleDismissKeyboard}
-                  style={({ pressed }) => ({
-                    alignItems: "center",
-                    backgroundColor: pressed
-                      ? withAlpha(terminalTheme.foreground, "1f")
-                      : withAlpha(terminalTheme.foreground, "12"),
-                    borderColor: terminalTheme.border,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    justifyContent: "center",
-                    minWidth: 38,
-                    paddingHorizontal: 11,
-                    paddingVertical: 8,
-                  })}
+              <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
+                <ComposerToolbarScroller
+                  contentPaddingRight={2}
+                  fadeOpaque={terminalTheme.background}
+                  fadeTransparent={`${terminalTheme.background}00`}
                 >
-                  <SymbolView
-                    name={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
-                    size={14}
-                    tintColor={terminalTheme.foreground}
-                    type="monochrome"
-                  />
-                </Pressable>
-              </View>
+                  {terminalToolbarActions.map((action) => {
+                    const active =
+                      action.kind === "modifier" && pendingModifier === action.modifier;
+
+                    return (
+                      <ComposerToolbarButton
+                        key={action.key}
+                        active={active}
+                        label={action.label}
+                        maxWidth={120}
+                        minWidth={action.label.length > 1 ? 56 : 44}
+                        onPress={() => handleToolbarActionPress(action)}
+                        showChevron={false}
+                        textTransform={
+                          action.kind === "modifier" || action.kind === "clear"
+                            ? "uppercase"
+                            : "none"
+                        }
+                      />
+                    );
+                  })}
+                </ComposerToolbarScroller>
+                <ComposerToolbarButton
+                  accessibilityLabel="Dismiss keyboard"
+                  icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
+                  onPress={handleDismissKeyboard}
+                  showChevron={false}
+                />
+              </ComposerToolbarRow>
             </View>
           </KeyboardStickyView>
         ) : !keyboardState.isVisible ? (

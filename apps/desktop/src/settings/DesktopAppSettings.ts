@@ -209,7 +209,7 @@ function readSettings(
         onSome: (raw) =>
           decodeDesktopSettingsJson(raw).pipe(
             Effect.map((parsed) => normalizeDesktopSettingsDocument(parsed, appVersion)),
-            Effect.catch(() => Effect.succeed(defaultSettings)),
+            Effect.orElseSucceed(() => defaultSettings),
           ),
       }),
     ),

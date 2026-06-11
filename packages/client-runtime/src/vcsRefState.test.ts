@@ -1,6 +1,6 @@
 import { EnvironmentId, type VcsListRefsResult } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createVcsRefManager,

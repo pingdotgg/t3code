@@ -178,8 +178,14 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         const remotes = yield* handle.driver
           .listRemotes(cwd)
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
+        const context = selectProviderContext(remotes.remotes);
 
-        return selectProviderContext(remotes.remotes);
+        return yield* SourceControlProviderDiscovery.refineUnknownRemoteProvider({
+          specs: discoverySpecs,
+          process,
+          cwd,
+          context,
+        });
       },
     );
 

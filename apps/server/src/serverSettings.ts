@@ -13,6 +13,7 @@
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   isProviderDriverKind,
   type ModelSelection,
@@ -207,6 +208,7 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
       instanceId: ProviderInstanceId.make(fallback),
       model:
         DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_GIT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };

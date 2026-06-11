@@ -48,6 +48,10 @@ interface RuleHarness {
   readonly invalid: (name: string, source: string, assertion?: (output: string) => void) => void;
 }
 
+interface RuleHarnessOptions {
+  readonly filename?: string;
+}
+
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
@@ -73,7 +77,10 @@ const spawnAndCollectOutput = Effect.fnUntraced(function* (command: ChildProcess
   return { exitCode, stdout, stderr };
 }, Effect.scoped);
 
-export const createOxlintRuleHarness = (ruleName: string): RuleHarness => {
+export const createOxlintRuleHarness = (
+  ruleName: string,
+  options: RuleHarnessOptions = {},
+): RuleHarness => {
   const [pluginName, shortRuleName] = ruleName.split("/");
   const diagnosticRuleName =
     pluginName && shortRuleName ? `${pluginName}\\(${shortRuleName}\\)` : ruleName;
@@ -84,9 +91,16 @@ export const createOxlintRuleHarness = (ruleName: string): RuleHarness => {
     const path = yield* Path.Path;
     const fixtureDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-oxlint-" });
     const configPath = path.join(fixtureDir, ".oxlintrc.json");
-    const sourcePath = path.join(fixtureDir, "fixture.ts");
+    const sourcePath = path.join(fixtureDir, options.filename ?? "fixture.ts");
     const repoRoot = path.join(import.meta.dirname, "..", "..");
-    const oxlintBin = path.join(repoRoot, "node_modules", ".bin", "oxlint");
+    const oxlintBin = path.join(
+      repoRoot,
+      "node_modules",
+      ".pnpm",
+      "node_modules",
+      ".bin",
+      "oxlint",
+    );
     const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.ts");
 
     yield* fs.writeFileString(

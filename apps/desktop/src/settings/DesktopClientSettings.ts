@@ -63,7 +63,7 @@ const readClientSettings = (
         onSome: (raw) =>
           decodeClientSettingsJson(raw).pipe(
             Effect.map((settings) => Option.some(settings)),
-            Effect.catch(() => Effect.succeed(Option.none<ClientSettings>())),
+            Effect.orElseSucceed(() => Option.none<ClientSettings>()),
           ),
       }),
     ),

@@ -19,11 +19,17 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const workspaceFiles = [
   "package.json",
-  "bun.lock",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
   "apps/server/package.json",
   "apps/desktop/package.json",
   "apps/web/package.json",
+  "apps/mobile/package.json",
+  "apps/mobile/deps/react-native-nitro-markdown-0.5.0.tgz",
+  "apps/mobile/modules/t3-review-diff/package.json",
+  "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
+  "infra/relay/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
@@ -43,15 +49,9 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     cpSync(sourcePath, destinationPath);
   }
 
-  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
-    readonly patchedDependencies?: Record<string, string>;
-  };
-
-  for (const relativePath of Object.values(packageJson.patchedDependencies ?? {})) {
-    const sourcePath = resolve(repoRoot, relativePath);
-    const destinationPath = resolve(targetRoot, relativePath);
-    mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+  const patchesDirectory = resolve(repoRoot, "patches");
+  if (existsSync(patchesDirectory)) {
+    cpSync(patchesDirectory, resolve(targetRoot, "patches"), { recursive: true });
   }
 }
 
@@ -176,6 +176,16 @@ function assertExists(path: string, message: string): void {
   }
 }
 
+function assertPackageVersion(path: string, version: string): void {
+  const packageJson = JSON.parse(readFileSync(path, "utf8")) as {
+    readonly version?: unknown;
+  };
+
+  if (packageJson.version !== version) {
+    throw new Error(`Expected ${path} to have version ${version}.`);
+  }
+}
+
 function assertMissing(path: string, message: string): void {
   if (existsSync(path)) {
     throw new Error(message);
@@ -201,19 +211,24 @@ try {
     },
   );
 
-  rmSync(resolve(tempRoot, "bun.lock"), { force: true });
+  rmSync(resolve(tempRoot, "pnpm-lock.yaml"), { force: true });
 
-  execFileSync("bun", ["install", "--ignore-scripts"], {
+  execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",
   });
 
-  const lockfile = readFileSync(resolve(tempRoot, "bun.lock"), "utf8");
-  assertContains(
-    lockfile,
-    `"version": "9.9.9-smoke.0"`,
-    "Expected bun.lock to contain the smoke version.",
-  );
+  const lockfile = readFileSync(resolve(tempRoot, "pnpm-lock.yaml"), "utf8");
+  assertContains(lockfile, "lockfileVersion:", "Expected pnpm-lock.yaml to be regenerated.");
+
+  for (const relativePath of [
+    "apps/server/package.json",
+    "apps/desktop/package.json",
+    "apps/web/package.json",
+    "packages/contracts/package.json",
+  ]) {
+    assertPackageVersion(resolve(tempRoot, relativePath), "9.9.9-smoke.0");
+  }
 
   const nightlyReleaseMetadata = execFileSync(
     process.execPath,

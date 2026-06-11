@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mockCreateEnvironmentConnection = vi.fn();
 const mockCreateWsRpcClient = vi.fn();
@@ -11,6 +11,7 @@ const mockWaitForSavedEnvironmentRegistryHydration = vi.fn();
 const mockListSavedEnvironmentRecords = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockReadSavedEnvironmentBearerToken = vi.fn();
+const mockReadSavedEnvironmentCredential = vi.fn();
 const mockGetSavedEnvironmentRecord = vi.fn();
 
 function MockWsTransport() {
@@ -31,7 +32,7 @@ vi.mock("../primary", () => ({
 }));
 
 vi.mock("../../lib/runtime", () => ({
-  remoteHttpRuntime: {
+  webRuntime: {
     runPromise: mockRemoteHttpRunPromise,
   },
 }));
@@ -42,6 +43,7 @@ vi.mock("./catalog", () => ({
   listSavedEnvironmentRecords: mockListSavedEnvironmentRecords,
   persistSavedEnvironmentRecord: vi.fn(),
   readSavedEnvironmentBearerToken: mockReadSavedEnvironmentBearerToken,
+  readSavedEnvironmentCredential: mockReadSavedEnvironmentCredential,
   removeSavedEnvironmentBearerToken: vi.fn(),
   useSavedEnvironmentRegistryStore: {
     subscribe: mockSavedEnvironmentRegistrySubscribe,
@@ -61,6 +63,7 @@ vi.mock("./catalog", () => ({
   },
   waitForSavedEnvironmentRegistryHydration: mockWaitForSavedEnvironmentRegistryHydration,
   writeSavedEnvironmentBearerToken: vi.fn(),
+  writeSavedEnvironmentCredential: vi.fn(),
 }));
 
 vi.mock("./connection", async (importOriginal) => ({
@@ -231,6 +234,10 @@ describe("saved environment startup", () => {
     mockSavedEnvironmentRegistrySubscribe.mockReturnValue(() => undefined);
     mockWaitForSavedEnvironmentRegistryHydration.mockResolvedValue(undefined);
     mockReadSavedEnvironmentBearerToken.mockResolvedValue("saved-bearer-token");
+    mockReadSavedEnvironmentCredential.mockImplementation(async () => {
+      const token = await mockReadSavedEnvironmentBearerToken();
+      return token ? { version: 1, method: "bearer", token } : null;
+    });
     mockCreateWsRpcClient.mockImplementation(() => createClient());
     mockCreateEnvironmentConnection.mockImplementation((input) => {
       if (input.kind === "saved") {
