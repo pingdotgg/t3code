@@ -49,6 +49,13 @@ const runtimeMock = vi.hoisted(() => {
       plan: {
         read: vi.fn(async () => ({ content: "" })),
       },
+      backgroundTasks: {
+        list: vi.fn(
+          async (): Promise<{ tasks: Array<Record<string, unknown>> }> => ({
+            tasks: [],
+          }),
+        ),
+      },
     },
     disconnect: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
@@ -835,6 +842,102 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         assert.equal(titleEvent.threadId, threadId);
         assert.deepStrictEqual(titleEvent.payload, {
           name: "Implement Copilot thread titles",
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits Copilot background tasks as task list plan updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-background-tasks-plan");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "delegate the investigation",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
+        tasks: [
+          {
+            type: "agent",
+            id: "task-explore-1",
+            toolCallId: "tool-task-explore-1",
+            description: "Exploring provider events",
+            status: "running",
+            startedAt: "2026-06-11T12:00:00.000Z",
+            agentType: "explore",
+            prompt: "Find Copilot task events",
+          },
+          {
+            type: "shell",
+            id: "task-shell-1",
+            description: "Running tests",
+            status: "completed",
+            startedAt: "2026-06-11T12:00:01.000Z",
+            command: "vp test",
+            attachmentMode: "detached",
+          },
+          {
+            type: "agent",
+            id: "task-review-1",
+            toolCallId: "tool-task-review-1",
+            description: "Reviewing implementation",
+            status: "failed",
+            startedAt: "2026-06-11T12:00:02.000Z",
+            agentType: "code-review",
+            prompt: "Review the implementation",
+          },
+        ],
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-background-tasks",
+        timestamp,
+        parentId: null,
+        ephemeral: true,
+        type: "session.background_tasks_changed",
+        data: {},
+      } as SessionEvent);
+
+      let planEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && planEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        planEvent = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(planEvent?.type, "turn.plan.updated");
+      if (planEvent?.type === "turn.plan.updated") {
+        assert.equal(planEvent.threadId, threadId);
+        assert.equal(String(planEvent.turnId), String(turn.turnId));
+        assert.deepStrictEqual(planEvent.payload, {
+          explanation: "Copilot Tasks",
+          plan: [
+            { step: "Exploring provider events", status: "inProgress" },
+            { step: "Running tests", status: "completed" },
+            { step: "Reviewing implementation (failed)", status: "pending" },
+          ],
         });
       }
 
