@@ -330,6 +330,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           ...decodedConfig,
           enabled: instanceConfig.enabled ?? decodedConfig.enabled,
         };
+        if (!effectiveConfig.enabled) {
+          return { skills: snapshot.skills };
+        }
         const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig).pipe(
           Effect.provideService(Path.Path, path),
         );
