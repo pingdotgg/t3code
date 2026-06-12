@@ -573,25 +573,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           content: resultText,
         });
 
-        let turnDiffEvent: ProviderRuntimeEvent | undefined;
-        for (let attempt = 0; attempt < 20 && turnDiffEvent === undefined; attempt += 1) {
-          yield* waitForSdkEventQueue();
-          turnDiffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
-        }
+        yield* waitForSdkEventQueue();
         yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-        assert.equal(turnDiffEvent?.type, "turn.diff.updated");
-        if (turnDiffEvent?.type === "turn.diff.updated") {
-          assert.equal(turnDiffEvent.threadId, threadId);
-          assert.equal(String(turnDiffEvent.turnId), String(turn.turnId));
-          assert.equal(
-            String(turnDiffEvent.itemId),
-            `copilot-task-completion-${String(turn.turnId)}`,
-          );
-          assert.deepStrictEqual(turnDiffEvent.payload, {
-            unifiedDiff: "",
-          });
-        }
+        assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
 
         yield* adapter.stopSession(threadId);
       }),
@@ -918,7 +903,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits a turn diff update when a Copilot file-change turn completes", () =>
+  it.effect("does not emit an empty turn diff when a Copilot file-change turn completes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-file-change-turn-diff");
@@ -991,31 +976,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
 
-      let turnDiffEvent: ProviderRuntimeEvent | undefined;
-      for (let attempt = 0; attempt < 20 && turnDiffEvent === undefined; attempt += 1) {
-        yield* waitForSdkEventQueue();
-        turnDiffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
-      }
+      yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(turnDiffEvent?.type, "turn.diff.updated");
-      if (turnDiffEvent?.type === "turn.diff.updated") {
-        assert.equal(turnDiffEvent.threadId, threadId);
-        assert.equal(String(turnDiffEvent.turnId), String(turn.turnId));
-        assert.equal(
-          String(turnDiffEvent.itemId),
-          `copilot-tool-completion-${String(turn.turnId)}`,
-        );
-        assert.deepStrictEqual(turnDiffEvent.payload, {
-          unifiedDiff: "",
-        });
-      }
+      assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
 
       yield* adapter.stopSession(threadId);
     }),
   );
 
-  it.effect("emits a turn diff update when a Copilot write permission is approved", () =>
+  it.effect("does not emit an empty turn diff when a Copilot write permission is approved", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-write-permission-turn-diff");
@@ -1119,25 +1089,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
 
-      let turnDiffEvent: ProviderRuntimeEvent | undefined;
-      for (let attempt = 0; attempt < 20 && turnDiffEvent === undefined; attempt += 1) {
-        yield* waitForSdkEventQueue();
-        turnDiffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
-      }
+      yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(turnDiffEvent?.type, "turn.diff.updated");
-      if (turnDiffEvent?.type === "turn.diff.updated") {
-        assert.equal(turnDiffEvent.threadId, threadId);
-        assert.equal(String(turnDiffEvent.turnId), String(turn.turnId));
-        assert.equal(
-          String(turnDiffEvent.itemId),
-          `copilot-tool-completion-${String(turn.turnId)}`,
-        );
-        assert.deepStrictEqual(turnDiffEvent.payload, {
-          unifiedDiff: "",
-        });
-      }
+      assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
 
       yield* adapter.stopSession(threadId);
     }),
