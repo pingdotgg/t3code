@@ -10,7 +10,10 @@ import {
 describe("providerToolClassification", () => {
   it("classifies common provider tools consistently", () => {
     assert.equal(classifyProviderToolItemType({ toolName: "bash" }), "command_execution");
-    assert.equal(classifyProviderToolItemType({ toolName: "Task_complete" }), "collab_agent_tool_call");
+    assert.equal(
+      classifyProviderToolItemType({ toolName: "Task_complete" }),
+      "collab_agent_tool_call",
+    );
     assert.equal(
       classifyProviderToolItemType({
         toolName: "update",
