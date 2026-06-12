@@ -21,6 +21,10 @@ export interface ProviderWorkspaceSkillsState {
   readonly error: string | null;
 }
 
+interface InternalProviderWorkspaceSkillsState extends ProviderWorkspaceSkillsState {
+  readonly key: string | null;
+}
+
 const cache = new Map<string, ReadonlyArray<ServerProviderSkill>>();
 const CACHE_MAX_ENTRIES = 100;
 
@@ -101,7 +105,8 @@ export function useProviderWorkspaceSkills(
   );
   const key = targetKey(stableTarget);
   const [connectionVersion, setConnectionVersion] = useState(0);
-  const [state, setState] = useState<ProviderWorkspaceSkillsState>(() => ({
+  const [state, setState] = useState<InternalProviderWorkspaceSkillsState>(() => ({
+    key,
     skills: target.fallbackSkills,
     isPending: false,
     error: null,
@@ -110,7 +115,7 @@ export function useProviderWorkspaceSkills(
   useEffect(() => {
     fallbackSkillsRef.current = target.fallbackSkills;
     if (key === null) {
-      setState({ skills: target.fallbackSkills, isPending: false, error: null });
+      setState({ key: null, skills: target.fallbackSkills, isPending: false, error: null });
     }
   }, [key, target.fallbackSkills]);
 
@@ -126,19 +131,20 @@ export function useProviderWorkspaceSkills(
       stableTarget.instanceId === null ||
       stableTarget.cwd === null
     ) {
-      setState({ skills: fallbackSkillsRef.current, isPending: false, error: null });
+      setState({ key, skills: fallbackSkillsRef.current, isPending: false, error: null });
       return;
     }
 
     const cached = cache.get(key);
     if (cached) {
-      setState({ skills: cached, isPending: false, error: null });
+      setState({ key, skills: cached, isPending: false, error: null });
       return;
     }
 
     const connection = readEnvironmentConnection(stableTarget.environmentId);
     if (!connection) {
       setState({
+        key,
         skills: fallbackSkillsRef.current,
         isPending: false,
         error: "Remote connection is not ready.",
@@ -148,7 +154,11 @@ export function useProviderWorkspaceSkills(
 
     let cancelled = false;
     setState((current) => ({
-      skills: current.skills.length > 0 ? current.skills : fallbackSkillsRef.current,
+      key,
+      skills:
+        current.key === key && current.skills.length > 0
+          ? current.skills
+          : fallbackSkillsRef.current,
       isPending: true,
       error: null,
     }));
@@ -160,11 +170,12 @@ export function useProviderWorkspaceSkills(
       .then((result) => {
         if (cancelled) return;
         setCachedSkills(key, result.skills);
-        setState({ skills: result.skills, isPending: false, error: null });
+        setState({ key, skills: result.skills, isPending: false, error: null });
       })
       .catch((error: unknown) => {
         if (cancelled) return;
         setState({
+          key,
           skills: fallbackSkillsRef.current,
           isPending: false,
           error: error instanceof Error ? error.message : "Failed to list provider skills.",
@@ -183,5 +194,9 @@ export function useProviderWorkspaceSkills(
     stableTarget.instanceId,
   ]);
 
-  return state;
+  return {
+    skills: state.skills,
+    isPending: state.isPending,
+    error: state.error,
+  };
 }
