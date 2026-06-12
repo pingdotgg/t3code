@@ -25,7 +25,7 @@ export function mergeProviderSessionEnvironment(
   const next = stripManagedRuntimeEnvKeys(baseEnv ?? process.env);
   if (!sessionEnv) return next;
   for (const [key, value] of Object.entries(sessionEnv)) {
-    if (value !== undefined && !isManagedRuntimeEnvKey(key)) {
+    if (value !== undefined) {
       next[key] = value;
     }
   }
