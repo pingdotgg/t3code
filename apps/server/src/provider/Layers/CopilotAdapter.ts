@@ -1535,6 +1535,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       if (!taskList) {
         return;
       }
+      const plan = planStepsFromCopilotTasks(taskList.tasks);
+      if (plan.length === 0) {
+        return;
+      }
       yield* emit({
         ...createBaseEvent({
           threadId: context.threadId,
@@ -1544,7 +1548,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         type: "turn.plan.updated",
         payload: {
           explanation: "Copilot Tasks",
-          plan: planStepsFromCopilotTasks(taskList.tasks),
+          plan,
         },
       });
     });
