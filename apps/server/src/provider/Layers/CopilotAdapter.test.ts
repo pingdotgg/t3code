@@ -249,6 +249,104 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }),
   );
 
+  it.effect("emits canonical answer maps for completed Copilot user input", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-user-input-canonical-answers");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      assert.ok(config.onUserInputRequest);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      const requestId = "user-input-canonical-answer";
+      const request = {
+        question: "How should Copilot continue?",
+        choices: ["Use default"],
+        allowFreeform: true,
+      };
+
+      const responsePromise = Promise.resolve(
+        config.onUserInputRequest(request, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      emit({
+        id: "evt-copilot-user-input-requested",
+        timestamp,
+        parentId: null,
+        type: "user_input.requested",
+        data: {
+          requestId,
+          ...request,
+        },
+      } as SessionEvent);
+
+      let requested: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && requested === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        requested = runtimeEvents.find(
+          (event) => event.type === "user-input.requested" && String(event.requestId) === requestId,
+        );
+      }
+      assert.equal(requested?.type, "user-input.requested");
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(requestId), {
+        answer: "Use a custom answer",
+      });
+      const response = yield* Effect.promise(() => responsePromise);
+      assert.deepStrictEqual(response, {
+        answer: "Use a custom answer",
+        wasFreeform: true,
+      });
+
+      emit({
+        id: "evt-copilot-user-input-completed",
+        timestamp,
+        parentId: null,
+        type: "user_input.completed",
+        data: {
+          requestId,
+          answer: response.answer,
+          wasFreeform: response.wasFreeform,
+        },
+      } as SessionEvent);
+
+      let resolved: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && resolved === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        resolved = runtimeEvents.find(
+          (event) => event.type === "user-input.resolved" && String(event.requestId) === requestId,
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(resolved?.type, "user-input.resolved");
+      if (resolved?.type === "user-input.resolved") {
+        assert.deepStrictEqual(resolved.payload.answers, {
+          answer: "Use a custom answer",
+        });
+        assert.equal("wasFreeform" in resolved.payload.answers, false);
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("passes selected Copilot context tier when creating a session", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
