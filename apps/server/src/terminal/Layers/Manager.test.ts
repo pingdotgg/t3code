@@ -991,7 +991,9 @@ it.layer(
 
   it.effect("escalates terminal shutdown to SIGKILL when process does not exit in time", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, { processKillGraceMs: 10 });
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 10,
+      }).pipe(Effect.provide(withHostPlatform("linux")));
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
@@ -1005,6 +1007,24 @@ it.layer(
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("kills the terminal without a signal on Windows", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        subprocessInspector: () =>
+          Effect.succeed({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* waitFor(Effect.sync(() => process.killed));
+
+      expect(process.killSignals).toEqual([undefined]);
+    }),
   );
 
   it.effect("publishes closed events when terminals are explicitly closed", () =>
@@ -1488,7 +1508,10 @@ it.layer(
       const scope = yield* Scope.make("sequential");
       const { manager, ptyAdapter } = yield* createManager(5, {
         processKillGraceMs: 10,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
+      }).pipe(
+        Effect.provide(withHostPlatform("linux")),
+        Effect.provideService(Scope.Scope, scope),
+      );
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();

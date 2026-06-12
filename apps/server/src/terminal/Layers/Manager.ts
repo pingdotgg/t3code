@@ -77,7 +77,7 @@ class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcess
   {
     message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    signal: Schema.Literals(["SIGTERM", "SIGKILL"]),
+    signal: Schema.optional(Schema.Literals(["SIGTERM", "SIGKILL"])),
   },
 ) {}
 
@@ -1143,6 +1143,29 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       threadId: string,
       terminalId: string,
     ) {
+      if (platform === "win32") {
+        // node-pty throws on Windows whenever a signal is passed; a signal-less
+        // kill terminates every process attached to the pty's console
+        // (shell and child processes such as dev servers), so no escalation step.
+        yield* Effect.try({
+          try: () => process.kill(),
+          catch: (cause) =>
+            new TerminalProcessSignalError({
+              message: "Failed to kill terminal console process tree.",
+              cause,
+            }),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to kill terminal process", {
+              threadId,
+              terminalId,
+              error: error.message,
+            }),
+          ),
+        );
+        return;
+      }
+
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
