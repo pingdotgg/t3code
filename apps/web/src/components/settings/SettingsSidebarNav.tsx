@@ -7,6 +7,7 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  NotebookPenIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -31,7 +32,8 @@ export type SettingsSectionPath =
   | "/settings/source-control"
   | "/settings/cloud"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/snippets";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
@@ -45,6 +47,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "T3 Cloud", to: "/settings/cloud", icon: CloudIcon, badgeLabel: "Private Beta" },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
+  { label: "Snippets", to: "/settings/snippets", icon: NotebookPenIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

@@ -68,6 +68,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import { searchSavedSnippetItems } from "./composerSavedSnippetSearch";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -78,6 +79,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { useServerPromptSnippets } from "~/rpc/serverState";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -568,6 +570,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+  const promptSnippets = useServerPromptSnippets();
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -894,12 +897,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: command.description ?? command.input?.hint ?? "Run provider command",
         }),
       );
+      const savedSnippetItems = Object.values(promptSnippets).map((snippet) => ({
+        id: `saved-snippet:${snippet.id}`,
+        type: "saved-snippet" as const,
+        snippet,
+        label: `/${snippet.id}`,
+        description: snippet.description ?? snippet.title,
+      }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...providerSlashCommandItems,
+        ...savedSnippetItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
-      return searchSlashCommandItems(slashCommandItems, query);
+      const builtInAndProvider = searchSlashCommandItems(
+        [...builtInSlashCommandItems, ...providerSlashCommandItems],
+        query,
+      );
+      const rankedSnippets = searchSavedSnippetItems(savedSnippetItems, query);
+      return [...builtInAndProvider, ...rankedSnippets];
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
@@ -917,7 +936,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    composerTrigger,
+    promptSnippets,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1547,6 +1572,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           replacement,
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "saved-snippet") {
+        // Substitutes the snippet body verbatim at the trigger range. We
+        // intentionally do NOT add a trailing space — snippet bodies can be
+        // paragraphs that already end in whitespace, and the user may be
+        // mid-token. The cursor lands at the end of the inserted body.
+        const replacement = item.snippet.body;
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, replacement, {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
         if (applied) {
           setComposerHighlightedItemId(null);
         }

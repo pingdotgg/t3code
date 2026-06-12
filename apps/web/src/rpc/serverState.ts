@@ -9,6 +9,8 @@ import {
   type ServerProvider,
   type ServerProviderUpdatedPayload,
   type ServerSettings,
+  type Snippet,
+  type SnippetMap,
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom } from "effect/unstable/reactivity";
@@ -44,6 +46,7 @@ function toServerConfigUpdatedPayload(config: ServerConfig): ServerConfigUpdated
 
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const EMPTY_SNIPPET_MAP: SnippetMap = {};
 
 const selectAvailableEditors = (config: ServerConfig | null): ReadonlyArray<EditorId> =>
   config?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
@@ -56,6 +59,8 @@ const selectProviders = (config: ServerConfig | null) =>
   config?.providers ?? EMPTY_SERVER_PROVIDERS;
 const selectSettings = (config: ServerConfig | null): ServerSettings =>
   config?.settings ?? DEFAULT_SERVER_SETTINGS;
+const selectPromptSnippets = (config: ServerConfig | null): SnippetMap =>
+  config?.settings.promptSnippets ?? EMPTY_SNIPPET_MAP;
 
 export const welcomeAtom = makeStateAtom<ServerLifecycleWelcomePayload | null>(
   "server-welcome",
@@ -290,6 +295,19 @@ export function useServerKeybindingsConfigPath(): string | null {
 
 export function useServerObservability(): ServerConfig["observability"] | null {
   return useAtomValue(serverConfigAtom, selectObservability);
+}
+
+export function useServerPromptSnippets(): SnippetMap {
+  return useAtomValue(serverConfigAtom, selectPromptSnippets);
+}
+
+export function getServerPromptSnippets(): SnippetMap {
+  return selectPromptSnippets(getServerConfig());
+}
+
+export function getServerPromptSnippet(id: string): Snippet | null {
+  const snippets = getServerPromptSnippets();
+  return (snippets as Record<string, Snippet | undefined>)[id] ?? null;
 }
 
 export function useServerWelcomeSubscription(

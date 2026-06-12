@@ -6,6 +6,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { SnippetMap } from "./snippets.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -384,6 +385,10 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // User-defined prompt snippets, keyed by slug. Whole-map replacement
+  // (see `ServerSettingsPatch`); never patched per-entry. Mirror of the
+  // `providerInstances` design note above.
+  promptSnippets: SnippetMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -476,6 +481,10 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Whole-map replacement for saved prompt snippets. Same rationale as
+  // `providerInstances`: a fully-formed map is the simplest contract and
+  // avoids half-merged states.
+  promptSnippets: Schema.optionalKey(SnippetMap),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

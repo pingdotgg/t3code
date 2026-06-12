@@ -3,8 +3,9 @@ import {
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type Snippet,
 } from "@t3tools/contracts";
-import { BotIcon } from "lucide-react";
+import { BotIcon, NotebookPenIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -51,6 +52,13 @@ export type ComposerCommandItem =
       skill: ServerProviderSkill;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "saved-snippet";
+      snippet: Snippet;
+      label: string;
+      description: string;
     };
 
 type ComposerCommandGroup = {
@@ -92,10 +100,14 @@ function groupCommandItems(
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
+  const savedItems = items.filter((item) => item.type === "saved-snippet");
 
   const groups: ComposerCommandGroup[] = [];
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
+  }
+  if (savedItems.length > 0) {
+    groups.push({ id: "saved", label: "Saved", items: savedItems });
   }
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
@@ -246,6 +258,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>
+      ) : null}
+      {props.item.type === "saved-snippet" ? (
+        <NotebookPenIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>
