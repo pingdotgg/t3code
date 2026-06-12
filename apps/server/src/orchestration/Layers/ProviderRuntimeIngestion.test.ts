@@ -2665,6 +2665,71 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
   });
 
+  it("projects reasoning text deltas into normalized thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Thinking through the implementation",
+        contentIndex: 0,
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-summary-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning-summary"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "Implementation summary",
+        summaryIndex: 1,
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.update",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.summary",
+        ),
+    );
+
+    const reasoning = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
+    );
+    expect(reasoning?.kind).toBe("reasoning.update");
+    expect(reasoning?.payload).toMatchObject({
+      detail: "Thinking through the implementation",
+      streamKind: "reasoning_text",
+      contentIndex: 0,
+    });
+
+    const summary = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-summary-delta",
+    );
+    expect(summary?.kind).toBe("reasoning.summary");
+    expect(summary?.payload).toMatchObject({
+      detail: "Implementation summary",
+      streamKind: "reasoning_summary_text",
+      summaryIndex: 1,
+    });
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
