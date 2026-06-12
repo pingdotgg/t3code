@@ -6,9 +6,21 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
-import type { PreviewAnnotationPayload, PreviewAnnotationRect } from "@t3tools/contracts";
+import type {
+  PreviewAnnotationPayload,
+  PreviewAnnotationRect,
+  PreviewAutomationClickInput,
+  PreviewAutomationEvaluateInput,
+  PreviewAutomationPressInput,
+  PreviewAutomationScrollInput,
+  PreviewAutomationSnapshot,
+  PreviewAutomationStatus,
+  PreviewAutomationTypeInput,
+  PreviewAutomationWaitForInput,
+} from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { type BrowserWindow, type Session, session, webContents } from "electron";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { isPreviewAnnotationPayload } from "./picked-element-payload.ts";
 
@@ -53,6 +65,36 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
+const MAX_EVALUATION_BYTES = 64_000;
+const MAX_VISIBLE_TEXT_LENGTH = 20_000;
+const MAX_INTERACTIVE_ELEMENTS = 200;
+const MAX_SCREENSHOT_WIDTH = 1280;
+
+interface CdpEvaluationResult {
+  readonly result?: {
+    readonly value?: unknown;
+    readonly description?: string;
+  };
+  readonly exceptionDetails?: {
+    readonly text?: string;
+    readonly exception?: { readonly description?: string };
+  };
+}
+
+const automationError = (
+  tag:
+    | "PreviewAutomationExecutionError"
+    | "PreviewAutomationInvalidSelectorError"
+    | "PreviewAutomationResultTooLargeError"
+    | "PreviewAutomationTimeoutError",
+  message: string,
+  detail?: unknown,
+): Error & { detail?: unknown } => {
+  const error = new Error(message) as Error & { detail?: unknown };
+  error.name = tag;
+  if (detail !== undefined) error.detail = detail;
+  return error;
+};
 
 const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
   if (typeof value !== "object" || value === null) return null;
@@ -455,6 +497,391 @@ export class PreviewViewManager {
     this.applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR);
   }
 
+  automationStatus(tabId: string): PreviewAutomationStatus {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.webContentsId == null) {
+      const navStatus = tab?.navStatus;
+      return {
+        available: false,
+        visible: true,
+        tabId,
+        url: !navStatus || navStatus.kind === "Idle" ? null : navStatus.url,
+        title: !navStatus || navStatus.kind === "Idle" ? null : navStatus.title,
+        loading: navStatus?.kind === "Loading",
+      };
+    }
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) {
+      return {
+        available: false,
+        visible: true,
+        tabId,
+        url: null,
+        title: null,
+        loading: false,
+      };
+    }
+    return {
+      available: true,
+      visible: true,
+      tabId,
+      url: wc.getURL() || null,
+      title: wc.getTitle() || null,
+      loading: wc.isLoading(),
+    };
+  }
+
+  async automationSnapshot(tabId: string): Promise<PreviewAutomationSnapshot> {
+    const wc = this.requireWebContents(tabId);
+    return this.withDebugger(wc, async (send) => {
+      await Promise.all([send("Runtime.enable"), send("Accessibility.enable")]);
+      const page = await this.evaluateWithDebugger<{
+        url: string;
+        title: string;
+        loading: boolean;
+        visibleText: string;
+        interactiveElements: PreviewAutomationSnapshot["interactiveElements"];
+      }>(
+        send,
+        `(() => {
+          const selectorFor = (element) => {
+            if (element.id) return "#" + CSS.escape(element.id);
+            for (const attribute of ["data-testid", "name"]) {
+              const value = element.getAttribute(attribute);
+              if (value) return element.tagName.toLowerCase() + "[" + attribute + "=" + JSON.stringify(value) + "]";
+            }
+            const parts = [];
+            let current = element;
+            while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 8) {
+              let part = current.tagName.toLowerCase();
+              const parent = current.parentElement;
+              if (parent) {
+                const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+                if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+              }
+              parts.unshift(part);
+              current = parent;
+            }
+            return parts.join(" > ");
+          };
+          const visible = (element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+          };
+          const elements = Array.from(document.querySelectorAll(
+            "a[href],button,input,textarea,select,[role],[tabindex]"
+          )).filter(visible).slice(0, ${MAX_INTERACTIVE_ELEMENTS}).map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              tag: element.tagName.toLowerCase(),
+              role: element.getAttribute("role"),
+              name: element.getAttribute("aria-label") || element.innerText || element.getAttribute("name") || "",
+              selector: selectorFor(element),
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height
+            };
+          });
+          return {
+            url: location.href,
+            title: document.title,
+            loading: document.readyState !== "complete",
+            visibleText: (document.body?.innerText || "").slice(0, ${MAX_VISIBLE_TEXT_LENGTH}),
+            interactiveElements: elements
+          };
+        })()`,
+        true,
+      );
+      const accessibility = await send("Accessibility.getFullAXTree");
+      let image = await wc.capturePage();
+      let size = image.getSize();
+      if (size.width > MAX_SCREENSHOT_WIDTH) {
+        image = image.resize({ width: MAX_SCREENSHOT_WIDTH });
+        size = image.getSize();
+      }
+      return {
+        ...page,
+        accessibilityTree: accessibility,
+        screenshot: {
+          mimeType: "image/png",
+          data: image.toPNG().toString("base64"),
+          width: size.width,
+          height: size.height,
+        },
+      };
+    });
+  }
+
+  async automationClick(tabId: string, input: PreviewAutomationClickInput): Promise<void> {
+    const wc = this.requireWebContents(tabId);
+    await this.withDebugger(wc, async (send) => {
+      await Promise.all([
+        send("Runtime.enable"),
+        send("Input.setIgnoreInputEvents", { ignore: false }),
+      ]);
+      let x: number;
+      let y: number;
+      if ("selector" in input) {
+        const point = await this.evaluateWithDebugger<
+          { x: number; y: number } | { invalidSelector: true; message: string } | { notFound: true }
+        >(
+          send,
+          `(() => {
+            try {
+              const element = document.querySelector(${JSON.stringify(input.selector)});
+              if (!element) return { notFound: true };
+              element.scrollIntoView({ block: "center", inline: "center" });
+              const rect = element.getBoundingClientRect();
+              return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            } catch (error) {
+              return { invalidSelector: true, message: String(error) };
+            }
+          })()`,
+          true,
+        );
+        if ("invalidSelector" in point) {
+          throw automationError("PreviewAutomationInvalidSelectorError", point.message, {
+            selector: input.selector,
+          });
+        }
+        if ("notFound" in point) {
+          throw automationError(
+            "PreviewAutomationExecutionError",
+            `No element matches selector ${input.selector}.`,
+          );
+        }
+        x = point.x;
+        y = point.y;
+      } else {
+        x = input.x;
+        y = input.y;
+      }
+      const viewport = await this.evaluateWithDebugger<{ width: number; height: number }>(
+        send,
+        "({ width: window.innerWidth, height: window.innerHeight })",
+        true,
+      );
+      if (x < 0 || y < 0 || x > viewport.width || y > viewport.height) {
+        throw automationError(
+          "PreviewAutomationExecutionError",
+          `Click coordinates (${x}, ${y}) are outside the preview viewport.`,
+        );
+      }
+      await send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      await send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+    });
+  }
+
+  async automationType(tabId: string, input: PreviewAutomationTypeInput): Promise<void> {
+    const wc = this.requireWebContents(tabId);
+    await this.withDebugger(wc, async (send) => {
+      await send("Runtime.enable");
+      const focusResult = await this.evaluateWithDebugger<
+        { ok: true } | { invalidSelector: true; message: string } | { notFound: true }
+      >(
+        send,
+        `(() => {
+          try {
+            const element = ${
+              input.selector
+                ? `document.querySelector(${JSON.stringify(input.selector)})`
+                : "document.activeElement"
+            };
+            if (!element) return { notFound: true };
+            element.focus();
+            if (${input.clear ?? false}) {
+              if ("value" in element) element.value = "";
+              else if (element.isContentEditable) element.textContent = "";
+              element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+            }
+            return { ok: true };
+          } catch (error) {
+            return { invalidSelector: true, message: String(error) };
+          }
+        })()`,
+        true,
+      );
+      if ("invalidSelector" in focusResult) {
+        throw automationError("PreviewAutomationInvalidSelectorError", focusResult.message, {
+          selector: input.selector ?? "",
+        });
+      }
+      if ("notFound" in focusResult) {
+        throw automationError(
+          "PreviewAutomationExecutionError",
+          input.selector
+            ? `No element matches selector ${input.selector}.`
+            : "No element is focused in the preview.",
+        );
+      }
+      await send("Input.insertText", { text: input.text });
+      await this.evaluateWithDebugger(
+        send,
+        `(() => {
+          const element = document.activeElement;
+          element?.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(input.text)} }));
+          element?.dispatchEvent(new Event("change", { bubbles: true }));
+        })()`,
+        false,
+      );
+    });
+  }
+
+  async automationPress(tabId: string, input: PreviewAutomationPressInput): Promise<void> {
+    const wc = this.requireWebContents(tabId);
+    await this.withDebugger(wc, async (send) => {
+      const modifiers = (input.modifiers ?? []).reduce((value, modifier) => {
+        switch (modifier) {
+          case "Alt":
+            return value | 1;
+          case "Control":
+            return value | 2;
+          case "Meta":
+            return value | 4;
+          case "Shift":
+            return value | 8;
+        }
+      }, 0);
+      const key = input.key;
+      const text = key.length === 1 ? key : undefined;
+      const params = {
+        key,
+        code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+        modifiers,
+        ...(text ? { text, unmodifiedText: text } : {}),
+      };
+      await send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
+    });
+  }
+
+  async automationScroll(tabId: string, input: PreviewAutomationScrollInput): Promise<void> {
+    const wc = this.requireWebContents(tabId);
+    await this.withDebugger(wc, async (send) => {
+      await send("Runtime.enable");
+      const result = await this.evaluateWithDebugger<
+        { ok: true } | { invalidSelector: true; message: string } | { notFound: true }
+      >(
+        send,
+        `(() => {
+          try {
+            const target = ${
+              input.selector
+                ? `document.querySelector(${JSON.stringify(input.selector)})`
+                : "window"
+            };
+            if (!target) return { notFound: true };
+            target.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
+            return { ok: true };
+          } catch (error) {
+            return { invalidSelector: true, message: String(error) };
+          }
+        })()`,
+        true,
+      );
+      if ("invalidSelector" in result) {
+        throw automationError("PreviewAutomationInvalidSelectorError", result.message, {
+          selector: input.selector ?? "",
+        });
+      }
+      if ("notFound" in result) {
+        throw automationError(
+          "PreviewAutomationExecutionError",
+          `No element matches selector ${input.selector}.`,
+        );
+      }
+    });
+  }
+
+  async automationEvaluate(tabId: string, input: PreviewAutomationEvaluateInput): Promise<unknown> {
+    const wc = this.requireWebContents(tabId);
+    return this.withDebugger(wc, async (send) => {
+      await send("Runtime.enable");
+      const value = await this.evaluateWithDebugger(
+        send,
+        input.expression,
+        input.returnByValue ?? true,
+        input.awaitPromise ?? true,
+      );
+      const serialized = JSON.stringify(value);
+      if (
+        serialized !== undefined &&
+        Buffer.byteLength(serialized, "utf8") > MAX_EVALUATION_BYTES
+      ) {
+        throw automationError(
+          "PreviewAutomationResultTooLargeError",
+          `Evaluation result exceeds ${MAX_EVALUATION_BYTES} bytes.`,
+          { maximumBytes: MAX_EVALUATION_BYTES },
+        );
+      }
+      return value;
+    });
+  }
+
+  async automationWaitFor(tabId: string, input: PreviewAutomationWaitForInput): Promise<void> {
+    const wc = this.requireWebContents(tabId);
+    const timeoutMs = input.timeoutMs ?? 15_000;
+    await this.withDebugger(wc, async (send) => {
+      await send("Runtime.enable");
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() <= deadline) {
+        const result = await this.evaluateWithDebugger<
+          { matched: boolean } | { invalidSelector: true; message: string }
+        >(
+          send,
+          `(() => {
+            try {
+              const selectorMatched = ${
+                input.selector
+                  ? `document.querySelector(${JSON.stringify(input.selector)}) !== null`
+                  : "true"
+              };
+              const textMatched = ${
+                input.text
+                  ? `(document.body?.innerText || "").includes(${JSON.stringify(input.text)})`
+                  : "true"
+              };
+              const urlMatched = ${
+                input.urlIncludes
+                  ? `location.href.includes(${JSON.stringify(input.urlIncludes)})`
+                  : "true"
+              };
+              return { matched: selectorMatched && textMatched && urlMatched };
+            } catch (error) {
+              return { invalidSelector: true, message: String(error) };
+            }
+          })()`,
+          true,
+        );
+        if ("invalidSelector" in result) {
+          throw automationError("PreviewAutomationInvalidSelectorError", result.message, {
+            selector: input.selector ?? "",
+          });
+        }
+        if (result.matched) return;
+        await sleep(100);
+      }
+      throw automationError(
+        "PreviewAutomationTimeoutError",
+        `Preview condition did not match within ${timeoutMs}ms.`,
+      );
+    });
+  }
+
   private applyZoom(tabId: string, transform: (current: number) => number): void {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
@@ -467,6 +894,62 @@ export class PreviewViewManager {
       }
     }
     this.update(tabId, { zoomFactor: next });
+  }
+
+  private async withDebugger<A>(
+    wc: Electron.WebContents,
+    use: (
+      send: (method: string, commandParams?: Record<string, unknown>) => Promise<unknown>,
+    ) => Promise<A>,
+  ): Promise<A> {
+    if (wc.debugger.isAttached()) {
+      throw automationError(
+        "PreviewAutomationExecutionError",
+        "Preview automation is unavailable while another debugger is attached.",
+      );
+    }
+    wc.debugger.attach("1.3");
+    try {
+      return await use((method, commandParams) => wc.debugger.sendCommand(method, commandParams));
+    } catch (cause) {
+      if (cause instanceof Error && cause.name.startsWith("PreviewAutomation")) throw cause;
+      throw automationError(
+        "PreviewAutomationExecutionError",
+        cause instanceof Error ? cause.message : String(cause),
+        cause,
+      );
+    } finally {
+      if (wc.debugger.isAttached()) {
+        try {
+          wc.debugger.detach();
+        } catch {
+          // The target can disappear while an operation is completing.
+        }
+      }
+    }
+  }
+
+  private async evaluateWithDebugger<A = unknown>(
+    send: (method: string, commandParams?: Record<string, unknown>) => Promise<unknown>,
+    expression: string,
+    returnByValue: boolean,
+    awaitPromise = true,
+  ): Promise<A> {
+    const response = (await send("Runtime.evaluate", {
+      expression,
+      awaitPromise,
+      returnByValue,
+      userGesture: true,
+    })) as CdpEvaluationResult;
+    if (response.exceptionDetails) {
+      throw automationError(
+        "PreviewAutomationExecutionError",
+        response.exceptionDetails.exception?.description ??
+          response.exceptionDetails.text ??
+          "JavaScript evaluation failed.",
+      );
+    }
+    return response.result?.value as A;
   }
 
   onStateChange(listener: Listener): () => void {

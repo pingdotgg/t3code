@@ -67,6 +67,19 @@ import type {
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import type {
+  PreviewAutomationClickInput,
+  PreviewAutomationEvaluateInput,
+  PreviewAutomationOwner,
+  PreviewAutomationPressInput,
+  PreviewAutomationRequest,
+  PreviewAutomationResponse,
+  PreviewAutomationScrollInput,
+  PreviewAutomationSnapshot,
+  PreviewAutomationStatus,
+  PreviewAutomationTypeInput,
+  PreviewAutomationWaitForInput,
+} from "./previewAutomation.ts";
+import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -668,6 +681,16 @@ export interface DesktopPreviewBridge {
   pickElement: (tabId: string) => Promise<PreviewAnnotationPayload | null>;
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
+  automation: {
+    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
+    type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
+    press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
+    scroll: (tabId: string, input: PreviewAutomationScrollInput) => Promise<void>;
+    evaluate: (tabId: string, input: PreviewAutomationEvaluateInput) => Promise<unknown>;
+    waitFor: (tabId: string, input: PreviewAutomationWaitForInput) => Promise<void>;
+  };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
 }
 
@@ -835,6 +858,16 @@ export interface EnvironmentApi {
     close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
     list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;
     reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
+    automation: {
+      connect: (
+        input: { clientId: string },
+        callback: (request: PreviewAutomationRequest) => void,
+        options?: { onResubscribe?: () => void },
+      ) => () => void;
+      respond: (response: PreviewAutomationResponse) => Promise<void>;
+      reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
+      clearOwner: (input: { clientId: string }) => Promise<void>;
+    };
     onEvent: (callback: (event: PreviewEvent) => void) => () => void;
     subscribePorts: (
       callback: (servers: DiscoveredLocalServerList) => void,

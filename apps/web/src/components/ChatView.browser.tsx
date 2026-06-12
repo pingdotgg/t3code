@@ -285,6 +285,12 @@ function createMockEnvironmentApi(input: {
       reportStatus: () => {
         throw new Error("Not implemented in browser test.");
       },
+      automation: {
+        connect: () => () => undefined,
+        respond: () => Promise.resolve(),
+        reportOwner: () => Promise.resolve(),
+        clearOwner: () => Promise.resolve(),
+      },
       onEvent: () => () => undefined,
       subscribePorts: () => () => undefined,
     } as EnvironmentApi["preview"],

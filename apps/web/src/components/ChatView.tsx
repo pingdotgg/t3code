@@ -99,7 +99,8 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { selectActiveRightPanelKindWithUrl, useRightPanelStore } from "../rightPanelStore";
-import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { PreviewAutomationOwner } from "./preview/PreviewAutomationOwner";
+import { isPreviewSupportedInRuntime, usePreviewStateStore } from "../previewStateStore";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 // Lazy: keeps the entire preview component graph (webview host, favicon
 // helper, Chromium error icon) out of the web bundle until first open.
@@ -166,6 +167,7 @@ import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
+  MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
@@ -182,6 +184,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -996,6 +999,22 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [mountedTerminalThreadKeys],
   );
+  const previewSessionThreadKeys = usePreviewStateStore(
+    useShallow((state) =>
+      Object.entries(state.byThreadKey).flatMap(([nextThreadKey, nextPreviewState]) =>
+        nextPreviewState.snapshot ? [nextThreadKey] : [],
+      ),
+    ),
+  );
+  const [mountedPreviewThreadKeys, setMountedPreviewThreadKeys] = useState<string[]>([]);
+  const mountedPreviewThreadRefs = useMemo(
+    () =>
+      mountedPreviewThreadKeys.flatMap((mountedThreadKey) => {
+        const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
+        return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
+      }),
+    [mountedPreviewThreadKeys],
+  );
 
   const fallbackDraftProjectRef = draftThread
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
@@ -1092,6 +1111,12 @@ export default function ChatView(props: ChatViewProps) {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+  const existingPreviewSessionThreadKeys = useMemo(() => {
+    const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
+    return previewSessionThreadKeys.filter((nextThreadKey) =>
+      existingThreadKeys.has(nextThreadKey),
+    );
+  }, [draftThreadKeys, previewSessionThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {
@@ -1121,6 +1146,27 @@ export default function ChatView(props: ChatViewProps) {
         : nextThreadIds;
     });
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalUiState.terminalOpen]);
+  useEffect(() => {
+    setMountedPreviewThreadKeys((currentThreadIds) => {
+      const nextThreadIds = reconcileRetainedMountedThreadIds({
+        currentThreadIds,
+        openThreadIds: existingPreviewSessionThreadKeys,
+        activeThreadId: activeThreadKey,
+        activeThreadOpen: Boolean(activeThreadKey && !shouldUsePlanSidebarSheet),
+        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
+        retainInactiveActiveThread: true,
+      });
+      return currentThreadIds.length === nextThreadIds.length &&
+        currentThreadIds.every((nextThreadId, index) => nextThreadId === nextThreadIds[index])
+        ? currentThreadIds
+        : nextThreadIds;
+    });
+  }, [
+    activeThreadKey,
+    existingPreviewSessionThreadKeys,
+    previewPanelOpen,
+    shouldUsePlanSidebarSheet,
+  ]);
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProjectRef = activeThread
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
@@ -4148,13 +4194,34 @@ export default function ChatView(props: ChatViewProps) {
             onClose={closePlanSidebar}
           />
         ) : null}
-        {previewPanelOpen && !shouldUsePlanSidebarSheet && activeThreadRef ? (
-          <Suspense fallback={null}>
-            <PreviewPanel mode="inline" threadRef={activeThreadRef} visible />
-          </Suspense>
-        ) : null}
+        {!shouldUsePlanSidebarSheet
+          ? mountedPreviewThreadRefs.map(
+              ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => {
+                const visible = previewPanelOpen && mountedThreadKey === activeThreadKey;
+                return (
+                  <div
+                    key={mountedThreadKey}
+                    className={cn(
+                      visible
+                        ? "contents"
+                        : "pointer-events-none fixed -left-[10000px] top-0 h-px w-px overflow-hidden opacity-0",
+                    )}
+                    aria-hidden={visible ? undefined : true}
+                  >
+                    <Suspense fallback={null}>
+                      <PreviewPanel mode="inline" threadRef={mountedThreadRef} visible={visible} />
+                    </Suspense>
+                  </div>
+                );
+              },
+            )
+          : null}
       </div>
       {/* end horizontal flex container */}
+
+      {activeThreadRef ? (
+        <PreviewAutomationOwner threadRef={activeThreadRef} visible={previewPanelOpen} />
+      ) : null}
 
       {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
         <PersistentThreadTerminalDrawer

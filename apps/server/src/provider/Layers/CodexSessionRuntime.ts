@@ -103,6 +103,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly appServerArgs?: ReadonlyArray<string>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -720,7 +721,7 @@ export const makeCodexSessionRuntime = (
     };
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(options.binaryPath, ["app-server"], {
+        ChildProcess.make(options.binaryPath, ["app-server", ...(options.appServerArgs ?? [])], {
           cwd: options.cwd,
           env,
           forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,

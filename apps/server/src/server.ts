@@ -37,6 +37,8 @@ import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/Provide
 import { TerminalManagerLive } from "./terminal/Layers/Manager.ts";
 import { PreviewManagerLive } from "./preview/Layers/Manager.ts";
 import { PreviewPortScannerLive } from "./preview/Layers/PortScanner.ts";
+import { McpHttpServerLive } from "./mcp/Layers/McpHttpServer.ts";
+import { McpSessionRegistryLive } from "./mcp/Layers/McpSessionRegistry.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
@@ -335,18 +337,21 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
-  HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
-    Layer.provide(authHttpApiLayer),
-    Layer.provide(connectHttpApiLayer),
-    Layer.provide(orchestrationHttpApiLayer),
-    Layer.provide(serverEnvironmentHttpApiLayer),
-    Layer.provide(environmentAuthenticatedAuthLayer),
+  Layer.mergeAll(
+    HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
+      Layer.provide(authHttpApiLayer),
+      Layer.provide(connectHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(environmentAuthenticatedAuthLayer),
+    ),
+    attachmentsRouteLayer,
+    otlpTracesProxyRouteLayer,
+    projectFaviconRouteLayer,
+    staticAndDevRouteLayer,
+    websocketRpcRouteLayer,
   ),
-  attachmentsRouteLayer,
-  otlpTracesProxyRouteLayer,
-  projectFaviconRouteLayer,
-  staticAndDevRouteLayer,
-  websocketRpcRouteLayer,
+  McpHttpServerLive.pipe(Layer.provide(McpSessionRegistryLive)),
 ).pipe(Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(

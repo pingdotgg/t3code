@@ -86,6 +86,12 @@ export interface WsRpcClient {
     readonly close: RpcUnaryMethod<typeof WS_METHODS.previewClose>;
     readonly list: RpcUnaryMethod<typeof WS_METHODS.previewList>;
     readonly reportStatus: RpcUnaryMethod<typeof WS_METHODS.previewReportStatus>;
+    readonly automation: {
+      readonly connect: RpcInputStreamMethod<typeof WS_METHODS.previewAutomationConnect>;
+      readonly respond: RpcUnaryMethod<typeof WS_METHODS.previewAutomationRespond>;
+      readonly reportOwner: RpcUnaryMethod<typeof WS_METHODS.previewAutomationReportOwner>;
+      readonly clearOwner: RpcUnaryMethod<typeof WS_METHODS.previewAutomationClearOwner>;
+    };
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribePreviewEvents>;
     readonly subscribePorts: RpcStreamMethod<typeof WS_METHODS.subscribeDiscoveredLocalServers>;
   };
@@ -230,6 +236,20 @@ export function createWsRpcClient(
       list: (input) => transport.request((client) => client[WS_METHODS.previewList](input)),
       reportStatus: (input) =>
         transport.request((client) => client[WS_METHODS.previewReportStatus](input)),
+      automation: {
+        connect: (input, listener, options) =>
+          transport.subscribe(
+            (client) => client[WS_METHODS.previewAutomationConnect](input),
+            listener,
+            subscriptionOptions(options, WS_METHODS.previewAutomationConnect),
+          ),
+        respond: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationRespond](input)),
+        reportOwner: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationReportOwner](input)),
+        clearOwner: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationClearOwner](input)),
+      },
       onEvent: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribePreviewEvents]({}),

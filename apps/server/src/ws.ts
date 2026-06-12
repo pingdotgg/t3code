@@ -73,6 +73,7 @@ import { redactServerSettingsForClient, ServerSettingsService } from "./serverSe
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { PreviewManager } from "./preview/Services/Manager.ts";
 import { PreviewPortScanner } from "./preview/Services/PortScanner.ts";
+import { previewAutomationBroker } from "./mcp/Layers/PreviewAutomationBroker.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
@@ -189,6 +190,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
   [WS_METHODS.previewList, AuthOrchestrationReadScope],
   [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationReportOwner, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationClearOwner, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
@@ -1387,6 +1392,30 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewAutomationConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.previewAutomationConnect,
+            previewAutomationBroker.connect(input.clientId),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationRespond,
+            previewAutomationBroker.respond(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationReportOwner]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationReportOwner,
+            previewAutomationBroker.reportOwner(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationClearOwner]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationClearOwner,
+            previewAutomationBroker.clearOwner(input.clientId),
+            { "rpc.aggregate": "preview-automation" },
+          ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",

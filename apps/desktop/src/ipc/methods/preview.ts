@@ -28,6 +28,13 @@ const tabIdFrom = (raw: unknown): string => {
   return tabId;
 };
 
+const inputFrom = (raw: unknown): unknown => {
+  if (typeof raw !== "object" || raw === null || !("input" in raw)) {
+    throw new Error("preview automation input is required");
+  }
+  return raw.input;
+};
+
 class PreviewIpcError extends Data.TaggedError("PreviewIpcError")<{
   readonly cause: unknown;
 }> {}
@@ -101,5 +108,47 @@ export const previewMethods = [
   ),
   method(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, (raw) =>
     previewViewManager.cancelPickElement(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, (raw) =>
+    previewViewManager.automationStatus(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, (raw) =>
+    previewViewManager.automationSnapshot(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, (raw) =>
+    previewViewManager.automationClick(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationClick>[1],
+    ),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL, (raw) =>
+    previewViewManager.automationType(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationType>[1],
+    ),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL, (raw) =>
+    previewViewManager.automationPress(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationPress>[1],
+    ),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL, (raw) =>
+    previewViewManager.automationScroll(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationScroll>[1],
+    ),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL, (raw) =>
+    previewViewManager.automationEvaluate(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationEvaluate>[1],
+    ),
+  ),
+  method(IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL, (raw) =>
+    previewViewManager.automationWaitFor(
+      tabIdFrom(raw),
+      inputFrom(raw) as Parameters<typeof previewViewManager.automationWaitFor>[1],
+    ),
   ),
 ] as const;

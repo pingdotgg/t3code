@@ -2,7 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
 import { join } from "node:path";
 
-import { desktopDir, resolveDevProtocolClient, resolveElectronPath } from "./electron-launcher.mjs";
+import {
+  desktopDir,
+  resolveDevProtocolClient,
+  resolveElectronLaunchCommand,
+} from "./electron-launcher.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
@@ -79,7 +83,8 @@ function startApp() {
   const launchArgs = devProtocolClient
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
-  const app = spawn(resolveElectronPath(), launchArgs, {
+  const electronCommand = resolveElectronLaunchCommand(launchArgs);
+  const app = spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,
     env: childEnv,
     stdio: "inherit",

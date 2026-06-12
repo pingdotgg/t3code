@@ -22,6 +22,7 @@ import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
+export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -80,14 +81,30 @@ export function reconcileMountedTerminalThreadIds(input: {
   activeThreadTerminalOpen: boolean;
   maxHiddenThreadCount?: number;
 }): string[] {
+  return reconcileRetainedMountedThreadIds({
+    currentThreadIds: input.currentThreadIds,
+    openThreadIds: input.openThreadIds,
+    activeThreadId: input.activeThreadId,
+    activeThreadOpen: input.activeThreadTerminalOpen,
+    maxHiddenThreadCount: input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  });
+}
+
+export function reconcileRetainedMountedThreadIds(input: {
+  currentThreadIds: ReadonlyArray<string>;
+  openThreadIds: ReadonlyArray<string>;
+  activeThreadId: string | null;
+  activeThreadOpen: boolean;
+  maxHiddenThreadCount: number;
+  retainInactiveActiveThread?: boolean;
+}): string[] {
   const openThreadIdSet = new Set(input.openThreadIds);
   const hiddenThreadIds = input.currentThreadIds.filter(
-    (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
+    (threadId) =>
+      (threadId !== input.activeThreadId || input.retainInactiveActiveThread === true) &&
+      openThreadIdSet.has(threadId),
   );
-  const maxHiddenThreadCount = Math.max(
-    0,
-    input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-  );
+  const maxHiddenThreadCount = Math.max(0, input.maxHiddenThreadCount);
   const nextThreadIds =
     hiddenThreadIds.length > maxHiddenThreadCount
       ? hiddenThreadIds.slice(-maxHiddenThreadCount)
@@ -95,7 +112,7 @@ export function reconcileMountedTerminalThreadIds(input: {
 
   if (
     input.activeThreadId &&
-    input.activeThreadTerminalOpen &&
+    input.activeThreadOpen &&
     !nextThreadIds.includes(input.activeThreadId)
   ) {
     nextThreadIds.push(input.activeThreadId);

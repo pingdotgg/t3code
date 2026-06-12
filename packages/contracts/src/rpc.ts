@@ -99,6 +99,12 @@ import {
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
+  PreviewAutomationError,
+  PreviewAutomationOwner,
+  PreviewAutomationRequest,
+  PreviewAutomationResponse,
+} from "./previewAutomation.ts";
+import {
   ServerConfigStreamEvent,
   ServerConfig,
   ServerProviderUpdateError,
@@ -177,6 +183,10 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewAutomationConnect: "previewAutomation.connect",
+  previewAutomationRespond: "previewAutomation.respond",
+  previewAutomationReportOwner: "previewAutomation.reportOwner",
+  previewAutomationClearOwner: "previewAutomation.clearOwner",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -510,6 +520,28 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
+  payload: Schema.Struct({ clientId: Schema.String }),
+  success: PreviewAutomationRequest,
+  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomationRespond, {
+  payload: PreviewAutomationResponse,
+  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewAutomationReportOwnerRpc = Rpc.make(WS_METHODS.previewAutomationReportOwner, {
+  payload: PreviewAutomationOwner,
+  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewAutomationClearOwnerRpc = Rpc.make(WS_METHODS.previewAutomationClearOwner, {
+  payload: Schema.Struct({ clientId: Schema.String }),
+  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -668,6 +700,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewAutomationConnectRpc,
+  WsPreviewAutomationRespondRpc,
+  WsPreviewAutomationReportOwnerRpc,
+  WsPreviewAutomationClearOwnerRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,
