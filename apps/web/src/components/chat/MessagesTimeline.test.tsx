@@ -535,7 +535,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("apply_patch");
-    expect(markup).toContain("apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("apps/web/src/session-logic.ts");
     expect(markup).toContain('aria-label="Expand Dynamic edit tool"');
   });
 

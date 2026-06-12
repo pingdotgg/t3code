@@ -1,4 +1,4 @@
-import { useAuth, useUser, useUserProfileModal } from "@clerk/expo";
+import { useAuth, useUser } from "@clerk/expo";
 import * as Notifications from "expo-notifications";
 import { Link, Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -68,7 +68,6 @@ function ConfiguredSettingsRouteScreen() {
   const { push } = useRouter();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
-  const { isAvailable: isUserProfileModalAvailable, presentUserProfile } = useUserProfileModal();
   const { savedConnectionsById } = useRemoteEnvironmentState();
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
@@ -266,15 +265,11 @@ function ConfiguredSettingsRouteScreen() {
       push("/settings/waitlist");
       return;
     }
-    if (isUserProfileModalAvailable) {
-      void presentUserProfile();
-      return;
-    }
     Alert.alert(
       "T3 Cloud unavailable",
       "Native T3 Cloud account management is not available in this build.",
     );
-  }, [isLoaded, isSignedIn, isUserProfileModalAvailable, presentUserProfile, push]);
+  }, [isLoaded, isSignedIn, push]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

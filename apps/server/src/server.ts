@@ -87,6 +87,12 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 
+// Effect's default preemptive shutdown waits 20s before finalizing request scopes.
+// T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
+// already closes the websocket gracefully. Do not add an artificial drain before
+// those finalizers get a chance to run.
+const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
+
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
     if (typeof Bun !== "undefined") {
@@ -116,6 +122,7 @@ const HttpServerLive = Layer.unwrap(
       return BunHttpServer.layer({
         port: config.port,
         ...(config.host ? { hostname: config.host } : {}),
+        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       });
     } else {
       const [NodeHttpServer, NodeHttp] = yield* Effect.all([
@@ -125,6 +132,7 @@ const HttpServerLive = Layer.unwrap(
       return NodeHttpServer.layer(NodeHttp.createServer, {
         host: config.host,
         port: config.port,
+        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       });
     }
   }),

@@ -149,7 +149,7 @@ describe("MessagesTimeline", () => {
     }
   });
 
-  it("uses accessible tooltips instead of native titles for work entry details", async () => {
+  it("uses accessible expansion instead of native titles or preview tooltips for work entry details", async () => {
     const screen = await render(
       <MessagesTimeline
         {...buildProps()}
@@ -181,21 +181,12 @@ describe("MessagesTimeline", () => {
         "Command - git diff -- apps/web/src/components/ChatMarkdown.tsx",
       );
       await commandTrigger.hover();
-      await vi.waitFor(() => {
-        const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
-        expect(tooltip?.textContent).toContain(
-          "git diff -- apps/web/src/components/ChatMarkdown.tsx --stat",
-        );
-      });
+      expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull();
 
-      const fileTrigger = page.getByLabelText("repo/apps/web/src/components/ChatMarkdown.tsx", {
-        exact: true,
-      });
-      await fileTrigger.hover();
-      await vi.waitFor(() => {
-        const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
-        expect(tooltip?.textContent).toContain("apps/web/src/components/ChatMarkdown.tsx");
-      });
+      await commandTrigger.click();
+      await expect
+        .element(page.getByText("git diff -- apps/web/src/components/ChatMarkdown.tsx --stat"))
+        .toBeVisible();
     } finally {
       await screen.unmount();
     }
