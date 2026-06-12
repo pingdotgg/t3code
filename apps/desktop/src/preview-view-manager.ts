@@ -6,16 +6,17 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
-import type { PickedElementPayload } from "@t3tools/contracts";
+import type { PreviewAnnotationPayload, PreviewAnnotationRect } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { type BrowserWindow, type Session, session, webContents } from "electron";
 
-import { isPickedElementPayload } from "./picked-element-payload.ts";
+import { isPreviewAnnotationPayload } from "./picked-element-payload.ts";
 
 const PREVIEW_PARTITION = "persist:t3code-preview";
 const START_PICK_CHANNEL = "preview:start-pick";
 const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
 const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
+const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
 
 // Re-export the guest webview security posture from its dedicated module so
 // the constant is unit-testable in isolation. See
@@ -53,6 +54,58 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
 
+const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
+  if (typeof value !== "object" || value === null) return null;
+  const rect = value as Record<string, unknown>;
+  const x = rect["x"];
+  const y = rect["y"];
+  const width = rect["width"];
+  const height = rect["height"];
+  if (
+    typeof x !== "number" ||
+    !Number.isFinite(x) ||
+    typeof y !== "number" ||
+    !Number.isFinite(y) ||
+    typeof width !== "number" ||
+    !Number.isFinite(width) ||
+    typeof height !== "number" ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  return {
+    x: Math.max(0, Math.floor(x)),
+    y: Math.max(0, Math.floor(y)),
+    width: Math.max(1, Math.ceil(width)),
+    height: Math.max(1, Math.ceil(height)),
+  };
+};
+
+const captureAnnotationScreenshot = async (
+  wc: Electron.WebContents,
+  cropRect: PreviewAnnotationRect | null,
+) => {
+  const image = await wc.capturePage(
+    cropRect
+      ? {
+          x: cropRect.x,
+          y: cropRect.y,
+          width: cropRect.width,
+          height: cropRect.height,
+        }
+      : undefined,
+  );
+  const size = image.getSize();
+  return {
+    dataUrl: image.toDataURL(),
+    width: size.width,
+    height: size.height,
+    cropRect: cropRect ?? { x: 0, y: 0, width: size.width, height: size.height },
+  };
+};
+
 const findZoomStep = (current: number): number => {
   for (let index = 0; index < ZOOM_LEVELS.length; index += 1) {
     if (Math.abs(ZOOM_LEVELS[index]! - current) < ZOOM_EPSILON) return index;
@@ -77,7 +130,7 @@ interface ManagedListeners {
 }
 
 interface PickSession {
-  readonly resolve: (payload: PickedElementPayload | null) => void;
+  readonly resolve: (payload: PreviewAnnotationPayload | null) => void;
   readonly cleanup: () => void;
 }
 
@@ -103,7 +156,7 @@ export class PreviewViewManager {
   private readonly attached = new Map<number, ManagedListeners>();
   private browserSession: Session | null = null;
   private readonly listeners = new Set<Listener>();
-  /** In-flight element-pick sessions, keyed by tabId (one pick per tab). */
+  /** In-flight preview annotation sessions, keyed by tabId. */
   private readonly pickSessions = new Map<string, PickSession>();
 
   setMainWindow(window: BrowserWindow): void {
@@ -290,17 +343,17 @@ export class PreviewViewManager {
   }
 
   /**
-   * Activate the in-page element picker for `tabId`. Resolves with the
-   * `PickedElementPayload` the preload script bubbles back via `ipc-message`,
-   * or `null` when the user cancels (Escape, navigation, manual cancel).
+   * Activate annotation mode for `tabId`. Resolves after the guest submits a
+   * multi-target annotation and the desktop process captures its screenshot,
+   * or with `null` when the user cancels.
    *
    * Exactly one pick session may be active per tab — re-invoking while a
    * pick is in flight cleanly resolves the old session with `null` first.
    */
-  async pickElement(tabId: string): Promise<PickedElementPayload | null> {
+  async pickElement(tabId: string): Promise<PreviewAnnotationPayload | null> {
     const wc = this.requireWebContents(tabId);
     this.cancelPickElement(tabId);
-    return new Promise<PickedElementPayload | null>((resolve) => {
+    return new Promise<PreviewAnnotationPayload | null>((resolve) => {
       // `wc.ipc` is the per-WebContents IpcMain that receives messages the
       // webview's preload sends with `ipcRenderer.send(...)`. We use that
       // (not the global `wc.on("ipc-message", ...)`, which is for
@@ -313,7 +366,7 @@ export class PreviewViewManager {
         this.pickSessions.delete(tabId);
       };
       const session: PickSession = { resolve, cleanup };
-      const settle = (payload: PickedElementPayload | null) => {
+      const settle = (payload: PreviewAnnotationPayload | null) => {
         if (this.pickSessions.get(tabId) !== session) return;
         cleanup();
         resolve(payload);
@@ -324,11 +377,22 @@ export class PreviewViewManager {
           settle(null);
           return;
         }
-        if (!isPickedElementPayload(payload)) {
+        if (!isPreviewAnnotationPayload(payload)) {
           settle(null);
           return;
         }
-        settle(payload);
+        const cropRect = normalizeCaptureRect(args[1]);
+        void captureAnnotationScreenshot(wc, cropRect)
+          .then((screenshot) => settle({ ...payload, screenshot }))
+          .catch(() => settle(payload))
+          .finally(() => {
+            if (wc.isDestroyed()) return;
+            try {
+              wc.send(ANNOTATION_CAPTURED_CHANNEL);
+            } catch {
+              // The guest may have navigated while capture was in flight.
+            }
+          });
       };
       const onDestroyed = () => settle(null);
       const onNavigated = () => settle(null);
