@@ -54,6 +54,7 @@ const rpcClientMock = {
     listDirectoryEntries: vi.fn(),
     readFile: vi.fn(),
     writeFile: vi.fn(),
+    deleteEntry: vi.fn(),
   },
   filesystem: {
     browse: vi.fn(),
@@ -437,6 +438,25 @@ describe("wsApi", () => {
       cwd: "/repo",
       target: "unstaged",
       ignoreWhitespace: true,
+    });
+  });
+
+  it("forwards project entry deletes directly to the RPC client", async () => {
+    rpcClientMock.projects.deleteEntry.mockResolvedValue({ relativePath: "src/old.ts" });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+
+    await expect(
+      api.projects.deleteEntry({
+        cwd: "/repo",
+        relativePath: "src/old.ts",
+      }),
+    ).resolves.toEqual({ relativePath: "src/old.ts" });
+
+    expect(rpcClientMock.projects.deleteEntry).toHaveBeenCalledWith({
+      cwd: "/repo",
+      relativePath: "src/old.ts",
     });
   });
 

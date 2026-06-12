@@ -11,6 +11,7 @@ import { installIosStandaloneBackSwipeGuard } from "./iosStandaloneBackSwipeGuar
 import { getRouter } from "./router";
 import { APP_BASE_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
+import { installPwaAppBadgeSync } from "./pwa/appBadge";
 import { registerPwaServiceWorker } from "./pwa/registerPwaServiceWorker";
 import { installServiceWorkerNotificationNavigation } from "./push/notificationNavigation";
 
@@ -25,6 +26,7 @@ if (isElectron) {
 }
 
 installIosStandaloneBackSwipeGuard();
+installPwaAppBadgeSync();
 registerPwaServiceWorker();
 
 document.title = APP_BASE_NAME;

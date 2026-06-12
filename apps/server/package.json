@@ -1,6 +1,6 @@
 {
   "name": "salchi",
-  "version": "0.0.30",
+  "version": "0.0.31",
   "description": "Minimal web GUI for coding agents.",
   "license": "MIT",
   "repository": {
@@ -12,7 +12,8 @@
     "salchi": "dist/bin.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "assets/salchi/salchi-logo-transparent.png"
   ],
   "type": "module",
   "scripts": {

@@ -117,13 +117,12 @@ export function resolveMobileEdgeSwipeDecision({
     horizontalDistance >= verticalDistance * MOBILE_EDGE_SWIPE_HORIZONTAL_DOMINANCE_RATIO;
 
   // Quick flick in the action direction: trigger before the sustained drag
-  // distance, so the gesture beats a scrollable body that would otherwise
-  // cancel the swipe. Vertical motion is intentionally ignored here; only
-  // horizontal intent matters, so flicking while the body scrolls up/down still
-  // works. A slow horizontal scroll never reaches the velocity threshold.
+  // distance, while still requiring horizontal dominance so fast vertical
+  // scrolling with incidental sideways motion does not open or close a panel.
   if (
     actionDistance >= MOBILE_EDGE_SWIPE_FLICK_DISTANCE_PX &&
-    actionVelocity >= MOBILE_EDGE_SWIPE_FLICK_VELOCITY_PX_PER_MS
+    actionVelocity >= MOBILE_EDGE_SWIPE_FLICK_VELOCITY_PX_PER_MS &&
+    isHorizontallyDominant
   ) {
     return action;
   }
@@ -140,6 +139,15 @@ export function resolveMobileEdgeSwipeDecision({
     return action;
   }
 
+  if (
+    verticalDistance >= MOBILE_EDGE_SWIPE_VERTICAL_CANCEL_DISTANCE_PX &&
+    !isHorizontallyDominant
+  ) {
+    return "cancel";
+  }
+
+  // Reuse the cancel threshold as an opposite-direction dead zone once the drag
+  // has moved meaningfully away from the requested panel action.
   if (actionDistance <= -MOBILE_EDGE_SWIPE_VERTICAL_CANCEL_DISTANCE_PX) {
     return "cancel";
   }

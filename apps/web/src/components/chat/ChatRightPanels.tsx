@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, type CSSProperties } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { closeWorkspaceFilePreview, reopenWorkspaceFilePanel } from "../../workspaceFilePreview";
 import type { WorkspaceFilePreviewDiffReturnTarget } from "../../workspaceFilePreview";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
@@ -199,29 +201,44 @@ export function ChatRightPanels(props: {
   // enter animation. The pool itself is a refcounted singleton, so the separate
   // providers below share one underlying pool.
   if (useSheet) {
+    // Mobile keeps diff and files/source-control in a *single* sheet so moving
+    // between source control → diff → file preview swaps content in place
+    // instead of cross-animating two sheets. Files wins as the active view when
+    // it is open (a preview opened on top of the diff, or source control with no
+    // diff); otherwise the diff is active. Closing dismisses only the active
+    // layer, leaving any layer underneath to swap back into place.
+    const diffOpen = diff?.open ?? false;
+    const sheetOpen = diffOpen || fileOpen;
+    const filesActive = fileOpen;
+    const onCloseSheet = () => {
+      if (filesActive) {
+        closeWorkspaceFilePreview();
+        return;
+      }
+      diff?.onClose();
+    };
+
     return (
-      <>
-        {diff ? (
-          <RightPanelSheet open={diff.open} onClose={diff.onClose}>
-            {diff.renderContent ? (
-              <DiffWorkerPoolProvider>
+      <RightPanelSheet open={sheetOpen} onClose={onCloseSheet}>
+        {diff?.renderContent || renderFileContent ? (
+          <DiffWorkerPoolProvider>
+            {diff?.renderContent ? (
+              <div className={cn("h-full min-h-0", filesActive && "hidden")}>
                 <LazyDiffPanel mode="sheet" />
-              </DiffWorkerPoolProvider>
+              </div>
             ) : null}
-          </RightPanelSheet>
+            {renderFileContent ? (
+              <div className={cn("h-full min-h-0", !filesActive && "hidden")}>
+                <WorkspaceFilesPanel
+                  mode="sheet"
+                  onReturnToDiff={onReturnFromFileToDiff}
+                  panelOpen={fileOpen}
+                />
+              </div>
+            ) : null}
+          </DiffWorkerPoolProvider>
         ) : null}
-        <RightPanelSheet open={fileOpen} onClose={closeWorkspaceFilePreview}>
-          {renderFileContent ? (
-            <DiffWorkerPoolProvider>
-              <WorkspaceFilesPanel
-                mode="sheet"
-                onReturnToDiff={onReturnFromFileToDiff}
-                panelOpen={fileOpen}
-              />
-            </DiffWorkerPoolProvider>
-          ) : null}
-        </RightPanelSheet>
-      </>
+      </RightPanelSheet>
     );
   }
 

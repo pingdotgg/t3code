@@ -10,8 +10,12 @@ import {
 } from "./pendingNotificationClick";
 
 export const NOTIFICATION_CLICK_MESSAGE_TYPE = "t3.notification-click";
+// Mirrored in public/t3-push-service-worker.js. The service worker is a plain
+// public asset, so it cannot import this TypeScript helper directly.
+export const NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME = "t3-notification-click";
 
 let lastNotificationNavigationTarget: NotificationNavigationTarget | null = null;
+let lastHandledClick: { readonly url: string; readonly openedAt: number } | null = null;
 let replayInFlight: Promise<void> | null = null;
 
 const PENDING_NOTIFICATION_CLICK_TTL_MS = 2 * 60 * 1000;
@@ -140,6 +144,7 @@ export function getLastNotificationNavigationTarget(): NotificationNavigationTar
 
 export function resetNotificationNavigationStateForTests(): void {
   lastNotificationNavigationTarget = null;
+  lastHandledClick = null;
   replayInFlight = null;
 }
 
@@ -183,6 +188,55 @@ export function installServiceWorkerNotificationNavigation(router: AppRouter): (
   cleanupCallbacks.push(() => {
     serviceWorker.removeEventListener("message", handleMessage);
   });
+
+  if (typeof BroadcastChannel !== "undefined") {
+    try {
+      const channel = new BroadcastChannel(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME);
+      const handleBroadcastMessage = (event: MessageEvent<unknown>) => {
+        if (!isNotificationClickClientMessage(event.data)) {
+          return;
+        }
+
+        if (
+          typeof document !== "undefined" &&
+          typeof document.hasFocus === "function" &&
+          !document.hasFocus()
+        ) {
+          recordResumeDiagnostic("notification-navigation-message", {
+            reason: "broadcast-ignored-unfocused",
+            data: {
+              url: event.data.url,
+              openedAt: event.data.openedAt,
+            },
+          });
+          return;
+        }
+
+        recordResumeDiagnostic("notification-navigation-message", {
+          reason: "broadcast-channel",
+          data: {
+            url: event.data.url,
+            openedAt: event.data.openedAt,
+          },
+        });
+        void handleNotificationClickNavigation(router, {
+          clearPending: true,
+          reason: "broadcast-channel",
+          url: event.data.url,
+          ...(event.data.openedAt !== undefined ? { openedAt: event.data.openedAt } : {}),
+        });
+      };
+
+      channel.addEventListener("message", handleBroadcastMessage);
+      cleanupCallbacks.push(() => {
+        channel.removeEventListener("message", handleBroadcastMessage);
+        channel.close();
+      });
+    } catch {
+      // Broadcast delivery is best-effort. Service worker postMessage and the
+      // pending-click cache still cover browsers that do not support it here.
+    }
+  }
 
   if (typeof window !== "undefined" && "addEventListener" in window) {
     const handleFocus = () => replayPendingClick("window-focus");
@@ -320,6 +374,26 @@ function handleNotificationClickNavigation(
     readonly url: string;
   },
 ): boolean {
+  const openedAt = Number.isFinite(input.openedAt) ? input.openedAt : undefined;
+  if (
+    openedAt !== undefined &&
+    lastHandledClick?.url === input.url &&
+    lastHandledClick.openedAt === openedAt
+  ) {
+    recordResumeDiagnostic("notification-navigation-message", {
+      reason: "duplicate",
+      data: {
+        source: input.reason,
+        url: input.url,
+        openedAt,
+      },
+    });
+    if (input.clearPending) {
+      void clearPendingNotificationClick();
+    }
+    return true;
+  }
+
   const target = parseNotificationNavigationTarget(input.url);
   if (target === null) {
     recordResumeDiagnostic("notification-navigation-target", {
@@ -344,7 +418,12 @@ function handleNotificationClickNavigation(
       target,
     },
   });
-  const openedAt = Number.isFinite(input.openedAt) ? input.openedAt : undefined;
+  if (openedAt !== undefined) {
+    lastHandledClick = {
+      url: input.url,
+      openedAt,
+    };
+  }
   reconcileAfterNotificationClick(target, openedAt === undefined ? undefined : { openedAt });
   void navigateToNotificationTarget(router, target);
   if (input.clearPending) {

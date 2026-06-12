@@ -194,7 +194,70 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
     yield* workspaceEntries.invalidate(input.cwd);
     return { relativePath: target.relativePath };
   });
-  return { readFile, writeFile } satisfies WorkspaceFileSystemShape;
+
+  const deleteEntry: WorkspaceFileSystemShape["deleteEntry"] = Effect.fn(
+    "WorkspaceFileSystem.deleteEntry",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+
+    const stat = yield* Effect.tryPromise({
+      try: () => fsPromises.lstat(target.absolutePath),
+      catch: (cause) =>
+        new WorkspaceFileSystemError({
+          cwd: input.cwd,
+          relativePath: input.relativePath,
+          operation: "workspaceFileSystem.lstat",
+          detail: `Workspace file does not exist: ${input.relativePath}`,
+          cause,
+        }),
+    });
+
+    if (stat.isDirectory()) {
+      yield* Effect.tryPromise({
+        try: () => fsPromises.rmdir(target.absolutePath),
+        catch: (cause) =>
+          new WorkspaceFileSystemError({
+            cwd: input.cwd,
+            relativePath: input.relativePath,
+            operation: "workspaceFileSystem.rmdir",
+            detail:
+              cause instanceof Error ? cause.message : "Failed to delete workspace directory.",
+            cause,
+          }),
+      });
+      yield* workspaceEntries.invalidate(input.cwd);
+      return { relativePath: target.relativePath };
+    }
+
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      return yield* new WorkspaceFileSystemError({
+        cwd: input.cwd,
+        relativePath: input.relativePath,
+        operation: "workspaceFileSystem.deleteEntry",
+        detail: "Workspace path is not a file or directory.",
+      });
+    }
+
+    yield* Effect.tryPromise({
+      try: () => fsPromises.unlink(target.absolutePath),
+      catch: (cause) =>
+        new WorkspaceFileSystemError({
+          cwd: input.cwd,
+          relativePath: input.relativePath,
+          operation: "workspaceFileSystem.unlink",
+          detail: cause instanceof Error ? cause.message : "Failed to delete workspace file.",
+          cause,
+        }),
+    });
+
+    yield* workspaceEntries.invalidate(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  return { readFile, writeFile, deleteEntry } satisfies WorkspaceFileSystemShape;
 });
 
 export const WorkspaceFileSystemLive = Layer.effect(WorkspaceFileSystem, makeWorkspaceFileSystem);

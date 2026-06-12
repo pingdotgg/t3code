@@ -161,6 +161,25 @@ describe("buildOpenDiffSearch", () => {
     });
   });
 
+  it("opens a working-tree diff with a selected file path", () => {
+    expect(
+      buildOpenDiffSearch(
+        {
+          diff: "1",
+          diffSource: "unstaged",
+          diffFilePath: "src/old.ts",
+          panel: "activity",
+        },
+        { source: "staged", filePath: "src/app.ts" },
+      ),
+    ).toEqual({
+      diff: "1",
+      diffSource: "staged",
+      diffFilePath: "src/app.ts",
+      panel: "activity",
+    });
+  });
+
   it("opens the generic all-turns diff without a source", () => {
     expect(
       buildOpenDiffSearch({

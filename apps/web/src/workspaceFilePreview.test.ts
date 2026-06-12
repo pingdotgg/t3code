@@ -172,6 +172,20 @@ describe("workspace file panel state", () => {
     });
   });
 
+  it("lets a diff preview opened over source control return to the diff first", () => {
+    const previewTarget = createPreviewTarget("src/from-diff.ts");
+    openWorkspaceSourceControlPanel();
+    openWorkspaceFilePreview(previewTarget, { returnTarget: diffReturnTarget });
+
+    expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
+      open: true,
+      view: "preview",
+      target: previewTarget,
+      history: [{ kind: "source-control" }, diffReturnTarget],
+      returnTarget: diffReturnTarget,
+    });
+  });
+
   it("keeps explorer file previews in the same stack", () => {
     const previewTarget = createPreviewTarget("src/from-git.ts");
     const explorerFileTarget = createPreviewTarget("src/from-explorer.ts");

@@ -29,20 +29,26 @@ import {
 import { projectQueryKeys } from "../lib/projectReactQuery";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
 
-const { localContextMenuShowMock, refreshGitStatusMock, toastAddMock, useGitStatusMock } =
-  vi.hoisted(() => ({
-    localContextMenuShowMock: vi.fn(async () => "add-to-input" as string | null),
-    refreshGitStatusMock: vi.fn<typeof import("../lib/gitStatusState").refreshGitStatus>(
-      async () => null,
-    ),
-    toastAddMock: vi.fn(() => "toast-1"),
-    useGitStatusMock: vi.fn<typeof import("../lib/gitStatusState").useGitStatus>(() => ({
-      data: null,
-      error: null,
-      cause: null,
-      isPending: false,
-    })),
-  }));
+const {
+  localConfirmMock,
+  localContextMenuShowMock,
+  refreshGitStatusMock,
+  toastAddMock,
+  useGitStatusMock,
+} = vi.hoisted(() => ({
+  localConfirmMock: vi.fn(async () => true),
+  localContextMenuShowMock: vi.fn(async () => "add-to-input" as string | null),
+  refreshGitStatusMock: vi.fn<typeof import("../lib/gitStatusState").refreshGitStatus>(
+    async () => null,
+  ),
+  toastAddMock: vi.fn(() => "toast-1"),
+  useGitStatusMock: vi.fn<typeof import("../lib/gitStatusState").useGitStatus>(() => ({
+    data: null,
+    error: null,
+    cause: null,
+    isPending: false,
+  })),
+}));
 
 vi.mock("../environments/runtime", () => ({
   addSavedEnvironment: vi.fn(),
@@ -83,6 +89,9 @@ vi.mock("../lib/gitStatusState", async (importOriginal) => {
 
 vi.mock("../localApi", () => ({
   readLocalApi: vi.fn(() => ({
+    dialogs: {
+      confirm: localConfirmMock,
+    },
     contextMenu: {
       show: localContextMenuShowMock,
     },
@@ -189,6 +198,9 @@ function createMockEnvironmentApi(
         truncated: false,
       })),
       writeFile: vi.fn(),
+      deleteEntry: vi.fn(async (input: { relativePath: string }) => ({
+        relativePath: input.relativePath,
+      })),
     },
   } as unknown as EnvironmentApi;
 }
@@ -290,6 +302,8 @@ describe("WorkspaceFilesPanel", () => {
     vi.restoreAllMocks();
     refreshGitStatusMock.mockReset();
     refreshGitStatusMock.mockResolvedValue(null);
+    localConfirmMock.mockReset();
+    localConfirmMock.mockResolvedValue(true);
     localContextMenuShowMock.mockReset();
     localContextMenuShowMock.mockResolvedValue("add-to-input");
     toastAddMock.mockReset();
@@ -376,7 +390,9 @@ describe("WorkspaceFilesPanel", () => {
           clientY: 16,
         }),
       );
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
       expect(localContextMenuShowMock).not.toHaveBeenCalled();
+      expect(addPathMention).not.toHaveBeenCalled();
 
       await page.getByRole("button", { name: /^src$/ }).click();
       await expect.element(page.getByRole("button", { name: /^App\.tsx$/ })).toBeVisible();
@@ -401,7 +417,10 @@ describe("WorkspaceFilesPanel", () => {
 
       await vi.waitFor(() => {
         expect(localContextMenuShowMock).toHaveBeenCalledWith(
-          [{ id: "add-to-input", label: "Add to chat input" }],
+          [
+            { id: "add-to-input", label: "Add to chat input" },
+            { id: "delete-entry", label: "Delete file", destructive: true },
+          ],
           { x: 12, y: 24 },
         );
         expect(addPathMention).toHaveBeenCalledWith("src/App.tsx");
@@ -409,6 +428,143 @@ describe("WorkspaceFilesPanel", () => {
           type: "success",
           title: "Added to input",
           description: "@src/App.tsx",
+        });
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("confirms before deleting explorer files from the context menu", async () => {
+    const api = createMockEnvironmentApi();
+    const invalidateQueriesSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    __setEnvironmentApiOverrideForTests(ENVIRONMENT_ID, api);
+    localContextMenuShowMock.mockResolvedValue("delete-entry");
+    const mounted = await renderFilesPanel();
+    try {
+      await expect.element(page.getByRole("button", { name: /^README\.md$/ })).toBeVisible();
+      refreshGitStatusMock.mockClear();
+      invalidateQueriesSpy.mockClear();
+      toastAddMock.mockClear();
+
+      document.querySelector<HTMLButtonElement>('button[title="README.md"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 28,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(localContextMenuShowMock).toHaveBeenCalledWith(
+          [
+            { id: "add-to-input", label: "Add to chat input" },
+            { id: "delete-entry", label: "Delete file", destructive: true },
+          ],
+          { x: 20, y: 28 },
+        );
+        expect(localConfirmMock).toHaveBeenCalledWith(
+          'Delete file "README.md"?\n\nThis cannot be undone.',
+        );
+        expect(api.projects.deleteEntry).toHaveBeenCalledWith({
+          cwd: WORKSPACE_ROOT,
+          relativePath: "README.md",
+        });
+        expect(invalidateQueriesSpy).toHaveBeenCalledWith({ queryKey: projectQueryKeys.all });
+        expect(refreshGitStatusMock).toHaveBeenCalledWith(
+          { environmentId: ENVIRONMENT_ID, cwd: WORKSPACE_ROOT },
+          { force: true },
+        );
+        expect(toastAddMock).toHaveBeenCalledWith({
+          type: "success",
+          title: "Deleted file",
+          description: "README.md",
+        });
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not delete explorer files when confirmation is cancelled", async () => {
+    const api = createMockEnvironmentApi();
+    __setEnvironmentApiOverrideForTests(ENVIRONMENT_ID, api);
+    localContextMenuShowMock.mockResolvedValue("delete-entry");
+    localConfirmMock.mockResolvedValue(false);
+    const mounted = await renderFilesPanel();
+    try {
+      await expect.element(page.getByRole("button", { name: /^README\.md$/ })).toBeVisible();
+
+      document.querySelector<HTMLButtonElement>('button[title="README.md"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 28,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(localConfirmMock).toHaveBeenCalledWith(
+          'Delete file "README.md"?\n\nThis cannot be undone.',
+        );
+      });
+      expect(api.projects.deleteEntry).not.toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("confirms before deleting empty folders from the context menu", async () => {
+    const api = createMockEnvironmentApi({
+      rootEntries: [{ kind: "directory", path: "src" }],
+      srcEntries: [],
+    });
+    __setEnvironmentApiOverrideForTests(ENVIRONMENT_ID, api);
+    localContextMenuShowMock.mockResolvedValue("delete-entry");
+    const mounted = await renderFilesPanel({
+      initialize: () =>
+        openWorkspaceFileExplorer({
+          environmentId: ENVIRONMENT_ID,
+          cwd: WORKSPACE_ROOT,
+          projectName: "project",
+        }),
+    });
+    try {
+      await expect.element(page.getByRole("button", { name: /^src$/ })).toBeVisible();
+      refreshGitStatusMock.mockClear();
+      toastAddMock.mockClear();
+
+      document.querySelector<HTMLButtonElement>('button[title="src"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 16,
+          clientY: 22,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(localContextMenuShowMock).toHaveBeenCalledWith(
+          [{ id: "delete-entry", label: "Delete empty folder", destructive: true }],
+          { x: 16, y: 22 },
+        );
+        expect(localConfirmMock).toHaveBeenCalledWith(
+          'Delete empty folder "src"?\n\nThis cannot be undone.',
+        );
+        expect(api.projects.deleteEntry).toHaveBeenCalledWith({
+          cwd: WORKSPACE_ROOT,
+          relativePath: "src",
+        });
+        expect(refreshGitStatusMock).toHaveBeenCalledWith(
+          { environmentId: ENVIRONMENT_ID, cwd: WORKSPACE_ROOT },
+          { force: true },
+        );
+        expect(toastAddMock).toHaveBeenCalledWith({
+          type: "success",
+          title: "Deleted folder",
+          description: "src",
         });
       });
     } finally {

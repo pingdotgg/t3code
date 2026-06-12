@@ -13,7 +13,10 @@ import {
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useMobileEdgeSwipe } from "../hooks/useMobileEdgeSwipe";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  resolveRightFilePanelVisibility,
+  RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
+} from "../rightPanelLayout";
 import {
   markRightPanelUsed,
   openLastUsedRightPanel,
@@ -54,6 +57,13 @@ function DraftChatThreadRouteView() {
   const filePanelOpen = filePanel.open;
   const sourceControlOpen = useSourceControlPanelState().open;
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const rightFilePanel = resolveRightFilePanelVisibility({
+    diffOpen,
+    filePanelOpen,
+    hasStoredFilePanelContext: filePanel.target !== null || filePanel.explorerContext !== null,
+    sourceControlOpen,
+    useSheet: shouldUseRightPanelSheet,
+  });
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
     draftId,
     hasOpenedDiff: diffOpen,
@@ -205,10 +215,10 @@ function DraftChatThreadRouteView() {
   }, [diffOpen]);
 
   useEffect(() => {
-    if (filePanelOpen && !sourceControlOpen) {
+    if (rightFilePanel.open && !sourceControlOpen) {
       markRightPanelUsed("file");
     }
-  }, [filePanelOpen, sourceControlOpen]);
+  }, [rightFilePanel.open, sourceControlOpen]);
 
   useRegisterRightPanel({
     close: closeDiff,
@@ -234,7 +244,7 @@ function DraftChatThreadRouteView() {
     enabled:
       shouldUseRightPanelSheet &&
       !diffOpen &&
-      !filePanelOpen &&
+      !rightFilePanel.open &&
       !sourceControlOpen &&
       !leftSidebarOpenMobile,
     onSwipe: openLastUsedRightPanel,
@@ -245,7 +255,8 @@ function DraftChatThreadRouteView() {
 
   useMobileEdgeSwipe({
     action: "close",
-    enabled: shouldUseRightPanelSheet && sourceControlOpen,
+    enabled:
+      shouldUseRightPanelSheet && sourceControlOpen && !rightFilePanel.sourceControlHiddenByDiff,
     onSwipe: closeSourceControlPanel,
     requireScrollableStartPosition: true,
     side: "right",
@@ -265,7 +276,7 @@ function DraftChatThreadRouteView() {
 
   useMobileEdgeSwipe({
     action: "close",
-    enabled: shouldUseRightPanelSheet && filePanelOpen && !sourceControlOpen,
+    enabled: shouldUseRightPanelSheet && rightFilePanel.open && !sourceControlOpen,
     onSwipe: closeWorkspaceFilePreview,
     requireScrollableStartPosition: true,
     side: "right",
@@ -292,10 +303,7 @@ function DraftChatThreadRouteView() {
   // See the thread route: reopen restores from the store, so only keep the
   // file/source-control panel mounted-while-closed inline, not on the mobile
   // sheet where the resident diff rendering is a crash risk.
-  const shouldRenderFilePanelContent =
-    filePanelOpen ||
-    (!shouldUseRightPanelSheet &&
-      (filePanel.target !== null || filePanel.explorerContext !== null));
+  const shouldRenderFilePanelContent = rightFilePanel.renderContent;
   // See the thread route: keeping the diff panel (and its worker pool) mounted
   // after it closes is a memory win for inline layout switches but a crash risk
   // on the mobile sheet, so tear it down on dismiss there.
@@ -320,7 +328,7 @@ function DraftChatThreadRouteView() {
           onOpen: openDiff,
           renderContent: shouldRenderDiffContent,
         }}
-        fileOpen={filePanelOpen}
+        fileOpen={rightFilePanel.open}
         renderFileContent={shouldRenderFilePanelContent}
         useSheet={shouldUseRightPanelSheet}
         onReturnFromFileToDiff={returnFromFilePreview}

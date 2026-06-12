@@ -4,10 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { TurnId } from "@t3tools/contracts";
 import {
+  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
+  FileSearchIcon,
   PanelRightCloseIcon,
   PilcrowIcon,
   Rows3Icon,
@@ -49,12 +51,18 @@ import {
   type ThreadRouteTarget,
 } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
+import { useSourceControlPanelState } from "../sourceControlPanelState";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { Button } from "./ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview";
+import {
+  openPathInPreferredEditorOrFilePreview,
+  openWorkspaceFilePreview,
+  type WorkspaceFilePreviewDiffReturnTarget,
+} from "../workspaceFilePreview";
 import {
   isWorkspaceImagePreviewPath,
   resolveWorkspaceGitImagePreviewUrl,
@@ -290,6 +298,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
+  const sourceControlOpen = useSourceControlPanelState().open;
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const serverThread = useStore(
@@ -559,6 +568,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
 
+  const buildDiffFileReturnTarget = useCallback(
+    (filePath: string): WorkspaceFilePreviewDiffReturnTarget => ({
+      kind: "diff",
+      ...(selectedDiffSource ? { diffSource: selectedDiffSource, diffFilePath: filePath } : {}),
+      ...(selectedTurn?.turnId ? { diffTurnId: selectedTurn.turnId, diffFilePath: filePath } : {}),
+    }),
+    [selectedDiffSource, selectedTurn?.turnId],
+  );
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
@@ -568,18 +585,30 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ? { environmentId: activeDiffContext.environmentId }
           : {}),
         ...(activeCwd ? { cwd: activeCwd, displayPath: filePath } : {}),
-        returnTarget: {
-          kind: "diff",
-          ...(selectedDiffSource ? { diffSource: selectedDiffSource } : {}),
-          ...(selectedDiffSource ? { diffFilePath: filePath } : {}),
-          ...(selectedTurn?.turnId ? { diffTurnId: selectedTurn.turnId } : {}),
-          ...(selectedTurn?.turnId ? { diffFilePath: filePath } : {}),
-        },
+        returnTarget: buildDiffFileReturnTarget(filePath),
       }).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd, activeDiffContext?.environmentId, selectedDiffSource, selectedTurn?.turnId],
+    [activeCwd, activeDiffContext?.environmentId, buildDiffFileReturnTarget],
+  );
+  const openDiffFilePreview = useCallback(
+    (filePath: string) => {
+      if (!activeCwd || !activeDiffContext?.environmentId) {
+        return;
+      }
+
+      openWorkspaceFilePreview(
+        {
+          environmentId: activeDiffContext.environmentId,
+          cwd: activeCwd,
+          relativePath: filePath,
+          displayPath: filePath,
+        },
+        { returnTarget: buildDiffFileReturnTarget(filePath) },
+      );
+    },
+    [activeCwd, activeDiffContext?.environmentId, buildDiffFileReturnTarget],
   );
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     setCollapsedDiffFileKeys((current) => {
@@ -741,6 +770,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   })();
   const headerRow = (
     <>
+      {sourceControlOpen ? (
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Back to source control"
+          title="Back to source control"
+          className="shrink-0 [-webkit-app-region:no-drag]"
+          onClick={closeDiffPanel}
+        >
+          <ArrowLeftIcon className="size-3.5" />
+        </Button>
+      ) : null}
       <div className="hidden min-w-0 flex-1 [-webkit-app-region:no-drag] max-[760px]:block">
         <Select
           value={diffSelectionValue}
@@ -756,7 +797,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             selectTurn(value as TurnId);
           }}
         >
-          <SelectTrigger className="w-full" aria-label="Diff selection">
+          <SelectTrigger className="w-full min-w-0" aria-label="Diff selection">
             <SelectValue>{selectedDiffDropdownLabel}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1094,6 +1135,30 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                 <ChevronDownIcon className="size-4" />
                               )}
                             </button>
+                          )}
+                          renderHeaderMetadata={() => (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    aria-label={`Preview ${filePath}`}
+                                    className="size-5 text-muted-foreground/75 hover:text-foreground"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openDiffFilePreview(filePath);
+                                    }}
+                                  />
+                                }
+                              >
+                                <FileSearchIcon className="size-3.5" />
+                              </TooltipTrigger>
+                              <TooltipPopup className="pointer-events-none" side="bottom">
+                                Preview file
+                              </TooltipPopup>
+                            </Tooltip>
                           )}
                           options={{
                             collapsed: collapsed || shouldRenderImagePreview,

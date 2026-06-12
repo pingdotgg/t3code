@@ -10,6 +10,7 @@ import {
   getLastNotificationNavigationTarget,
   installServiceWorkerNotificationNavigation,
   isNotificationClickClientMessage,
+  NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME,
   parseNotificationNavigationTarget,
   resetNotificationNavigationStateForTests,
   resolveNotificationUrl,
@@ -35,11 +36,66 @@ function createCacheStorageMock() {
   };
 }
 
-function stubServiceWorker(options: { readonly cacheStorage?: CacheStorage } = {}) {
+interface MockBroadcastChannelInstance extends EventTarget {
+  readonly name: string;
+  readonly close: ReturnType<typeof vi.fn>;
+  closed: boolean;
+}
+
+function stubBroadcastChannel() {
+  const channels: MockBroadcastChannelInstance[] = [];
+  class MockBroadcastChannel extends EventTarget implements MockBroadcastChannelInstance {
+    readonly name: string;
+    closed = false;
+    readonly close = vi.fn(() => {
+      this.closed = true;
+    });
+
+    constructor(name: string) {
+      super();
+      this.name = name;
+      channels.push(this);
+    }
+  }
+
+  vi.stubGlobal("BroadcastChannel", MockBroadcastChannel);
+
+  return {
+    channels,
+    dispatch(name: string, data: unknown) {
+      for (const channel of channels) {
+        if (channel.name !== name || channel.closed) {
+          continue;
+        }
+        const event = new Event("message") as MessageEvent;
+        Object.defineProperty(event, "data", { value: data });
+        channel.dispatchEvent(event);
+      }
+    },
+  };
+}
+
+function stubServiceWorker(
+  options: {
+    readonly broadcastChannel?: "mock" | "none";
+    readonly cacheStorage?: CacheStorage;
+  } = {},
+) {
   const serviceWorkerTarget = new EventTarget();
   const windowTarget = new EventTarget();
   const documentTarget = new EventTarget();
   const startMessages = vi.fn();
+  const broadcastChannel = options.broadcastChannel === "none" ? undefined : stubBroadcastChannel();
+  if (options.broadcastChannel === "none") {
+    vi.stubGlobal("BroadcastChannel", undefined);
+  }
+  let documentHasFocus = true;
+  const windowStub: Record<string, unknown> = {
+    ...(options.cacheStorage ? { caches: options.cacheStorage } : {}),
+    addEventListener: windowTarget.addEventListener.bind(windowTarget),
+    location: { origin: ORIGIN },
+    removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+  };
   vi.stubGlobal("navigator", {
     serviceWorker: {
       addEventListener: serviceWorkerTarget.addEventListener.bind(serviceWorkerTarget),
@@ -47,19 +103,16 @@ function stubServiceWorker(options: { readonly cacheStorage?: CacheStorage } = {
       startMessages,
     },
   });
-  vi.stubGlobal("window", {
-    ...(options.cacheStorage ? { caches: options.cacheStorage } : {}),
-    addEventListener: windowTarget.addEventListener.bind(windowTarget),
-    location: { origin: ORIGIN },
-    removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
-  });
+  vi.stubGlobal("window", windowStub);
   vi.stubGlobal("document", {
     addEventListener: documentTarget.addEventListener.bind(documentTarget),
+    hasFocus: vi.fn(() => documentHasFocus),
     removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
     visibilityState: "visible",
   });
 
   return {
+    broadcastChannel,
     dispatch(data: unknown) {
       const event = new Event("message") as MessageEvent;
       Object.defineProperty(event, "data", { value: data });
@@ -70,6 +123,12 @@ function stubServiceWorker(options: { readonly cacheStorage?: CacheStorage } = {
     },
     dispatchDocumentEvent(type: string) {
       documentTarget.dispatchEvent(new Event(type));
+    },
+    setCacheStorage(cacheStorage: CacheStorage) {
+      windowStub.caches = cacheStorage;
+    },
+    setDocumentHasFocus(value: boolean) {
+      documentHasFocus = value;
     },
     startMessages,
   };
@@ -218,6 +277,203 @@ describe("notificationNavigation", () => {
       url: "/env-2/thread-2",
     });
     expect(router.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("navigates broadcast click messages through the app router and clears pending clicks", async () => {
+    const resumeDiagnostics = await import("../environments/runtime/resumeDiagnostics");
+    const diagnosticSpy = vi.spyOn(resumeDiagnostics, "recordResumeDiagnostic");
+    const service = await import("../environments/runtime/service");
+    const reconcileSpy = vi
+      .spyOn(service, "reconcileAfterNotificationClick")
+      .mockImplementation(() => undefined);
+    const { cacheStorage } = createCacheStorageMock();
+    const serviceWorker = stubServiceWorker();
+    const router = makeRouter();
+    const openedAt = Date.now();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+    serviceWorker.setCacheStorage(cacheStorage as unknown as CacheStorage);
+    await flushMicrotasks();
+    await writePendingNotificationClick({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    serviceWorker.broadcastChannel?.dispatch(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME, {
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    await flushMicrotasks();
+
+    expect(router.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: {
+        environmentId: "env-1",
+        threadId: "thread-1",
+      },
+      search: {},
+    });
+    expect(reconcileSpy).toHaveBeenCalledWith(
+      {
+        kind: "thread",
+        environmentId: "env-1",
+        threadId: "thread-1",
+      },
+      {
+        openedAt,
+      },
+    );
+    expect(diagnosticSpy).toHaveBeenCalledWith(
+      "notification-navigation-message",
+      expect.objectContaining({
+        reason: "broadcast-channel",
+        data: expect.objectContaining({
+          url: "/env-1/thread-1",
+          openedAt,
+        }),
+      }),
+    );
+    await expect(readPendingNotificationClick()).resolves.toBeNull();
+
+    cleanup();
+  });
+
+  it("dedupes identical service worker and broadcast click messages", async () => {
+    const resumeDiagnostics = await import("../environments/runtime/resumeDiagnostics");
+    const diagnosticSpy = vi.spyOn(resumeDiagnostics, "recordResumeDiagnostic");
+    const service = await import("../environments/runtime/service");
+    const reconcileSpy = vi
+      .spyOn(service, "reconcileAfterNotificationClick")
+      .mockImplementation(() => undefined);
+    const serviceWorker = stubServiceWorker();
+    const router = makeRouter();
+    const openedAt = Date.now();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+    serviceWorker.dispatch({
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    serviceWorker.broadcastChannel?.dispatch(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME, {
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    expect(router.navigate).toHaveBeenCalledTimes(1);
+
+    serviceWorker.broadcastChannel?.dispatch(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME, {
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt: openedAt + 1,
+    });
+
+    expect(router.navigate).toHaveBeenCalledTimes(2);
+    expect(reconcileSpy).toHaveBeenCalledTimes(2);
+    expect(diagnosticSpy).toHaveBeenCalledWith(
+      "notification-navigation-message",
+      expect.objectContaining({
+        reason: "duplicate",
+        data: expect.objectContaining({
+          source: "broadcast-channel",
+          url: "/env-1/thread-1",
+          openedAt,
+        }),
+      }),
+    );
+
+    cleanup();
+  });
+
+  it("dedupes a pending-cache replay of a broadcast click", async () => {
+    const service = await import("../environments/runtime/service");
+    vi.spyOn(service, "reconcileAfterNotificationClick").mockImplementation(() => undefined);
+    const { cacheStorage } = createCacheStorageMock();
+    const serviceWorker = stubServiceWorker();
+    const router = makeRouter();
+    const openedAt = Date.now();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+    serviceWorker.setCacheStorage(cacheStorage as unknown as CacheStorage);
+    await flushMicrotasks();
+    serviceWorker.broadcastChannel?.dispatch(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME, {
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    await writePendingNotificationClick({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    await consumePendingNotificationClick(router, "test-cache-replay");
+
+    expect(router.navigate).toHaveBeenCalledTimes(1);
+    await expect(readPendingNotificationClick()).resolves.toBeNull();
+
+    cleanup();
+  });
+
+  it("ignores broadcast click messages when the document is not focused", async () => {
+    const resumeDiagnostics = await import("../environments/runtime/resumeDiagnostics");
+    const diagnosticSpy = vi.spyOn(resumeDiagnostics, "recordResumeDiagnostic");
+    const { cacheStorage } = createCacheStorageMock();
+    const serviceWorker = stubServiceWorker();
+    const router = makeRouter();
+    const openedAt = Date.now();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+    serviceWorker.setCacheStorage(cacheStorage as unknown as CacheStorage);
+    await flushMicrotasks();
+    await writePendingNotificationClick({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    serviceWorker.setDocumentHasFocus(false);
+    serviceWorker.broadcastChannel?.dispatch(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME, {
+      type: "t3.notification-click",
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    await flushMicrotasks();
+
+    expect(router.navigate).not.toHaveBeenCalled();
+    await expect(readPendingNotificationClick()).resolves.toEqual({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    expect(diagnosticSpy).toHaveBeenCalledWith(
+      "notification-navigation-message",
+      expect.objectContaining({
+        reason: "broadcast-ignored-unfocused",
+      }),
+    );
+
+    cleanup();
+  });
+
+  it("closes the broadcast channel during cleanup", () => {
+    const serviceWorker = stubServiceWorker();
+    const router = makeRouter();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+    const [channel] = serviceWorker.broadcastChannel?.channels ?? [];
+    expect(channel?.closed).toBe(false);
+
+    cleanup();
+
+    expect(channel?.close).toHaveBeenCalledTimes(1);
+    expect(channel?.closed).toBe(true);
+  });
+
+  it("does not throw when BroadcastChannel is unavailable", () => {
+    const serviceWorker = stubServiceWorker({ broadcastChannel: "none" });
+    const router = makeRouter();
+
+    const cleanup = installServiceWorkerNotificationNavigation(router);
+
+    cleanup();
+    expect(serviceWorker.broadcastChannel).toBeUndefined();
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 
   it("starts service worker message delivery when installed", () => {

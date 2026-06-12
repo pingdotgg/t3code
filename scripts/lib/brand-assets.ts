@@ -1,6 +1,7 @@
 export const BRAND_ASSET_PATHS = {
   salchiIconPng: "assets/salchi/salchi-icon-1024.png",
   salchiIconIco: "assets/salchi/salchi-icon.ico",
+  salchiReadmeLogoPng: "assets/salchi/salchi-logo-transparent.png",
   salchiWebLogoPng: "assets/salchi/salchi-logo.png",
 } as const;
 

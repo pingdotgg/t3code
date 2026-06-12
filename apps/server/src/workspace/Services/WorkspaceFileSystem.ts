@@ -15,6 +15,8 @@ import type {
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
 } from "@t3tools/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
 
@@ -56,6 +58,19 @@ export interface WorkspaceFileSystemShape {
     input: ProjectWriteFileInput,
   ) => Effect.Effect<
     ProjectWriteFileResult,
+    WorkspaceFileSystemError | WorkspacePathOutsideRootError
+  >;
+
+  /**
+   * Delete a file or empty directory relative to the workspace root.
+   *
+   * Rejects paths that escape the workspace root and rejects non-empty
+   * directories. Symlinks are unlinked directly rather than followed.
+   */
+  readonly deleteEntry: (
+    input: ProjectDeleteEntryInput,
+  ) => Effect.Effect<
+    ProjectDeleteEntryResult,
     WorkspaceFileSystemError | WorkspacePathOutsideRootError
   >;
 }

@@ -29,6 +29,7 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectDeleteEntryError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   ThreadId,
@@ -1348,6 +1349,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   ? "Workspace file path must stay within the project root."
                   : "Failed to write workspace file";
                 return new ProjectWriteFileError({
+                  message,
+                  cause,
+                });
+              }),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteEntry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteEntry,
+            workspaceFileSystem.deleteEntry(input).pipe(
+              Effect.mapError((cause) => {
+                const message = isWorkspacePathOutsideRootError(cause)
+                  ? "Workspace entry path must stay within the project root."
+                  : cause.detail;
+                return new ProjectDeleteEntryError({
                   message,
                   cause,
                 });

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
   ChevronRightIcon,
@@ -24,6 +24,7 @@ import {
 
 import { useLongPressContextMenu } from "../hooks/useLongPressContextMenu";
 import { useTheme } from "../hooks/useTheme";
+import { ensureEnvironmentApi } from "../environmentApi";
 import {
   projectListDirectoryEntriesQueryOptions,
   projectQueryKeys,
@@ -43,15 +44,33 @@ import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { toastManager } from "./ui/toast";
 
 const EXPLORER_ROW_HEIGHT_CLASS_NAME = "h-7";
 const EXPLORER_DIRECTORY_ENTRY_LIMIT = 500;
 const EXPLORER_SEARCH_ENTRY_LIMIT = 120;
 const EMPTY_CHANGED_FILES: ReadonlyArray<WorkspaceChangedFile> = [];
 
-const ADD_TO_INPUT_CONTEXT_MENU_ITEMS = [
-  { id: "add-to-input", label: "Add to chat input" },
-] as const;
+type WorkspaceExplorerEntryContextMenuAction = "add-to-input" | "delete-entry";
+
+function workspaceExplorerEntryContextMenuItems(input: {
+  canAddToInput: boolean;
+  canDelete: boolean;
+  entryKind: ProjectEntry["kind"];
+}): ContextMenuItem<WorkspaceExplorerEntryContextMenuAction>[] {
+  const items: ContextMenuItem<WorkspaceExplorerEntryContextMenuAction>[] = [];
+  if (input.canAddToInput) {
+    items.push({ id: "add-to-input", label: "Add to chat input" });
+  }
+  if (input.canDelete) {
+    items.push({
+      id: "delete-entry",
+      label: input.entryKind === "directory" ? "Delete empty folder" : "Delete file",
+      destructive: true,
+    });
+  }
+  return items;
+}
 
 function basenameOfPath(path: string): string {
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -104,6 +123,8 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
   expanded: boolean;
   mode: "tree" | "search";
   onAddFileToInput?: ((entry: ProjectEntry) => void) | undefined;
+  onCanDeleteEntry?: ((entry: ProjectEntry) => boolean | Promise<boolean>) | undefined;
+  onDeleteEntry?: ((entry: ProjectEntry) => void | Promise<void>) | undefined;
   onOpenFile: (entry: ProjectEntry) => void;
   onRevealDirectory: (path: string) => void;
   onToggleDirectory: (path: string) => void;
@@ -115,6 +136,8 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
     expanded,
     mode,
     onAddFileToInput,
+    onCanDeleteEntry,
+    onDeleteEntry,
     onOpenFile,
     onRevealDirectory,
     onToggleDirectory,
@@ -137,7 +160,9 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
     statusBadge && changeDecoration?.source === "directory"
       ? `Contains ${changeDecoration.descendantCount} changed ${statusChangedFileNoun}; highest status ${statusBadge.label}`
       : statusBadge?.label;
-  const contextMenuEnabled = !isDirectory && onAddFileToInput !== undefined;
+  const canAddToInput = !isDirectory && onAddFileToInput !== undefined;
+  const canAttemptDelete = onDeleteEntry !== undefined;
+  const contextMenuEnabled = canAddToInput || canAttemptDelete;
 
   const onClick = useCallback(() => {
     if (isDirectory) {
@@ -150,7 +175,7 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
     }
     onOpenFile(entry);
   }, [entry, isDirectory, mode, onOpenFile, onRevealDirectory, onToggleDirectory]);
-  const openAddToInputContextMenu = useCallback(
+  const openFileContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       if (!contextMenuEnabled) {
         return;
@@ -159,12 +184,40 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
       if (!api) {
         return;
       }
-      const clicked = await api.contextMenu.show(ADD_TO_INPUT_CONTEXT_MENU_ITEMS, position);
-      if (clicked === "add-to-input") {
+      const canDelete = canAttemptDelete ? (await onCanDeleteEntry?.(entry)) !== false : false;
+      const contextMenuItems = workspaceExplorerEntryContextMenuItems({
+        canAddToInput,
+        canDelete,
+        entryKind: entry.kind,
+      });
+      if (contextMenuItems.length === 0) {
+        return;
+      }
+      const clicked = await api.contextMenu.show(contextMenuItems, position);
+      if (clicked === "add-to-input" && canAddToInput) {
         onAddFileToInput?.(entry);
+        return;
+      }
+      if (clicked === "delete-entry" && canDelete) {
+        const actionLabel = isDirectory ? "Delete empty folder" : "Delete file";
+        const confirmed = await api.dialogs.confirm(
+          `${actionLabel} "${entry.path}"?\n\nThis cannot be undone.`,
+        );
+        if (confirmed) {
+          await onDeleteEntry?.(entry);
+        }
       }
     },
-    [contextMenuEnabled, entry, onAddFileToInput],
+    [
+      canAddToInput,
+      canAttemptDelete,
+      contextMenuEnabled,
+      entry,
+      isDirectory,
+      onCanDeleteEntry,
+      onAddFileToInput,
+      onDeleteEntry,
+    ],
   );
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -173,9 +226,9 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
       }
       event.preventDefault();
       event.stopPropagation();
-      void openAddToInputContextMenu({ x: event.clientX, y: event.clientY });
+      void openFileContextMenu({ x: event.clientX, y: event.clientY });
     },
-    [contextMenuEnabled, openAddToInputContextMenu],
+    [contextMenuEnabled, openFileContextMenu],
   );
   const {
     onClickCapture: handleLongPressClickCapture,
@@ -186,7 +239,7 @@ const WorkspaceExplorerEntryRow = memo(function WorkspaceExplorerEntryRow(props:
     onPointerUpCapture: handleLongPressPointerUpCapture,
   } = useLongPressContextMenu<HTMLButtonElement>({
     enabled: contextMenuEnabled,
-    onLongPress: openAddToInputContextMenu,
+    onLongPress: openFileContextMenu,
   });
 
   return (
@@ -268,6 +321,8 @@ function WorkspaceDirectoryEntries(props: {
   environmentId: EnvironmentId;
   expandedDirectoryPaths: ReadonlySet<string>;
   onAddFileToInput?: ((entry: ProjectEntry) => void) | undefined;
+  onCanDeleteEntry?: ((entry: ProjectEntry) => boolean | Promise<boolean>) | undefined;
+  onDeleteEntry?: ((entry: ProjectEntry) => void | Promise<void>) | undefined;
   onOpenFile: (entry: ProjectEntry) => void;
   onRevealDirectory: (path: string) => void;
   onToggleDirectory: (path: string) => void;
@@ -314,6 +369,8 @@ function WorkspaceDirectoryEntries(props: {
               expanded={expanded}
               mode="tree"
               onAddFileToInput={props.onAddFileToInput}
+              onCanDeleteEntry={props.onCanDeleteEntry}
+              onDeleteEntry={props.onDeleteEntry}
               onOpenFile={props.onOpenFile}
               onRevealDirectory={props.onRevealDirectory}
               onToggleDirectory={props.onToggleDirectory}
@@ -328,6 +385,8 @@ function WorkspaceDirectoryEntries(props: {
                 environmentId={props.environmentId}
                 expandedDirectoryPaths={props.expandedDirectoryPaths}
                 onAddFileToInput={props.onAddFileToInput}
+                onCanDeleteEntry={props.onCanDeleteEntry}
+                onDeleteEntry={props.onDeleteEntry}
                 onOpenFile={props.onOpenFile}
                 onRevealDirectory={props.onRevealDirectory}
                 onToggleDirectory={props.onToggleDirectory}
@@ -349,6 +408,8 @@ function WorkspaceSearchEntries(props: {
   cwd: string;
   environmentId: EnvironmentId;
   onAddFileToInput?: ((entry: ProjectEntry) => void) | undefined;
+  onCanDeleteEntry?: ((entry: ProjectEntry) => boolean | Promise<boolean>) | undefined;
+  onDeleteEntry?: ((entry: ProjectEntry) => void | Promise<void>) | undefined;
   onOpenFile: (entry: ProjectEntry) => void;
   onRevealDirectory: (path: string) => void;
   query: string;
@@ -392,6 +453,8 @@ function WorkspaceSearchEntries(props: {
           expanded={false}
           mode="search"
           onAddFileToInput={props.onAddFileToInput}
+          onCanDeleteEntry={props.onCanDeleteEntry}
+          onDeleteEntry={props.onDeleteEntry}
           onOpenFile={props.onOpenFile}
           onRevealDirectory={props.onRevealDirectory}
           onToggleDirectory={props.onRevealDirectory}
@@ -507,6 +570,55 @@ export function WorkspaceFileExplorerPanel(props: {
     [onScrollTopChange],
   );
 
+  const canDeleteWorkspaceEntry = useCallback(
+    async (entry: ProjectEntry) => {
+      if (entry.kind !== "directory") {
+        return true;
+      }
+
+      try {
+        const api = ensureEnvironmentApi(environmentId);
+        const listing = await api.projects.listDirectoryEntries({
+          cwd: workspaceRoot,
+          directoryPath: entry.path,
+          limit: 1,
+        });
+        return listing.entries.length === 0;
+      } catch {
+        return false;
+      }
+    },
+    [environmentId, workspaceRoot],
+  );
+
+  const deleteWorkspaceEntry = useCallback(
+    async (entry: ProjectEntry) => {
+      try {
+        const api = ensureEnvironmentApi(environmentId);
+        await api.projects.deleteEntry({
+          cwd: workspaceRoot,
+          relativePath: entry.path,
+        });
+        void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+        void refreshGitStatus({ environmentId, cwd: workspaceRoot }, { force: true });
+        const entryTypeLabel = entry.kind === "directory" ? "folder" : "file";
+        toastManager.add({
+          type: "success",
+          title: `Deleted ${entryTypeLabel}`,
+          description: entry.path,
+        });
+      } catch (error) {
+        const entryTypeLabel = entry.kind === "directory" ? "folder" : "file";
+        toastManager.add({
+          type: "error",
+          title: `Failed to delete ${entryTypeLabel}`,
+          description: error instanceof Error ? error.message : `Failed to delete ${entry.path}.`,
+        });
+      }
+    },
+    [environmentId, queryClient, workspaceRoot],
+  );
+
   const header = useMemo(
     () => (
       <>
@@ -585,6 +697,8 @@ export function WorkspaceFileExplorerPanel(props: {
               cwd={workspaceRoot}
               environmentId={environmentId}
               onAddFileToInput={onAddFileToInput}
+              onCanDeleteEntry={canDeleteWorkspaceEntry}
+              onDeleteEntry={deleteWorkspaceEntry}
               onOpenFile={onOpenFile}
               onRevealDirectory={onRevealDirectory}
               query={trimmedSearchQuery}
@@ -598,6 +712,8 @@ export function WorkspaceFileExplorerPanel(props: {
               environmentId={environmentId}
               expandedDirectoryPaths={expandedDirectoryPaths}
               onAddFileToInput={onAddFileToInput}
+              onCanDeleteEntry={canDeleteWorkspaceEntry}
+              onDeleteEntry={deleteWorkspaceEntry}
               onOpenFile={onOpenFile}
               onRevealDirectory={onRevealDirectory}
               onToggleDirectory={onToggleDirectory}

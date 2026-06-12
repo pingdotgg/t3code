@@ -375,11 +375,15 @@ const useWorkspaceFilePreviewStore = create<WorkspaceFilePreviewState>((set) => 
         target,
       } satisfies WorkspaceFilePanelPreviewHistoryEntry;
       let history = historyWithCurrentEntry(state, destination);
+      const explicitReturnEntry = historyEntryFromReturnTarget(options?.returnTarget);
+
+      if (state.open && state.view === "source-control" && explicitReturnEntry?.kind === "diff") {
+        history = appendHistoryEntry(history, explicitReturnEntry);
+      }
 
       if (!state.open) {
-        const fallbackEntry = historyEntryFromReturnTarget(options?.returnTarget);
-        if (fallbackEntry) {
-          history = appendHistoryEntry(history, fallbackEntry);
+        if (explicitReturnEntry) {
+          history = appendHistoryEntry(history, explicitReturnEntry);
         }
       }
 

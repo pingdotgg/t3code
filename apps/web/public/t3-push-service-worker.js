@@ -1,6 +1,9 @@
 const DEFAULT_NOTIFICATION_TITLE = "Salchi";
 const DEFAULT_NOTIFICATION_URL = "/";
 const NOTIFICATION_CLICK_MESSAGE_TYPE = "t3.notification-click";
+// Mirrored in src/push/notificationNavigation.ts. The service worker is a
+// public plain JS asset, so it cannot import the TypeScript helper directly.
+const NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME = "t3-notification-click";
 const NOTIFICATION_TITLE_SOURCE_SUFFIX = /(?:^|\s+)from\s+Salchi\s*$/i;
 // Mirrored in src/push/pendingNotificationClick.ts. The service worker is a
 // public plain JS asset, so it cannot import the TypeScript helper directly.
@@ -20,14 +23,24 @@ self.addEventListener("push", (event) => {
     },
   };
 
-  event.waitUntil(self.registration.showNotification(title, notification));
+  event.waitUntil(
+    (async () => {
+      await self.registration.showNotification(title, notification);
+      await syncDisplayedNotificationBadge({ skipVisibleClient: true });
+    })(),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = resolveNotificationUrl(event.notification.data?.url);
 
-  event.waitUntil(openNotificationUrl(url));
+  event.waitUntil(
+    (async () => {
+      await syncDisplayedNotificationBadge();
+      await openNotificationUrl(url);
+    })(),
+  );
 });
 
 function readPushPayload(event) {
@@ -87,22 +100,83 @@ async function openNotificationUrl(url) {
     openedAt: Date.now(),
   };
   await persistPendingNotificationClick(click);
+  broadcastNotificationClick(click);
 
   return openNotificationClickTarget(click);
 }
 
 async function openNotificationClickTarget(click) {
-  const clients = await self.clients.matchAll({
-    type: "window",
-    includeUncontrolled: true,
-  });
+  const [clients, controlledClients] = await Promise.all([
+    self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    }),
+    self.clients.matchAll({
+      type: "window",
+    }),
+  ]);
   const sameOriginClients = clients.filter((client) => isSameOriginUrl(client.url));
   if (sameOriginClients.length === 0) {
     return openWindowAndPostNotificationClick(click);
   }
 
   const targetClient = selectNotificationClient(sameOriginClients, click.url);
+  if (isControlledNotificationClient(targetClient, controlledClients)) {
+    return focusClientAndPostNotificationClick(targetClient, click);
+  }
+
   return navigateFocusAndPostNotificationClick(targetClient, click);
+}
+
+function canSetAppBadge() {
+  return typeof self.navigator?.setAppBadge === "function";
+}
+
+function isVisibleSameOriginClient(client) {
+  return (
+    isSameOriginUrl(client.url) && (client.focused === true || client.visibilityState === "visible")
+  );
+}
+
+async function hasVisibleSameOriginWindowClient() {
+  const clients = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  return clients.some((client) => isVisibleSameOriginClient(client));
+}
+
+async function syncDisplayedNotificationBadge(options = {}) {
+  if (!canSetAppBadge() || typeof self.registration?.getNotifications !== "function") {
+    return false;
+  }
+
+  if (options.skipVisibleClient === true && (await hasVisibleSameOriginWindowClient())) {
+    return false;
+  }
+
+  const notifications = await self.registration.getNotifications();
+  return writeServiceWorkerAppBadge(notifications.length);
+}
+
+async function writeServiceWorkerAppBadge(count) {
+  const badgeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  try {
+    if (badgeCount > 0) {
+      await self.navigator.setAppBadge(badgeCount);
+      return true;
+    }
+
+    if (typeof self.navigator.clearAppBadge === "function") {
+      await self.navigator.clearAppBadge();
+      return true;
+    }
+
+    await self.navigator.setAppBadge(0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function navigateFocusAndPostNotificationClick(client, click) {
@@ -181,6 +255,34 @@ function postNotificationClickMessage(client, click) {
   client.postMessage(message);
 }
 
+function broadcastNotificationClick(click) {
+  if (!("BroadcastChannel" in self)) {
+    return;
+  }
+
+  let channel = null;
+  try {
+    channel = new self.BroadcastChannel(NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME);
+    const message = {
+      type: NOTIFICATION_CLICK_MESSAGE_TYPE,
+      url: click.url,
+      openedAt: click.openedAt,
+    };
+    // BroadcastChannel.postMessage does not accept a target origin.
+    // oxlint-disable-next-line require-post-message-target-origin
+    channel.postMessage(message);
+  } catch {
+    // Broadcast delivery is best-effort. The pending-click cache remains the
+    // fallback for clients that miss this message.
+  } finally {
+    try {
+      channel?.close();
+    } catch {
+      // Closing a best-effort channel must not block notification handling.
+    }
+  }
+}
+
 async function persistPendingNotificationClick(click) {
   if (!("caches" in self)) {
     return;
@@ -205,6 +307,14 @@ function makePendingNotificationClickRequest() {
   return new Request(new URL(PENDING_NOTIFICATION_CLICK_REQUEST_PATH, self.location.origin), {
     method: "GET",
   });
+}
+
+function isControlledNotificationClient(client, controlledClients) {
+  if (!client || !("id" in client) || typeof client.id !== "string") {
+    return false;
+  }
+
+  return controlledClients.some((controlledClient) => controlledClient.id === client.id);
 }
 
 function selectNotificationClient(sameOriginClients, url) {

@@ -34,6 +34,8 @@ import type {
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
 } from "./project.ts";
 import type { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import type {
@@ -550,6 +552,7 @@ export interface EnvironmentApi {
     ) => Promise<ProjectListDirectoryEntriesResult>;
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    deleteEntry: (input: ProjectDeleteEntryInput) => Promise<ProjectDeleteEntryResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

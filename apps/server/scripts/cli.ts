@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { PUBLISH_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
+import { BRAND_ASSET_PATHS, PUBLISH_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -87,10 +87,16 @@ interface PublishIconBackup {
   readonly backupPath: string;
 }
 
-interface PublishRootFileBackup {
+interface PublishPackageFileBackup {
   readonly targetPath: string;
   readonly backupPath: string | null;
 }
+
+const PUBLISH_PACKAGE_FILE_PATHS = [
+  "README.md",
+  "LICENSE",
+  BRAND_ASSET_PATHS.salchiReadmeLogoPng,
+] as const;
 
 const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(function* (
   repoRoot: string,
@@ -128,7 +134,7 @@ const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(functio
   return backups as ReadonlyArray<PublishIconBackup>;
 });
 
-const copyPublishRootFiles = Effect.fn("copyPublishRootFiles")(function* (
+const copyPublishPackageFiles = Effect.fn("copyPublishPackageFiles")(function* (
   repoRoot: string,
   serverDir: string,
 ) {
@@ -137,11 +143,11 @@ const copyPublishRootFiles = Effect.fn("copyPublishRootFiles")(function* (
   const backupDirectory = yield* fs.makeTempDirectoryScoped({
     prefix: "salchi-publish-root-files-",
   });
-  const backups: PublishRootFileBackup[] = [];
+  const backups: PublishPackageFileBackup[] = [];
 
-  for (const filename of ["README.md", "LICENSE"]) {
-    const sourcePath = path.join(repoRoot, filename);
-    const targetPath = path.join(serverDir, filename);
+  for (const relativePath of PUBLISH_PACKAGE_FILE_PATHS) {
+    const sourcePath = path.join(repoRoot, relativePath);
+    const targetPath = path.join(serverDir, relativePath);
 
     if (!(yield* fs.exists(sourcePath))) {
       return yield* new CliError({
@@ -150,18 +156,19 @@ const copyPublishRootFiles = Effect.fn("copyPublishRootFiles")(function* (
     }
 
     const backupPath = (yield* fs.exists(targetPath))
-      ? path.join(backupDirectory, `${backups.length}-${filename}`)
+      ? path.join(backupDirectory, `${backups.length}-${path.basename(relativePath)}`)
       : null;
     if (backupPath) {
       yield* fs.copyFile(targetPath, backupPath);
     }
 
+    yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
     yield* fs.copyFile(sourcePath, targetPath);
     backups.push({ targetPath, backupPath });
   }
 
-  yield* Effect.log("[cli] Copied README.md and LICENSE into package root");
-  return backups as ReadonlyArray<PublishRootFileBackup>;
+  yield* Effect.log("[cli] Copied publish package files into package root");
+  return backups as ReadonlyArray<PublishPackageFileBackup>;
 });
 
 const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(function* (
@@ -176,8 +183,8 @@ const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(fun
   }
 });
 
-const restorePublishRootFiles = Effect.fn("restorePublishRootFiles")(function* (
-  backups: ReadonlyArray<PublishRootFileBackup>,
+const restorePublishPackageFiles = Effect.fn("restorePublishPackageFiles")(function* (
+  backups: ReadonlyArray<PublishPackageFileBackup>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   for (const backup of backups) {
@@ -333,8 +340,8 @@ const publishCmd = Command.make(
           yield* Effect.log("[cli] Prepared package.json for publish");
 
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
-          const rootFileBackups = yield* copyPublishRootFiles(repoRoot, serverDir);
-          return { iconBackups, rootFileBackups };
+          const packageFileBackups = yield* copyPublishPackageFiles(repoRoot, serverDir);
+          return { iconBackups, packageFileBackups };
         }),
         // Use: npm publish
         () =>
@@ -358,12 +365,12 @@ const publishCmd = Command.make(
         // Release: restore
         (resource: {
           readonly iconBackups: ReadonlyArray<PublishIconBackup>;
-          readonly rootFileBackups: ReadonlyArray<PublishRootFileBackup>;
+          readonly packageFileBackups: ReadonlyArray<PublishPackageFileBackup>;
         }) =>
           Effect.gen(function* () {
-            yield* restorePublishRootFiles(resource.rootFileBackups).pipe(
+            yield* restorePublishPackageFiles(resource.packageFileBackups).pipe(
               Effect.catch((error) =>
-                Effect.logError(`[cli] Failed to restore publish root files: ${String(error)}`),
+                Effect.logError(`[cli] Failed to restore publish package files: ${String(error)}`),
               ),
             );
             yield* restorePublishIconOverrides(resource.iconBackups).pipe(

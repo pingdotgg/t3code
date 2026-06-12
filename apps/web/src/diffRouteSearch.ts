@@ -43,13 +43,14 @@ export function stripDiffSearchParams<T extends object>(
 
 export function buildOpenDiffSearch<T extends object>(
   params: T,
-  options?: { source?: DiffRouteSource | undefined },
+  options?: { filePath?: string | undefined; source?: DiffRouteSource | undefined },
 ): Omit<T, "diff" | "diffSource" | "diffTurnId" | "diffFilePath"> & DiffRouteSearch {
   const rest = stripDiffSearchParams(params);
   return {
     ...rest,
     diff: "1",
     ...(options?.source ? { diffSource: options.source } : {}),
+    ...(options?.source && options.filePath ? { diffFilePath: options.filePath } : {}),
   };
 }
 

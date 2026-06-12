@@ -1201,6 +1201,40 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (!serverThread?.id) return;
     const threadKey = scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id));
+    const markVisibleThreadVisited = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      markThreadVisited(threadKey);
+    };
+
+    markVisibleThreadVisited();
+
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        markThreadVisited(threadKey);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [
+    serverThread?.id,
+    serverThread?.environmentId,
+    serverThread?.latestTurn?.completedAt,
+    markThreadVisited,
+  ]);
+
+  useEffect(() => {
+    if (!serverThread?.id) return;
+    const threadKey = scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id));
     return () => {
       markThreadVisited(threadKey);
     };

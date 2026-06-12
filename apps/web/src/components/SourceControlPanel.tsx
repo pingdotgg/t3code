@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -33,10 +33,15 @@ import {
 
 import { openWorkspaceFilePreview } from "../workspaceFilePreview";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { buildOpenDiffSearch } from "../diffRouteSearch";
 import { useStore, selectProjectByRef } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { useTheme } from "../hooks/useTheme";
-import { resolveThreadRouteTarget } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  buildThreadRouteParams,
+  resolveThreadRouteTarget,
+} from "../threadRoutes";
 import {
   readSourceControlPanelScrollTop,
   recordSourceControlPanelCollapsedDirs,
@@ -230,6 +235,7 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
   const { commitMessage } = useSourceControlPanelState();
   const setCommitMessage = useSetSourceControlCommitMessage();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const sourceControlListRef = useRef<VirtualizedListHandle | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<SourceControlSection>>(
@@ -789,20 +795,38 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
       });
   }, [generateCommitMessageMutation, setCommitMessage]);
 
-  const handleOpenFilePreview = useCallback(
-    (filePath: string) => {
+  const handleOpenFileDiff = useCallback(
+    (filePath: string, section: SourceControlSection) => {
       if (!environmentId || !cwd) return;
-      openWorkspaceFilePreview(
-        {
-          environmentId,
-          cwd,
-          relativePath: filePath,
-          displayPath: filePath,
-        },
-        { returnTarget: { kind: "source-control" } },
-      );
+      if (!routeTarget) {
+        openWorkspaceFilePreview(
+          {
+            environmentId,
+            cwd,
+            relativePath: filePath,
+            displayPath: filePath,
+          },
+          { returnTarget: { kind: "source-control" } },
+        );
+        return;
+      }
+
+      if (routeTarget.kind === "draft") {
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(routeTarget.draftId),
+          search: (previous) => buildOpenDiffSearch(previous, { source: section, filePath }),
+        });
+        return;
+      }
+
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(routeTarget.threadRef),
+        search: (previous) => buildOpenDiffSearch(previous, { source: section, filePath }),
+      });
     },
-    [cwd, environmentId],
+    [cwd, environmentId, navigate, routeTarget],
   );
 
   const handleCommitMessageKeyDown = useCallback(
@@ -900,14 +924,14 @@ export default function SourceControlPanel({ mode = "sidebar", onClose }: Source
           onToggleDir={toggleDir}
           onFileAction={isStagedSection ? unstageOneFile : stageOneFile}
           onFileRevert={isStagedSection ? undefined : revertOneUnstagedFile}
-          onOpenFilePreview={handleOpenFilePreview}
+          onOpenFileDiff={handleOpenFileDiff}
         />
       );
     },
     [
       collapsedDirs,
       collapsedSections,
-      handleOpenFilePreview,
+      handleOpenFileDiff,
       isGitActionRunning,
       isStageOperationRunning,
       pendingRevertPaths,
@@ -1482,7 +1506,7 @@ function SourceControlTreeRow({
   onToggleDir,
   onFileAction,
   onFileRevert,
-  onOpenFilePreview,
+  onOpenFileDiff,
 }: {
   node: SourceControlTreeNode;
   section: SourceControlSection;
@@ -1496,7 +1520,7 @@ function SourceControlTreeRow({
   onToggleDir: (path: string) => void;
   onFileAction: (path: string) => void;
   onFileRevert?: ((path: string) => void) | undefined;
-  onOpenFilePreview: (path: string) => void;
+  onOpenFileDiff: (path: string, section: SourceControlSection) => void;
 }) {
   const indentStyle = { paddingLeft: `${viewMode === "tree" ? depth * 12 + 18 : 6}px` };
   const rowKey = sourceControlRowKey({ kind: "node", section, node, depth });
@@ -1548,7 +1572,7 @@ function SourceControlTreeRow({
       <button
         type="button"
         className="flex min-w-0 flex-1 items-center gap-1 text-left"
-        onClick={() => onOpenFilePreview(node.path)}
+        onClick={() => onOpenFileDiff(node.path, section)}
       >
         {/* Spacer matching the directory chevron so file icons align with sibling folder icons. */}
         {viewMode === "tree" ? <span className="size-3.5 shrink-0" aria-hidden="true" /> : null}

@@ -1,17 +1,14 @@
 <p align="center">
-  <img src="assets/salchi/salchi-logo.png" alt="Salchi logo" width="128" height="128" />
+  <img src="./assets/salchi/salchi-logo-transparent.png" alt="Salchi logo" width="128" height="128" />
 </p>
 
 # Salchi
 
 Salchi is a minimal web GUI for coding agents (currently OpenAI/Codex, Claude, Cursor, and OpenCode, more coming soon).
 
-## Why Salchi Over t3code?
+## Why Salchi?
 
-Salchi is built on top of the excellent t3code project, and I am grateful for
-the work that made this editor possible.
-
-Compared with using t3code directly, Salchi focuses on two things:
+Salchi focuses on two things:
 
 - A mobile-optimized PWA for checking in on coding-agent sessions away from your
   main machine.
@@ -27,11 +24,7 @@ That makes Salchi useful when you want:
 - PWA push notifications for agent activity. On mobile, install Salchi to the
   Home Screen first so notifications can work.
 - Bring-your-own-subscription provider access instead of a resold-token model.
-- Salchi-first mobile, PWA, provider, and remote-access polish on top of the
-  t3code editor base.
-
-I plan to keep the editor mostly up to date with t3code upstream while keeping
-Salchi focused on the workflows and polish that matter here.
+- Mobile, PWA, provider, and remote-access polish for coding-agent workflows.
 
 ## Installation
 
@@ -133,5 +126,3 @@ bun install .
 ```
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).

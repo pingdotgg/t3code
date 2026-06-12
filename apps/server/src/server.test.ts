@@ -2458,6 +2458,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.deleteEntry for files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "nested", "delete-me.txt"), "delete me");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteEntry]({
+            cwd: workspaceDir,
+            relativePath: "nested/delete-me.txt",
+          }),
+        ),
+      );
+      const deletedStat = yield* fs
+        .stat(path.join(workspaceDir, "nested", "delete-me.txt"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+
+      assert.equal(response.relativePath, "nested/delete-me.txt");
+      assert.equal(deletedStat, null);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteEntry for empty directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "empty"), { recursive: true });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteEntry]({
+            cwd: workspaceDir,
+            relativePath: "empty",
+          }),
+        ),
+      );
+      const deletedStat = yield* fs
+        .stat(path.join(workspaceDir, "empty"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+
+      assert.equal(response.relativePath, "empty");
+      assert.equal(deletedStat, null);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.readFile", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2568,6 +2623,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(
         result.failure.message,
         "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteEntry errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-delete-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteEntry]({
+            cwd: workspaceDir,
+            relativePath: "../escape.txt",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectDeleteEntryError");
+      assert.equal(
+        result.failure.message,
+        "Workspace entry path must stay within the project root.",
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

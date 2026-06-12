@@ -419,6 +419,7 @@ import { __resetSourceControlPanelStateForTests } from "../sourceControlPanelSta
 import {
   __readWorkspaceFilePanelStateForTests,
   __resetWorkspaceFilePanelStateForTests,
+  openWorkspaceSourceControlPanel,
 } from "../workspaceFilePreview";
 
 function Harness() {
@@ -658,35 +659,73 @@ describe("SourceControlPanel git action runner", () => {
     }
   });
 
-  it("opens staged and unstaged file rows in the file preview", async () => {
+  it("opens staged and unstaged file rows in the matching diff sidebar", async () => {
     currentGitStatusRef.current = createPanelStatus({
       stagedFiles: [{ path: "staged-only.ts", status: "modified", insertions: 1, deletions: 0 }],
       unstagedFiles: [
         { path: "unstaged-only.ts", status: "modified", insertions: 1, deletions: 0 },
       ],
     });
+    openWorkspaceSourceControlPanel();
     const { host, screen } = await renderPanel();
 
     try {
+      expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
+        open: true,
+        view: "source-control",
+      });
       findButtonByText("staged-only.ts")?.click();
-      let filePanel = __readWorkspaceFilePanelStateForTests();
-      expect(filePanel.open).toBe(true);
-      expect(filePanel.view).toBe("preview");
-      expect(filePanel.target?.relativePath).toBe("staged-only.ts");
-      expect(filePanel.returnTarget).toEqual({ kind: "source-control" });
+      let navigateInput = navigateSpy.mock.calls.at(-1)?.[0] as
+        | {
+            params: Record<string, unknown>;
+            search: (previous: Record<string, unknown>) => Record<string, unknown>;
+            to: string;
+          }
+        | undefined;
+      expect(navigateInput).toMatchObject({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: ENVIRONMENT_A, threadId: SHARED_THREAD_ID },
+      });
+      expect(
+        navigateInput?.search({
+          diff: "1",
+          diffSource: "unstaged",
+          diffFilePath: "stale.ts",
+          panel: "activity",
+        }),
+      ).toEqual({
+        diff: "1",
+        diffSource: "staged",
+        diffFilePath: "staged-only.ts",
+        panel: "activity",
+      });
+      expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
+        open: true,
+        view: "source-control",
+      });
 
       findButtonByText("unstaged-only.ts")?.click();
-      filePanel = __readWorkspaceFilePanelStateForTests();
-      expect(filePanel.target?.relativePath).toBe("unstaged-only.ts");
-      expect(filePanel.returnTarget).toBeNull();
-      expect(navigateSpy).not.toHaveBeenCalled();
+      navigateInput = navigateSpy.mock.calls.at(-1)?.[0] as typeof navigateInput;
+      expect(
+        navigateInput?.search({
+          diff: "1",
+          diffSource: "staged",
+          diffFilePath: "stale.ts",
+          panel: "activity",
+        }),
+      ).toEqual({
+        diff: "1",
+        diffSource: "unstaged",
+        diffFilePath: "unstaged-only.ts",
+        panel: "activity",
+      });
     } finally {
       await screen.unmount();
       host.remove();
     }
   });
 
-  it("restores the source control scroll position after returning from a file preview", async () => {
+  it("restores the source control scroll position after opening a file diff and remounting", async () => {
     currentGitStatusRef.current = createPanelStatus({
       unstagedFiles: Array.from({ length: 40 }, (_, index) => ({
         path: `docs/file-${String(index).padStart(2, "0")}.ts`,
@@ -695,6 +734,7 @@ describe("SourceControlPanel git action runner", () => {
         deletions: 0,
       })),
     });
+    openWorkspaceSourceControlPanel();
     const firstRender = await renderPanel();
 
     try {
@@ -710,10 +750,12 @@ describe("SourceControlPanel git action runner", () => {
       });
 
       findButtonByText("file-08.ts")?.click();
+      await vi.waitFor(() => {
+        expect(navigateSpy).toHaveBeenCalled();
+      });
       expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
         open: true,
-        view: "preview",
-        returnTarget: { kind: "source-control" },
+        view: "source-control",
       });
     } finally {
       await firstRender.screen.unmount();
@@ -819,13 +861,6 @@ describe("SourceControlPanel git action runner", () => {
       findButtonByExactText("src")?.click();
       await vi.waitFor(() => {
         expect(findButtonByText("app.ts")).toBeNull();
-      });
-
-      findButtonByText("keep.ts")?.click();
-      expect(__readWorkspaceFilePanelStateForTests()).toMatchObject({
-        open: true,
-        view: "preview",
-        returnTarget: { kind: "source-control" },
       });
     } finally {
       await firstRender.screen.unmount();

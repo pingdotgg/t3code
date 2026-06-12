@@ -44,7 +44,7 @@ const SEMVER_PATTERN = /^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:[-+][0-9A
 
 function usage(): string {
   return [
-    "Usage: bun run release:npm [--version <version> | --bump <major|minor|patch>] [flags]",
+    "Usage: pnpm release:npm [--version <version> | --bump <major|minor|patch>] [flags]",
     "",
     "Flags:",
     "  --version <version>  Explicit npm package version to publish.",
@@ -475,12 +475,12 @@ async function main() {
   );
 
   await run("node", ["scripts/update-release-package-versions.ts", targetVersion]);
-  await run("bun", ["install", "--lockfile-only", "--ignore-scripts"]);
-  await run("bun", ["fmt"]);
-  await run("bun", ["lint"]);
-  await run("bun", ["typecheck"]);
-  await run("bun", ["--filter", "@t3tools/web", "build"]);
-  await run("bun", ["--filter", "salchi", "build"]);
+  await run("pnpm", ["install", "--lockfile-only", "--ignore-scripts"]);
+  await run("pnpm", ["fmt"]);
+  await run("pnpm", ["lint"]);
+  await run("pnpm", ["typecheck"]);
+  await run("pnpm", ["--filter", "@t3tools/web", "build"]);
+  await run("pnpm", ["--filter", "salchi", "build"]);
 
   const otp = options.otp ?? (options.dryRun ? null : await promptHidden("npm OTP: "));
   const publishArgs = [
