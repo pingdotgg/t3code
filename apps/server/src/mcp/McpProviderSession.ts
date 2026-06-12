@@ -1,5 +1,4 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -9,11 +8,6 @@ export interface McpProviderSessionConfig {
   readonly endpoint: string;
   readonly authorizationHeader: string;
 }
-
-export class McpProviderSession extends Context.Service<
-  McpProviderSession,
-  McpProviderSessionConfig
->()("t3/mcp/Services/McpProviderSession") {}
 
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
 

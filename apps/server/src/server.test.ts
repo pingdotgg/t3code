@@ -99,8 +99,8 @@ import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./server
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
-import { PreviewManager } from "./preview/Services/Manager.ts";
-import { PortDiscovery } from "./preview/Services/PortScanner.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -669,7 +669,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
-          Layer.mock(PreviewManager)({
+          Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
             reportStatus: () => Effect.void,
@@ -681,7 +681,7 @@ const buildAppUnderTest = (options?: {
               PubSub.subscribe(pubsub),
             ),
           }),
-          Layer.mock(PortDiscovery)({
+          Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
             subscribe: () => Effect.succeed(() => {}),
             retain: () => Effect.succeed(() => {}),

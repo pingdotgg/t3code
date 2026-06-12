@@ -8,11 +8,12 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import packageJson from "../../../package.json" with { type: "json" };
-import { McpInvocationContext } from "../Services/McpInvocationContext.ts";
-import { McpSessionRegistry } from "../Services/McpSessionRegistry.ts";
-import { PreviewToolkitHandlersLive } from "../toolkits/preview/handlers.ts";
-import { PreviewToolkit } from "../toolkits/preview/tools.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { PreviewToolkitHandlersLive } from "./toolkits/preview/handlers.ts";
+import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -41,25 +42,24 @@ export const normalizeMcpHttpResponse = (
 };
 
 const McpAuthMiddlewareLive = HttpRouter.middleware<{
-  provides: McpInvocationContext;
+  provides: McpInvocationContext.McpInvocationContext;
 }>()(
   Effect.gen(function* () {
-    const registry = yield* McpSessionRegistry;
-    return (httpEffect) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const authorization = request.headers.authorization;
-        const token =
-          authorization?.startsWith("Bearer ") === true
-            ? authorization.slice("Bearer ".length).trim()
-            : "";
-        const invocation = yield* registry.resolve(token);
-        if (!invocation) return unauthorized;
-        return yield* httpEffect.pipe(
-          Effect.provideService(McpInvocationContext, invocation),
-          Effect.map(normalizeMcpHttpResponse),
-        );
-      });
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const authorization = request.headers.authorization;
+      const token =
+        authorization?.startsWith("Bearer ") === true
+          ? authorization.slice("Bearer ".length).trim()
+          : "";
+      const invocation = yield* registry.resolve(token);
+      if (!invocation) return unauthorized;
+      return yield* httpEffect.pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.map(normalizeMcpHttpResponse),
+      );
+    });
   }),
 ).layer;
 
@@ -79,7 +79,7 @@ export const PreviewToolkitRegistrationLive = Layer.effectDiscard(
     ) => Effect.Effect<
       Stream.Stream<{ readonly encodedResult: unknown }, Error>,
       Error,
-      McpInvocationContext
+      McpInvocationContext.McpInvocationContext
     >;
     for (const tool of Object.values(built.tools)) {
       yield* server.addTool({
@@ -160,6 +160,7 @@ export const PreviewToolkitRegistrationLive = Layer.effectDiscard(
   }),
 ).pipe(Layer.provide(PreviewToolkitHandlersLive));
 
-export const McpHttpServerLive = Layer.mergeAll(PreviewToolkitRegistrationLive).pipe(
+export const layer = Layer.mergeAll(PreviewToolkitRegistrationLive).pipe(
   Layer.provideMerge(McpTransportLive),
+  Layer.provide(PreviewAutomationBroker.layer),
 );

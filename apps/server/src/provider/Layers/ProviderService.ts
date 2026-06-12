@@ -56,16 +56,8 @@ import {
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
-import {
-  issueActiveMcpCredential,
-  revokeActiveMcpThread,
-  revokeAllActiveMcpCredentials,
-} from "../../mcp/Layers/McpSessionRegistry.ts";
-import {
-  clearAllMcpProviderSessions,
-  clearMcpProviderSession,
-  setMcpProviderSession,
-} from "../../mcp/Services/McpProviderSession.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -223,14 +215,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
+    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
       Effect.tap((credential) =>
-        credential ? Effect.sync(() => setMcpProviderSession(credential.config)) : Effect.void,
+        credential
+          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
+          : Effect.void,
       ),
     );
   const clearMcpSession = (threadId: ThreadId) =>
-    revokeActiveMcpThread(threadId).pipe(
-      Effect.tap(() => Effect.sync(() => clearMcpProviderSession(threadId))),
+    McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
+      Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
@@ -1027,8 +1021,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
-    yield* revokeAllActiveMcpCredentials();
-    clearAllMcpProviderSessions();
+    yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
+    McpProviderSession.clearAllMcpProviderSessions();
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(bindings, (binding) =>
       Effect.gen(function* () {

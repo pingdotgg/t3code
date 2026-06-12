@@ -6,9 +6,9 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpServerResponse } from "effect/unstable/http";
 
-import { McpInvocationContext } from "../Services/McpInvocationContext.ts";
-import { normalizeMcpHttpResponse, PreviewToolkitRegistrationLive } from "./McpHttpServer.ts";
-import { previewAutomationBroker } from "./PreviewAutomationBroker.ts";
+import * as McpHttpServer from "./McpHttpServer.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -31,17 +31,18 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
-const TestLayer = PreviewToolkitRegistrationLive.pipe(
+const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(PreviewAutomationBroker.layer),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
-  const notificationResponse = normalizeMcpHttpResponse(
+  const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
     HttpServerResponse.text("", { status: 200, contentType: "application/json" }),
   );
   expect(notificationResponse.status).toBe(202);
 
-  const resultResponse = normalizeMcpHttpResponse(
+  const resultResponse = McpHttpServer.normalizeMcpHttpResponse(
     HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id: 1, result: {} }),
   );
   expect(resultResponse.status).toBe(200);
@@ -51,9 +52,10 @@ it.effect("registers annotated tools and preserves authenticated request context
   Effect.scoped(
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
-      const requests = yield* previewAutomationBroker.connect("mcp-test-client");
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const requests = yield* broker.connect("mcp-test-client");
       yield* Stream.runForEach(requests, (request) =>
-        previewAutomationBroker.respond({
+        broker.respond({
           requestId: request.requestId,
           ok: true,
           result:
@@ -88,7 +90,7 @@ it.effect("registers annotated tools and preserves authenticated request context
         }),
       ).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* previewAutomationBroker.reportOwner({
+      yield* broker.reportOwner({
         clientId: "mcp-test-client",
         environmentId,
         threadId,
@@ -120,7 +122,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
         .pipe(
-          Effect.provideService(McpInvocationContext, invocation),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(status.isError).toBe(false);
@@ -132,7 +134,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const malformed = yield* server
         .callTool({ name: "preview_click", arguments: { selector: "" } })
         .pipe(
-          Effect.provideService(McpInvocationContext, invocation),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(malformed.isError).toBe(true);
@@ -140,7 +142,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const snapshot = yield* server
         .callTool({ name: "preview_snapshot", arguments: {} })
         .pipe(
-          Effect.provideService(McpInvocationContext, invocation),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(snapshot.isError).toBe(false);
@@ -152,7 +154,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const press = yield* server
         .callTool({ name: "preview_press", arguments: { key: "Enter" } })
         .pipe(
-          Effect.provideService(McpInvocationContext, invocation),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(press.isError).toBe(false);

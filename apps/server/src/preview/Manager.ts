@@ -10,9 +10,16 @@
  * fail an in-progress `navigate()`).
  */
 import {
+  type PreviewCloseInput,
   type PreviewEvent,
+  type PreviewError,
   PreviewInvalidUrlError,
+  type PreviewListInput,
   type PreviewListResult,
+  type PreviewNavigateInput,
+  type PreviewOpenInput,
+  type PreviewRefreshInput,
+  type PreviewReportStatusInput,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
@@ -21,9 +28,33 @@ import {
   normalizePreviewUrl,
   PreviewUrlNormalizationError,
 } from "@t3tools/shared/preview";
-import { DateTime, Effect, Layer, PubSub, Stream, SynchronizedRef } from "effect";
+import {
+  Context,
+  DateTime,
+  Effect,
+  Layer,
+  PubSub,
+  type Scope,
+  Stream,
+  SynchronizedRef,
+} from "effect";
 
-import { PreviewManager, type PreviewManagerShape } from "../Services/Manager.ts";
+export interface PreviewManagerShape {
+  readonly open: (input: PreviewOpenInput) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+  readonly navigate: (
+    input: PreviewNavigateInput,
+  ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+  readonly reportStatus: (input: PreviewReportStatusInput) => Effect.Effect<void, PreviewError>;
+  readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
+  readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
+  readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
+  readonly events: Stream.Stream<PreviewEvent>;
+  readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
+}
+
+export class PreviewManager extends Context.Service<PreviewManager, PreviewManagerShape>()(
+  "t3/preview/Manager/PreviewManager",
+) {}
 
 interface PreviewSessionState {
   readonly threadId: string;
@@ -96,7 +127,7 @@ const buildIdleSnapshot = (input: {
   updatedAt: input.updatedAt,
 });
 
-export const makePreviewManager = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to
   // block publishers if a subscriber is slow. WS clients backpressure on
@@ -134,8 +165,8 @@ export const makePreviewManager = Effect.gen(function* () {
         ] as readonly [ModifyResult, ManagerState]);
       }
       return mutator(session).pipe(
-        Effect.flatMap(({ next, emit, result }) =>
-          Effect.gen(function* () {
+        Effect.flatMap(
+          Effect.fn("PreviewManager.commitMutation")(function* ({ next, emit, result }) {
             if (emit) yield* PubSub.publish(eventsPubSub, emit);
             const sessions = new Map(state.sessions);
             sessions.set(compositeKey(threadId, tabId), next);
@@ -153,43 +184,44 @@ export const makePreviewManager = Effect.gen(function* () {
     );
   };
 
-  const open: PreviewManagerShape["open"] = (input) =>
-    Effect.gen(function* () {
-      const tabId = newPreviewTabId();
-      const updatedAt = yield* currentIsoTimestamp;
-      const snapshot = input.url
-        ? buildLoadingSnapshot({
-            threadId: input.threadId,
-            tabId,
-            url: yield* normalizeUrl(input.url),
-            title: "",
-            updatedAt,
-          })
-        : buildIdleSnapshot({ threadId: input.threadId, tabId, updatedAt });
-      yield* SynchronizedRef.update(stateRef, (state) => {
-        const sessions = new Map(state.sessions);
-        sessions.set(compositeKey(input.threadId, tabId), {
+  const open: PreviewManagerShape["open"] = Effect.fn("PreviewManager.open")(function* (input) {
+    const tabId = newPreviewTabId();
+    const updatedAt = yield* currentIsoTimestamp;
+    const snapshot = input.url
+      ? buildLoadingSnapshot({
           threadId: input.threadId,
           tabId,
-          snapshot,
-        });
-        return { sessions };
-      });
-      yield* PubSub.publish(eventsPubSub, {
-        type: "opened",
+          url: yield* normalizeUrl(input.url),
+          title: "",
+          updatedAt,
+        })
+      : buildIdleSnapshot({ threadId: input.threadId, tabId, updatedAt });
+    yield* SynchronizedRef.update(stateRef, (state) => {
+      const sessions = new Map(state.sessions);
+      sessions.set(compositeKey(input.threadId, tabId), {
         threadId: input.threadId,
         tabId,
-        createdAt: snapshot.updatedAt,
         snapshot,
       });
-      return snapshot;
+      return { sessions };
     });
+    yield* PubSub.publish(eventsPubSub, {
+      type: "opened",
+      threadId: input.threadId,
+      tabId,
+      createdAt: snapshot.updatedAt,
+      snapshot,
+    });
+    return snapshot;
+  });
 
-  const navigate: PreviewManagerShape["navigate"] = (input) =>
-    Effect.gen(function* () {
+  const navigate: PreviewManagerShape["navigate"] = Effect.fn("PreviewManager.navigate")(
+    function* (input) {
       const url = yield* normalizeUrl(input.url);
-      return yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
-        Effect.gen(function* () {
+      return yield* mutateExistingSession(
+        input.threadId,
+        input.tabId,
+        Effect.fn("PreviewManager.navigateSession")(function* (session) {
           const updatedAt = yield* currentIsoTimestamp;
           const previousTitle =
             session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
@@ -215,11 +247,16 @@ export const makePreviewManager = Effect.gen(function* () {
           };
         }),
       );
-    });
+    },
+  );
 
-  const reportStatus: PreviewManagerShape["reportStatus"] = (input) =>
-    mutateExistingSession(input.threadId, input.tabId, (session) =>
-      Effect.gen(function* () {
+  const reportStatus: PreviewManagerShape["reportStatus"] = Effect.fn(
+    "PreviewManager.reportStatus",
+  )(function* (input) {
+    yield* mutateExistingSession(
+      input.threadId,
+      input.tabId,
+      Effect.fn("PreviewManager.reportSessionStatus")(function* (session) {
         const updatedAt = yield* currentIsoTimestamp;
         const snapshot: PreviewSessionSnapshot = {
           threadId: session.threadId,
@@ -255,48 +292,51 @@ export const makePreviewManager = Effect.gen(function* () {
         };
       }),
     );
+  });
 
-  const refresh: PreviewManagerShape["refresh"] = (input) =>
-    // Verify the session exists; the desktop bridge handles the actual reload
-    // and will report progress back via `reportStatus`. No event emitted.
-    mutateExistingSession(input.threadId, input.tabId, (session) =>
-      Effect.succeed({ next: session, emit: null, result: undefined as void }),
-    );
+  const refresh: PreviewManagerShape["refresh"] = Effect.fn("PreviewManager.refresh")(
+    function* (input) {
+      // Verify the session exists; the desktop bridge handles the actual reload
+      // and will report progress back via `reportStatus`. No event emitted.
+      yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
+        Effect.succeed({ next: session, emit: null, result: undefined as void }),
+      );
+    },
+  );
 
-  const close: PreviewManagerShape["close"] = (input) =>
-    Effect.gen(function* () {
-      const createdAt = yield* currentIsoTimestamp;
-      const events = yield* SynchronizedRef.modify(stateRef, (state) => {
-        const eventsToEmit: PreviewEvent[] = [];
-        const sessions = new Map(state.sessions);
-        const targets = input.tabId
-          ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
-              (entry): entry is PreviewSessionState => entry !== undefined,
-            )
-          : sessionsForThread(state, input.threadId);
-        for (const target of targets) {
-          sessions.delete(compositeKey(target.threadId, target.tabId));
-          eventsToEmit.push({
-            type: "closed",
-            threadId: target.threadId,
-            tabId: target.tabId,
-            createdAt,
-          });
-        }
-        if (eventsToEmit.length === 0) {
-          return [eventsToEmit, state] as const;
-        }
-        return [eventsToEmit, { sessions }] as const;
-      });
-      if (events.length > 0) {
-        yield* Effect.forEach(events, (event) => PubSub.publish(eventsPubSub, event), {
-          discard: true,
+  const close: PreviewManagerShape["close"] = Effect.fn("PreviewManager.close")(function* (input) {
+    const createdAt = yield* currentIsoTimestamp;
+    const events = yield* SynchronizedRef.modify(stateRef, (state) => {
+      const eventsToEmit: PreviewEvent[] = [];
+      const sessions = new Map(state.sessions);
+      const targets = input.tabId
+        ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
+            (entry): entry is PreviewSessionState => entry !== undefined,
+          )
+        : sessionsForThread(state, input.threadId);
+      for (const target of targets) {
+        sessions.delete(compositeKey(target.threadId, target.tabId));
+        eventsToEmit.push({
+          type: "closed",
+          threadId: target.threadId,
+          tabId: target.tabId,
+          createdAt,
         });
       }
+      if (eventsToEmit.length === 0) {
+        return [eventsToEmit, state] as const;
+      }
+      return [eventsToEmit, { sessions }] as const;
     });
+    if (events.length > 0) {
+      yield* Effect.forEach(events, (event) => PubSub.publish(eventsPubSub, event), {
+        discard: true,
+      });
+    }
+  });
 
-  const list: PreviewManagerShape["list"] = (input) =>
-    SynchronizedRef.get(stateRef).pipe(
+  const list: PreviewManagerShape["list"] = Effect.fn("PreviewManager.list")(function* (input) {
+    return yield* SynchronizedRef.get(stateRef).pipe(
       Effect.map(
         (state): PreviewListResult => ({
           sessions: sessionsForThread(state, input.threadId)
@@ -305,6 +345,7 @@ export const makePreviewManager = Effect.gen(function* () {
         }),
       ),
     );
+  });
 
   return {
     open,
@@ -318,4 +359,4 @@ export const makePreviewManager = Effect.gen(function* () {
   } satisfies PreviewManagerShape;
 });
 
-export const PreviewManagerLive = Layer.effect(PreviewManager, makePreviewManager);
+export const layer = Layer.effect(PreviewManager, make);

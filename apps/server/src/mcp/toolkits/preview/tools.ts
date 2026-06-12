@@ -16,7 +16,13 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
-import { McpInvocationContext } from "../../Services/McpInvocationContext.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  PreviewAutomationBroker.PreviewAutomationBroker,
+];
 
 const browserTool = <T extends Tool.Any>(tool: T): T =>
   tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, true) as T;
@@ -32,7 +38,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
     "Report whether the scoped thread has an automation-capable desktop preview, including its active tab, URL, title, visibility, and loading state.",
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
-  dependencies: [McpInvocationContext],
+  dependencies,
 })
   .annotate(Tool.Title, "Get preview status")
   .annotate(Tool.Readonly, true)
@@ -46,7 +52,7 @@ export const PreviewOpenTool = browserTool(
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
@@ -59,7 +65,7 @@ export const PreviewNavigateTool = safeBrowserTool(
     parameters: PreviewAutomationNavigateInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Navigate browser preview"),
 );
 
@@ -69,7 +75,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
       "Inspect the current page before interacting. Returns URL/title/loading state, visible text, semantic interactive elements with reusable selectors and coordinates, accessibility data, recent console/network failures, action history, and a PNG screenshot.",
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
@@ -79,7 +85,7 @@ export const PreviewClickTool = browserTool(
       "Click exactly one page target. Prefer locator with a Playwright selector such as role=button[name='Send']; selector accepts legacy CSS; x and y are viewport CSS pixels and must be supplied together. Call preview_snapshot first when the target is unknown.",
     parameters: PreviewAutomationClickInput,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Click preview page"),
 );
 
@@ -89,7 +95,7 @@ export const PreviewTypeTool = browserTool(
       "Insert literal text into one input. Prefer locator with a Playwright role/text selector; selector accepts legacy CSS. If neither is supplied, types into the currently focused element. Set clear=true to replace existing text.",
     parameters: PreviewAutomationTypeInput,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Type into preview page"),
 );
 
@@ -99,7 +105,7 @@ export const PreviewPressTool = browserTool(
       "Press one keyboard key in the active page, for example {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}. This targets the page's current focus.",
     parameters: PreviewAutomationPressInput,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Press key in preview page"),
 );
 
@@ -109,7 +115,7 @@ export const PreviewScrollTool = safeBrowserTool(
       "Scroll by CSS pixels. Positive deltaY scrolls down and positive deltaX scrolls right. Without locator/selector it scrolls the viewport; otherwise it scrolls that container. At least one delta is required.",
     parameters: PreviewAutomationScrollInput,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Scroll preview page"),
 );
 
@@ -120,7 +126,7 @@ export const PreviewEvaluateTool = browserTool(
     parameters: PreviewAutomationEvaluateInput,
     success: Schema.Unknown,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
 );
 
@@ -130,7 +136,7 @@ export const PreviewWaitForTool = readonlyBrowserTool(
       "Wait until all supplied conditions match: a Playwright locator, legacy CSS selector, visible-text substring, and/or URL substring. Provide at least one condition. Defaults to 15 seconds, maximum 60 seconds.",
     parameters: PreviewAutomationWaitForInput,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Wait for preview page condition"),
 );
 
@@ -140,7 +146,7 @@ export const PreviewRecordingStartTool = safeBrowserTool(
       "Start recording the active collaborative browser tab while keeping it interactive for both agent and human use.",
     success: PreviewAutomationRecordingStatus,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Start browser recording"),
 );
 
@@ -149,7 +155,7 @@ export const PreviewRecordingStopTool = safeBrowserTool(
     description: "Stop the active browser recording and save it as a local evidence artifact.",
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,
-    dependencies: [McpInvocationContext],
+    dependencies,
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 

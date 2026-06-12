@@ -5,16 +5,15 @@ import { ThreadId } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { COMMON_DEV_PORTS, PortDiscovery } from "../Services/PortScanner.ts";
-import { ProcessRunner } from "../../processRunner.ts";
-import { __testing, PortDiscoveryLive } from "./PortScanner.ts";
+import { ProcessRunner } from "../processRunner.ts";
+import * as PortScanner from "./PortScanner.ts";
 
 const { parseLsofOutput, parsePortFromLsofName, parseWindowsListenerOutput, serversEqual } =
-  __testing;
+  PortScanner.__testing;
 const TestProcessRunner = Layer.succeed(ProcessRunner, {
   run: () => Effect.die("ProcessRunner should not be used by Windows TCP probe tests"),
 });
-const TestPortDiscoveryLive = PortDiscoveryLive.pipe(Layer.provide(TestProcessRunner));
+const TestPortDiscoveryLive = PortScanner.layer.pipe(Layer.provide(TestProcessRunner));
 
 describe("parsePortFromLsofName", () => {
   it("parses *:port", () => {
@@ -189,7 +188,7 @@ describe("PortDiscovery integration (TCP probe fallback)", () => {
   beforeEach(async () => {
     originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-    for (const candidate of COMMON_DEV_PORTS) {
+    for (const candidate of PortScanner.COMMON_DEV_PORTS) {
       const candidateServer = net.createServer();
       const listening = await new Promise<boolean>((resolve) => {
         candidateServer.once("error", () => resolve(false));
@@ -215,7 +214,7 @@ describe("PortDiscovery integration (TCP probe fallback)", () => {
 
   effectIt.effect("scan() returns a server we just opened on a curated dev port", () =>
     Effect.gen(function* () {
-      const scanner = yield* PortDiscovery;
+      const scanner = yield* PortScanner.PortDiscovery;
       const result = yield* scanner.scan();
       const found = result.find((server) => server.port === port);
       expect(found).toBeDefined();
@@ -226,7 +225,7 @@ describe("PortDiscovery integration (TCP probe fallback)", () => {
   effectIt.effect("retain() drives an immediate broadcast to subscribers", () => {
     const received: number[] = [];
     return Effect.gen(function* () {
-      const scanner = yield* PortDiscovery;
+      const scanner = yield* PortScanner.PortDiscovery;
       const unsubscribe = yield* scanner.subscribe((servers) =>
         Effect.sync(() => {
           for (const server of servers) received.push(server.port);

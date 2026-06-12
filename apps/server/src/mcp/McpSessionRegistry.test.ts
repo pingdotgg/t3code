@@ -4,8 +4,8 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
-import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
-import { makeMcpSessionRegistry } from "./McpSessionRegistry.ts";
+import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -18,7 +18,7 @@ const fakeEnvironment = ServerEnvironment.of({
 });
 
 const makeRegistry = (now: () => number) =>
-  makeMcpSessionRegistry({
+  McpSessionRegistry.makeForTest({
     now,
     idleTimeoutMs: 100,
     maximumLifetimeMs: 1_000,

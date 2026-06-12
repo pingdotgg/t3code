@@ -33,7 +33,7 @@ import {
   terminalSessionsTotal,
 } from "../../observability/Metrics.ts";
 import * as ProcessRunner from "../../processRunner.ts";
-import { PortDiscovery } from "../../preview/Services/PortScanner.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import {
   TerminalCwdError,
   TerminalHistoryError,
@@ -996,7 +996,7 @@ interface TerminalManagerOptions {
 const makeTerminalManager = Effect.fn("makeTerminalManager")(function* () {
   const { terminalLogsDir } = yield* ServerConfig;
   const ptyAdapter = yield* PtyAdapter;
-  const portDiscovery = yield* PortDiscovery;
+  const portDiscovery = yield* PortScanner.PortDiscovery;
   return yield* makeTerminalManagerWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
