@@ -26,19 +26,26 @@ export interface DesktopPreviewOverlay {
   canGoForward: boolean;
   loading: boolean;
   zoomFactor: number;
+  controller: "human" | "agent" | "none";
 }
 
 export interface ThreadPreviewState {
   snapshot: PreviewSessionSnapshot | null;
+  sessions: Record<string, PreviewSessionSnapshot>;
+  activeTabId: string | null;
   /** Bridge state takes precedence over `snapshot` for nav button enablement. */
   desktopOverlay: DesktopPreviewOverlay | null;
+  desktopByTabId: Record<string, DesktopPreviewOverlay>;
   /** Recently-visited URLs surfaced in the empty state. */
   recentlySeenUrls: string[];
 }
 
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   snapshot: null,
+  sessions: {},
+  activeTabId: null,
   desktopOverlay: null,
+  desktopByTabId: {},
   recentlySeenUrls: [] as string[],
 });
 
@@ -46,7 +53,12 @@ export interface PreviewStateStoreState {
   byThreadKey: Record<string, ThreadPreviewState>;
   applyServerEvent: (ref: ScopedThreadRef, event: PreviewEvent) => void;
   applyServerSnapshot: (ref: ScopedThreadRef, snapshot: PreviewSessionSnapshot | null) => void;
-  applyDesktopState: (ref: ScopedThreadRef, overlay: DesktopPreviewOverlay | null) => void;
+  applyDesktopState: (
+    ref: ScopedThreadRef,
+    tabId: string,
+    overlay: DesktopPreviewOverlay | null,
+  ) => void;
+  setActiveTab: (ref: ScopedThreadRef, tabId: string) => void;
   rememberUrl: (ref: ScopedThreadRef, url: string) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -96,34 +108,64 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
               snapshot.navStatus._tag === "Idle"
                 ? current.recentlySeenUrls
                 : dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url);
-            return { ...current, snapshot, recentlySeenUrls };
+            const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+            const activeTabId = event.type === "opened" ? snapshot.tabId : current.activeTabId;
+            const activeSnapshot = sessions[activeTabId ?? snapshot.tabId] ?? snapshot;
+            return {
+              ...current,
+              sessions,
+              activeTabId: activeTabId ?? snapshot.tabId,
+              snapshot: activeSnapshot,
+              desktopOverlay: current.desktopByTabId[activeSnapshot.tabId] ?? null,
+              recentlySeenUrls,
+            };
           });
           break;
         case "failed":
           nextByThread = updateThread(state, threadKey, (current) => {
-            if (!current.snapshot || current.snapshot.tabId !== event.tabId) return current;
+            const existing = current.sessions[event.tabId];
+            if (!existing) return current;
+            const failedSnapshot = {
+              ...existing,
+              navStatus: {
+                _tag: "LoadFailed" as const,
+                url: event.url,
+                title: event.title,
+                code: event.code,
+                description: event.description,
+              },
+              updatedAt: event.createdAt,
+            };
+            const sessions = { ...current.sessions, [event.tabId]: failedSnapshot };
             return {
               ...current,
-              snapshot: {
-                ...current.snapshot,
-                navStatus: {
-                  _tag: "LoadFailed",
-                  url: event.url,
-                  title: event.title,
-                  code: event.code,
-                  description: event.description,
-                },
-                updatedAt: event.createdAt,
-              },
+              sessions,
+              snapshot: current.activeTabId === event.tabId ? failedSnapshot : current.snapshot,
             };
           });
           break;
         case "closed":
           nextByThread = updateThread(state, threadKey, (current) => {
-            // Only clear if the closed tab is the one we were tracking; the
-            // server may have multiple tabs per thread but we only render one.
-            if (current.snapshot && current.snapshot.tabId !== event.tabId) return current;
-            return { ...current, snapshot: null, desktopOverlay: null };
+            if (!current.sessions[event.tabId]) return current;
+            const { [event.tabId]: _closed, ...sessions } = current.sessions;
+            const { [event.tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
+            const nextSnapshot =
+              Object.values(sessions)
+                .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+                .at(-1) ?? null;
+            const activeTabId =
+              current.activeTabId === event.tabId
+                ? (nextSnapshot?.tabId ?? null)
+                : current.activeTabId;
+            const snapshot = activeTabId ? (sessions[activeTabId] ?? nextSnapshot) : nextSnapshot;
+            return {
+              ...current,
+              sessions,
+              desktopByTabId,
+              activeTabId: snapshot?.tabId ?? null,
+              snapshot,
+              desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
+            };
           });
           break;
       }
@@ -134,21 +176,59 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
       const threadKey = scopedThreadKey(ref);
       const nextByThread = updateThread(state, threadKey, (current) => {
         if (!snapshot && current.snapshot === null) return current;
+        if (!snapshot) {
+          return {
+            ...current,
+            snapshot: null,
+            sessions: {},
+            activeTabId: null,
+            desktopOverlay: null,
+            desktopByTabId: {},
+          };
+        }
         const recentlySeenUrls =
           snapshot && snapshot.navStatus._tag !== "Idle"
             ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)
             : current.recentlySeenUrls;
-        return { ...current, snapshot, recentlySeenUrls };
+        return {
+          ...current,
+          snapshot,
+          sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
+          activeTabId: snapshot.tabId,
+          desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+          recentlySeenUrls,
+        };
       });
       return { byThreadKey: nextByThread };
     }),
-  applyDesktopState: (ref, overlay) =>
+  applyDesktopState: (ref, tabId, overlay) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
-      const nextByThread = updateThread(state, threadKey, (current) => ({
-        ...current,
-        desktopOverlay: overlay,
-      }));
+      const nextByThread = updateThread(state, threadKey, (current) => {
+        const desktopByTabId = { ...current.desktopByTabId };
+        if (overlay) desktopByTabId[tabId] = overlay;
+        else delete desktopByTabId[tabId];
+        return {
+          ...current,
+          desktopByTabId,
+          desktopOverlay: current.activeTabId === tabId ? overlay : current.desktopOverlay,
+        };
+      });
+      return { byThreadKey: nextByThread };
+    }),
+  setActiveTab: (ref, tabId) =>
+    set((state) => {
+      const threadKey = scopedThreadKey(ref);
+      const nextByThread = updateThread(state, threadKey, (current) => {
+        const snapshot = current.sessions[tabId];
+        if (!snapshot || current.activeTabId === tabId) return current;
+        return {
+          ...current,
+          activeTabId: tabId,
+          snapshot,
+          desktopOverlay: current.desktopByTabId[tabId] ?? null,
+        };
+      });
       return { byThreadKey: nextByThread };
     }),
   rememberUrl: (ref, url) =>

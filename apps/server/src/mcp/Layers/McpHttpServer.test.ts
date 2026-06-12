@@ -65,6 +65,9 @@ it.effect("registers annotated tools and preserves authenticated request context
                   visibleText: "Example",
                   interactiveElements: [],
                   accessibilityTree: {},
+                  consoleEntries: [],
+                  networkEntries: [],
+                  actionTimeline: [],
                   screenshot: {
                     mimeType: "image/png",
                     data: Buffer.from("png").toString("base64"),
@@ -96,6 +99,21 @@ it.effect("registers annotated tools and preserves authenticated request context
       const statusTool = server.tools.find(({ tool }) => tool.name === "preview_status");
       expect(statusTool?.tool.annotations?.readOnlyHint).toBe(true);
       expect(statusTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(statusTool?.tool.annotations?.destructiveHint).toBe(false);
+
+      const snapshotTool = server.tools.find(({ tool }) => tool.name === "preview_snapshot");
+      expect(snapshotTool?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(snapshotTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(snapshotTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const clickTool = server.tools.find(({ tool }) => tool.name === "preview_click");
+      expect(clickTool?.tool.annotations?.readOnlyHint).toBe(false);
+      expect(clickTool?.tool.annotations?.destructiveHint).toBe(true);
+      expect(clickTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
+      expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
+      expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
 
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })

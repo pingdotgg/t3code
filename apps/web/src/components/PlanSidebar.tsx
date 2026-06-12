@@ -59,7 +59,7 @@ interface PlanSidebarProps {
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
-  mode?: "sheet" | "sidebar";
+  mode?: "sheet" | "sidebar" | "embedded";
   onClose: () => void;
 }
 

@@ -184,15 +184,37 @@ describe("previewStateStore (single-tab)", () => {
       createdAt: snapshot.updatedAt,
       snapshot,
     });
-    store.applyDesktopState(ref, {
+    store.applyDesktopState(ref, snapshot.tabId, {
       canGoBack: true,
       canGoForward: false,
       loading: false,
       zoomFactor: 1,
+      controller: "none",
     });
     const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, ref);
     expect(state.desktopOverlay?.canGoBack).toBe(true);
     expect(state.snapshot?.canGoBack).toBe(false);
+  });
+
+  it("retains multiple tabs and switches active desktop state", () => {
+    const first = makeSnapshot();
+    const second = { ...makeSnapshot(), tabId: "tab_2", updatedAt: "2026-01-02T00:00:00.000Z" };
+    const store = usePreviewStateStore.getState();
+    store.applyServerSnapshot(ref, first);
+    store.applyServerSnapshot(ref, second);
+    store.applyDesktopState(ref, first.tabId, {
+      canGoBack: true,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      controller: "none",
+    });
+    store.setActiveTab(ref, first.tabId);
+
+    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, ref);
+    expect(Object.keys(state.sessions)).toEqual([first.tabId, second.tabId]);
+    expect(state.snapshot?.tabId).toBe(first.tabId);
+    expect(state.desktopOverlay?.canGoBack).toBe(true);
   });
 
   it("applyServerSnapshot null clears snapshot for a thread that had one", () => {

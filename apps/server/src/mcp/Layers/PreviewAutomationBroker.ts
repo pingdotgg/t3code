@@ -1,4 +1,5 @@
 import {
+  PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationNoFocusedOwnerError,
@@ -56,6 +57,8 @@ const makeResponseError = (
       return new PreviewAutomationTabNotFoundError({ message: error.message });
     case "PreviewAutomationTimeoutError":
       return new PreviewAutomationTimeoutError({ message: error.message });
+    case "PreviewAutomationControlInterruptedError":
+      return new PreviewAutomationControlInterruptedError({ message: error.message });
     case "PreviewAutomationInvalidSelectorError": {
       const detail =
         typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
@@ -193,20 +196,19 @@ export const makePreviewAutomationBroker = (): PreviewAutomationBrokerShape => {
           (owner) =>
             owner.environmentId === input.scope.environmentId &&
             owner.threadId === input.scope.threadId &&
-            owner.supportsAutomation &&
-            (input.operation === "open" || input.operation === "status" || owner.visible),
+            owner.supportsAutomation,
         )
         .sort((left, right) => right.focusedAt.localeCompare(left.focusedAt));
       const owner = candidates[0];
       if (!owner) {
         return yield* new PreviewAutomationNoFocusedOwnerError({
-          message: "No focused desktop preview owner is available for this thread.",
+          message: "No desktop browser host is available for this thread.",
         });
       }
       const connection = current.clients.get(owner.clientId);
       if (!connection) {
         return yield* new PreviewAutomationUnavailableError({
-          message: "The focused preview owner is not connected.",
+          message: "The browser host is not connected.",
         });
       }
       if (
@@ -216,7 +218,7 @@ export const makePreviewAutomationBroker = (): PreviewAutomationBrokerShape => {
         !input.tabId
       ) {
         return yield* new PreviewAutomationTabNotFoundError({
-          message: "The focused preview owner does not have an active tab.",
+          message: "The browser host does not have an active tab.",
         });
       }
       const requestId = `preview-${requestSequence++}`;

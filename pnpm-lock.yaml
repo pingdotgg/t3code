@@ -128,6 +128,9 @@ importers:
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.3
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       react-grab:
         specifier: ^0.1.32
         version: 0.1.44(react@19.2.6)

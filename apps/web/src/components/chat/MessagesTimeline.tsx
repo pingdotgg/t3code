@@ -1377,23 +1377,28 @@ function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
 ): string | null {
+  const blocks: string[] = [];
+  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
+    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+  }
   const raw = workEntryRawCommand(workEntry);
   if (raw?.trim()) {
-    return raw.trim();
-  }
-  if (workEntry.command?.trim()) {
-    return workEntry.command.trim();
+    blocks.push(raw.trim());
+  } else if (workEntry.command?.trim()) {
+    blocks.push(workEntry.command.trim());
   }
   if (workEntry.detail?.trim()) {
-    return workEntry.detail.trim();
+    blocks.push(workEntry.detail.trim());
   }
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length > 0) {
-    return changedFiles
-      .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
-      .join("\n");
+    blocks.push(
+      changedFiles
+        .map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
+        .join("\n"),
+    );
   }
-  return null;
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {

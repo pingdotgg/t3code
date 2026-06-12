@@ -36,7 +36,6 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
   };
 
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
-
   return (
     <Menu>
       <Tooltip>
@@ -60,7 +59,6 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
         <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
           Open DevTools
         </MenuItem>
-        <MenuSeparator />
         {/*
           Zoom row: label + inline control cluster. `closeOnClick=false`
           keeps the menu open while the user clicks the +/− buttons.

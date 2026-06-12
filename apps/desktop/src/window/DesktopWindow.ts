@@ -200,7 +200,10 @@ const make = Effect.gen(function* () {
 
     previewViewManager.setMainWindow(window);
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-      if (params.partition !== previewViewManager.getBrowserPartition()) {
+      if (
+        typeof params.partition !== "string" ||
+        !previewViewManager.isBrowserPartition(params.partition)
+      ) {
         event.preventDefault();
         return;
       }

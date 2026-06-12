@@ -451,6 +451,7 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   /** Current zoom factor (1.0 = 100%). */
   zoomFactor: number;
+  controller: "human" | "agent" | "none";
   updatedAt: string;
 }
 
@@ -475,6 +476,32 @@ export interface DesktopPreviewWebviewConfig {
    * renderer must then disable element-pick affordances.
    */
   preloadUrl: string | null;
+}
+
+export interface DesktopPreviewRecordingFrame {
+  tabId: string;
+  data: string;
+  width: number;
+  height: number;
+  receivedAt: string;
+}
+
+export interface DesktopPreviewRecordingArtifact {
+  id: string;
+  tabId: string;
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface DesktopPreviewScreenshotArtifact {
+  id: string;
+  tabId: string;
+  path: string;
+  mimeType: "image/png";
+  sizeBytes: number;
+  createdAt: string;
 }
 
 /**
@@ -672,7 +699,7 @@ export interface DesktopPreviewBridge {
    * `getPickPreloadPath`) so adding a new field here only requires touching
    * the contract + main, not the renderer's mount logic.
    */
-  getPreviewConfig: () => Promise<DesktopPreviewWebviewConfig>;
+  getPreviewConfig: (environmentId: EnvironmentId) => Promise<DesktopPreviewWebviewConfig>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with
    * the picked payload, or `null` when the user cancels (Escape / nav). The
@@ -681,6 +708,17 @@ export interface DesktopPreviewBridge {
   pickElement: (tabId: string) => Promise<PreviewAnnotationPayload | null>;
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
+  captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  recording: {
+    startScreencast: (tabId: string) => Promise<void>;
+    stopScreencast: (tabId: string) => Promise<void>;
+    save: (
+      tabId: string,
+      mimeType: string,
+      data: Uint8Array,
+    ) => Promise<DesktopPreviewRecordingArtifact>;
+    onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
+  };
   automation: {
     status: (tabId: string) => Promise<PreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;

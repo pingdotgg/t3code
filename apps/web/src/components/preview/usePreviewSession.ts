@@ -33,7 +33,7 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
         // `updatedAt` ascending, so the last one is freshest.
         const serverSnapshot = result.sessions.at(-1) ?? null;
         if (serverSnapshot) {
-          applyServerSnapshot(threadRef, serverSnapshot);
+          for (const snapshot of result.sessions) applyServerSnapshot(threadRef, snapshot);
           return;
         }
         // Server has no sessions — try to recover what the renderer

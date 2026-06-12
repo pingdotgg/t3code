@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * PreviewViewManager — desktop side of the in-app browser preview.
  *
@@ -9,9 +10,15 @@
 import type {
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
+  DesktopPreviewRecordingArtifact,
+  DesktopPreviewRecordingFrame,
+  DesktopPreviewScreenshotArtifact,
   PreviewAutomationClickInput,
+  PreviewAutomationActionEvent,
+  PreviewAutomationConsoleEntry,
   PreviewAutomationEvaluateInput,
   PreviewAutomationPressInput,
+  PreviewAutomationNetworkEntry,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
@@ -19,16 +26,21 @@ import type {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { type BrowserWindow, type Session, session, webContents } from "electron";
+import { app, type BrowserWindow, type Session, session, webContents } from "electron";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { isPreviewAnnotationPayload } from "./picked-element-payload.ts";
+import { playwrightInjectedRuntimeInstallExpression } from "./playwright-injected-runtime.ts";
 
-const PREVIEW_PARTITION = "persist:t3code-preview";
+const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 const START_PICK_CHANNEL = "preview:start-pick";
 const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
 const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
 const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
+const HUMAN_INPUT_CHANNEL = "preview:human-input";
 
 // Re-export the guest webview security posture from its dedicated module so
 // the constant is unit-testable in isolation. See
@@ -55,6 +67,7 @@ export interface PreviewTabState {
   canGoBack: boolean;
   canGoForward: boolean;
   zoomFactor: number;
+  controller: "human" | "agent" | "none";
   updatedAt: string;
 }
 
@@ -69,6 +82,7 @@ const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 const MAX_SCREENSHOT_WIDTH = 1280;
+const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
 interface CdpEvaluationResult {
   readonly result?: {
@@ -86,7 +100,8 @@ const automationError = (
     | "PreviewAutomationExecutionError"
     | "PreviewAutomationInvalidSelectorError"
     | "PreviewAutomationResultTooLargeError"
-    | "PreviewAutomationTimeoutError",
+    | "PreviewAutomationTimeoutError"
+    | "PreviewAutomationControlInterruptedError",
   message: string,
   detail?: unknown,
 ): Error & { detail?: unknown } => {
@@ -165,15 +180,29 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 };
 
 type Listener = (tabId: string, state: PreviewTabState) => void;
+type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => void;
 
 interface ManagedListeners {
   navigate: () => void;
   failed: (event: Event, code: number, description: string) => void;
+  humanInput: () => void;
 }
 
 interface PickSession {
   readonly resolve: (payload: PreviewAnnotationPayload | null) => void;
   readonly cleanup: () => void;
+}
+
+interface BrowserControlSession {
+  readonly webContentsId: number;
+  tail: Promise<void>;
+  initialized: Promise<void>;
+}
+
+interface BrowserDiagnostics {
+  readonly consoleEntries: PreviewAutomationConsoleEntry[];
+  readonly networkEntries: PreviewAutomationNetworkEntry[];
+  readonly requests: Map<string, { url: string; method: string }>;
 }
 
 const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
@@ -196,17 +225,30 @@ export class PreviewViewManager {
   private mainWindow: BrowserWindow | null = null;
   private readonly tabs = new Map<string, PreviewTabState>();
   private readonly attached = new Map<number, ManagedListeners>();
-  private browserSession: Session | null = null;
+  private readonly browserSessions = new Map<string, Session>();
   private readonly listeners = new Set<Listener>();
+  private readonly recordingFrameListeners = new Set<RecordingFrameListener>();
   /** In-flight preview annotation sessions, keyed by tabId. */
   private readonly pickSessions = new Map<string, PickSession>();
+  /** One long-lived CDP attachment and serialized command queue per guest. */
+  private readonly controlSessions = new Map<number, BrowserControlSession>();
+  private readonly diagnostics = new Map<number, BrowserDiagnostics>();
+  private readonly controlEpoch = new Map<string, number>();
+  private readonly actionTimeline = new Map<string, PreviewAutomationActionEvent[]>();
+  private actionSequence = 0;
+  private recordingTabId: string | null = null;
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window;
   }
 
-  getBrowserPartition(): string {
-    return PREVIEW_PARTITION;
+  getBrowserPartition(scope = "shared"): string {
+    const digest = createHash("sha256").update(scope).digest("hex").slice(0, 20);
+    return `${PREVIEW_PARTITION_PREFIX}${digest}`;
+  }
+
+  isBrowserPartition(partition: string): boolean {
+    return partition.startsWith(PREVIEW_PARTITION_PREFIX);
   }
 
   /**
@@ -219,9 +261,11 @@ export class PreviewViewManager {
     return PREVIEW_WEBVIEW_PREFERENCES;
   }
 
-  getBrowserSession(): Session {
-    if (this.browserSession) return this.browserSession;
-    const sess = session.fromPartition(PREVIEW_PARTITION);
+  getBrowserSession(scope = "shared"): Session {
+    const partition = this.getBrowserPartition(scope);
+    const existing = this.browserSessions.get(partition);
+    if (existing) return existing;
+    const sess = session.fromPartition(partition);
     const ua = sess
       .getUserAgent()
       .replace(/Electron\/[\d.]+ /, "")
@@ -231,7 +275,7 @@ export class PreviewViewManager {
       const allow = ["clipboard-read", "clipboard-write", "notifications", "geolocation"];
       callback(allow.includes(perm));
     });
-    this.browserSession = sess;
+    this.browserSessions.set(partition, sess);
     return sess;
   }
 
@@ -245,6 +289,7 @@ export class PreviewViewManager {
       canGoBack: false,
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
+      controller: "none",
       updatedAt: new Date().toISOString(),
     };
     this.tabs.set(tabId, initial);
@@ -257,6 +302,7 @@ export class PreviewViewManager {
     if (!tab) return;
     this.cancelPickElement(tabId);
     if (tab.webContentsId != null) {
+      this.detachControlSession(tab.webContentsId);
       this.detachListeners(tab.webContentsId);
     }
     const closed: PreviewTabState = {
@@ -266,6 +312,7 @@ export class PreviewViewManager {
       canGoBack: false,
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
+      controller: "none",
       updatedAt: new Date().toISOString(),
     };
     this.tabs.delete(tabId);
@@ -294,6 +341,7 @@ export class PreviewViewManager {
       return;
     }
     if (tab.webContentsId != null && tab.webContentsId !== webContentsId) {
+      this.detachControlSession(tab.webContentsId);
       this.detachListeners(tab.webContentsId);
       // Any in-flight pick is bound to the OLD WebContents via `wc.ipc.on`.
       // Cancel it so the toggle button doesn't get stuck pressed waiting
@@ -301,6 +349,7 @@ export class PreviewViewManager {
       this.cancelPickElement(tabId);
     }
     this.attachListeners(tabId, wc);
+    void this.ensureControlSession(wc).catch(() => undefined);
     // Restore the persisted zoom factor onto the freshly-attached WebContents
     // so a thread-switch + remount lands the user back where they were.
     if (Math.abs(tab.zoomFactor - DEFAULT_ZOOM_FACTOR) > ZOOM_EPSILON) {
@@ -364,6 +413,10 @@ export class PreviewViewManager {
       wc.devToolsWebContents?.focus();
       return;
     }
+    this.detachControlSession(wc.id);
+    wc.once("devtools-closed", () => {
+      if (!wc.isDestroyed()) void this.ensureControlSession(wc).catch(() => undefined);
+    });
     wc.openDevTools({ mode: "detach" });
   }
 
@@ -372,16 +425,18 @@ export class PreviewViewManager {
    * preview tab since they all share `persist:t3code-preview`.
    */
   async clearCookies(): Promise<void> {
-    const sess = this.getBrowserSession();
-    await sess.clearStorageData({
-      storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
-    });
+    await Promise.all(
+      [...this.browserSessions.values()].map((sess) =>
+        sess.clearStorageData({
+          storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
+        }),
+      ),
+    );
   }
 
   /** Drop the HTTP cache for the preview partition. */
   async clearCache(): Promise<void> {
-    const sess = this.getBrowserSession();
-    await sess.clearCache();
+    await Promise.all([...this.browserSessions.values()].map((sess) => sess.clearCache()));
   }
 
   /**
@@ -485,6 +540,65 @@ export class PreviewViewManager {
     session.resolve(null);
   }
 
+  async startRecording(tabId: string): Promise<void> {
+    if (this.recordingTabId && this.recordingTabId !== tabId) {
+      throw new Error("Only one browser recording can be active per window.");
+    }
+    const wc = this.requireWebContents(tabId);
+    await this.withControlSession(tabId, wc, "recording.start", async (send) => {
+      await send("Page.enable");
+      await send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 80,
+        maxWidth: 1600,
+        maxHeight: 1200,
+        everyNthFrame: 1,
+      });
+    });
+    this.recordingTabId = tabId;
+  }
+
+  async captureScreenshot(tabId: string): Promise<DesktopPreviewScreenshotArtifact> {
+    const wc = this.requireWebContents(tabId);
+    const createdAt = new Date().toISOString();
+    const id = `browser-screenshot-${Date.now().toString(36)}`;
+    const directory = join(app.getPath("userData"), "browser-artifacts");
+    const path = join(directory, `${id}.png`);
+    const data = (await wc.capturePage()).toPNG();
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, data);
+    return { id, tabId, path, mimeType: "image/png", sizeBytes: data.byteLength, createdAt };
+  }
+
+  async stopRecording(tabId: string): Promise<void> {
+    if (this.recordingTabId !== tabId) return;
+    const wc = this.requireWebContents(tabId);
+    await this.withControlSession(tabId, wc, "recording.stop", async (send) => {
+      await send("Page.stopScreencast");
+    });
+    this.recordingTabId = null;
+  }
+
+  async saveRecording(
+    tabId: string,
+    mimeType: string,
+    data: Uint8Array,
+  ): Promise<DesktopPreviewRecordingArtifact> {
+    const createdAt = new Date().toISOString();
+    const id = `browser-recording-${Date.now().toString(36)}`;
+    const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+    const directory = join(app.getPath("userData"), "browser-artifacts");
+    const path = join(directory, `${id}.${extension}`);
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, data);
+    return { id, tabId, path, mimeType, sizeBytes: data.byteLength, createdAt };
+  }
+
+  onRecordingFrame(listener: RecordingFrameListener): () => void {
+    this.recordingFrameListeners.add(listener);
+    return () => this.recordingFrameListeners.delete(listener);
+  }
+
   zoomIn(tabId: string): void {
     this.applyZoom(tabId, (current) => nextZoomLevel(current, "in"));
   }
@@ -533,7 +647,7 @@ export class PreviewViewManager {
 
   async automationSnapshot(tabId: string): Promise<PreviewAutomationSnapshot> {
     const wc = this.requireWebContents(tabId);
-    return this.withDebugger(wc, async (send) => {
+    return this.withControlSession(tabId, wc, "snapshot", async (send) => {
       await Promise.all([send("Runtime.enable"), send("Accessibility.enable")]);
       const page = await this.evaluateWithDebugger<{
         url: string;
@@ -604,6 +718,9 @@ export class PreviewViewManager {
       return {
         ...page,
         accessibilityTree: accessibility,
+        consoleEntries: [...(this.diagnostics.get(wc.id)?.consoleEntries ?? [])],
+        networkEntries: [...(this.diagnostics.get(wc.id)?.networkEntries ?? [])],
+        actionTimeline: [...(this.actionTimeline.get(tabId) ?? [])],
         screenshot: {
           mimeType: "image/png",
           data: image.toPNG().toString("base64"),
@@ -616,22 +733,29 @@ export class PreviewViewManager {
 
   async automationClick(tabId: string, input: PreviewAutomationClickInput): Promise<void> {
     const wc = this.requireWebContents(tabId);
-    await this.withDebugger(wc, async (send) => {
+    await this.withControlSession(tabId, wc, "click", async (send) => {
       await Promise.all([
         send("Runtime.enable"),
         send("Input.setIgnoreInputEvents", { ignore: false }),
       ]);
       let x: number;
       let y: number;
-      if ("selector" in input) {
+      if ("selector" in input || "locator" in input) {
+        await this.ensurePlaywrightInjected(send);
+        const locator = this.automationLocator(input);
         const point = await this.evaluateWithDebugger<
           { x: number; y: number } | { invalidSelector: true; message: string } | { notFound: true }
         >(
           send,
           `(() => {
             try {
-              const element = document.querySelector(${JSON.stringify(input.selector)});
+              const injected = globalThis.__t3PlaywrightInjected;
+              const parsed = injected.parseSelector(${JSON.stringify(locator)});
+              const element = injected.querySelector(parsed, document, true);
               if (!element) return { notFound: true };
+              const visible = injected.elementState(element, "visible");
+              const enabled = injected.elementState(element, "enabled");
+              if (!visible.matches || !enabled.matches) return { notFound: true };
               element.scrollIntoView({ block: "center", inline: "center" });
               const rect = element.getBoundingClientRect();
               return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -643,20 +767,20 @@ export class PreviewViewManager {
         );
         if ("invalidSelector" in point) {
           throw automationError("PreviewAutomationInvalidSelectorError", point.message, {
-            selector: input.selector,
+            selector: locator,
           });
         }
         if ("notFound" in point) {
           throw automationError(
             "PreviewAutomationExecutionError",
-            `No element matches selector ${input.selector}.`,
+            `No element matches locator ${locator}.`,
           );
         }
         x = point.x;
         y = point.y;
       } else {
-        x = input.x;
-        y = input.y;
+        x = input.x!;
+        y = input.y!;
       }
       const viewport = await this.evaluateWithDebugger<{ width: number; height: number }>(
         send,
@@ -688,19 +812,17 @@ export class PreviewViewManager {
 
   async automationType(tabId: string, input: PreviewAutomationTypeInput): Promise<void> {
     const wc = this.requireWebContents(tabId);
-    await this.withDebugger(wc, async (send) => {
+    await this.withControlSession(tabId, wc, "type", async (send) => {
       await send("Runtime.enable");
+      const locator = this.automationLocator(input);
+      if (locator) await this.ensurePlaywrightInjected(send);
       const focusResult = await this.evaluateWithDebugger<
         { ok: true } | { invalidSelector: true; message: string } | { notFound: true }
       >(
         send,
         `(() => {
           try {
-            const element = ${
-              input.selector
-                ? `document.querySelector(${JSON.stringify(input.selector)})`
-                : "document.activeElement"
-            };
+            const element = ${locator ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${JSON.stringify(locator)}), document, true); })()` : "document.activeElement"};
             if (!element) return { notFound: true };
             element.focus();
             if (${input.clear ?? false}) {
@@ -723,8 +845,8 @@ export class PreviewViewManager {
       if ("notFound" in focusResult) {
         throw automationError(
           "PreviewAutomationExecutionError",
-          input.selector
-            ? `No element matches selector ${input.selector}.`
+          locator
+            ? `No element matches locator ${locator}.`
             : "No element is focused in the preview.",
         );
       }
@@ -743,7 +865,7 @@ export class PreviewViewManager {
 
   async automationPress(tabId: string, input: PreviewAutomationPressInput): Promise<void> {
     const wc = this.requireWebContents(tabId);
-    await this.withDebugger(wc, async (send) => {
+    await this.withControlSession(tabId, wc, "press", async (send) => {
       const modifiers = (input.modifiers ?? []).reduce((value, modifier) => {
         switch (modifier) {
           case "Alt":
@@ -771,19 +893,17 @@ export class PreviewViewManager {
 
   async automationScroll(tabId: string, input: PreviewAutomationScrollInput): Promise<void> {
     const wc = this.requireWebContents(tabId);
-    await this.withDebugger(wc, async (send) => {
+    await this.withControlSession(tabId, wc, "scroll", async (send) => {
       await send("Runtime.enable");
+      const locator = this.automationLocator(input);
+      if (locator) await this.ensurePlaywrightInjected(send);
       const result = await this.evaluateWithDebugger<
         { ok: true } | { invalidSelector: true; message: string } | { notFound: true }
       >(
         send,
         `(() => {
           try {
-            const target = ${
-              input.selector
-                ? `document.querySelector(${JSON.stringify(input.selector)})`
-                : "window"
-            };
+            const target = ${locator ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${JSON.stringify(locator)}), document, true); })()` : "window"};
             if (!target) return { notFound: true };
             target.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
             return { ok: true };
@@ -801,7 +921,7 @@ export class PreviewViewManager {
       if ("notFound" in result) {
         throw automationError(
           "PreviewAutomationExecutionError",
-          `No element matches selector ${input.selector}.`,
+          `No element matches locator ${locator}.`,
         );
       }
     });
@@ -809,7 +929,7 @@ export class PreviewViewManager {
 
   async automationEvaluate(tabId: string, input: PreviewAutomationEvaluateInput): Promise<unknown> {
     const wc = this.requireWebContents(tabId);
-    return this.withDebugger(wc, async (send) => {
+    return this.withControlSession(tabId, wc, "evaluate", async (send) => {
       await send("Runtime.enable");
       const value = await this.evaluateWithDebugger(
         send,
@@ -835,8 +955,10 @@ export class PreviewViewManager {
   async automationWaitFor(tabId: string, input: PreviewAutomationWaitForInput): Promise<void> {
     const wc = this.requireWebContents(tabId);
     const timeoutMs = input.timeoutMs ?? 15_000;
-    await this.withDebugger(wc, async (send) => {
+    await this.withControlSession(tabId, wc, "waitFor", async (send) => {
       await send("Runtime.enable");
+      const locator = this.automationLocator(input);
+      if (locator) await this.ensurePlaywrightInjected(send);
       const deadline = Date.now() + timeoutMs;
       while (Date.now() <= deadline) {
         const result = await this.evaluateWithDebugger<
@@ -845,11 +967,7 @@ export class PreviewViewManager {
           send,
           `(() => {
             try {
-              const selectorMatched = ${
-                input.selector
-                  ? `document.querySelector(${JSON.stringify(input.selector)}) !== null`
-                  : "true"
-              };
+              const selectorMatched = ${locator ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${JSON.stringify(locator)}), document, false) !== null; })()` : "true"};
               const textMatched = ${
                 input.text
                   ? `(document.body?.innerText || "").includes(${JSON.stringify(input.text)})`
@@ -896,36 +1014,282 @@ export class PreviewViewManager {
     this.update(tabId, { zoomFactor: next });
   }
 
-  private async withDebugger<A>(
+  private async withControlSession<A>(
+    tabId: string,
     wc: Electron.WebContents,
+    action: string,
     use: (
       send: (method: string, commandParams?: Record<string, unknown>) => Promise<unknown>,
     ) => Promise<A>,
   ): Promise<A> {
-    if (wc.debugger.isAttached()) {
-      throw automationError(
-        "PreviewAutomationExecutionError",
-        "Preview automation is unavailable while another debugger is attached.",
-      );
-    }
-    wc.debugger.attach("1.3");
+    const actionEvent: PreviewAutomationActionEvent = {
+      id: `browser-action-${Date.now().toString(36)}-${(this.actionSequence++).toString(36)}`,
+      action,
+      status: "running",
+      startedAt: new Date().toISOString(),
+    };
+    this.pushAction(tabId, actionEvent);
+    const epoch = this.controlEpoch.get(tabId) ?? 0;
+    const control = await this.ensureControlSession(wc);
+    let resolveTail: () => void = () => undefined;
+    const previous = control.tail;
+    control.tail = new Promise<void>((resolve) => {
+      resolveTail = resolve;
+    });
+    await previous;
+    this.update(tabId, { controller: "agent" });
     try {
-      return await use((method, commandParams) => wc.debugger.sendCommand(method, commandParams));
+      const send = async (method: string, commandParams?: Record<string, unknown>) => {
+        if ((this.controlEpoch.get(tabId) ?? 0) !== epoch) {
+          throw automationError(
+            "PreviewAutomationControlInterruptedError",
+            "Browser control was interrupted by human input.",
+          );
+        }
+        const result = await wc.debugger.sendCommand(method, commandParams);
+        if ((this.controlEpoch.get(tabId) ?? 0) !== epoch) {
+          throw automationError(
+            "PreviewAutomationControlInterruptedError",
+            "Browser control was interrupted by human input.",
+          );
+        }
+        return result;
+      };
+      const result = await use(send);
+      this.replaceAction(tabId, {
+        ...actionEvent,
+        status: "succeeded",
+        completedAt: new Date().toISOString(),
+      });
+      return result;
     } catch (cause) {
+      const interrupted =
+        cause instanceof Error && cause.name === "PreviewAutomationControlInterruptedError";
+      this.replaceAction(tabId, {
+        ...actionEvent,
+        status: interrupted ? "interrupted" : "failed",
+        completedAt: new Date().toISOString(),
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
       if (cause instanceof Error && cause.name.startsWith("PreviewAutomation")) throw cause;
       throw automationError(
         "PreviewAutomationExecutionError",
         cause instanceof Error ? cause.message : String(cause),
-        cause,
+        { tabId, cause },
       );
     } finally {
-      if (wc.debugger.isAttached()) {
-        try {
-          wc.debugger.detach();
-        } catch {
-          // The target can disappear while an operation is completing.
+      if (this.tabs.has(tabId)) this.update(tabId, { controller: "none" });
+      resolveTail();
+    }
+  }
+
+  private pushAction(tabId: string, event: PreviewAutomationActionEvent): void {
+    const timeline = this.actionTimeline.get(tabId) ?? [];
+    timeline.push(event);
+    if (timeline.length > 200) timeline.splice(0, timeline.length - 200);
+    this.actionTimeline.set(tabId, timeline);
+  }
+
+  private replaceAction(tabId: string, event: PreviewAutomationActionEvent): void {
+    const timeline = this.actionTimeline.get(tabId);
+    if (!timeline) return;
+    const index = timeline.findIndex((candidate) => candidate.id === event.id);
+    if (index >= 0) timeline[index] = event;
+  }
+
+  private async ensureControlSession(wc: Electron.WebContents): Promise<BrowserControlSession> {
+    const existing = this.controlSessions.get(wc.id);
+    if (existing) {
+      await existing.initialized;
+      return existing;
+    }
+    if (wc.isDevToolsOpened()) {
+      throw automationError(
+        "PreviewAutomationExecutionError",
+        "Close preview DevTools before using agent browser control.",
+      );
+    }
+    if (wc.debugger.isAttached()) {
+      throw automationError(
+        "PreviewAutomationExecutionError",
+        "Preview control cannot attach because another debugger owns this page.",
+      );
+    }
+    const control: BrowserControlSession = {
+      webContentsId: wc.id,
+      tail: Promise.resolve(),
+      initialized: Promise.resolve(),
+    };
+    const diagnostics: BrowserDiagnostics = {
+      consoleEntries: [],
+      networkEntries: [],
+      requests: new Map(),
+    };
+    this.diagnostics.set(wc.id, diagnostics);
+    wc.debugger.on("message", (_event, method, params) => {
+      if (method === "Page.screencastFrame") {
+        const frame = params as Record<string, unknown>;
+        const sessionId = frame["sessionId"];
+        if (typeof sessionId === "number") {
+          void wc.debugger
+            .sendCommand("Page.screencastFrameAck", { sessionId })
+            .catch(() => undefined);
+        }
+        const tabId = this.tabIdForWebContents(wc.id);
+        const metadata =
+          typeof frame["metadata"] === "object" && frame["metadata"] !== null
+            ? (frame["metadata"] as Record<string, unknown>)
+            : {};
+        if (tabId && typeof frame["data"] === "string") {
+          const payload: DesktopPreviewRecordingFrame = {
+            tabId,
+            data: frame["data"],
+            width: typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
+            height: typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
+            receivedAt: new Date().toISOString(),
+          };
+          for (const listener of this.recordingFrameListeners) listener(payload);
         }
       }
+      this.captureDiagnosticMessage(diagnostics, method, params as Record<string, unknown>);
+    });
+    control.initialized = (async () => {
+      wc.debugger.attach("1.3");
+      await Promise.all([
+        wc.debugger.sendCommand("Runtime.enable"),
+        wc.debugger.sendCommand("Accessibility.enable"),
+        wc.debugger.sendCommand("Network.enable"),
+        wc.debugger.sendCommand("Log.enable"),
+      ]);
+    })();
+    this.controlSessions.set(wc.id, control);
+    try {
+      await control.initialized;
+      return control;
+    } catch (cause) {
+      this.controlSessions.delete(wc.id);
+      throw cause;
+    }
+  }
+
+  private detachControlSession(webContentsId: number): void {
+    this.controlSessions.delete(webContentsId);
+    this.diagnostics.delete(webContentsId);
+    const wc = webContents.fromId(webContentsId);
+    if (!wc || wc.isDestroyed() || !wc.debugger.isAttached()) return;
+    try {
+      wc.debugger.detach();
+    } catch {
+      // Target teardown can race detachment.
+    }
+  }
+
+  private tabIdForWebContents(webContentsId: number): string | null {
+    for (const [tabId, tab] of this.tabs) {
+      if (tab.webContentsId === webContentsId) return tabId;
+    }
+    return null;
+  }
+
+  private captureDiagnosticMessage(
+    diagnostics: BrowserDiagnostics,
+    method: string,
+    params: Record<string, unknown>,
+  ): void {
+    const timestamp = new Date().toISOString();
+    if (method === "Runtime.consoleAPICalled") {
+      const args = Array.isArray(params["args"]) ? params["args"] : [];
+      const text = args
+        .map((arg) => {
+          if (typeof arg !== "object" || arg === null) return String(arg);
+          const value = arg as Record<string, unknown>;
+          return String(value["value"] ?? value["description"] ?? "");
+        })
+        .join(" ");
+      this.pushBounded(diagnostics.consoleEntries, {
+        level: typeof params["type"] === "string" ? params["type"] : "log",
+        text,
+        timestamp,
+        source: "console",
+      });
+      return;
+    }
+    if (method === "Runtime.exceptionThrown") {
+      const details =
+        typeof params["exceptionDetails"] === "object" && params["exceptionDetails"] !== null
+          ? (params["exceptionDetails"] as Record<string, unknown>)
+          : {};
+      this.pushBounded(diagnostics.consoleEntries, {
+        level: "error",
+        text: String(details["text"] ?? "Uncaught exception"),
+        timestamp,
+        source: "exception",
+      });
+      return;
+    }
+    if (method === "Log.entryAdded") {
+      const entry =
+        typeof params["entry"] === "object" && params["entry"] !== null
+          ? (params["entry"] as Record<string, unknown>)
+          : {};
+      this.pushBounded(diagnostics.consoleEntries, {
+        level: typeof entry["level"] === "string" ? entry["level"] : "info",
+        text: String(entry["text"] ?? ""),
+        timestamp,
+        source: typeof entry["source"] === "string" ? entry["source"] : "log",
+      });
+      return;
+    }
+    const requestId = typeof params["requestId"] === "string" ? params["requestId"] : null;
+    if (method === "Network.requestWillBeSent" && requestId) {
+      const request =
+        typeof params["request"] === "object" && params["request"] !== null
+          ? (params["request"] as Record<string, unknown>)
+          : {};
+      diagnostics.requests.set(requestId, {
+        url: String(request["url"] ?? ""),
+        method: String(request["method"] ?? "GET"),
+      });
+      return;
+    }
+    if (method === "Network.responseReceived" && requestId) {
+      const request = diagnostics.requests.get(requestId);
+      const response =
+        typeof params["response"] === "object" && params["response"] !== null
+          ? (params["response"] as Record<string, unknown>)
+          : {};
+      const status = typeof response["status"] === "number" ? response["status"] : null;
+      if (request && status !== null && status >= 400) {
+        this.pushBounded(diagnostics.networkEntries, {
+          ...request,
+          status,
+          failed: true,
+          timestamp,
+        });
+      }
+      return;
+    }
+    if (method === "Network.loadingFailed" && requestId) {
+      const request = diagnostics.requests.get(requestId);
+      if (request) {
+        this.pushBounded(diagnostics.networkEntries, {
+          ...request,
+          status: null,
+          failed: true,
+          errorText: String(params["errorText"] ?? "Network request failed"),
+          timestamp,
+        });
+      }
+      diagnostics.requests.delete(requestId);
+      return;
+    }
+    if (method === "Network.loadingFinished" && requestId) diagnostics.requests.delete(requestId);
+  }
+
+  private pushBounded<A>(buffer: A[], entry: A): void {
+    buffer.push(entry);
+    if (buffer.length > DIAGNOSTIC_BUFFER_LIMIT) {
+      buffer.splice(0, buffer.length - DIAGNOSTIC_BUFFER_LIMIT);
     }
   }
 
@@ -952,6 +1316,28 @@ export class PreviewViewManager {
     return response.result?.value as A;
   }
 
+  private automationLocator(input: {
+    readonly selector?: string | undefined;
+    readonly locator?: string | undefined;
+  }): string | null {
+    if (input.locator) return input.locator;
+    if (input.selector) return `css=${input.selector}`;
+    return null;
+  }
+
+  private async ensurePlaywrightInjected(
+    send: (method: string, commandParams?: Record<string, unknown>) => Promise<unknown>,
+  ): Promise<void> {
+    const installed = await this.evaluateWithDebugger<boolean>(
+      send,
+      "Boolean(globalThis.__t3PlaywrightInjected)",
+      true,
+    );
+    if (installed) return;
+    const expression = await playwrightInjectedRuntimeInstallExpression();
+    await this.evaluateWithDebugger(send, expression, true);
+  }
+
   onStateChange(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -964,6 +1350,7 @@ export class PreviewViewManager {
       this.closeTab(tabId);
     }
     this.listeners.clear();
+    this.recordingFrameListeners.clear();
   }
 
   private attachListeners(tabId: string, wc: Electron.WebContents): void {
@@ -988,6 +1375,15 @@ export class PreviewViewManager {
         },
       });
     };
+    const humanInput = (): void => {
+      this.controlEpoch.set(tabId, (this.controlEpoch.get(tabId) ?? 0) + 1);
+      this.update(tabId, { controller: "human" });
+      void sleep(750).then(() => {
+        if (this.tabs.get(tabId)?.controller === "human") {
+          this.update(tabId, { controller: "none" });
+        }
+      });
+    };
 
     wc.on("did-navigate", sync);
     wc.on("did-navigate-in-page", sync);
@@ -995,6 +1391,7 @@ export class PreviewViewManager {
     wc.on("did-start-loading", sync);
     wc.on("did-stop-loading", sync);
     wc.on("did-fail-load", failed as never);
+    wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
 
     // Keep external links inside the same view (matches ami's policy).
     wc.setWindowOpenHandler(({ url }) => {
@@ -1020,7 +1417,7 @@ export class PreviewViewManager {
       }
     });
 
-    this.attached.set(wc.id, { navigate: sync, failed });
+    this.attached.set(wc.id, { navigate: sync, failed, humanInput });
   }
 
   private detachListeners(webContentsId: number): void {
@@ -1035,6 +1432,7 @@ export class PreviewViewManager {
     wc.off("did-start-loading", handlers.navigate);
     wc.off("did-stop-loading", handlers.navigate);
     wc.off("did-fail-load", handlers.failed as never);
+    wc.ipc.off(HUMAN_INPUT_CHANNEL, handlers.humanInput);
   }
 
   private isAppShortcut(input: Electron.Input): boolean {

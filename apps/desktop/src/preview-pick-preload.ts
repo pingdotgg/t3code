@@ -16,6 +16,7 @@ const START_PICK_CHANNEL = "preview:start-pick";
 const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
 const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
 const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
+const HUMAN_INPUT_CHANNEL = "preview:human-input";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const Z_INDEX_OVERLAY = 2147483646;
 const ACCENT = "#7c3aed";
@@ -41,6 +42,13 @@ interface AnnotationSession {
 
 let activeSession: AnnotationSession | null = null;
 let idSequence = 0;
+
+const reportHumanInput = (event: Event): void => {
+  if (event.isTrusted) ipcRenderer.send(HUMAN_INPUT_CHANNEL);
+};
+
+window.addEventListener("pointerdown", reportHumanInput, true);
+window.addEventListener("keydown", reportHumanInput, true);
 
 const nextId = (prefix: string): string => {
   idSequence += 1;

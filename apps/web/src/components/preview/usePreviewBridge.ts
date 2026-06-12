@@ -14,25 +14,13 @@ import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewState
 import { previewBridge } from "./previewBridge";
 
 /**
- * Owns the desktop tab lifecycle, mirrors low-latency button state into the
- * store, and reflects bridge navigation events back to the server.
- *
- * Tab create/close is anchored to the panel mount, NOT to the snapshot, so
- * snapshot transitions (`opened` → `closed` → `opened`) cannot tear down and
- * recreate the tab in the wrong order relative to in-flight desktop IPCs.
+ * Mirrors low-latency desktop state into the store and reflects navigation
+ * events back to the server. Webview lifetime is owned by ElectronBrowserHost.
  */
 export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: string }): void {
   const { threadRef, tabId } = input;
   const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
   const bridge = previewBridge;
-
-  useEffect(() => {
-    if (!bridge) return;
-    void bridge.createTab(tabId);
-    return () => {
-      void bridge.closeTab(tabId);
-    };
-  }, [bridge, tabId]);
 
   // One bridge subscription does both jobs (mirror state + forward to
   // server) so the desktop bridge keeps a single listener entry per tab.
@@ -45,7 +33,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
     lastReportedKind.current = null;
     const unsubscribe = bridge.onStateChange((changedTabId, state) => {
       if (changedTabId !== tabId) return;
-      applyDesktopState(threadRef, projectDesktopState(state));
+      applyDesktopState(threadRef, tabId, projectDesktopState(state));
       const reported = buildReportInput({
         threadId: threadRef.threadId,
         tabId,
@@ -68,6 +56,7 @@ function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverl
     canGoForward: state.canGoForward,
     loading: state.navStatus.kind === "Loading",
     zoomFactor: state.zoomFactor,
+    controller: state.controller,
   };
 }
 

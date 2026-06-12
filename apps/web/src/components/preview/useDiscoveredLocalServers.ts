@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ensureEnvironmentApi } from "~/environmentApi";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured" | "recent";
@@ -42,11 +43,14 @@ export function useDiscoveredLocalServers(
   return useMemo(
     () =>
       mergeServers({
-        scanner: scannerSnapshot,
+        scanner: scannerSnapshot.map((server) => ({
+          ...server,
+          url: resolveDiscoveredServerUrl(input.environmentId, server.url),
+        })),
         configuredUrls: input.configuredUrls ?? [],
         recentlySeenUrls: input.recentlySeenUrls ?? [],
       }),
-    [scannerSnapshot, input.configuredUrls, input.recentlySeenUrls],
+    [input.environmentId, scannerSnapshot, input.configuredUrls, input.recentlySeenUrls],
   );
 }
 

@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import type {
   PreviewAutomationOperation,
+  PreviewAutomationRecordingArtifact,
+  PreviewAutomationRecordingStatus,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -44,4 +46,6 @@ export const PreviewToolkitHandlersLive = PreviewToolkit.toLayer({
   preview_scroll: (input) => invoke<void>("scroll", input),
   preview_evaluate: (input) => invoke<unknown>("evaluate", input),
   preview_wait_for: (input) => invoke<void>("waitFor", input, input.timeoutMs),
+  preview_recording_start: () => invoke<PreviewAutomationRecordingStatus>("recordingStart", {}),
+  preview_recording_stop: () => invoke<PreviewAutomationRecordingArtifact>("recordingStop", {}),
 });

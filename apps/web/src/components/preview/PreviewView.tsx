@@ -13,6 +13,7 @@ import {
 } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
+import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -21,13 +22,20 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
 import { PreviewUnreachable } from "./PreviewUnreachable";
-import { PreviewWebview } from "./PreviewWebview";
+import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
+import {
+  startBrowserRecording,
+  stopBrowserRecording,
+  useBrowserRecordingStore,
+} from "~/browser/browserRecording";
+import { toastManager } from "~/components/ui/toast";
 
 interface Props {
   threadRef: ScopedThreadRef;
+  tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
 }
@@ -38,9 +46,10 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
  */
-export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
+export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState(0);
   const [pickActive, setPickActive] = useState(false);
+  const activeRecordingTabId = useBrowserRecordingStore((state) => state.activeTabId);
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = usePreviewStateStore((state) =>
@@ -62,8 +71,9 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
     };
   }, []);
 
-  const { snapshot, desktopOverlay } = previewState;
-  const tabId = snapshot?.tabId ?? null;
+  const tabId = requestedTabId ?? previewState.activeTabId;
+  const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
+  const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
@@ -71,22 +81,24 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
+  const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       const api = ensureEnvironmentApi(threadRef.environmentId);
       try {
+        const resolvedUrl = resolveDiscoveredServerUrl(threadRef.environmentId, next);
         if (tabId && previewBridge) {
           // Drive the webview imperatively; `usePreviewBridge` mirrors the
           // resolved URL back to the server so other clients stay in sync.
-          await previewBridge.navigate(tabId, next);
-          rememberUrl(threadRef, next);
+          await previewBridge.navigate(tabId, resolvedUrl);
+          rememberUrl(threadRef, resolvedUrl);
         } else {
           await openPreviewSession({
             previewApi: api.preview,
             threadRef,
-            url: next,
+            url: resolvedUrl,
             applyServerSnapshot,
             rememberUrl,
           });
@@ -126,6 +138,68 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
     if (!localApi || !url) return;
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
+
+  const handleCapture = useCallback(
+    (record: boolean) => {
+      if (!previewBridge || !tabId) return;
+      const recordingThisTab = activeRecordingTabId === tabId;
+      if (recordingThisTab) {
+        void stopBrowserRecording(tabId).then(
+          (artifact) => {
+            if (!artifact) return;
+            toastManager.add({
+              type: "success",
+              title: "Recording saved",
+              description: artifact.path,
+            });
+          },
+          (error) => {
+            toastManager.add({
+              type: "error",
+              title: "Unable to stop recording",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            });
+          },
+        );
+        return;
+      }
+      if (record) {
+        if (activeRecordingTabId !== null) {
+          toastManager.add({
+            type: "warning",
+            title: "Another preview is recording",
+            description: "Stop the active recording before starting a new one.",
+          });
+          return;
+        }
+        void startBrowserRecording(tabId).catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to start recording",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        });
+        return;
+      }
+      void previewBridge.captureScreenshot(tabId).then(
+        (artifact) => {
+          toastManager.add({
+            type: "success",
+            title: "Screenshot saved",
+            description: artifact.path,
+          });
+        },
+        (error) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to capture screenshot",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        },
+      );
+    },
+    [activeRecordingTabId, tabId],
+  );
 
   const handlePickElement = useCallback(() => {
     if (!previewBridge || !tabId) return;
@@ -232,7 +306,7 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
@@ -248,6 +322,9 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
+        onCapture={previewBridge && tabId ? handleCapture : undefined}
+        captureDisabled={!desktopOverlay || isUnreachable}
+        recording={tabId !== null && activeRecordingTabId === tabId}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
@@ -268,13 +345,12 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
         }
       />
 
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {tabId && snapshot ? (
-          <PreviewWebview
+          <BrowserSurfaceSlot
             key={tabId}
-            threadRef={threadRef}
             tabId={tabId}
-            initialUrl={url || null}
+            visible={visible && !isUnreachable}
             className="absolute inset-0 h-full w-full"
           />
         ) : (
@@ -287,6 +363,11 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
         )}
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
+        ) : null}
+        {controller !== "none" ? (
+          <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur">
+            {controller === "agent" ? "Agent controlling browser" : "Human control"}
+          </div>
         ) : null}
         {navStatus._tag === "LoadFailed" ? (
           <div className="absolute inset-0 z-10 bg-background">

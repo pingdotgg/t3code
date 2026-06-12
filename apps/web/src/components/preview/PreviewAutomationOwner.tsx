@@ -10,15 +10,21 @@ import type {
   PreviewAutomationStatus,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ensureEnvironmentApi } from "~/environmentApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
+import {
+  startBrowserRecording,
+  stopBrowserRecording,
+  useBrowserRecordingStore,
+} from "~/browser/browserRecording";
 
 import { previewBridge } from "./previewBridge";
 
-const automationClientId =
+const newAutomationClientId = (): string =>
   typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : `preview-${Math.random().toString(36).slice(2)}`;
@@ -112,11 +118,14 @@ export function PreviewAutomationOwner(props: {
   readonly visible: boolean;
 }) {
   const { threadRef, visible } = props;
+  const [automationClientId] = useState(newAutomationClientId);
   const ownerStateRef = useRef({ threadRef, visible });
   const handlerRef = useRef<(request: PreviewAutomationRequest) => Promise<unknown>>(
     async () => undefined,
   );
-  ownerStateRef.current = { threadRef, visible };
+  useEffect(() => {
+    ownerStateRef.current = { threadRef, visible };
+  }, [threadRef, visible]);
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
@@ -136,9 +145,6 @@ export function PreviewAutomationOwner(props: {
           return currentStatus(threadRef, visible);
         case "open": {
           const input = request.input as PreviewAutomationOpenInput;
-          if (input.show ?? true) {
-            useRightPanelStore.getState().open(threadRef, "preview");
-          }
           let activeTabId =
             (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
           if (!activeTabId) {
@@ -151,13 +157,20 @@ export function PreviewAutomationOwner(props: {
           } else if (input.url && previewBridge) {
             await previewBridge.navigate(activeTabId, input.url);
           }
+          if (input.show ?? true) {
+            useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
+          }
           await waitForDesktopOverlay(threadRef, request.timeoutMs);
           return currentStatus(threadRef, input.show ?? true);
         }
         case "navigate": {
           if (!previewBridge || !tabId) throw new Error("Preview tab is not initialized.");
           const input = request.input as PreviewAutomationNavigateInput;
-          await previewBridge.navigate(tabId, input.url);
+          const resolution = resolveBrowserNavigationTarget(
+            threadRef.environmentId,
+            input.target ?? { kind: "url", url: input.url! },
+          );
+          await previewBridge.navigate(tabId, resolution.resolvedUrl);
           await waitForNavigationReadiness(
             tabId,
             input.readiness ?? "load",
@@ -204,11 +217,28 @@ export function PreviewAutomationOwner(props: {
             tabId,
             request.input as Parameters<typeof previewBridge.automation.waitFor>[1],
           );
+        case "recordingStart": {
+          if (!tabId) throw new Error("Preview tab is not initialized.");
+          await startBrowserRecording(tabId);
+          return {
+            tabId,
+            recording: true,
+            startedAt: useBrowserRecordingStore.getState().startedAt,
+          };
+        }
+        case "recordingStop": {
+          if (!tabId) throw new Error("Preview tab is not initialized.");
+          const artifact = await stopBrowserRecording(tabId);
+          if (!artifact) throw new Error("No active recording exists for this preview tab.");
+          return artifact;
+        }
       }
     },
     [threadRef, visible],
   );
-  handlerRef.current = handleRequest;
+  useEffect(() => {
+    handlerRef.current = handleRequest;
+  }, [handleRequest]);
 
   useEffect(() => {
     const api = ensureEnvironmentApi(threadRef.environmentId);
@@ -249,7 +279,7 @@ export function PreviewAutomationOwner(props: {
         },
       },
     );
-  }, [threadRef.environmentId]);
+  }, [automationClientId, threadRef.environmentId]);
 
   useEffect(() => {
     const api = ensureEnvironmentApi(threadRef.environmentId);
@@ -281,7 +311,7 @@ export function PreviewAutomationOwner(props: {
       unsubscribe();
       void api.preview.automation.clearOwner({ clientId: automationClientId });
     };
-  }, [threadRef, visible]);
+  }, [automationClientId, threadRef, visible]);
 
   return null;
 }

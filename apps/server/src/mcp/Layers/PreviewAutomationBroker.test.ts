@@ -63,3 +63,27 @@ it.effect("rejects calls when no focused owner exists", () =>
     expect(error).toBeInstanceOf(PreviewAutomationNoFocusedOwnerError);
   }),
 );
+
+it.effect("routes interactive commands to a hidden durable browser host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = makePreviewAutomationBroker();
+      const requests = yield* broker.connect("client-hidden");
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({ requestId: request.requestId, ok: true }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* broker.reportOwner({
+        clientId: "client-hidden",
+        environmentId: scope.environmentId,
+        threadId: scope.threadId,
+        tabId: "tab-hidden",
+        visible: false,
+        supportsAutomation: true,
+        focusedAt: "2026-06-11T00:00:00.000Z",
+      });
+
+      yield* broker.invoke<void>({ scope, operation: "click", input: { x: 10, y: 10 } });
+    }),
+  ),
+);

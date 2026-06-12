@@ -6,7 +6,7 @@ import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
-export type PreviewPanelMode = "inline" | "sheet" | "sidebar";
+export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
 const PREVIEW_PANEL_MIN_WIDTH = 360;
@@ -22,7 +22,7 @@ const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
  * sheet/sidebar modes the parent owns the size.
  */
 export function PreviewPanelShell(props: { mode: PreviewPanelMode; children: ReactNode }) {
-  const useDragRegion = isElectron && props.mode !== "sheet";
+  const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const maxWidth = useViewportClampedMaxWidth();
   const { width, handlers } = useResizableWidth({
@@ -36,7 +36,7 @@ export function PreviewPanelShell(props: { mode: PreviewPanelMode; children: Rea
   return (
     <div
       className={cn(
-        "relative flex h-full min-w-0 flex-col bg-background",
+        "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-background",
         isInline ? "shrink-0 border-l border-border" : "w-full",
       )}
       style={isInline ? { width: `${width}px` } : undefined}

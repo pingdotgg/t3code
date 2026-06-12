@@ -1,5 +1,3 @@
-import { cn } from "~/lib/utils";
-
 import { BrowserMockup } from "./BrowserMockup";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
@@ -14,18 +12,14 @@ export function PreviewLocalServerCard({ server, onOpen }: Props) {
     <button
       type="button"
       onClick={onOpen}
-      className={cn(
-        "group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-2.5 text-left transition-colors",
-        "hover:border-border hover:bg-accent/40",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-      )}
+      className="group flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <BrowserMockup className="size-7 shrink-0" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium text-foreground">
+        <span className="truncate text-sm font-medium text-foreground">{subtitle}</span>
+        <span className="truncate text-xs text-muted-foreground">
           {server.host}:{server.port}
         </span>
-        <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
       </div>
       {server.listening ? <PulsingDot /> : <DimDot />}
     </button>

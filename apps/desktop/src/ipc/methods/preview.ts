@@ -17,6 +17,14 @@ previewViewManager.onStateChange((tabId, state) => {
   }
 });
 
+previewViewManager.onRecordingFrame((frame) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame);
+    }
+  }
+});
+
 const tabIdFrom = (raw: unknown): string => {
   if (typeof raw !== "object" || raw === null || !("tabId" in raw)) {
     throw new Error("preview tab id is required");
@@ -95,10 +103,16 @@ export const previewMethods = [
   ),
   method(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () => previewViewManager.clearCookies()),
   method(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () => previewViewManager.clearCache()),
-  method(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, () => {
+  method(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, (raw) => {
+    const environmentId =
+      typeof raw === "object" && raw !== null && "environmentId" in raw ? raw.environmentId : null;
+    if (typeof environmentId !== "string" || environmentId.length === 0) {
+      throw new Error("preview environment id is required");
+    }
+    previewViewManager.getBrowserSession(environmentId);
     const preloadPath = `${__dirname}/preview-pick-preload.cjs`;
     return {
-      partition: previewViewManager.getBrowserPartition(),
+      partition: previewViewManager.getBrowserPartition(environmentId),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: pathToFileURL(preloadPath).href,
     };
@@ -108,6 +122,9 @@ export const previewMethods = [
   ),
   method(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, (raw) =>
     previewViewManager.cancelPickElement(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, (raw) =>
+    previewViewManager.captureScreenshot(tabIdFrom(raw)),
   ),
   method(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, (raw) =>
     previewViewManager.automationStatus(tabIdFrom(raw)),
@@ -151,4 +168,20 @@ export const previewMethods = [
       inputFrom(raw) as Parameters<typeof previewViewManager.automationWaitFor>[1],
     ),
   ),
+  method(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, (raw) =>
+    previewViewManager.startRecording(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, (raw) =>
+    previewViewManager.stopRecording(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, (raw) => {
+    const tabId = tabIdFrom(raw);
+    if (typeof raw !== "object" || raw === null) throw new Error("recording payload is required");
+    const mimeType = "mimeType" in raw ? raw.mimeType : null;
+    const data = "data" in raw ? raw.data : null;
+    if (typeof mimeType !== "string" || !(data instanceof Uint8Array)) {
+      throw new Error("recording mimeType and bytes are required");
+    }
+    return previewViewManager.saveRecording(tabId, mimeType, data);
+  }),
 ] as const;

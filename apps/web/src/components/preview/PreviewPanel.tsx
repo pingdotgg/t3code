@@ -10,15 +10,16 @@ import { PreviewView } from "./PreviewView";
 interface Props {
   mode: PreviewPanelMode;
   threadRef: ScopedThreadRef;
+  tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
 }
 
-export function PreviewPanel({ mode, threadRef, configuredUrls, visible }: Props) {
+export function PreviewPanel({ mode, threadRef, tabId, configuredUrls, visible }: Props) {
   if (!isPreviewSupportedInRuntime()) {
     return (
       <PreviewPanelShell mode={mode}>
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
             Preview is only available in the T3 Code desktop app.
           </p>
@@ -29,7 +30,12 @@ export function PreviewPanel({ mode, threadRef, configuredUrls, visible }: Props
 
   return (
     <PreviewPanelShell mode={mode}>
-      <PreviewView threadRef={threadRef} configuredUrls={configuredUrls} visible={visible} />
+      <PreviewView
+        threadRef={threadRef}
+        {...(tabId !== undefined ? { tabId } : {})}
+        configuredUrls={configuredUrls}
+        visible={visible}
+      />
     </PreviewPanelShell>
   );
 }
