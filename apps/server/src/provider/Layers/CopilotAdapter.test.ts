@@ -674,6 +674,17 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
         yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
+        const fallbackDelta = runtimeEvents.find(
+          (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        );
+        assert.equal(fallbackDelta?.type, "content.delta");
+        if (fallbackDelta?.type === "content.delta") {
+          assert.equal(String(fallbackDelta.itemId), `copilot-task-completion-${String(turn.turnId)}`);
+          assert.deepStrictEqual(fallbackDelta.payload, {
+            streamKind: "assistant_text",
+            delta: resultText,
+          });
+        }
         assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
 
         yield* adapter.stopSession(threadId);
@@ -697,6 +708,13 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         input: "edit the docs",
         attachments: [],
       });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
       assert.ok(config?.onEvent);
@@ -779,6 +797,21 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         messageId: `copilot-tool-completion-${String(turn.turnId)}`,
         content: "Done. I completed the requested file changes.",
       });
+
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const fallbackDelta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      );
+      assert.equal(fallbackDelta?.type, "content.delta");
+      if (fallbackDelta?.type === "content.delta") {
+        assert.equal(String(fallbackDelta.itemId), `copilot-tool-completion-${String(turn.turnId)}`);
+        assert.deepStrictEqual(fallbackDelta.payload, {
+          streamKind: "assistant_text",
+          delta: "Done. I completed the requested file changes.",
+        });
+      }
 
       yield* adapter.stopSession(threadId);
     }),

@@ -1312,6 +1312,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
     context.pendingTaskCompletionTextByTurnId.delete(turnId);
     const itemId = `copilot-task-completion-${String(turnId)}`;
+    await emitTextDelta({
+      context,
+      turnId,
+      itemId,
+      itemType: "assistant_message",
+      streamKind: "assistant_text",
+      nextText: content,
+      raw,
+    });
     await emitAsync({
       ...createBaseEvent({
         threadId: context.threadId,
@@ -1346,6 +1355,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
 
     const itemId = `copilot-tool-completion-${String(turnId)}`;
+    await emitTextDelta({
+      context,
+      turnId,
+      itemId,
+      itemType: "assistant_message",
+      streamKind: "assistant_text",
+      nextText: content,
+      raw,
+    });
     await emitAsync({
       ...createBaseEvent({
         threadId: context.threadId,
