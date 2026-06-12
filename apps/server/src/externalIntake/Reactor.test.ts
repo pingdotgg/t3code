@@ -4,6 +4,7 @@ import {
   assistantFileInitialComment,
   assistantAttachmentDeliveryKey,
   assistantTextDeliveryKey,
+  dedupeAssistantAttachments,
   shouldFinalizeAssistantRelayFromMessage,
 } from "./Reactor.ts";
 
@@ -56,5 +57,24 @@ describe("ExternalIntakeReactor", () => {
     expect(assistantFileInitialComment("Done. The CSV is attached.")).toBe(
       "Done. The CSV is attached.",
     );
+  });
+
+  it("deduplicates repeated assistant attachments while preserving order", () => {
+    const first = {
+      type: "file" as const,
+      id: "thread-attachment-1",
+      name: "chase-ink-creator-strategy.md",
+      mimeType: "text/markdown",
+      sizeBytes: 12,
+    };
+    const second = {
+      type: "file" as const,
+      id: "thread-attachment-2",
+      name: "other.md",
+      mimeType: "text/markdown",
+      sizeBytes: 34,
+    };
+
+    expect(dedupeAssistantAttachments([first, first, second, first])).toEqual([first, second]);
   });
 });

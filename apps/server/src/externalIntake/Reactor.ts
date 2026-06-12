@@ -89,6 +89,21 @@ export function assistantFileInitialComment(text: string) {
   return text.trim().length > 0 ? toSlackMarkdown(text) : undefined;
 }
 
+export function dedupeAssistantAttachments(
+  attachments: ReadonlyArray<ChatAttachment>,
+): ReadonlyArray<ChatAttachment> {
+  if (attachments.length <= 1) return attachments;
+
+  const seen = new Set<string>();
+  const deduped: ChatAttachment[] = [];
+  for (const attachment of attachments) {
+    if (seen.has(attachment.id)) continue;
+    seen.add(attachment.id);
+    deduped.push(attachment);
+  }
+  return deduped;
+}
+
 export const makeExternalIntakeReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const repository = yield* ExternalIntegrationRepository;
@@ -372,13 +387,14 @@ export const makeExternalIntakeReactor = Effect.gen(function* () {
         state.messageTextById.get(state.lastMessageId) ?? "",
       );
       const attachments = state.messageAttachmentsById.get(state.lastMessageId) ?? [];
+      const dedupedAttachments = dedupeAssistantAttachments(attachments);
       const textToRelay =
         finalText !== null &&
         finalText !== state.firstRelayedText &&
         finalText !== state.finalRelayedText
           ? finalText
           : "";
-      if (textToRelay.length === 0 && attachments.length === 0) {
+      if (textToRelay.length === 0 && dedupedAttachments.length === 0) {
         return;
       }
       if (finalText !== null) {
@@ -389,7 +405,7 @@ export const makeExternalIntakeReactor = Effect.gen(function* () {
         turnId: state.turnId,
         messageId: state.lastMessageId,
         text: textToRelay,
-        attachments,
+        attachments: dedupedAttachments,
         phase: "final",
       });
       if (finalText !== null) {
