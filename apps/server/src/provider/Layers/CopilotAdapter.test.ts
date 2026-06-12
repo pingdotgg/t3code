@@ -679,11 +679,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
         const fallbackDelta = runtimeEvents.find(
-          (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
         );
         assert.equal(fallbackDelta?.type, "content.delta");
         if (fallbackDelta?.type === "content.delta") {
-          assert.equal(String(fallbackDelta.itemId), `copilot-task-completion-${String(turn.turnId)}`);
+          assert.equal(
+            String(fallbackDelta.itemId),
+            `copilot-task-completion-${String(turn.turnId)}`,
+          );
           assert.deepStrictEqual(fallbackDelta.payload, {
             streamKind: "assistant_text",
             delta: resultText,
@@ -699,7 +703,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         if (completedTool?.type === "item.completed") {
           assert.equal(completedTool.providerRefs?.providerItemId, "tool-task-complete");
         }
-        assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
+        assert.equal(
+          runtimeEvents.some((event) => event.type === "turn.diff.updated"),
+          false,
+        );
 
         yield* adapter.stopSession(threadId);
       }),
@@ -820,7 +827,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
       assert.equal(fallbackDelta?.type, "content.delta");
       if (fallbackDelta?.type === "content.delta") {
-        assert.equal(String(fallbackDelta.itemId), `copilot-tool-completion-${String(turn.turnId)}`);
+        assert.equal(
+          String(fallbackDelta.itemId),
+          `copilot-tool-completion-${String(turn.turnId)}`,
+        );
         assert.deepStrictEqual(fallbackDelta.payload, {
           streamKind: "assistant_text",
           delta: "Done. I completed the requested file changes.",
@@ -1060,7 +1070,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeMode: "approval-required",
       });
 
-      const turn = yield* adapter.sendTurn({
+      yield* adapter.sendTurn({
         threadId,
         input: "edit the docs",
         attachments: [],
@@ -1124,7 +1134,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "turn.diff.updated"),
+        false,
+      );
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1237,7 +1250,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "turn.diff.updated"),
+        false,
+      );
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1720,6 +1736,97 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       if (completed?.type === "turn.completed") {
         assert.equal(String(completed.turnId), String(turn.turnId));
         assert.equal(completed.payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits one canonical turn completion for duplicate Copilot lifecycle events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-duplicate-lifecycle-completion");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "complete once",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-duplicate-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-duplicate-completion",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-duplicate-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-duplicate-completion",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-duplicate-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-duplicate-turn-end-again",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-duplicate-completion",
+        },
+      } as SessionEvent);
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        runtimeEvents.filter((event) => event.type === "turn.completed").length === 0;
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const completions = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      assert.equal(completions.length, 1);
+      assert.equal(completions[0]?.type, "turn.completed");
+      if (completions[0]?.type === "turn.completed") {
+        assert.equal(completions[0].payload.state, "completed");
       }
 
       yield* adapter.stopSession(threadId);

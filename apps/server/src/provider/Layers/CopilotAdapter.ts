@@ -217,7 +217,10 @@ function toCopilotResumeCursor(sessionId: string): { schemaVersion: 1; sessionId
   };
 }
 
-function readTrimmedStringProperty(record: Record<string, unknown>, key: string): string | undefined {
+function readTrimmedStringProperty(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
   const value = record[key];
   return typeof value === "string" ? trimOrUndefined(value) : undefined;
 }
@@ -1177,6 +1180,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       readonly raw?: SessionEvent | undefined;
     },
   ) => {
+    // Copilot can report both assistant.turn_end and session.idle for the same
+    // turn; keep the public runtime lifecycle canonical and idempotent.
     if (context.completedTurnIds.has(turnId)) {
       context.pendingTaskCompletionTextByTurnId.delete(turnId);
       context.turnIdsWithAssistantText.delete(turnId);
