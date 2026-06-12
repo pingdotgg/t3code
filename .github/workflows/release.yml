@@ -1,12 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
-  schedule:
-    - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       channel:
