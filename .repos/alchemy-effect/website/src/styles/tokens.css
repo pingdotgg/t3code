@@ -1,0 +1,363 @@
+/* ============================================================
+   Alchemy Design System — Colors & Type
+   Sunny-forest palette: warm cream parchment, muted moss green,
+   terracotta accents, walnut browns. Light mode, earthy, calm.
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@500;600;700&display=swap");
+
+/* Tinos (Apache 2.0, Steve Matteson / Ascender / Google) — metrically
+   compatible with Times New Roman. Self-hosted because we use it as a
+   pinned target for specific glyphs (currently just the marketing
+   arrow `→` U+2192). The OG image renderer reads the same TTF from
+   `assets/fonts/Tinos-Regular.ttf` so the website and the OG card
+   render that glyph from the same face. unicode-range scopes the
+   download so it only fires when a Tinos glyph actually appears. */
+@font-face {
+  font-family: "Tinos";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Tinos-Regular.ttf") format("truetype");
+  unicode-range: U+2192; /* → only — keep payload focused */
+}
+
+:root {
+  /* ---------- Brand: muted forest greens ---------- */
+  --alc-accent: #5c7a3e; /* moss — primary brand */
+  --alc-accent-deep: #3f5a2a; /* deep forest — pressed/emphasis */
+  --alc-accent-warm: #7a9a5e; /* sage — lighter, sunny */
+  --alc-accent-bright: #8fb15e; /* lit leaves — accents on cream */
+  /* Translucent so surfaces using `accent-soft` (hero CTA cards, asides,
+     selection) let the underlying texture show through — same approach
+     as the dark-mode token below. */
+  --alc-accent-soft: color-mix(in srgb, #5c7a3e 18%, transparent);
+  --alc-accent-60: color-mix(in srgb, #5c7a3e 60%, transparent);
+  --alc-accent-40: color-mix(in srgb, #5c7a3e 40%, transparent);
+  --alc-accent-12: color-mix(in srgb, #5c7a3e 12%, transparent);
+
+  /* Bindu (yantra centroid dot) — deep moss in light mode. The dark
+     block overrides this to terracotta so the brand mark gets a warm
+     focal point against the dark page. */
+  --alc-yantra-dot: #3f5a2a;
+
+  /* ---------- Secondary: warm terracotta ---------- */
+  --alc-terracotta: #c56e3c;
+  --alc-terracotta-deep: #9a4f27;
+  --alc-terracotta-soft: color-mix(in srgb, #c56e3c 18%, transparent);
+
+  /* ---------- Surfaces (warm cream / parchment) ---------- */
+  --alc-bg: #f5efe3; /* page — parchment */
+  --alc-bg-nav: #efe7d6; /* nav, sidebar — a touch deeper */
+  --alc-bg-elev-1: #fbf6ea; /* cards, panels — lifted, paper */
+  --alc-bg-elev-2: #fffaf0; /* hover / nested */
+  --alc-bg-code: #2a2620; /* terminal / code blocks — walnut */
+  --alc-bg-sunk: #ebe3d0; /* insets */
+
+  /* ---------- Neutrals (warm walnut scale) ---------- */
+  --alc-walnut-50: #faf6ec;
+  --alc-walnut-100: #f1ead8;
+  --alc-walnut-200: #e2d7bc;
+  --alc-walnut-300: #c7b795;
+  --alc-walnut-400: #a89572;
+  --alc-walnut-500: #85714f;
+  --alc-walnut-600: #68573c;
+  --alc-walnut-700: #4e402c;
+  --alc-walnut-800: #363022;
+  --alc-walnut-900: #2a2620;
+  --alc-walnut-950: #1a1813;
+
+  /* ---------- Text ---------- */
+  --alc-fg-1: #2a2620; /* primary — walnut */
+  --alc-fg-2: #4e402c; /* body — deep tan */
+  --alc-fg-3: #85714f; /* muted — mushroom */
+  --alc-fg-4: #a89572; /* tertiary / captions */
+  --alc-fg-invert: #fbf6ea; /* on dark (code/term) */
+  --alc-fg-on-accent: #fbf6ea; /* on moss */
+
+  /* ---------- Hairlines / borders ---------- */
+  --alc-hairline: rgba(42, 38, 32, 0.08);
+  --alc-hairline-2: rgba(42, 38, 32, 0.14);
+  --alc-hairline-3: rgba(42, 38, 32, 0.22);
+
+  /* ---------- Semantic (status) — earthy ---------- */
+  --alc-success: #5c7a3e; /* plan: create — moss */
+  --alc-warn: #d49a2a; /* plan: update — honey */
+  --alc-danger: #b3462e; /* plan: replace / destroy — brick */
+  --alc-info: #4a7a8a; /* info — slate teal */
+  --alc-muted: #a89572; /* dim text */
+
+  /* ---------- Syntax (on walnut bg, SUNRISE — bright & distinct) ---------- */
+  --alc-code-keyword: #d4f26a; /* electric spring green — keywords, export, const */
+  --alc-code-string: #ffe38a; /* bright honey — strings */
+  --alc-code-fn: #ffb968; /* sunrise amber — function calls */
+  --alc-code-type: #7ddfff; /* sky cyan — types */
+  --alc-code-comment: #b3a27a; /* bright readable tan */
+  --alc-code-var: #faf5e3; /* near-white parchment — identifiers */
+  --alc-code-literal: #ff9a6b; /* coral sunrise — numbers/literals */
+
+  /* ---------- Type ---------- */
+  --alc-font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --alc-font-serif:
+    "Source Serif 4", "Tinos", "Source Serif Pro", Georgia, "Times New Roman",
+    serif;
+  --alc-font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --alc-font-hand:
+    "Caveat", "Comic Sans MS", cursive; /* hand-drawn diagram labels */
+
+  /* ---------- Radius ---------- */
+  --alc-radius-xs: 2px;
+  --alc-radius-sm: 4px;
+  --alc-radius: 8px;
+  --alc-radius-md: 10px;
+  --alc-radius-lg: 12px;
+  --alc-radius-xl: 16px;
+
+  /* ---------- Spacing (4px grid) ---------- */
+  --alc-space-1: 4px;
+  --alc-space-2: 8px;
+  --alc-space-3: 12px;
+  --alc-space-4: 16px;
+  --alc-space-5: 24px;
+  --alc-space-6: 32px;
+  --alc-space-7: 48px;
+  --alc-space-8: 64px;
+  --alc-space-9: 96px;
+
+  /* ---------- Shadows (warm, soft) ---------- */
+  --alc-shadow-sm: 0 1px 2px rgba(78, 64, 44, 0.08);
+  --alc-shadow: 0 4px 14px rgba(78, 64, 44, 0.1);
+  --alc-shadow-lg: 0 20px 40px rgba(78, 64, 44, 0.14);
+  --alc-glow:
+    0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
+
+  /* ---------- Motion ---------- */
+  --alc-ease: cubic-bezier(0.2, 0, 0, 1);
+  --alc-dur-fast: 120ms;
+  --alc-dur: 180ms;
+  --alc-dur-slow: 320ms;
+}
+
+/* ============================================================
+   Dark mode — "night forest, walnut interior".
+   Same warm/earthy logic as light, inverted around the walnut
+   scale. The page joins the dark code-block surface; cream
+   becomes the text scale; moss & terracotta lift one step so
+   they read on dark.
+   ============================================================ */
+
+[data-theme="dark"] {
+  /* Brand: lifted moss for emphasis on dark walnut */
+  --alc-accent: #7a9a5e;
+  --alc-accent-deep: #a3c473; /* emphasis / text-accent — lifted, not darkened */
+  --alc-accent-warm: #8fb15e;
+  --alc-accent-bright: #b3d188;
+  --alc-accent-soft: color-mix(in srgb, #7a9a5e 22%, transparent);
+  --alc-accent-60: color-mix(in srgb, #a3c473 60%, transparent);
+  --alc-accent-40: color-mix(in srgb, #a3c473 40%, transparent);
+  --alc-accent-12: color-mix(in srgb, #a3c473 18%, transparent);
+
+  /* Bindu pops in terracotta against the dark page. */
+  --alc-yantra-dot: #c56e3c;
+
+  /* Secondary: warm terracotta — lifted */
+  --alc-terracotta: #d8835a;
+  --alc-terracotta-deep: #e89a72;
+  --alc-terracotta-soft: color-mix(in srgb, #d8835a 20%, transparent);
+
+  /* Surfaces — page joins the code-block aesthetic. In dark mode the
+     code surface LIFTS above the page (vs. light mode where it sinks),
+     so terminal/code chrome still reads as a distinct card on the page. */
+  --alc-bg: #14110d;
+  --alc-bg-nav: #1a1613;
+  --alc-bg-elev-1: #221e18;
+  --alc-bg-elev-2: #2a2620;
+  --alc-bg-code: #2a2620; /* same as light-mode code surface — chrome/syntax tuning carries over */
+  --alc-bg-sunk: #100c08;
+
+  /* Text — cream scale */
+  --alc-fg-1: #faf6ec; /* primary — parchment */
+  --alc-fg-2: #e2d7bc; /* body — washed parchment */
+  --alc-fg-3: #a89572; /* muted — walnut-400 still reads */
+  --alc-fg-4: #85714f; /* tertiary / captions */
+  /* `--alc-fg-invert` is text on the dark code surface, which stays dark in
+     both modes — so this token is the same in light and dark. */
+  --alc-fg-invert: #fbf6ea;
+  --alc-fg-on-accent: #fbf6ea;
+
+  /* Hairlines — cream over walnut */
+  --alc-hairline: rgba(250, 246, 236, 0.08);
+  --alc-hairline-2: rgba(250, 246, 236, 0.14);
+  --alc-hairline-3: rgba(250, 246, 236, 0.22);
+
+  /* Semantic — lifted on dark for AA contrast */
+  --alc-success: #8fb15e;
+  --alc-warn: #e8b04a;
+  --alc-danger: #d76a4e;
+  --alc-info: #6da4b4;
+  --alc-muted: #85714f;
+
+  /* Shadows — heavier black, less warmth shows through */
+  --alc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --alc-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --alc-shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.6);
+  --alc-glow:
+    0 0 0 1px var(--alc-accent-40), 0 0 24px -4px var(--alc-accent-40);
+}
+
+/* ============================================================
+   Semantic text styles
+   ============================================================ */
+
+.alc-display {
+  font-family: var(--alc-font-serif);
+  font-size: 76px;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+}
+
+.alc-h1 {
+  font-family: var(--alc-font-serif);
+  font-size: 52px;
+  line-height: 1.06;
+  letter-spacing: -0.015em;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+}
+
+.alc-h2 {
+  font-family: var(--alc-font-serif);
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+  color: var(--alc-fg-1);
+}
+
+.alc-h3 {
+  font-family: var(--alc-font-sans);
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+
+.alc-h4 {
+  font-family: var(--alc-font-sans);
+  font-size: 17px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+
+.alc-eyebrow {
+  font-family: var(--alc-font-mono);
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--alc-accent-deep);
+}
+
+.alc-body-lg {
+  font-family: var(--alc-font-sans);
+  font-size: 18px;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--alc-fg-2);
+}
+
+.alc-body {
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--alc-fg-2);
+}
+
+.alc-small {
+  font-family: var(--alc-font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--alc-fg-3);
+}
+
+.alc-caption {
+  font-family: var(--alc-font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--alc-fg-4);
+}
+
+.alc-code {
+  font-family: var(--alc-font-mono);
+  font-size: 14px;
+  line-height: 1.55;
+  font-variant-ligatures: none;
+  color: var(--alc-fg-invert);
+}
+
+.alc-code-inline {
+  font-family: var(--alc-font-mono);
+  font-size: 0.9em;
+  padding: 0.12em 0.38em;
+  border-radius: var(--alc-radius-sm);
+  background: var(--alc-bg-sunk);
+  border: 1px solid var(--alc-hairline);
+  color: var(--alc-fg-1);
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* In large headings the inline-code pill's padding + border makes the box
+   taller than the heading's line-height, so it visually clips into adjacent
+   lines. Shrink it slightly and align to baseline so it sits cleanly. */
+h1 .alc-code-inline,
+h2 .alc-code-inline,
+h3 .alc-code-inline {
+  font-size: 0.78em;
+  padding: 0.08em 0.34em;
+  vertical-align: 0.04em;
+  line-height: 1;
+}
+
+.alc-hand {
+  font-family: var(--alc-font-hand);
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--alc-accent-deep);
+}
+
+.alc-text-accent {
+  color: var(--alc-accent-deep);
+  font-style: italic;
+  font-family: var(--alc-font-serif);
+  font-weight: 500;
+}
+
+/* ============================================================
+   Body defaults
+   ============================================================ */
+
+body.alc-root,
+.alc-root {
+  background: var(--alc-bg);
+  color: var(--alc-fg-2);
+  font-family: var(--alc-font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--alc-accent-soft);
+  color: var(--alc-fg-1);
+}

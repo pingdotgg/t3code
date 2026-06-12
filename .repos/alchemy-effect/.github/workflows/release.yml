@@ -1,0 +1,432 @@
+name: Release NPM Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        type: choice
+        default: beta
+        options:
+          - release
+          - beta
+          - alpha
+          - tag
+      spec:
+        description: >-
+          Channel-specific value. tag: REQUIRED, the explicit full version (e.g.
+          2.0.0-experimental.1). release: REQUIRED, patch|minor|major or an
+          explicit x.y.z. beta|alpha: optional, an integer N to force
+          2.0.0-<channel>.N; leave blank to auto-increment.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  NODE_VERSION: "24"
+  # Files produced by the bump job and consumed by every publish job + the
+  # final commit job. Listed once here so additions stay in sync.
+  BUMP_ARTIFACT_PATHS: |
+    packages/alchemy/lib
+    packages/alchemy/bin
+    packages/alchemy/package.json
+    packages/better-auth/package.json
+    packages/better-auth/lib
+    packages/pr-package/package.json
+    packages/pr-package/lib
+    bun.lock
+jobs:
+  # ── Step 1: Compute the next version and stage the bump in-memory. ──
+  # No git commit: we want a failed publish to leave no orphan commit
+  # behind. The staged files ride to the publish jobs (and the final commit
+  # job) as an artifact.
+  bump:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      channel: ${{ inputs.channel }}
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - name: Validate inputs
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          SPEC: ${{ inputs.spec }}
+        run: |
+          case "$CHANNEL" in
+            tag)
+              if [ -z "$SPEC" ]; then
+                echo "::error::'tag' channel requires an explicit version in 'spec' (e.g. 2.0.0-experimental.1)"
+                exit 1
+              fi
+              ;;
+            release)
+              if [ -z "$SPEC" ]; then
+                echo "::error::'release' channel requires a 'spec' (patch|minor|major|x.y.z)"
+                exit 1
+              fi
+              ;;
+          esac
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          registry-url: https://registry.npmjs.org/
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - id: bump
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          SPEC: ${{ inputs.spec }}
+        run: |
+          if [ -n "$SPEC" ]; then
+            VERSION=$(bun ./scripts/release/bump.ts "$CHANNEL" "$SPEC")
+          else
+            VERSION=$(bun ./scripts/release/bump.ts "$CHANNEL")
+          fi
+          echo "Resolved version: $VERSION (channel: $CHANNEL)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Build everything once, up front, against the bumped versions. Outputs
+      # ride to every publish job as the `build-output` artifact so we don't
+      # rebuild three times in parallel.
+      - run: bun run build:packages
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bump-files
+          path: ${{ env.BUMP_ARTIFACT_PATHS }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-output
+          path: |
+            packages/*/lib
+            packages/*/bin
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: true
+
+  # ── Step 2: Commit (bump + changelog) and tag BEFORE publishing.
+  # Committing first means the publishable source of truth is the tagged
+  # commit; publish jobs check it out by SHA. Durability: if a previous
+  # attempt already committed and tagged but failed during npm publish, the
+  # bump job's HEAD-tag detection reuses the existing version, and this job
+  # detects HEAD is already at the tag and skips the commit/push.
+  # Skipped for `tag` channel — those releases are intentionally uncommitted.
+  commit-and-tag:
+    needs: bump
+    if: inputs.channel != 'tag'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          token: ${{ steps.bot-token.outputs.token }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bump-files
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - name: Configure git
+        run: |
+          git config user.email "alchemy-version-bot[bot]@users.noreply.github.com"
+          git config user.name "alchemy-version-bot[bot]"
+
+      - id: commit
+        name: Commit bump + changelog, tag, push
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          # Durability: if HEAD already points at the release tag (resumed
+          # run after a previous attempt committed+tagged but publish
+          # failed), there is nothing to do. Use HEAD as the publish SHA.
+          HEAD_TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || true)
+          if [ "$HEAD_TAG" = "$TAG" ]; then
+            echo "HEAD is already at ${TAG}; skipping commit/tag/push"
+            SHA=$(git rev-parse HEAD)
+            echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Generate release notes; release-notes.ts is idempotent and
+          # bails out if the tag heading is already present in CHANGELOG.md.
+          bun scripts/release/release-notes.ts "${TAG}"
+
+          # Stage bump files (overwritten by the downloaded artifact) and
+          # the new changelog entry as a single commit.
+          git add packages/alchemy/package.json \
+                  packages/better-auth/package.json \
+                  packages/pr-package/package.json \
+                  bun.lock \
+                  CHANGELOG.md
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit (already on a release commit?)"
+          else
+            git commit -m "chore(release): ${VERSION}"
+          fi
+
+          if ! git rev-parse --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git tag -a "${TAG}" -m "Release ${TAG}"
+          fi
+
+          git push origin HEAD
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already on remote, skipping tag push"
+          else
+            git push origin "refs/tags/${TAG}"
+          fi
+
+          SHA=$(git rev-parse HEAD)
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+  # ── Step 3a: Build and publish `alchemy`. ──
+  # For non-tag channels, checkout the just-committed tagged SHA; for the
+  # `tag` channel (no commit), checkout the bump's pre-bump SHA and rely
+  # on the bump-files artifact instead.
+  publish-alchemy:
+    needs: [bump, commit-and-tag]
+    if:
+      always() && needs.bump.result == 'success' && (needs.commit-and-tag.result
+      == 'success' || needs.commit-and-tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.commit-and-tag.outputs.sha || needs.bump.outputs.sha }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          registry-url: https://registry.npmjs.org/
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest && npm --version
+          sed -i '/always-auth/d' ~/.npmrc 2>/dev/null || true
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bump-files
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-output
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - run: bun scripts/release/publish-package.ts packages/alchemy ${{
+          needs.bump.outputs.channel }}
+
+  # ── Step 3b: Build and publish `@alchemy.run/better-auth`. ──
+  publish-better-auth:
+    needs: [bump, commit-and-tag, publish-alchemy]
+    if:
+      always() && needs.bump.result == 'success' && (needs.commit-and-tag.result
+      == 'success' || needs.commit-and-tag.result == 'skipped') &&
+      needs.publish-alchemy.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.commit-and-tag.outputs.sha || needs.bump.outputs.sha }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          registry-url: https://registry.npmjs.org/
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest && npm --version
+          sed -i '/always-auth/d' ~/.npmrc 2>/dev/null || true
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bump-files
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-output
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - run: bun scripts/release/publish-package.ts packages/better-auth ${{
+          needs.bump.outputs.channel }}
+
+  # ── Step 3c: Build and publish `@alchemy.run/pr-package`. ──
+  publish-pr-package:
+    needs: [bump, commit-and-tag, publish-alchemy]
+    if:
+      always() && needs.bump.result == 'success' && (needs.commit-and-tag.result
+      == 'success' || needs.commit-and-tag.result == 'skipped') &&
+      needs.publish-alchemy.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.commit-and-tag.outputs.sha || needs.bump.outputs.sha }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          registry-url: https://registry.npmjs.org/
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest && npm --version
+          sed -i '/always-auth/d' ~/.npmrc 2>/dev/null || true
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bump-files
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-output
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - run: bun scripts/release/publish-package.ts packages/pr-package ${{
+          needs.bump.outputs.channel }}
+
+  # ── Step 4: Create GitHub Release and notify Discord. ──
+  # Runs only after every publish job succeeded. The bump+changelog commit
+  # and tag were already pushed by `commit-and-tag` before publishing.
+  finalize:
+    needs:
+      [
+        bump,
+        commit-and-tag,
+        publish-alchemy,
+        publish-better-auth,
+        publish-pr-package,
+      ]
+    if: inputs.channel != 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.commit-and-tag.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - name: Create GitHub Release
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+          CHANNEL: ${{ needs.bump.outputs.channel }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun scripts/release/github-release.ts "v${VERSION}" "${CHANNEL}"
+
+      - name: Notify Discord
+        if: success() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VERSION: ${{ needs.bump.outputs.version }}
+          CHANNEL: ${{ needs.bump.outputs.channel }}
+        run: bun scripts/release/discord-notify.ts "v${VERSION}" "${CHANNEL}"

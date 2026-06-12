@@ -2,7 +2,7 @@ import { WS_METHODS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { WsTransport } from "./wsTransport.ts";
 
@@ -170,13 +170,13 @@ describe("WsTransport", () => {
   });
 
   it("supports async websocket url providers", async () => {
-    const transport = createTransport(async () => "wss://remote.example.com/?wsToken=dynamic");
+    const transport = createTransport(async () => "wss://remote.example.com/?wsTicket=dynamic");
 
     await waitFor(() => {
       expect(sockets).toHaveLength(1);
     });
 
-    expect(getSocket().url).toBe("wss://remote.example.com/ws?wsToken=dynamic");
+    expect(getSocket().url).toBe("wss://remote.example.com/ws?wsTicket=dynamic");
     await transport.dispose();
   });
 
@@ -788,7 +788,7 @@ describe("WsTransport", () => {
       () =>
         Stream.suspend(() => {
           attempts += 1;
-          return Stream.fail(new Error("SocketCloseError: WebSocket closed"));
+          return Stream.fail(new Error("Socket is not connected"));
         }),
       vi.fn(),
       { retryDelay: 10 },
@@ -805,7 +805,7 @@ describe("WsTransport", () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith("WebSocket RPC subscription disconnected", {
-      error: "SocketCloseError: WebSocket closed",
+      error: "Socket is not connected",
     });
 
     unsubscribe();

@@ -1,0 +1,11 @@
+---
+import { CF_COLOR, tint } from "../_colors";
+interface Props { size?: number; color?: string }
+const { size = 26, color = CF_COLOR } = Astro.props;
+const fill = tint(color);
+---
+<svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <ellipse cx="16" cy="8" rx="10" ry="3" fill={fill} stroke={color} stroke-width="1.5" />
+  <path d="M6 8 V24 C6 25.7 10.5 27 16 27 C21.5 27 26 25.7 26 24 V8" fill={fill} stroke={color} stroke-width="1.5" />
+  <path d="M9 14 L23 14 M9 18 L23 18 M9 22 L19 22" stroke={color} stroke-width="1.2" stroke-linecap="round" />
+</svg>

@@ -4,7 +4,7 @@ import type {
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { ORCHESTRATION_WS_METHODS, ThreadId, WS_METHODS } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("./wsTransport.ts", () => ({
   WsTransport: class WsTransport {

@@ -16,30 +16,34 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
+T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
+repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
+[`../../.env.example`](../../.env.example).
+
 ## Development
 
 Start Metro for the dev client:
 
 ```bash
-bun run dev:client
+vp run dev:client
 ```
 
 Build and run the local iOS dev client:
 
 ```bash
-bun run ios:dev
+vp run ios:dev
 ```
 
 Build and run the local iOS preview app:
 
 ```bash
-bun run ios:preview
+vp run ios:preview
 ```
 
 Force the review diff highlighter engine:
 
 ```bash
-EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript bun run ios:dev
+EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
 ```
 
 `javascript` is the default and recommended setting for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=native` only when you explicitly want to test the native Shiki engine.
@@ -47,8 +51,8 @@ EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript bun run ios:dev
 Inspect the resolved Expo config for a variant:
 
 ```bash
-bun run config:dev
-bun run config:preview
+vp run config:dev
+vp run config:preview
 ```
 
 Run static checks for mobile native code:
@@ -61,21 +65,34 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 
 ## EAS Builds
 
+CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.
+
+For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
+`T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
+as EAS environment variables. Expo config maps the canonical values into the mobile build.
+
+Create a PR preview dev-client build manually:
+
+```bash
+vp run eas:ios:preview:dev
+```
+
 Create a cloud dev-client build:
 
 ```bash
-bun run eas:ios:dev
+vp run eas:ios:dev
 ```
 
 Create a persistent preview build:
 
 ```bash
-bun run eas:ios:preview
+vp run eas:ios:preview
 ```
 
 Android equivalents:
 
 ```bash
-bun run eas:android:dev
-bun run eas:android:preview
+vp run eas:android:dev
+vp run eas:android:preview:dev
+vp run eas:android:preview
 ```

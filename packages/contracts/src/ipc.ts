@@ -66,7 +66,7 @@ import type {
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
-import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
+import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
@@ -86,6 +86,10 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
+  header?: boolean;
+  /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
+  icon?: string;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -94,6 +98,8 @@ export interface ContextMenuItemSchemaType {
   readonly label: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly header?: boolean;
+  readonly icon?: string;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -102,6 +108,8 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   label: Schema.String,
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
+  header: Schema.optionalKey(Schema.Boolean),
+  icon: Schema.optionalKey(Schema.String),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
@@ -338,6 +346,11 @@ export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
   desktopSsh: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
+  relayManaged: Schema.optionalKey(
+    Schema.Struct({
+      relayUrl: Schema.String,
+    }),
+  ),
 });
 export type PersistedSavedEnvironmentRecord = typeof PersistedSavedEnvironmentRecordSchema.Type;
 
@@ -372,6 +385,23 @@ export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
+export const DesktopCloudAuthFetchInputSchema = Schema.Struct({
+  url: Schema.String,
+  method: Schema.optionalKey(Schema.String),
+  headers: Schema.Record(Schema.String, Schema.String),
+  body: Schema.optionalKey(Schema.String),
+});
+export type DesktopCloudAuthFetchInput = typeof DesktopCloudAuthFetchInputSchema.Type;
+
+export const DesktopCloudAuthFetchResultSchema = Schema.Struct({
+  ok: Schema.Boolean,
+  status: Schema.Number,
+  statusText: Schema.String,
+  headers: Schema.Record(Schema.String, Schema.String),
+  body: Schema.String,
+});
+export type DesktopCloudAuthFetchResult = typeof DesktopCloudAuthFetchResultSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -394,12 +424,12 @@ export interface DesktopBridge {
   bootstrapSshBearerSession: (
     httpBaseUrl: string,
     credential: string,
-  ) => Promise<AuthBearerBootstrapResult>;
+  ) => Promise<AuthAccessTokenResult>;
   fetchSshSessionState: (httpBaseUrl: string, bearerToken: string) => Promise<AuthSessionState>;
-  issueSshWebSocketToken: (
+  issueSshWebSocketTicket: (
     httpBaseUrl: string,
     bearerToken: string,
-  ) => Promise<AuthWebSocketTokenResult>;
+  ) => Promise<AuthWebSocketTicketResult>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
@@ -417,6 +447,12 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  createCloudAuthRequest: () => Promise<string>;
+  getCloudAuthToken: () => Promise<string | null>;
+  setCloudAuthToken: (token: string) => Promise<boolean>;
+  clearCloudAuthToken: () => Promise<void>;
+  fetchCloudAuth: (input: DesktopCloudAuthFetchInput) => Promise<DesktopCloudAuthFetchResult>;
+  onCloudAuthCallback: (listener: (rawUrl: string) => void) => () => void;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;

@@ -40,14 +40,13 @@ const sourceExtensions = new Set([".swift", ".kt", ".kts"]);
 const excludedDirectories = new Set([
   ".expo",
   ".git",
-  "android",
   "build",
   "DerivedData",
-  "ios",
   "node_modules",
   "Pods",
   "Vendor",
 ]);
+const generatedNativeProjectDirectories = new Set(["android", "ios"]);
 
 const appRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../apps/mobile", import.meta.url))),
@@ -74,7 +73,7 @@ const commandExists = Effect.fn("commandExists")(function* (command: string) {
   return yield* spawner.spawn(lookupCommand).pipe(
     Effect.flatMap((child) => child.exitCode),
     Effect.map((exitCode) => exitCode === 0),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
 });
 
@@ -108,6 +107,7 @@ const runCommand = Effect.fn("runCommand")(function* (
 
 function collectSources(
   directory: string,
+  root: string,
 ): Effect.Effect<
   ReadonlyArray<string>,
   PlatformError.PlatformError,
@@ -120,15 +120,18 @@ function collectSources(
     const sources: Array<string> = [];
 
     for (const entry of entries) {
-      if (excludedDirectories.has(entry)) {
-        continue;
-      }
-
       const entryPath = path.join(directory, entry);
       const stat = yield* fs.stat(entryPath);
 
       if (stat.type === "Directory") {
-        sources.push(...(yield* collectSources(entryPath)));
+        const isGeneratedNativeProjectDirectory =
+          directory === root && generatedNativeProjectDirectories.has(entry);
+
+        if (excludedDirectories.has(entry) || isGeneratedNativeProjectDirectory) {
+          continue;
+        }
+
+        sources.push(...(yield* collectSources(entryPath, root)));
         continue;
       }
 
@@ -144,7 +147,7 @@ function collectSources(
 const runNativeStaticChecks = Effect.fn("runNativeStaticChecks")(function* () {
   const path = yield* Path.Path;
   const root = yield* appRoot;
-  const sources = yield* collectSources(root);
+  const sources = yield* collectSources(root, root);
   const swiftSources = sources.filter((source) => path.extname(source) === ".swift");
   const kotlinSources = sources.filter((source) => {
     const extension = path.extname(source);
@@ -155,6 +158,10 @@ const runNativeStaticChecks = Effect.fn("runNativeStaticChecks")(function* () {
   for (const tool of tools) {
     availableTools.set(tool.command, yield* commandExists(tool.command));
   }
+
+  yield* Console.log(
+    `Found ${swiftSources.length} Swift and ${kotlinSources.length} Kotlin native source files.`,
+  );
 
   if (swiftSources.length > 0) {
     if (availableTools.get("swiftlint")) {

@@ -392,5 +392,20 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
       }),
     );
+
+    it.effect("returns an empty listing when the OS denies directory access", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-eacces-" });
+
+        const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(denied);
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: appendSeparator(cwd),
+        });
+        expect(result).toEqual({ parentPath: cwd, entries: [] });
+      }),
+    );
   });
 });

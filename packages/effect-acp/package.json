@@ -34,8 +34,8 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run",
-    "generate": "bun run scripts/generate.ts"
+    "test": "vp test run",
+    "generate": "node scripts/generate.ts"
   },
   "dependencies": {
     "effect": "catalog:"
@@ -45,6 +45,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

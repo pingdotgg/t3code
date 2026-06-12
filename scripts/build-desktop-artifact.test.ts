@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  createStagePnpmConfig,
   resolveDesktopRuntimeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
@@ -61,6 +62,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@effect/platform-node": "4.0.0-beta.59",
         effect: "4.0.0-beta.59",
       },
+    );
+  });
+
+  it("carries only staged dependency patch metadata into staged desktop installs", () => {
+    assert.deepStrictEqual(
+      createStagePnpmConfig(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+          "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
+          "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+        },
+        {
+          "@pierre/diffs": "1.1.20",
+          effect: "4.0.0-beta.73",
+        },
+      ),
+      {
+        patchedDependencies: {
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+          "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
+        },
+      },
+    );
+
+    assert.equal(
+      createStagePnpmConfig(
+        {
+          "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+        },
+        { effect: "4.0.0-beta.73" },
+      ),
+      undefined,
     );
   });
 

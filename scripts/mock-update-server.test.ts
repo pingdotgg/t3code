@@ -1,5 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { NodeHttpServer, NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

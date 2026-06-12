@@ -4,7 +4,11 @@ import {
   fetchRemoteEnvironmentDescriptor,
 } from "@t3tools/client-runtime";
 import { resolveRemotePairingTarget, stripPairingTokenFromUrl } from "@t3tools/shared/remote";
-import { mobileRemoteHttpRuntime } from "./runtime";
+import * as Effect from "effect/Effect";
+import { mobileAuthClientMetadata } from "./authClientMetadata";
+import { mobileRuntime } from "./runtime";
+
+export { mobileAuthClientMetadata } from "./authClientMetadata";
 
 export interface RemoteConnectionInput {
   readonly pairingUrl: string;
@@ -17,7 +21,10 @@ export interface SavedRemoteConnection {
   readonly displayUrl: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
-  readonly bearerToken: string;
+  readonly bearerToken: string | null;
+  readonly authenticationMethod?: "bearer" | "dpop";
+  readonly dpopAccessToken?: string;
+  readonly relayManaged?: true;
 }
 
 export type RemoteClientConnectionState =
@@ -36,6 +43,23 @@ export function redactPairingCredential(pairingUrl: string): string {
   }
 }
 
+export function isRelayManagedConnection(
+  connection: Pick<SavedRemoteConnection, "authenticationMethod" | "relayManaged">,
+): boolean {
+  return connection.relayManaged === true || connection.authenticationMethod === "dpop";
+}
+
+export function toStableSavedRemoteConnection(
+  connection: SavedRemoteConnection,
+): SavedRemoteConnection {
+  if (!isRelayManagedConnection(connection) || !connection.dpopAccessToken) {
+    return connection;
+  }
+
+  const { dpopAccessToken: _, ...stableConnection } = connection;
+  return stableConnection;
+}
+
 export async function bootstrapRemoteConnection(
   input: RemoteConnectionInput,
 ): Promise<SavedRemoteConnection> {
@@ -43,17 +67,20 @@ export async function bootstrapRemoteConnection(
     pairingUrl: input.pairingUrl,
   });
 
-  const descriptor = await mobileRemoteHttpRuntime.runPromise(
-    fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: target.httpBaseUrl,
-    }),
-  );
-
-  const bootstrap = await mobileRemoteHttpRuntime.runPromise(
-    bootstrapRemoteBearerSession({
-      httpBaseUrl: target.httpBaseUrl,
-      credential: target.credential,
-    }),
+  const { descriptor, bootstrap } = await mobileRuntime.runPromise(
+    Effect.all(
+      {
+        descriptor: fetchRemoteEnvironmentDescriptor({
+          httpBaseUrl: target.httpBaseUrl,
+        }),
+        bootstrap: bootstrapRemoteBearerSession({
+          httpBaseUrl: target.httpBaseUrl,
+          credential: target.credential,
+          clientMetadata: mobileAuthClientMetadata(),
+        }),
+      },
+      { concurrency: "unbounded" },
+    ),
   );
 
   return {
@@ -63,6 +90,7 @@ export async function bootstrapRemoteConnection(
     displayUrl: target.httpBaseUrl,
     httpBaseUrl: target.httpBaseUrl,
     wsBaseUrl: target.wsBaseUrl,
-    bearerToken: bootstrap.sessionToken,
+    bearerToken: bootstrap.access_token,
+    authenticationMethod: "bearer",
   };
 }

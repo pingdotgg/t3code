@@ -7,80 +7,104 @@ on:
       - main
 
 jobs:
-  quality:
-    name: Format, Lint, Typecheck, Test, Browser Test, Build
+  check:
+    name: Check
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Cache Bun and Turbo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.bun/install/cache
-            .turbo
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-${{ hashFiles('turbo.json') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cache: true
+          run-install: true
 
       - name: Ensure Electron runtime is installed
-        run: |
-          if ! node -e "require('./apps/desktop/node_modules/electron')" >/dev/null 2>&1; then
-            rm -rf apps/desktop/node_modules/electron/dist apps/desktop/node_modules/electron/path.txt
-            bun apps/desktop/node_modules/electron/install.js
-          fi
-          node -e "require('./apps/desktop/node_modules/electron')"
+        run: vp run --filter @t3tools/desktop ensure:electron
 
-      - name: Format
-        run: bun run fmt:check
-
-      - name: Lint
-        run: bun run lint
+      - name: Check
+        run: vp check
 
       - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        run: bun run test
-
-      - name: Install browser test runtime
-        run: |
-          cd apps/web
-          bunx playwright install --with-deps chromium
-
-      - name: Browser test
-        run: bun run --cwd apps/web test:browser
+        run: vpr typecheck
 
       - name: Build desktop pipeline
-        run: bun run build:desktop
+        run: vp run build:desktop
 
       - name: Verify preload bundle output
         run: |
           test -f apps/desktop/dist-electron/preload.cjs
           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
+
+  test:
+    name: Test
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Test
+        run: vp run test
+
+  test_browser:
+    name: Test Browser
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install browser test runtime
+        run: vp run --filter @t3tools/web test:browser:install
+
+      - name: Browser test / Chat view
+        working-directory: apps/web
+        run: vp test run --mode browser --browser=chromium src/components/ChatView.browser.tsx
+
+      - name: Browser test / Chat markdown
+        working-directory: apps/web
+        run: vp test run --mode browser --browser=chromium src/components/ChatMarkdown.browser.tsx
+
+      - name: Browser test / Components
+        working-directory: apps/web
+        run: |
+          vp test run --mode browser --browser=chromium \
+            src/components/GitActionsControl.browser.tsx \
+            src/components/KeybindingsToast.browser.tsx \
+            src/components/ThreadTerminalDrawer.browser.tsx \
+            src/components/chat/MessagesTimeline.browser.tsx \
+            src/components/chat/ProviderModelPicker.browser.tsx \
+            src/components/chat/CompactComposerControlsMenu.browser.tsx \
+            src/components/settings/SettingsPanels.browser.tsx
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
@@ -90,24 +114,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cache: true
+          run-install: true
 
       - name: Install mobile native static analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
 
       - name: Lint mobile native sources
-        run: node scripts/mobile-native-static-check.ts
+        run: vp run lint:mobile
 
   release_smoke:
     name: Release Smoke
@@ -117,18 +135,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cache: true
+          run-install: true
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts

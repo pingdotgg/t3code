@@ -1,5 +1,5 @@
 import {
-  type AuthSessionRole,
+  AuthEnvironmentScope,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
@@ -7,6 +7,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
+  EnvironmentAuthInvalidError,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -14,13 +15,18 @@ import {
   type WsRpcClient,
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
+  fetchRemoteDpopSessionState,
   fetchRemoteSessionState,
-  isRemoteEnvironmentAuthHttpError,
+  type ManagedRelayDpopProofInput,
+  ManagedRelayDpopSigner,
+  resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "@t3tools/client-runtime";
 
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
@@ -38,21 +44,25 @@ import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalUiThreadKeys } from "~/lib/terminalUiStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { getPrimaryKnownEnvironment } from "../primary";
-import { remoteHttpRuntime } from "../../lib/runtime";
+import { webRuntime } from "../../lib/runtime";
+import { connectManagedCloudEnvironment } from "../../cloud/linkEnvironment";
+import { readManagedRelayClerkToken } from "../../cloud/managedAuth";
 
 import {
   getSavedEnvironmentRecord,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
   persistSavedEnvironmentRecord,
-  readSavedEnvironmentBearerToken,
+  readSavedEnvironmentCredential,
   removeSavedEnvironmentBearerToken,
   type SavedEnvironmentRecord,
+  type SavedEnvironmentCredential,
   toPersistedSavedEnvironmentRecord,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
   waitForSavedEnvironmentRegistryHydration,
   writeSavedEnvironmentBearerToken,
+  writeSavedEnvironmentCredential,
 } from "./catalog";
 import {
   createEnvironmentConnection,
@@ -76,6 +86,8 @@ import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
 } from "../../logicalProject";
+
+const decodeIssuedBearerScopes = Schema.decodeUnknownSync(Schema.Array(AuthEnvironmentScope));
 import { getClientSettings } from "~/hooks/useSettings";
 import { subscribeTerminalMetadata, terminalSessionManager } from "../../terminalSessionState";
 import { resetWsReconnectBackoff } from "~/rpc/wsConnectionState";
@@ -99,6 +111,7 @@ type ThreadDetailSubscriptionEntry = {
 };
 
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 function isSavedEnvironmentConnectionCancelledError(
   error: unknown,
@@ -153,6 +166,12 @@ const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
 const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
+
+const createManagedRelayDpopProof = (input: ManagedRelayDpopProofInput) =>
+  Effect.gen(function* () {
+    const signer = yield* ManagedRelayDpopSigner;
+    return yield* signer.createProof(input);
+  });
 
 function createDeferredPromise<T>() {
   let resolve: ((value: T) => void) | null = null;
@@ -738,6 +757,10 @@ async function bootstrapDesktopSshBearerSession(httpBaseUrl: string, credential:
   return await getDesktopSshBridge().bootstrapSshBearerSession(httpBaseUrl, credential);
 }
 
+function readIssuedBearerScopes(scope: string): ReadonlyArray<AuthEnvironmentScope> {
+  return decodeIssuedBearerScopes(scope.split(" "));
+}
+
 async function fetchDesktopSshSessionState(httpBaseUrl: string, bearerToken: string) {
   return await getDesktopSshBridge().fetchSshSessionState(httpBaseUrl, bearerToken);
 }
@@ -747,9 +770,9 @@ async function resolveDesktopSshWebSocketConnectionUrl(
   httpBaseUrl: string,
   bearerToken: string,
 ) {
-  const issued = await getDesktopSshBridge().issueSshWebSocketToken(httpBaseUrl, bearerToken);
+  const issued = await getDesktopSshBridge().issueSshWebSocketTicket(httpBaseUrl, bearerToken);
   const url = new URL(wsBaseUrl, window.location.origin);
-  url.searchParams.set("wsToken", issued.token);
+  url.searchParams.set("wsTicket", issued.ticket);
   return url.toString();
 }
 
@@ -799,7 +822,7 @@ async function prepareSavedEnvironmentRecordForConnection(
 async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Promise<{
   readonly record: SavedEnvironmentRecord;
   readonly bearerToken: string;
-  readonly role: AuthSessionRole | null;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope> | null;
 }> {
   const registrySnapshot = snapshotSavedEnvironmentRegistry([record.environmentId]);
   const prepared = await prepareSavedEnvironmentRecordForConnection(record, {
@@ -827,7 +850,7 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
   });
   const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
     prepared.record.environmentId,
-    bearerSession.sessionToken,
+    bearerSession.access_token,
   );
   if (!didPersistBearerToken) {
     await persistSavedEnvironmentRegistryRollback(registrySnapshot);
@@ -836,8 +859,8 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
 
   return {
     record: prepared.record,
-    bearerToken: bearerSession.sessionToken,
-    role: bearerSession.role ?? null,
+    bearerToken: bearerSession.access_token,
+    scopes: readIssuedBearerScopes(bearerSession.scope),
   };
 }
 
@@ -1147,7 +1170,7 @@ function createPrimaryEnvironmentClient(
 
 function createSavedEnvironmentClient(
   environmentId: EnvironmentId,
-  bearerToken: string,
+  credentialRef: { current: SavedEnvironmentCredential },
 ): WsRpcClient {
   useSavedEnvironmentRuntimeStore.getState().ensure(environmentId);
 
@@ -1158,19 +1181,70 @@ function createSavedEnvironmentClient(
         if (!record) {
           throw new Error(`Saved environment ${environmentId} not found.`);
         }
-        return record.desktopSsh
-          ? await resolveDesktopSshWebSocketConnectionUrl(
-              record.wsBaseUrl,
-              record.httpBaseUrl,
-              bearerToken,
-            )
-          : await remoteHttpRuntime.runPromise(
-              resolveRemoteWebSocketConnectionUrl({
-                wsBaseUrl: record.wsBaseUrl,
-                httpBaseUrl: record.httpBaseUrl,
-                bearerToken,
-              }),
+        const credential = credentialRef.current;
+        if (record.desktopSsh) {
+          if (credential.method !== "bearer") {
+            throw new Error("SSH environments require bearer credentials.");
+          }
+          return await resolveDesktopSshWebSocketConnectionUrl(
+            record.wsBaseUrl,
+            record.httpBaseUrl,
+            credential.token,
+          );
+        }
+        if (credential.method === "dpop") {
+          try {
+            return await webRuntime.runPromise(
+              createManagedRelayDpopProof({
+                method: "POST",
+                url: new URL("/api/auth/websocket-ticket", record.httpBaseUrl).toString(),
+                accessToken: credential.accessToken,
+              }).pipe(
+                Effect.flatMap((proof) =>
+                  resolveRemoteDpopWebSocketConnectionUrl({
+                    wsBaseUrl: record.wsBaseUrl,
+                    httpBaseUrl: record.httpBaseUrl,
+                    accessToken: credential.accessToken,
+                    dpopProof: proof,
+                  }),
+                ),
+              ),
             );
+          } catch (error) {
+            if (!isEnvironmentAuthInvalidError(error)) {
+              throw error;
+            }
+            const renewed = await renewManagedRelayCredential(record);
+            if (!renewed || renewed.credential.method !== "dpop") {
+              throw error;
+            }
+            const renewedCredential = renewed.credential;
+            credentialRef.current = renewedCredential;
+            return await webRuntime.runPromise(
+              createManagedRelayDpopProof({
+                method: "POST",
+                url: new URL("/api/auth/websocket-ticket", renewed.record.httpBaseUrl).toString(),
+                accessToken: renewedCredential.accessToken,
+              }).pipe(
+                Effect.flatMap((proof) =>
+                  resolveRemoteDpopWebSocketConnectionUrl({
+                    wsBaseUrl: renewed.record.wsBaseUrl,
+                    httpBaseUrl: renewed.record.httpBaseUrl,
+                    accessToken: renewedCredential.accessToken,
+                    dpopProof: proof,
+                  }),
+                ),
+              ),
+            );
+          }
+        }
+        return await webRuntime.runPromise(
+          resolveRemoteWebSocketConnectionUrl({
+            wsBaseUrl: record.wsBaseUrl,
+            httpBaseUrl: record.httpBaseUrl,
+            bearerToken: credential.token,
+          }),
+        );
       },
       {
         getConnectionLabel: () => getSavedEnvironmentRecord(environmentId)?.label ?? null,
@@ -1212,9 +1286,9 @@ function createSavedEnvironmentClient(
 
 async function refreshSavedEnvironmentMetadata(
   environmentId: EnvironmentId,
-  bearerToken: string,
+  credential: SavedEnvironmentCredential,
   client: WsRpcClient,
-  roleHint?: AuthSessionRole | null,
+  scopeHint?: ReadonlyArray<AuthEnvironmentScope> | null,
   configHint?: ServerConfig | null,
 ): Promise<void> {
   const record = getSavedEnvironmentRecord(environmentId);
@@ -1225,24 +1299,88 @@ async function refreshSavedEnvironmentMetadata(
   const [serverConfig, sessionState] = await Promise.all([
     configHint ? Promise.resolve(configHint) : client.server.getConfig(),
     record.desktopSsh
-      ? fetchDesktopSshSessionState(record.httpBaseUrl, bearerToken)
-      : remoteHttpRuntime.runPromise(
-          fetchRemoteSessionState({
-            httpBaseUrl: record.httpBaseUrl,
-            bearerToken,
-          }),
-        ),
+      ? credential.method === "bearer"
+        ? fetchDesktopSshSessionState(record.httpBaseUrl, credential.token)
+        : Promise.reject(new Error("SSH environments require bearer credentials."))
+      : credential.method === "dpop"
+        ? webRuntime.runPromise(
+            createManagedRelayDpopProof({
+              method: "GET",
+              url: new URL("/api/auth/session", record.httpBaseUrl).toString(),
+              accessToken: credential.accessToken,
+            }).pipe(
+              Effect.flatMap((proof) =>
+                fetchRemoteDpopSessionState({
+                  httpBaseUrl: record.httpBaseUrl,
+                  accessToken: credential.accessToken,
+                  dpopProof: proof,
+                }),
+              ),
+            ),
+          )
+        : webRuntime.runPromise(
+            fetchRemoteSessionState({
+              httpBaseUrl: record.httpBaseUrl,
+              bearerToken: credential.token,
+            }),
+          ),
   ]);
 
   useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
     authState: sessionState.authenticated ? "authenticated" : "requires-auth",
     descriptor: serverConfig.environment,
     serverConfig,
-    role: sessionState.authenticated ? (sessionState.role ?? roleHint ?? null) : null,
+    scopes: sessionState.authenticated ? (sessionState.scopes ?? scopeHint ?? null) : null,
   });
   useSavedEnvironmentRegistryStore
     .getState()
     .rename(record.environmentId, serverConfig.environment.label);
+}
+
+async function renewManagedRelayCredential(record: SavedEnvironmentRecord): Promise<{
+  readonly record: SavedEnvironmentRecord;
+  readonly credential: SavedEnvironmentCredential;
+} | null> {
+  if (!record.relayManaged) {
+    return null;
+  }
+  const clerkToken = await readManagedRelayClerkToken();
+  if (!clerkToken) {
+    return null;
+  }
+  const connected = await webRuntime.runPromise(
+    connectManagedCloudEnvironment({
+      clerkToken,
+      relayUrl: record.relayManaged.relayUrl,
+      environment: {
+        environmentId: record.environmentId,
+        label: record.label,
+        linkedAt: record.createdAt,
+        endpoint: {
+          httpBaseUrl: record.httpBaseUrl,
+          wsBaseUrl: record.wsBaseUrl,
+          providerKind: "cloudflare_tunnel",
+        },
+      },
+    }),
+  );
+  const nextRecord: SavedEnvironmentRecord = {
+    ...record,
+    label: connected.label,
+    httpBaseUrl: connected.httpBaseUrl,
+    wsBaseUrl: connected.wsBaseUrl,
+  };
+  const credential: SavedEnvironmentCredential = {
+    version: 1,
+    method: "dpop",
+    accessToken: connected.accessToken,
+  };
+  await persistSavedEnvironmentRecord(nextRecord);
+  if (!(await writeSavedEnvironmentCredential(nextRecord.environmentId, credential))) {
+    throw new Error("Unable to persist refreshed managed environment credentials.");
+  }
+  useSavedEnvironmentRegistryStore.getState().upsert(nextRecord);
+  return { record: nextRecord, credential };
 }
 
 function registerConnection(connection: EnvironmentConnection): EnvironmentConnection {
@@ -1311,8 +1449,10 @@ async function ensureSavedEnvironmentConnection(
   options?: {
     readonly client?: WsRpcClient;
     readonly bearerToken?: string;
-    readonly role?: AuthSessionRole | null;
+    readonly credential?: SavedEnvironmentCredential;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | null;
     readonly serverConfig?: ServerConfig | null;
+    readonly allowManagedRenewal?: boolean;
   },
 ): Promise<EnvironmentConnection> {
   const existing = environmentConnections.get(record.environmentId);
@@ -1330,19 +1470,22 @@ async function ensureSavedEnvironmentConnection(
     isCurrent: attempt.isCurrent,
     promise: Promise.resolve().then(async () => {
       let activeRecord = record;
-      let roleHint = options?.role ?? null;
-      let bearerToken =
-        options?.bearerToken ?? (await readSavedEnvironmentBearerToken(record.environmentId));
-      if (!bearerToken) {
+      let scopeHint = options?.scopes ?? null;
+      let credential =
+        options?.credential ??
+        (options?.bearerToken
+          ? ({ version: 1, method: "bearer", token: options.bearerToken } as const)
+          : await readSavedEnvironmentCredential(record.environmentId));
+      if (!credential) {
         if (record.desktopSsh) {
           const issued = await issueDesktopSshBearerSession(record);
           activeRecord = issued.record;
-          bearerToken = issued.bearerToken;
-          roleHint = issued.role;
+          credential = { version: 1, method: "bearer", token: issued.bearerToken };
+          scopeHint = issued.scopes;
         } else {
           useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
             authState: "requires-auth",
-            role: null,
+            scopes: null,
             connectionState: "disconnected",
             lastError: "Saved environment is missing its saved credential. Pair it again.",
             lastErrorAt: isoNow(),
@@ -1354,10 +1497,10 @@ async function ensureSavedEnvironmentConnection(
         activeRecord = prepared.record;
       }
 
-      const activeBearerToken = bearerToken;
+      const activeCredential = { current: credential };
       const client =
         options?.client ??
-        createSavedEnvironmentClient(activeRecord.environmentId, activeBearerToken);
+        createSavedEnvironmentClient(activeRecord.environmentId, activeCredential);
       const initialConfigSnapshot = createDeferredPromise<ServerConfig>();
       const knownEnvironment = createKnownEnvironment({
         id: activeRecord.environmentId,
@@ -1378,7 +1521,7 @@ async function ensureSavedEnvironmentConnection(
         refreshMetadata: async () => {
           await refreshSavedEnvironmentMetadata(
             activeRecord.environmentId,
-            activeBearerToken,
+            activeCredential.current,
             client,
           );
         },
@@ -1407,34 +1550,55 @@ async function ensureSavedEnvironmentConnection(
             ));
           await refreshSavedEnvironmentMetadata(
             activeRecord.environmentId,
-            activeBearerToken,
+            activeCredential.current,
             client,
-            roleHint,
+            scopeHint,
             initialServerConfig,
           );
         } catch (error) {
           const isAuthError = activeRecord.desktopSsh
             ? isSshHttpAuthError(error, 401)
-            : isRemoteEnvironmentAuthHttpError(error) && error.status === 401;
+            : isEnvironmentAuthInvalidError(error);
           if (!isAuthError) {
             throw error;
           }
           if (!activeRecord.desktopSsh) {
+            if (
+              activeCredential.current.method === "dpop" &&
+              options?.allowManagedRenewal !== false
+            ) {
+              const renewed = await renewManagedRelayCredential(activeRecord);
+              if (renewed) {
+                await connection.dispose().catch(() => undefined);
+                pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
+                return await ensureSavedEnvironmentConnection(renewed.record, {
+                  credential: renewed.credential,
+                  scopes: scopeHint,
+                  serverConfig: options?.serverConfig ?? null,
+                  allowManagedRenewal: false,
+                });
+              }
+            }
             await removeSavedEnvironmentBearerToken(activeRecord.environmentId);
-            throw new Error("Saved environment credential expired. Pair it again.", {
-              cause: error,
-            });
+            throw new Error(
+              activeCredential.current.method === "dpop"
+                ? "Managed tunnel credential expired. Connect it again from T3 Connect."
+                : "Saved environment credential expired. Pair it again.",
+              {
+                cause: error,
+              },
+            );
           }
 
           const issued = await issueDesktopSshBearerSession(activeRecord);
           activeRecord = issued.record;
-          bearerToken = issued.bearerToken;
-          roleHint = issued.role;
+          credential = { version: 1, method: "bearer", token: issued.bearerToken };
+          scopeHint = issued.scopes;
           await connection.dispose().catch(() => undefined);
           pendingSavedEnvironmentConnections.delete(activeRecord.environmentId);
           return await ensureSavedEnvironmentConnection(activeRecord, {
-            bearerToken,
-            role: roleHint,
+            credential,
+            scopes: scopeHint,
             serverConfig: options?.serverConfig ?? null,
           });
         }
@@ -1638,7 +1802,7 @@ export async function reconnectSavedEnvironment(environmentId: EnvironmentId): P
         await removeConnection(environmentId).catch(() => false);
         await ensureSavedEnvironmentConnection(issued.record, {
           bearerToken: issued.bearerToken,
-          role: issued.role,
+          scopes: issued.scopes,
         });
         return;
       } catch (recoveryError) {
@@ -1677,7 +1841,7 @@ export async function addSavedEnvironment(input: {
   });
   const descriptor = input.desktopSsh
     ? await fetchDesktopSshEnvironmentDescriptor(resolvedTarget.httpBaseUrl)
-    : await remoteHttpRuntime.runPromise(
+    : await webRuntime.runPromise(
         fetchRemoteEnvironmentDescriptor({
           httpBaseUrl: resolvedTarget.httpBaseUrl,
         }),
@@ -1692,7 +1856,7 @@ export async function addSavedEnvironment(input: {
 
   const bearerSession = input.desktopSsh
     ? await bootstrapDesktopSshBearerSession(resolvedTarget.httpBaseUrl, resolvedTarget.credential)
-    : await remoteHttpRuntime.runPromise(
+    : await webRuntime.runPromise(
         bootstrapRemoteBearerSession({
           httpBaseUrl: resolvedTarget.httpBaseUrl,
           credential: resolvedTarget.credential,
@@ -1714,7 +1878,7 @@ export async function addSavedEnvironment(input: {
   await persistSavedEnvironmentRecord(record);
   const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
     environmentId,
-    bearerSession.sessionToken,
+    bearerSession.access_token,
   );
   if (!didPersistBearerToken) {
     await persistSavedEnvironmentRegistryRollback(registrySnapshot);
@@ -1726,9 +1890,43 @@ export async function addSavedEnvironment(input: {
   }
   await removeConnection(environmentId).catch(() => false);
   await ensureSavedEnvironmentConnection(record, {
-    bearerToken: bearerSession.sessionToken,
-    role: bearerSession.role,
+    bearerToken: bearerSession.access_token,
+    scopes: readIssuedBearerScopes(bearerSession.scope),
   });
+  return record;
+}
+
+export async function addManagedRelayEnvironment(input: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+  readonly relayUrl: string;
+  readonly accessToken: string;
+}): Promise<SavedEnvironmentRecord> {
+  const existingRecord = getSavedEnvironmentRecord(input.environmentId);
+  const record: SavedEnvironmentRecord = {
+    environmentId: input.environmentId,
+    label: input.label.trim() || existingRecord?.label || "Managed environment",
+    httpBaseUrl: input.httpBaseUrl,
+    wsBaseUrl: input.wsBaseUrl,
+    createdAt: existingRecord?.createdAt ?? isoNow(),
+    lastConnectedAt: isoNow(),
+    relayManaged: { relayUrl: input.relayUrl },
+  };
+  const credential: SavedEnvironmentCredential = {
+    version: 1,
+    method: "dpop",
+    accessToken: input.accessToken,
+  };
+
+  await persistSavedEnvironmentRecord(record);
+  if (!(await writeSavedEnvironmentCredential(record.environmentId, credential))) {
+    throw new Error("Unable to persist managed environment credentials.");
+  }
+  useSavedEnvironmentRegistryStore.getState().upsert(record);
+  await removeConnection(record.environmentId).catch(() => false);
+  await ensureSavedEnvironmentConnection(record, { credential });
   return record;
 }
 

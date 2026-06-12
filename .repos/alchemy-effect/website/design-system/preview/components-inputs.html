@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Inputs</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      label {
+        font-family: var(--alc-font-sans);
+        font-size: 12px;
+        color: var(--alc-fg-3);
+      }
+      input,
+      select {
+        background: var(--alc-bg-elev-2);
+        border: 1px solid var(--alc-hairline-2);
+        color: var(--alc-fg-1);
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-family: var(--alc-font-mono);
+        font-size: 13px;
+        outline: none;
+      }
+      input:focus {
+        border-color: var(--alc-accent);
+        box-shadow: 0 0 0 2px rgba(92, 122, 62, 0.22);
+      }
+      .kbd {
+        background: var(--alc-bg-sunk);
+        border: 1px solid var(--alc-hairline-2);
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-2);
+      }
+      .search {
+        position: relative;
+      }
+      .search input {
+        padding-left: 32px;
+        padding-right: 56px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .search::before {
+        content: "⌕";
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--alc-fg-4);
+        font-size: 14px;
+      }
+      .search .keys {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        gap: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="field">
+          <label>Stage name</label>
+          <input type="text" value="prod" />
+        </div>
+        <div class="field">
+          <label>Cloudflare account</label>
+          <input type="text" value="a1b2c3d4e5" placeholder="account id" />
+        </div>
+      </div>
+      <div class="field" style="margin-top: 14px">
+        <label>Search docs</label>
+        <div class="search">
+          <input value="R2Bucket" />
+          <span class="keys"
+            ><span class="kbd">⌘</span><span class="kbd">K</span></span
+          >
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

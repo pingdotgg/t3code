@@ -1,7 +1,6 @@
 import Stack from "expo-router/stack";
+import { useColorScheme } from "react-native";
 import { useResolveClassNames } from "uniwind";
-
-import { useThemeColor } from "../../lib/useThemeColor";
 
 export const unstable_settings = {
   anchor: "index",
@@ -9,8 +8,9 @@ export const unstable_settings = {
 
 export default function ConnectionsLayout() {
   const contentStyle = useResolveClassNames("bg-sheet");
-  const connSheetBg = String(useThemeColor("--color-sheet"));
-  const headerTint = String(useThemeColor("--color-icon"));
+  const isDark = useColorScheme() === "dark";
+  const connSheetBg = isDark ? "rgba(14, 14, 14, 0.98)" : "rgba(242, 242, 247, 0.98)";
+  const headerTint = isDark ? "#f5f5f5" : "#262626";
 
   return (
     <Stack

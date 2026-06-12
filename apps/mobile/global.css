@@ -38,6 +38,7 @@
       --color-secondary: #ffffff;
       --color-secondary-foreground: #262626;
       --color-secondary-border: rgba(0, 0, 0, 0.08);
+      --color-switch-active: #34c759;
 
       /* Danger */
       --color-danger: #fef2f2;
@@ -125,6 +126,7 @@
       --color-secondary: rgba(255, 255, 255, 0.04);
       --color-secondary-foreground: #f5f5f5;
       --color-secondary-border: rgba(255, 255, 255, 0.06);
+      --color-switch-active: #30d158;
 
       /* Danger */
       --color-danger: rgba(239, 68, 68, 0.14);

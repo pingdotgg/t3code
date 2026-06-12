@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -293,7 +293,7 @@ describe("ssh tunnel scripts", () => {
         makeSuccessfulProcess(`{
   "id": "88941235-6ed5-4184-a2ff-5339e2075958",
   "credential": "LCL4R2TPHDKQ",
-  "role": "client",
+  "scopes": ["orchestration:read"],
   "expiresAt": "2026-04-29T01:01:20.994Z"
 }
 
@@ -321,7 +321,7 @@ describe("ssh tunnel scripts", () => {
 {
   "id": "88941235-6ed5-4184-a2ff-5339e2075958",
   "credential": "LCL4R2TPHDKQ",
-  "role": "client",
+  "scopes": ["orchestration:read"],
   "expiresAt": "2026-04-29T01:01:20.994Z"
 }
 

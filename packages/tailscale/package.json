@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run"
+    "test": "vp test run"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
@@ -19,6 +19,6 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

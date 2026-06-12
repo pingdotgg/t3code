@@ -14,7 +14,7 @@ import {
   type TerminalMetadataStreamEvent,
   ThreadId,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 
@@ -202,8 +202,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     fetchSshSessionState: async () => {
       throw new Error("fetchSshSessionState not implemented in test");
     },
-    issueSshWebSocketToken: async () => {
-      throw new Error("issueSshWebSocketToken not implemented in test");
+    issueSshWebSocketTicket: async () => {
+      throw new Error("issueSshWebSocketTicket not implemented in test");
     },
     onSshPasswordPrompt: () => () => undefined,
     resolveSshPasswordPrompt: async () => undefined,
@@ -234,6 +234,18 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setTheme: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    createCloudAuthRequest: async () => "t3code-dev://auth/callback?t3_state=test",
+    getCloudAuthToken: async () => null,
+    setCloudAuthToken: async () => true,
+    clearCloudAuthToken: async () => undefined,
+    fetchCloudAuth: async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: "",
+    }),
+    onCloudAuthCallback: () => () => undefined,
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");
@@ -289,7 +301,7 @@ const baseServerConfig: ServerConfig = {
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
-    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-access-token"],
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",

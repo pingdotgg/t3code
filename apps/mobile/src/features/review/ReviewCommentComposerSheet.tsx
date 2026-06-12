@@ -238,17 +238,18 @@ export function ReviewCommentComposerSheet() {
               <View className="min-h-0 flex-1 gap-2">
                 <Text className="text-[13px] font-t3-bold text-foreground">Comment</Text>
                 <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
-                  <View className="flex-1 px-4 pt-3.5">
-                    <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1 }}>
+                  <View className="min-h-0 flex-1 px-4 pt-3.5">
+                    <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
                       <TextInput
                         autoFocus
                         multiline
+                        scrollEnabled
                         placeholder="Leave a comment..."
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
                         className="h-full flex-1 border-0 bg-transparent px-0 py-0 font-sans text-[15px]"
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, minHeight: 0 }}
                       />
                     </TextInputWrapper>
                   </View>

@@ -1,0 +1,148 @@
+---
+import Logo from "./Logo.astro";
+
+interface FooterLink {
+  label: string;
+  href: string;
+}
+interface FooterCol {
+  h: string;
+  links: FooterLink[];
+}
+
+const cols: FooterCol[] = [
+  {
+    h: "Product",
+    links: [
+      { label: "Docs", href: "/getting-started" },
+      { label: "Tutorial", href: "/tutorial/part-1" },
+      // todo(sam): create an /examples landing page (or sidebar entry)
+      // and re-enable: { label: "Examples", href: "/examples" }
+      // todo(sam): create /providers/index.md that lists every provider
+      // (Starlight currently autogenerates the sidebar from the
+      // providers/ folder but there's no overview page to link to).
+      // Re-enable: { label: "Providers", href: "/providers" }
+      // todo(sam): wire a /changelog page that mirrors the GitHub
+      // releases / CHANGELOG.md (either fetch at build time or add a
+      // generator that drops a markdown file under content/docs).
+      // Re-enable: { label: "Changelog", href: "/changelog" }
+    ],
+  },
+  {
+    h: "Community",
+    links: [
+      { label: "Discord", href: "https://discord.gg/jwKw8dBJdN" },
+      { label: "GitHub", href: "https://github.com/alchemy-run/alchemy-effect" },
+      { label: "X / Twitter", href: "https://x.com/alchemy_run" },
+      { label: "Blog", href: "/blog" },
+      { label: "Privacy", href: "/privacy" },
+    ],
+  },
+  // todo(sam): write the comparison pages and re-enable this whole
+  // column. Suggested locations: /compare/pulumi, /compare/sst,
+  // /compare/terraform, /compare/cdk.
+  // {
+  //   h: "Compare",
+  //   links: [
+  //     { label: "vs Pulumi",    href: "/compare/pulumi" },
+  //     { label: "vs SST",       href: "/compare/sst" },
+  //     { label: "vs Terraform", href: "/compare/terraform" },
+  //     { label: "vs CDK",       href: "/compare/cdk" },
+  //   ],
+  // },
+];
+---
+
+<footer class="alc-footer">
+  <div class="alc-footer__grid">
+    <div>
+      <Logo />
+      <p class="alc-footer__tag">
+        Infrastructure as Effects. A single, type-safe TypeScript program for your cloud.
+      </p>
+      <div class="alc-footer__copy">Apache-2.0 · © 2026</div>
+    </div>
+    {cols.map((col) => (
+      <div>
+        <div class="alc-footer__heading">{col.h}</div>
+        <ul class="alc-footer__list">
+          {col.links.map((l) => (
+            <li><a href={l.href} class="alc-footer__link">{l.label}</a></li>
+          ))}
+        </ul>
+      </div>
+    ))}
+  </div>
+</footer>
+
+<style>
+  .alc-footer {
+    padding: 40px 32px;
+    border-top: 1px solid var(--alc-hairline);
+    background: var(--alc-bg-nav);
+  }
+  .alc-footer__grid {
+    max-width: 1152px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1.6fr repeat(3, minmax(0, 1fr));
+    gap: 40px;
+  }
+  @media (max-width: 880px) {
+    .alc-footer__grid {
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 28px 24px;
+    }
+    .alc-footer__grid > :first-child {
+      grid-column: 1 / -1;
+      max-width: 520px;
+    }
+  }
+  @media (max-width: 640px) {
+    .alc-footer { padding: 32px 20px; }
+    .alc-footer__grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 24px 20px;
+    }
+  }
+  @media (max-width: 380px) {
+    .alc-footer__grid { grid-template-columns: 1fr; }
+  }
+  .alc-footer__tag {
+    font-family: var(--alc-font-sans);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--alc-fg-3);
+    margin: 14px 0 0;
+  }
+  .alc-footer__copy {
+    margin-top: 16px;
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    color: var(--alc-fg-4);
+  }
+  .alc-footer__heading {
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--alc-fg-4);
+    margin-bottom: 12px;
+  }
+  .alc-footer__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .alc-footer__link {
+    text-decoration: none;
+    color: var(--alc-fg-2);
+    font-size: 13px;
+  }
+  .alc-footer__link:hover {
+    color: var(--alc-accent-deep);
+  }
+</style>

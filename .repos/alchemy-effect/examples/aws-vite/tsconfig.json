@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["alchemy.run.ts", "src/**/*.ts", "vite.config.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    // TODO(sam): remove this once we have a proper implementation
+    "noCheck": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext"
+  },
+  "references": [
+    {
+      "path": "../../packages/alchemy/tsconfig.json"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
@@ -99,6 +99,27 @@ describe("instance-scoped model selection", () => {
         "openai/gpt-5.5",
       ),
     ).toBe("openai/gpt-5.5");
+  });
+
+  it("includes Grok custom models from the selected provider instance", () => {
+    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("grok")]: {
+          driver: ProviderDriverKind.make("grok"),
+          config: { customModels: ["grok-test-custom-model"] },
+        },
+      },
+    };
+    const grok = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "grok",
+    )!;
+
+    expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
+      "grok-test-custom-model",
+    );
   });
 
   it("does not inject an unknown selected slug into the stock instance list", () => {

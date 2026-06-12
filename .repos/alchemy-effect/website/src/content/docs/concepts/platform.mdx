@@ -1,0 +1,187 @@
+---
+title: Platform
+description: A Platform bundles infrastructure with the runtime code that runs on it — Workers, Lambda Functions, Containers — so your handler ships with its bindings.
+sidebar:
+  order: 5
+---
+
+A **Platform** is a special kind of [Resource](/concepts/resource)
+that ships **runtime code along with its infrastructure**. Cloudflare
+Workers, AWS Lambda Functions, and Cloudflare Containers are all
+platforms. When you declare a platform you describe both:
+
+- The cloud configuration (memory, region, compatibility flags…)
+- The Effect that runs inside it
+
+Both deploy together as one resource. There is no separate "infra
+project" plus "handler project" — the handler is part of the
+platform's declaration.
+
+## A Worker, end to end
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Bucket } from "./bucket.ts";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    // Init: bind a resource. The binding is the typed SDK.
+    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+
+    return {
+      // Runtime: per-request handler.
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("hello.txt");
+        return obj
+          ? HttpServerResponse.text(yield* obj.text())
+          : HttpServerResponse.text("Not found", { status: 404 });
+      }),
+    };
+  }),
+);
+```
+
+`bucket` is the resource itself, exposed as a typed SDK. There's no
+`env.BUCKET`, no environment variable wiring — the binding **is** the
+client. For the deploy-time mechanics that make this work (IAM, env
+injection, typed wrappers) see [Binding](/concepts/binding).
+
+## Bindings in action
+
+A binding is what connects a resource to the platform's runtime. The
+syntax `yield* SomeResource.bind(target)` does three things at once:
+
+1. Records the binding on the platform's deploy plan
+2. Generates any needed permissions/configuration
+3. Returns a typed handle you call at runtime
+
+```typescript
+const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+const kv = yield* Cloudflare.KVNamespace.bind(Sessions);
+
+// Inside fetch:
+yield* bucket.put("key", "value");
+yield* kv.get("session-id");
+```
+
+Every binding obeys the same shape across providers — a Cloudflare
+R2 binding and an AWS S3 binding are interchangeable from the
+caller's point of view.
+
+## Automatic IAM (and bindings) on AWS
+
+On AWS, every binding maps to specific IAM actions on specific
+resources. Alchemy generates **least-privilege policies** scoped to
+the exact resource ARNs — you never write `PolicyStatement` objects
+by hand:
+
+```typescript
+export default AWS.Lambda.Function(
+  "Api",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const getJob = yield* DynamoDB.GetItem.bind(JobsTable);
+    const enqueue = yield* SQS.SendMessage.bind(JobQueue);
+
+    return {
+      fetch: Effect.gen(function* () {
+        // The binding alone is enough — IAM is generated automatically.
+        const job = yield* getJob({ Key: { id: { S: "abc" } } });
+        yield* enqueue({ MessageBody: JSON.stringify(job) });
+      }),
+    };
+  }),
+);
+```
+
+The deployed function has exactly:
+
+- `dynamodb:GetItem` on `JobsTable.tableArn`
+- `sqs:SendMessage` on `JobQueue.queueArn`
+
+…and nothing else. If you bind multiple tables to one operation, the
+generated policy enumerates each ARN explicitly rather than
+falling back to `Resource: "*"`. On Cloudflare, the same call
+records a Worker binding instead — the runtime API stays identical.
+
+## Writing your own platform
+
+A platform is a [Provider](/concepts/provider) that builds
+infrastructure **and** bundles a runtime Effect. Most users won't
+need to write one — Worker, Lambda, and Container cover the common
+cases — but the surface is open.
+
+```typescript
+export const MyPlatform = Platform<MyConfig, Handlers>(
+  "MyPlatform",
+  // ...lifecycle hooks (reconcile / delete) that build the
+  //    infrastructure and upload the bundled handler.
+);
+```
+
+See [Provider](/concepts/provider#authoring-a-custom-provider) for
+how lifecycle hooks compose into a Layer, and
+[Resource Lifecycle](/concepts/resource-lifecycle) for when each
+hook fires.
+
+## Effect handlers vs async handlers
+
+Platforms support two styles for the runtime code. Both deploy
+through the same provider and produce the same artifact.
+
+**Effect style** — handlers are Effects, with typed errors,
+composable retries, structured concurrency, and bindings resolved
+through Effect's context:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    return {
+      fetch: Effect.gen(function* () {
+        /* ... */
+      }),
+    };
+  }),
+);
+```
+
+**Async style** — handlers are standard `async fetch` functions.
+Bindings are declared on the resource's `env` prop and typed via
+`InferEnv`:
+
+```typescript
+// alchemy.run.ts
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Bucket },
+});
+```
+
+```typescript
+// src/worker.ts
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(request: Request, env: WorkerEnv) {
+    const object = await env.Bucket.get("key");
+    return new Response(object?.body ?? null);
+  },
+};
+```
+
+Pick whichever fits your team. The Effect style unlocks
+[Layers](/concepts/layers), structured retries, and fine-grained
+testing; the async style integrates better with existing handler
+code.
+
+For a deeper look at when init code runs vs when exec code runs (and
+why), see [Plantime and Runtime](/concepts/phases).

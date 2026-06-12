@@ -163,6 +163,13 @@ export class WsTransport {
 
         const session = this.session;
         try {
+          if (hasReceivedValue) {
+            try {
+              options?.onResubscribe?.();
+            } catch {
+              // Ignore reconnect hook failures so the stream can recover.
+            }
+          }
           const runningStream = this.runStreamOnSession(
             session,
             connect,

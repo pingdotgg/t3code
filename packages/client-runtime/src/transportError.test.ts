@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { isTransportConnectionErrorMessage, sanitizeThreadErrorMessage } from "./transportError.ts";
 
@@ -9,6 +9,14 @@ describe("isTransportConnectionErrorMessage", () => {
 
   it("returns true for SocketOpenError", () => {
     expect(isTransportConnectionErrorMessage("SocketOpenError: ECONNREFUSED")).toBe(true);
+  });
+
+  it("returns true for React Native disconnected socket errors", () => {
+    expect(
+      isTransportConnectionErrorMessage(
+        "The operation couldn't be completed. Socket is not connected",
+      ),
+    ).toBe(true);
   });
 
   it("returns true for the T3 server WebSocket message", () => {

@@ -6,11 +6,16 @@ export default function NewTaskDraftRoute() {
   const params = useLocalSearchParams<{
     environmentId?: string | string[];
     projectId?: string | string[];
+    title?: string | string[];
   }>();
 
   return (
     <>
-      <Stack.Screen options={{ headerShown: false }} />
+      <Stack.Screen
+        options={{
+          title: Array.isArray(params.title) ? params.title[0] : (params.title ?? "New task"),
+        }}
+      />
       <NewTaskDraftScreen
         initialProjectRef={{
           environmentId: Array.isArray(params.environmentId)

@@ -7,9 +7,21 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { useAuth } from "@clerk/react";
 import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthAdministrativeScopes,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  AuthReviewWriteScope,
+  AuthStandardClientScopes,
+  AuthTerminalOperateScope,
   type AuthClientSession,
+  type AuthEnvironmentScope,
   type AuthPairingLink,
   type AdvertisedEndpoint,
   type DesktopDiscoveredSshHost,
@@ -18,12 +30,14 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { WsRpcClient } from "@t3tools/client-runtime";
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import { resolveRelayClerkTokenOptions } from "../../cloud/publicConfig";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -31,6 +45,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { Input } from "../ui/input";
+import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -54,11 +69,14 @@ import {
 } from "../ui/alert-dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
+import { Skeleton } from "../ui/skeleton";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Group, GroupSeparator } from "../ui/group";
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
@@ -75,11 +93,12 @@ import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   createServerPairingCredential,
-  fetchSessionState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
   revokeServerPairingLink,
   isLoopbackHostname,
+  usePrimaryEnvironmentId,
+  usePrimarySessionState,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
@@ -89,6 +108,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
   addSavedEnvironment,
+  addManagedRelayEnvironment,
   connectDesktopSshEnvironment,
   disconnectSavedEnvironment,
   getPrimaryEnvironmentConnection,
@@ -98,6 +118,19 @@ import {
 import { useUiStateStore } from "~/uiStateStore";
 import { resolveServerConfigVersionMismatch } from "~/versionSkew";
 import { useServerConfig } from "~/rpc/serverState";
+import {
+  connectManagedCloudEnvironment,
+  linkPrimaryEnvironmentToCloud,
+  unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
+} from "~/cloud/linkEnvironment";
+import {
+  refreshManagedRelayEnvironments,
+  useManagedRelayEnvironments,
+} from "~/cloud/managedRelayState";
+import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
+import { webRuntime } from "~/lib/runtime";
+import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
@@ -112,6 +145,97 @@ function formatAccessTimestamp(value: string): string {
     return value;
   }
   return accessTimestampFormatter.format(parsed);
+}
+
+const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
+  readonly scope: AuthEnvironmentScope;
+  readonly title: string;
+  readonly description: string;
+}> = [
+  {
+    scope: AuthOrchestrationReadScope,
+    title: "View environment",
+    description: "Read threads, status, diffs, and configuration.",
+  },
+  {
+    scope: AuthOrchestrationOperateScope,
+    title: "Operate tasks",
+    description: "Start tasks and perform changes in the environment.",
+  },
+  {
+    scope: AuthTerminalOperateScope,
+    title: "Use terminals",
+    description: "Create terminals and send input to running shells.",
+  },
+  {
+    scope: AuthReviewWriteScope,
+    title: "Write reviews",
+    description: "Create comments while reviewing changes.",
+  },
+  {
+    scope: AuthAccessReadScope,
+    title: "View access",
+    description: "Inspect pairing links and authorized clients.",
+  },
+  {
+    scope: AuthAccessWriteScope,
+    title: "Manage access",
+    description: "Issue and revoke credentials for other clients.",
+  },
+  {
+    scope: AuthRelayReadScope,
+    title: "View relay",
+    description: "Inspect managed relay connectivity.",
+  },
+  {
+    scope: AuthRelayWriteScope,
+    title: "Manage relay",
+    description: "Change managed tunnel connectivity.",
+  },
+];
+
+function AccessScopeSummary({
+  scopes,
+  label,
+}: {
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly label: string;
+}) {
+  const scopeCountLabel = `${scopes.length} ${scopes.length === 1 ? "scope" : "scopes"}`;
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={250}
+        closeDelay={100}
+        render={
+          <button
+            type="button"
+            aria-label={`${label}: show ${scopeCountLabel}`}
+            className="cursor-help underline decoration-border underline-offset-2 outline-hidden hover:text-foreground focus-visible:text-foreground"
+          />
+        }
+      >
+        {scopeCountLabel}
+      </PopoverTrigger>
+      <PopoverPopup
+        side="top"
+        align="start"
+        tooltipStyle
+        className="w-max max-w-80 whitespace-normal"
+      >
+        <p className="mb-1 font-medium">Granted scopes</p>
+        <div className="flex flex-col gap-0.5">
+          {scopes.map((scope) => (
+            <code key={scope} className="font-mono text-foreground/85">
+              {scope}
+            </code>
+          ))}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
 }
 
 type ConnectionStatusDotProps = {
@@ -150,7 +274,6 @@ function ConnectionStatusDot({
   const dot = (
     <button
       type="button"
-      title={tooltipText}
       aria-label={tooltipText}
       className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
     >
@@ -629,8 +752,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
-  const roleLabel = pairingLink.role === "owner" ? "Owner" : "Client";
-  const primaryLabel = pairingLink.label ?? `${roleLabel} link`;
+  const primaryLabel = pairingLink.label ?? "Pairing link";
   const defaultEndpointCopyOption =
     endpointCopyOptions.find((option) => option.key === defaultEndpointKey) ??
     endpointCopyOptions[0] ??
@@ -758,9 +880,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               ) : null}
             </Popover>
           </div>
-          <p className="text-xs text-muted-foreground" title={expiresAbsolute}>
-            {[roleLabel, formatExpiresInLabel(pairingLink.expiresAt, nowMs)].join(" · ")}
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={<p aria-label={expiresAbsolute} className="text-xs text-muted-foreground" />}
+            >
+              {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+              <span aria-hidden> · </span>
+              <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
+          </Tooltip>
           {shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
@@ -773,17 +902,26 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <>
                 {shareablePairingUrl ? (
                   <Group aria-label="Copy selected endpoint">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="max-w-56"
-                      title={`Copy pairing URL for: ${defaultEndpointCopyLabel}`}
-                      onClick={handleCopyDefaultLink}
-                    >
-                      <span className="truncate">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            className="max-w-56"
+                            aria-label={`Copy pairing URL for: ${defaultEndpointCopyLabel}`}
+                            onClick={handleCopyDefaultLink}
+                          />
+                        }
+                      >
+                        <span className="truncate">
+                          Copy pairing URL for: {defaultEndpointCopyLabel}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">
                         Copy pairing URL for: {defaultEndpointCopyLabel}
-                      </span>
-                    </Button>
+                      </TooltipPopup>
+                    </Tooltip>
                     <GroupSeparator />
                     <Menu>
                       <MenuTrigger
@@ -900,7 +1038,6 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     : lastConnectedAt
       ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
       : "Not connected yet.";
-  const roleLabel = clientSession.role === "owner" ? "Owner" : "Client";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
       ? clientSession.client.deviceType[0]?.toUpperCase() + clientSession.client.deviceType.slice(1)
@@ -932,7 +1069,13 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             ) : null}
           </div>
           <p className="text-xs text-muted-foreground">
-            {[roleLabel, ...deviceInfoBits].join(" · ")}
+            {deviceInfoBits.length > 0 ? (
+              <>
+                {deviceInfoBits.join(" · ")}
+                <span aria-hidden> · </span>
+              </>
+            ) : null}
+            <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -965,13 +1108,17 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
 }: AuthorizedClientsHeaderActionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
+  const [pairingScopes, setPairingScopes] = useState<ReadonlyArray<AuthEnvironmentScope>>([
+    ...AuthStandardClientScopes,
+  ]);
   const [isCreatingPairingLink, setIsCreatingPairingLink] = useState(false);
 
   const handleCreatePairingLink = useCallback(async () => {
     setIsCreatingPairingLink(true);
     try {
-      await createServerPairingCredential(pairingLabel);
+      await createServerPairingCredential({ label: pairingLabel, scopes: pairingScopes });
       setPairingLabel("");
+      setPairingScopes([...AuthStandardClientScopes]);
       setDialogOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
@@ -985,7 +1132,13 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     } finally {
       setIsCreatingPairingLink(false);
     }
-  }, [pairingLabel]);
+  }, [pairingLabel, pairingScopes]);
+
+  const togglePairingScope = useCallback((scope: AuthEnvironmentScope, checked: boolean) => {
+    setPairingScopes((current) =>
+      checked ? [...current, scope] : current.filter((currentScope) => currentScope !== scope),
+    );
+  }, []);
 
   return (
     <div className="flex items-center gap-2">
@@ -1005,6 +1158,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
           setDialogOpen(open);
           if (!open) {
             setPairingLabel("");
+            setPairingScopes([...AuthStandardClientScopes]);
           }
         }}
       >
@@ -1016,7 +1170,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
             </Button>
           }
         />
-        <DialogPopup className="max-w-sm">
+        <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
             <DialogDescription>
@@ -1024,7 +1178,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
               authorized client.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel>
+          <DialogPanel className="space-y-5">
             <label className="block">
               <span className="mb-1.5 block text-xs font-medium text-foreground">
                 Client label (optional)
@@ -1037,6 +1191,62 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                 autoFocus
               />
             </label>
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-medium text-foreground">Permissions</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Limit what the paired client can do.
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={isCreatingPairingLink}
+                    onClick={() => setPairingScopes([AuthOrchestrationReadScope])}
+                  >
+                    Read only
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={isCreatingPairingLink}
+                    onClick={() => setPairingScopes([...AuthStandardClientScopes])}
+                  >
+                    Standard
+                  </Button>
+                </div>
+              </div>
+              <div className="divide-y divide-border/60 rounded-lg border border-input bg-muted/25">
+                {PAIRING_SCOPE_OPTIONS.map(({ scope, title, description }) => (
+                  <label
+                    key={scope}
+                    className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40"
+                  >
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={pairingScopes.includes(scope)}
+                      disabled={isCreatingPairingLink}
+                      onCheckedChange={(checked) => togglePairingScope(scope, checked === true)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">{title}</span>
+                      <span className="block text-xs leading-snug text-muted-foreground">
+                        {description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {pairingScopes.length === 0 ? (
+                <p className="text-xs text-destructive">Select at least one permission.</p>
+              ) : pairingScopes.includes(AuthAccessWriteScope) ? (
+                <p className="text-xs text-warning">
+                  This client can create or revoke access for other devices.
+                </p>
+              ) : null}
+            </section>
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
@@ -1046,7 +1256,10 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
             >
               Cancel
             </Button>
-            <Button disabled={isCreatingPairingLink} onClick={() => void handleCreatePairingLink()}>
+            <Button
+              disabled={isCreatingPairingLink || pairingScopes.length === 0}
+              onClick={() => void handleCreatePairingLink()}
+            >
               {isCreatingPairingLink ? "Creating…" : "Create link"}
             </Button>
           </DialogFooter>
@@ -1153,12 +1366,19 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             {endpoint.label}
           </h3>
           {shouldShowEndpointUrl ? (
-            <p
-              className="min-w-0 truncate text-xs leading-5 text-muted-foreground"
-              title={endpoint.httpBaseUrl}
-            >
-              {endpoint.httpBaseUrl}
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <p
+                    aria-label={endpoint.httpBaseUrl}
+                    className="min-w-0 truncate text-xs leading-5 text-muted-foreground"
+                  />
+                }
+              >
+                {endpoint.httpBaseUrl}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{endpoint.httpBaseUrl}</TooltipPopup>
+            </Tooltip>
           ) : null}
           {!isAvailable ? (
             <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -1290,14 +1510,12 @@ function SavedBackendListRow({
         : connectionState === "error"
           ? "bg-destructive"
           : "bg-muted-foreground/40";
-  const roleLabel = runtime?.role ? (runtime.role === "owner" ? "Owner" : "Client") : null;
   const descriptorLabel = runtime?.descriptor?.label ?? null;
   const displayLabel = descriptorLabel ?? record.label;
   const statusTooltip = getSavedBackendStatusTooltip(runtime, record, nowMs);
   const versionMismatch = resolveServerConfigVersionMismatch(runtime?.serverConfig);
   const metadataBits = [
     record.desktopSsh ? `SSH ${formatDesktopSshTarget(record.desktopSsh)}` : null,
-    roleLabel,
     record.lastConnectedAt
       ? `Last connected ${formatAccessTimestamp(record.lastConnectedAt)}`
       : null,
@@ -1317,8 +1535,14 @@ function SavedBackendListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{displayLabel}</h3>
           </div>
-          {metadataBits.length > 0 ? (
-            <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
+          {metadataBits.length > 0 || runtime?.scopes ? (
+            <p className="text-xs text-muted-foreground">
+              {metadataBits.length > 0 ? metadataBits.join(" · ") : null}
+              {metadataBits.length > 0 && runtime?.scopes ? <span aria-hidden> · </span> : null}
+              {runtime?.scopes ? (
+                <AccessScopeSummary scopes={runtime.scopes} label="Granted scopes" />
+              ) : null}
+            </p>
           ) : null}
           {versionMismatch ? (
             <p className="flex items-center gap-1 text-warning text-xs">
@@ -1399,14 +1623,333 @@ const DesktopSshHostRow = memo(function DesktopSshHostRow({
   );
 });
 
+function CloudLinkSwitch({
+  checked,
+  disabled,
+  disabledReason,
+  onCheckedChange,
+}: {
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly disabledReason: string | null;
+  readonly onCheckedChange?: (enabled: boolean) => void;
+}) {
+  const control = (
+    <Switch
+      aria-label="Enable T3 Connect"
+      checked={checked}
+      disabled={disabled}
+      {...(onCheckedChange ? { onCheckedChange } : {})}
+    />
+  );
+  return disabledReason ? (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex">{control}</span>} />
+      <TooltipPopup side="top">{disabledReason}</TooltipPopup>
+    </Tooltip>
+  ) : (
+    control
+  );
+}
+
+function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
+  const { getToken, isSignedIn } = useAuth();
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
+  const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
+
+  const updateLink = async (enabled: boolean) => {
+    setIsUpdating(true);
+    setOperationError(null);
+    try {
+      const clerkToken = await getToken(resolveRelayClerkTokenOptions());
+      if (enabled) {
+        if (!clerkToken) {
+          throw new Error("Sign in to T3 Connect before linking this environment.");
+        }
+        await webRuntime.runPromise(linkPrimaryEnvironmentToCloud({ clerkToken }));
+      } else {
+        await webRuntime.runPromise(
+          unlinkPrimaryEnvironmentFromCloud({ clerkToken: clerkToken ?? null }),
+        );
+      }
+      primaryCloudLinkState.refresh();
+      refreshManagedRelayEnvironments();
+      toastManager.add({
+        type: "success",
+        title: enabled ? "T3 Connect linked" : "T3 Connect unlinked",
+        description: enabled
+          ? "This environment is available through T3 Connect."
+          : "This environment is no longer available through T3 Connect.",
+      });
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
+      setOperationError(message);
+      toastManager.add({
+        type: "error",
+        title: "Could not update T3 Connect",
+        description: message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+  const updatePublishAgentActivity = async (enabled: boolean) => {
+    setIsUpdatingPreference(true);
+    try {
+      await webRuntime.runPromise(updatePrimaryCloudPreferences({ publishAgentActivity: enabled }));
+      primaryCloudLinkState.refresh();
+      toastManager.add({
+        type: "success",
+        title: enabled ? "Agent activity enabled" : "Agent activity disabled",
+        description: enabled
+          ? "This environment can publish agent activity to your notification devices."
+          : "This environment will stop publishing agent activity.",
+      });
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: "Could not update T3 Connect preferences",
+        description:
+          cause instanceof Error ? cause.message : "Could not update agent activity publishing.",
+      });
+    } finally {
+      setIsUpdatingPreference(false);
+    }
+  };
+  const disabledReason = !isSignedIn
+    ? "Sign in to T3 Connect"
+    : !canManageRelay
+      ? "Your session does not have permission to manage T3 Connect access."
+      : null;
+  const linked = primaryCloudLinkState.data?.linked ?? false;
+
+  return (
+    <>
+      <SettingsRow
+        title="T3 Connect"
+        description={
+          linked
+            ? "This environment is available to your other devices through T3 Connect."
+            : "Make this environment available to your other devices through T3 Connect."
+        }
+        status={operationError ?? primaryCloudLinkState.error}
+        control={
+          <CloudLinkSwitch
+            checked={linked}
+            disabled={
+              (isSignedIn && !canManageRelay) || primaryCloudLinkState.isPending || isUpdating
+            }
+            disabledReason={disabledReason}
+            onCheckedChange={(enabled) => {
+              if (!isSignedIn) {
+                openAuthPrompt();
+                return;
+              }
+              void updateLink(enabled);
+            }}
+          />
+        }
+      />
+      {linked ? (
+        <SettingsRow
+          title="Publish agent activity"
+          description="Send agent activity from this environment to your notification devices."
+          className="bg-muted/20 pl-7 sm:pl-8"
+          control={
+            <Switch
+              aria-label="Publish agent activity"
+              checked={primaryCloudLinkState.data?.publishAgentActivity ?? false}
+              disabled={
+                !canManageRelay ||
+                !isSignedIn ||
+                primaryCloudLinkState.isPending ||
+                isUpdatingPreference
+              }
+              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
+            />
+          }
+        />
+      ) : null}
+      {authPrompt}
+    </>
+  );
+}
+
+function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
+  return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
+}
+
+function EmptyRemoteEnvironments({
+  cloudEnabled = true,
+  onConnectFromCloud,
+}: {
+  readonly cloudEnabled?: boolean;
+  readonly onConnectFromCloud?: () => void;
+}) {
+  return (
+    <Empty className="min-h-52">
+      <EmptyMedia variant="icon">
+        <ChevronsLeftRightEllipsisIcon />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyDescription>
+          Click “Add environment” to pair another environment
+          {cloudEnabled ? (
+            <>
+              , or connect one from{" "}
+              {onConnectFromCloud ? (
+                <button
+                  type="button"
+                  className="border-b border-dotted border-current text-foreground/80 hover:text-foreground"
+                  onClick={onConnectFromCloud}
+                >
+                  T3 Connect
+                </button>
+              ) : (
+                "T3 Connect"
+              )}
+            </>
+          ) : null}
+          .
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function RemoteEnvironmentRowsSkeleton() {
+  return (
+    <div className={ITEM_ROW_CLASSNAME}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="h-4 w-32 rounded-full" />
+          <Skeleton className="h-3 w-20 rounded-full" />
+        </div>
+        <Skeleton className="h-7 w-16 rounded-md" />
+      </div>
+    </div>
+  );
+}
+
+function ConfiguredCloudRemoteEnvironmentRows({
+  primaryEnvironmentId,
+  savedEnvironmentIds,
+}: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}) {
+  const { getToken, isSignedIn } = useAuth();
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
+  const environmentsState = useManagedRelayEnvironments();
+  const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
+    null,
+  );
+  const savedIds = useMemo(() => new Set(savedEnvironmentIds), [savedEnvironmentIds]);
+
+  const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+    setConnectingEnvironmentId(environment.environmentId);
+    try {
+      const clerkToken = await getToken(resolveRelayClerkTokenOptions());
+      if (!clerkToken) {
+        throw new Error("Sign in to T3 Connect before connecting this environment.");
+      }
+      const connection = await webRuntime.runPromise(
+        connectManagedCloudEnvironment({ clerkToken, environment }),
+      );
+      await addManagedRelayEnvironment(connection);
+      toastManager.add({
+        type: "success",
+        title: "Environment connected",
+        description: `${connection.label} is available through T3 Connect.`,
+      });
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: "Could not connect environment",
+        description:
+          cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.",
+      });
+    } finally {
+      setConnectingEnvironmentId(null);
+    }
+  };
+
+  const connectableEnvironments = (environmentsState.data ?? []).filter(
+    (environment) =>
+      environment.environmentId !== primaryEnvironmentId &&
+      !savedIds.has(environment.environmentId),
+  );
+
+  if (savedEnvironmentIds.length === 0 && environmentsState.data === null) {
+    return <RemoteEnvironmentRowsSkeleton />;
+  }
+
+  if (savedEnvironmentIds.length === 0 && connectableEnvironments.length === 0) {
+    return (
+      <>
+        <EmptyRemoteEnvironments {...(!isSignedIn ? { onConnectFromCloud: openAuthPrompt } : {})} />
+        {authPrompt}
+      </>
+    );
+  }
+
+  return connectableEnvironments.map((environment) => (
+    <div key={environment.environmentId} className={ITEM_ROW_CLASSNAME}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ConnectionStatusDot
+              dotClassName="bg-muted-foreground/35"
+              tooltipText="Available through T3 Connect"
+            />
+            <p className="truncate text-sm font-medium">{environment.label}</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">T3 Connect</p>
+        </div>
+        <Button
+          size="sm"
+          disabled={connectingEnvironmentId !== null}
+          onClick={() => void connectEnvironment(environment)}
+        >
+          {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+        </Button>
+      </div>
+    </div>
+  ));
+}
+
+function CloudRemoteEnvironmentRows({
+  primaryEnvironmentId,
+  savedEnvironmentIds,
+}: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}) {
+  return hasCloudPublicConfig() ? (
+    <ConfiguredCloudRemoteEnvironmentRows
+      primaryEnvironmentId={primaryEnvironmentId}
+      savedEnvironmentIds={savedEnvironmentIds}
+    />
+  ) : savedEnvironmentIds.length === 0 ? (
+    <EmptyRemoteEnvironments cloudEnabled={false} />
+  ) : null;
+}
+
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
-  const [currentSessionRole, setCurrentSessionRole] = useState<"owner" | "client" | null>(
-    desktopBridge ? "owner" : null,
-  );
-  const [currentAuthPolicy, setCurrentAuthPolicy] = useState<
-    "desktop-managed-local" | "loopback-browser" | "remote-reachable" | "unsafe-no-auth" | null
-  >(desktopBridge ? null : null);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primarySessionState = usePrimarySessionState();
+  const currentSessionScopes = desktopBridge
+    ? AuthAdministrativeScopes
+    : primarySessionState.data?.authenticated
+      ? (primarySessionState.data.scopes ?? null)
+      : null;
+  const currentAuthPolicy = desktopBridge ? null : (primarySessionState.data?.auth.policy ?? null);
   const savedEnvironmentsById = useSavedEnvironmentRegistryStore((state) => state.byId);
   const savedEnvironmentIds = useMemo(
     () =>
@@ -1516,7 +2059,8 @@ export function ConnectionsSettings() {
   const setDefaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.setDefaultAdvertisedEndpointKey,
   );
-  const canManageLocalBackend = currentSessionRole === "owner";
+  const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
+  const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
@@ -1930,30 +2474,6 @@ export function ConnectionsSettings() {
   ]);
 
   useEffect(() => {
-    if (desktopBridge) {
-      setCurrentSessionRole("owner");
-      return;
-    }
-
-    let cancelled = false;
-    void fetchSessionState()
-      .then((session) => {
-        if (cancelled) return;
-        setCurrentSessionRole(session.authenticated ? (session.role ?? null) : null);
-        setCurrentAuthPolicy(session.auth.policy);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setCurrentSessionRole(null);
-        setCurrentAuthPolicy(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopBridge]);
-
-  useEffect(() => {
     if (!canManageLocalBackend) return;
 
     let cancelled = false;
@@ -2065,10 +2585,7 @@ export function ConnectionsSettings() {
     setDesktopAdvertisedEndpoints([]);
     setDesktopServerExposureError(null);
   }, [canManageLocalBackend]);
-  const visibleDesktopPairingLinks = useMemo(
-    () => desktopPairingLinks.filter((pairingLink) => pairingLink.role === "client"),
-    [desktopPairingLinks],
-  );
+  const visibleDesktopPairingLinks = desktopPairingLinks;
   const tailscaleHttpsEndpoint = useMemo(
     () => desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null,
     [desktopAdvertisedEndpoints],
@@ -2450,7 +2967,7 @@ export function ConnectionsSettings() {
     <SettingsPageContainer>
       {canManageLocalBackend ? (
         <>
-          <SettingsSection title="Manage local backend">
+          <SettingsSection title="This environment">
             {primaryVersionMismatch ? (
               <SettingsRow
                 title="Version drift"
@@ -2469,9 +2986,13 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             ) : (
-              renderDisabledNetworkAccessRow()
+              <>
+                {renderDisabledNetworkAccessRow()}
+                <CloudLinkRow canManageRelay={canManageRelay} />
+              </>
             )}
           </SettingsSection>
 
@@ -2615,12 +3136,21 @@ export function ConnectionsSettings() {
                 ) : null}
                 <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <p
-                    className="mt-1 truncate text-sm text-foreground"
-                    title={pendingTailscaleServeBaseUrl ?? undefined}
-                  >
-                    {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                  </p>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <p
+                          aria-label={pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                          className="mt-1 truncate text-sm text-foreground"
+                        />
+                      }
+                    >
+                      {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">
+                      {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                    </TooltipPopup>
+                  </Tooltip>
                 </div>
               </DialogPanel>
               <DialogFooter>
@@ -2648,11 +3178,12 @@ export function ConnectionsSettings() {
           </Dialog>
         </>
       ) : (
-        <SettingsSection title="Local backend access">
+        <SettingsSection title="This environment">
           <SettingsRow
-            title="Owner tools"
-            description="Pairing links and client-session management are only available to owner sessions for this backend."
+            title="Administrative access"
+            description="Pairing links and client-session management require the access:write scope for this backend."
           />
+          <CloudLinkRow canManageRelay={canManageRelay} />
         </SettingsSection>
       )}
 
@@ -2732,15 +3263,10 @@ export function ConnectionsSettings() {
             onRemove={handleRemoveSavedBackend}
           />
         ))}
-
-        {savedEnvironmentIds.length === 0 ? (
-          <div className={ITEM_ROW_CLASSNAME}>
-            <p className="text-xs text-muted-foreground">
-              No remote environments yet. Click &ldquo;Add environment&rdquo; to pair another
-              environment.
-            </p>
-          </div>
-        ) : null}
+        <CloudRemoteEnvironmentRows
+          primaryEnvironmentId={primaryEnvironmentId}
+          savedEnvironmentIds={savedEnvironmentIds}
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );

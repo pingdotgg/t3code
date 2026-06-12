@@ -1,0 +1,38 @@
+{
+  "$schema": "../../node_modules/@effect/docgen/schema.json",
+  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/platform-node/src/",
+  "exclude": ["src/internal/**/*.ts"],
+  "tscExecutable": "tsgo",
+  "examplesCompilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "module": "ES2022",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "rewriteRelativeImportExtensions": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "effect": ["../../../effect/src/index.js"],
+      "effect/*": ["../../../effect/src/*.js"],
+      "@effect/cluster": ["../../../cluster/src/index.js"],
+      "@effect/cluster/*": ["../../../cluster/src/*.js"],
+      "@effect/experimental": ["../../../experimental/src/index.js"],
+      "@effect/experimental/*": ["../../../experimental/src/*.js"],
+      "@effect/platform": ["../../../platform/src/index.js"],
+      "@effect/platform/*": ["../../../platform/src/*.js"],
+      "@effect/platform-node": ["../../../platform-node/src/index.js"],
+      "@effect/platform-node/*": ["../../../platform-node/src/*.js"],
+      "@effect/platform-node-shared": ["../../../platform-node-shared/src/index.js"],
+      "@effect/platform-node-shared/*": ["../../../platform-node-shared/src/*.js"],
+      "@effect/rpc": ["../../../rpc/src/index.js"],
+      "@effect/rpc/*": ["../../../rpc/src/*.js"],
+      "effect/unstable/sql": ["../../../sql/src/index.js"],
+      "effect/unstable/sql/*": ["../../../sql/src/*.js"]
+    },
+    "plugins": [
+      { "name": "@effect/language-service", "includeSuggestionsInTsc": false }
+    ]
+  }
+}

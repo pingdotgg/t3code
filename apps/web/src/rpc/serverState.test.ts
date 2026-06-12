@@ -11,7 +11,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   getServerConfig,
@@ -76,7 +76,7 @@ const baseServerConfig: ServerConfig = {
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
-    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+    sessionMethods: ["browser-session-cookie", "bearer-access-token"],
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",
