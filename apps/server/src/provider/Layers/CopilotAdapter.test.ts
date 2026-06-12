@@ -304,6 +304,9 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         );
       }
       assert.equal(requested?.type, "user-input.requested");
+      if (requested?.type === "user-input.requested") {
+        assert.equal(requested.providerRefs?.providerRequestId, requestId);
+      }
 
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(requestId), {
         answer: "Use a custom answer",
@@ -337,6 +340,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       assert.equal(resolved?.type, "user-input.resolved");
       if (resolved?.type === "user-input.resolved") {
+        assert.equal(resolved.providerRefs?.providerRequestId, requestId);
         assert.deepStrictEqual(resolved.payload.answers, {
           answer: "Use a custom answer",
         });
@@ -684,6 +688,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             streamKind: "assistant_text",
             delta: resultText,
           });
+        }
+        const completedTool = runtimeEvents.find(
+          (event) =>
+            event.type === "item.completed" &&
+            event.payload.itemType === "collab_agent_tool_call" &&
+            String(event.itemId) === "copilot-tool-tool-task-complete",
+        );
+        assert.equal(completedTool?.type, "item.completed");
+        if (completedTool?.type === "item.completed") {
+          assert.equal(completedTool.providerRefs?.providerItemId, "tool-task-complete");
         }
         assert.equal(runtimeEvents.some((event) => event.type === "turn.diff.updated"), false);
 
