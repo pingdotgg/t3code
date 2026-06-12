@@ -56,6 +56,7 @@ type CopilotUserInputResponse = Awaited<
 >;
 type SessionPermissionRequestedEvent = Extract<SessionEvent, { type: "permission.requested" }>;
 type SessionUserInputRequestedEvent = Extract<SessionEvent, { type: "user_input.requested" }>;
+type SessionUserInputCompletedEvent = Extract<SessionEvent, { type: "user_input.completed" }>;
 type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permissionRequest"];
 type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
 type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
@@ -900,6 +901,14 @@ function answerFromUserInput(
   return {
     answer: preferredAnswer,
     wasFreeform,
+  };
+}
+
+function answersFromCompletedUserInput(
+  data: SessionUserInputCompletedEvent["data"],
+): ProviderUserInputAnswers {
+  return {
+    answer: data.answer ?? "",
   };
 }
 
@@ -2399,10 +2408,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }),
           type: "user-input.resolved",
           payload: {
-            answers: {
-              answer: event.data.answer ?? "",
-              wasFreeform: event.data.wasFreeform ?? true,
-            },
+            answers: answersFromCompletedUserInput(event.data),
           },
         });
         return;
