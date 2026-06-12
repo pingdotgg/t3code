@@ -37,8 +37,8 @@ interface Props {
   /** When provided, renders an "Open in browser" affordance to the right. */
   onOpenInBrowser?: (() => void) | undefined;
   /**
-   * When provided, renders a "Select element" toggle button to the right of
-   * the URL input. Pressed while a pick is active (button shows in `pressed`
+   * When provided, renders an annotation-mode toggle button to the right of
+   * the URL input. Pressed while annotation mode is active (button shows in `pressed`
    * state). Disabled in `pickDisabled` mode.
    */
   onPickElement?: (() => void) | undefined;
@@ -192,7 +192,7 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={onPickElement}
                   disabled={pickDisabled}
-                  aria-label={pickActive ? "Cancel element pick" : "Select element from page"}
+                  aria-label={pickActive ? "Cancel annotation" : "Annotate preview"}
                   aria-pressed={pickActive ? "true" : "false"}
                   type="button"
                 />
@@ -204,8 +204,8 @@ export function PreviewChromeRow({
               {pickDisabled && pickDisabledReason
                 ? pickDisabledReason
                 : pickActive
-                  ? "Cancel pick (Esc)"
-                  : "Select element to attach"}
+                  ? "Cancel annotation (Esc)"
+                  : "Annotate elements, regions, and drawings"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

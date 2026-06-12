@@ -505,6 +505,70 @@ export interface PickedElementPayload {
   pickedAt: string;
 }
 
+export interface PreviewAnnotationRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PreviewAnnotationPoint {
+  x: number;
+  y: number;
+}
+
+export interface PreviewAnnotationElementTarget {
+  id: string;
+  element: PickedElementPayload;
+  rect: PreviewAnnotationRect;
+}
+
+export interface PreviewAnnotationRegionTarget {
+  id: string;
+  rect: PreviewAnnotationRect;
+}
+
+export interface PreviewAnnotationStrokeTarget {
+  id: string;
+  color: string;
+  width: number;
+  points: ReadonlyArray<PreviewAnnotationPoint>;
+  bounds: PreviewAnnotationRect;
+}
+
+export interface PreviewAnnotationStyleChange {
+  targetId: string;
+  selector: string | null;
+  property: string;
+  previousValue: string;
+  value: string;
+}
+
+export interface PreviewAnnotationScreenshot {
+  dataUrl: string;
+  width: number;
+  height: number;
+  cropRect: PreviewAnnotationRect;
+}
+
+/**
+ * A submitted preview annotation. One annotation may reference multiple DOM
+ * elements, freeform regions, and ink strokes. The desktop main process adds
+ * the screenshot after the guest preload submits the structured draft.
+ */
+export interface PreviewAnnotationPayload {
+  id: string;
+  pageUrl: string;
+  pageTitle: string | null;
+  comment: string;
+  elements: ReadonlyArray<PreviewAnnotationElementTarget>;
+  regions: ReadonlyArray<PreviewAnnotationRegionTarget>;
+  strokes: ReadonlyArray<PreviewAnnotationStrokeTarget>;
+  styleChanges: ReadonlyArray<PreviewAnnotationStyleChange>;
+  screenshot: PreviewAnnotationScreenshot | null;
+  createdAt: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -601,8 +665,8 @@ export interface DesktopPreviewBridge {
    * the picked payload, or `null` when the user cancels (Escape / nav). The
    * promise rejects if the picker can't be activated (no webview, etc.).
    */
-  pickElement: (tabId: string) => Promise<PickedElementPayload | null>;
-  /** Cancel an in-flight `pickElement(tabId)` (renderer-side teardown). */
+  pickElement: (tabId: string) => Promise<PreviewAnnotationPayload | null>;
+  /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
 }
