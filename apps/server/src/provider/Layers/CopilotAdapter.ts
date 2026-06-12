@@ -30,6 +30,7 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { classifyProviderToolItemType } from "@t3tools/shared/providerToolClassification";
 import { DateTime, Deferred, Effect, Path, Predicate, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -665,102 +666,16 @@ function deltaFromBufferedText(previous: string | undefined, next: string): stri
   return next.slice(commonPrefixLength(previous ?? "", next));
 }
 
-function toolArgumentsLookLikeFileChange(arguments_: unknown): boolean {
-  const args = stringRecord(arguments_);
-  if (!args) {
-    return false;
-  }
-
-  const filePathKeys = [
-    "path",
-    "filePath",
-    "file_path",
-    "file",
-    "fileName",
-    "filename",
-    "targetFile",
-    "target_file",
-  ];
-  const editPayloadKeys = [
-    "content",
-    "newContent",
-    "new_content",
-    "oldString",
-    "old_string",
-    "newString",
-    "new_string",
-    "diff",
-    "patch",
-    "edits",
-  ];
-  const hasFilePath = filePathKeys.some((key) => {
-    const value = args[key];
-    return typeof value === "string" && trimOrUndefined(value) !== undefined;
-  });
-  const hasEditPayload = editPayloadKeys.some((key) => args[key] !== undefined);
-  return hasFilePath && hasEditPayload;
-}
-
-function toolNameImpliesFileChange(toolName: string, arguments_: unknown): boolean {
-  const normalized = toolName.toLowerCase();
-  if (
-    normalized.includes("write") ||
-    normalized.includes("edit") ||
-    normalized.includes("patch") ||
-    normalized.includes("replace")
-  ) {
-    return true;
-  }
-
-  if (
-    normalized.includes("create") ||
-    normalized.includes("delete") ||
-    normalized.includes("remove") ||
-    normalized.includes("modify") ||
-    normalized.includes("update") ||
-    normalized.includes("insert")
-  ) {
-    return normalized.includes("file") || toolArgumentsLookLikeFileChange(arguments_);
-  }
-
-  return false;
-}
-
 function toolItemType(
   toolName: string,
   mcpServerName?: string,
   arguments_?: unknown,
 ): ToolMeta["itemType"] {
-  const normalized = toolName.toLowerCase();
-  if (mcpServerName) {
-    return "mcp_tool_call";
-  }
-  if (
-    normalized.includes("bash") ||
-    normalized.includes("shell") ||
-    normalized.includes("exec") ||
-    normalized.includes("command")
-  ) {
-    return "command_execution";
-  }
-  if (toolNameImpliesFileChange(toolName, arguments_)) {
-    return "file_change";
-  }
-  if (normalized.includes("search") || normalized.includes("fetch") || normalized.includes("web")) {
-    return "web_search";
-  }
-  if (normalized.includes("image") || normalized.includes("screenshot")) {
-    return "image_view";
-  }
-  if (
-    normalized.includes("subagent") ||
-    normalized.includes("agent") ||
-    normalized.includes("delegate") ||
-    normalized.includes("task")
-  ) {
-    return "collab_agent_tool_call";
-  }
-  return "dynamic_tool_call";
+  return classifyProviderToolItemType({
+    toolName,
+    ...(mcpServerName ? { mcpServerName } : {}),
+    ...(arguments_ !== undefined ? { arguments: arguments_ } : {}),
+  });
 }
 
 function isTaskCompleteTool(toolName: string | undefined): boolean {
