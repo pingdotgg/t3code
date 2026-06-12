@@ -1546,7 +1546,7 @@ function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
     hasRenderableCommandOutput(workEntry.stdout) || hasRenderableCommandOutput(workEntry.stderr);
 
   return (
-    <div className="mt-2 ms-7 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
       {command && (
         <ToolDetailBlock title="Command" mono>
           {command}
@@ -1665,7 +1665,7 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
   const hasInlineDiff = renderablePatch?.kind === "files";
 
   return (
-    <div className="mt-2 ms-7 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
       {!hasInlineDiff && (workEntry.changedFiles?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1">
           {workEntry.changedFiles?.map((filePath) => {
@@ -1712,7 +1712,7 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
 
 function GenericToolEntryDetails({ value }: { value: string }) {
   return (
-    <div className="mt-2 ms-7 border-s border-border/45 ps-3 pt-0.5">
+    <div className="mt-2 ms-2 border-s border-border/45 ps-3 pt-0.5">
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
         {value}
       </pre>
