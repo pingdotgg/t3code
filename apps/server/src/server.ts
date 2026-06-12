@@ -36,7 +36,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { TerminalManagerLive } from "./terminal/Layers/Manager.ts";
 import { PreviewManagerLive } from "./preview/Layers/Manager.ts";
-import { PreviewPortScannerLive } from "./preview/Layers/PortScanner.ts";
+import { PortDiscoveryLive } from "./preview/Layers/PortScanner.ts";
 import { McpHttpServerLive } from "./mcp/Layers/McpHttpServer.ts";
 import { McpSessionRegistryLive } from "./mcp/Layers/McpSessionRegistry.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -236,12 +236,14 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
-const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
+const PortScannerLayerLive = PortDiscoveryLive.pipe(Layer.provide(ProcessRunner.layer));
 
-const PreviewLayerLive = Layer.mergeAll(
-  PreviewManagerLive,
-  PreviewPortScannerLive.pipe(Layer.provide(ProcessRunner.layer)),
+const TerminalLayerLive = TerminalManagerLive.pipe(
+  Layer.provide(PtyAdapterLive),
+  Layer.provide(PortScannerLayerLive),
 );
+
+const PreviewLayerLive = Layer.mergeAll(PreviewManagerLive, PortScannerLayerLive);
 
 const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
   Layer.provide(WorkspacePathsLive),

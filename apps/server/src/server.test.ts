@@ -100,7 +100,7 @@ import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRu
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import { PreviewManager } from "./preview/Services/Manager.ts";
-import { PreviewPortScanner } from "./preview/Services/PortScanner.ts";
+import { PortDiscovery } from "./preview/Services/PortScanner.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -681,10 +681,12 @@ const buildAppUnderTest = (options?: {
               PubSub.subscribe(pubsub),
             ),
           }),
-          Layer.mock(PreviewPortScanner)({
+          Layer.mock(PortDiscovery)({
             scan: () => Effect.succeed([]),
             subscribe: () => Effect.succeed(() => {}),
             retain: () => Effect.succeed(() => {}),
+            registerTerminalProcesses: () => Effect.void,
+            unregisterTerminal: () => Effect.void,
           }),
         ),
       ),

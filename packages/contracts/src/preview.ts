@@ -142,6 +142,12 @@ export const DiscoveredLocalServer = Schema.Struct({
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  terminal: Schema.NullOr(
+    Schema.Struct({
+      threadId: ThreadId,
+      terminalId: TrimmedNonEmptyString,
+    }),
+  ),
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 

@@ -22,16 +22,19 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
 import { PreviewUnreachable } from "./PreviewUnreachable";
+import { revealInFileExplorerLabel } from "./fileExplorerLabel";
+import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
+import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
   useBrowserRecordingStore,
 } from "~/browser/browserRecording";
-import { toastManager } from "~/components/ui/toast";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -47,7 +50,7 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * state when no session exists for the thread.
  */
 export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
-  const [focusUrlNonce, setFocusUrlNonce] = useState(0);
+  const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabId = useBrowserRecordingStore((state) => state.activeTabId);
   const pickActiveRef = useRef(false);
@@ -81,6 +84,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
+  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
 
@@ -142,16 +146,89 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const handleCapture = useCallback(
     (record: boolean) => {
       if (!previewBridge || !tabId) return;
+      const bridge = previewBridge;
       const recordingThisTab = activeRecordingTabId === tabId;
       if (recordingThisTab) {
         void stopBrowserRecording(tabId).then(
           (artifact) => {
             if (!artifact) return;
-            toastManager.add({
-              type: "success",
-              title: "Recording saved",
-              description: artifact.path,
-            });
+            let pathCopied = false;
+            let toastId: ReturnType<typeof toastManager.add>;
+
+            const copyPath = () => {
+              if (!navigator.clipboard?.writeText) {
+                toastManager.update(
+                  toastId,
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Unable to copy recording path",
+                    description: "Clipboard API unavailable.",
+                    actionProps: revealAction,
+                  }),
+                );
+                return;
+              }
+
+              void navigator.clipboard.writeText(artifact.path).then(
+                () => {
+                  pathCopied = true;
+                  updateRecordingToast();
+                  window.setTimeout(() => {
+                    pathCopied = false;
+                    updateRecordingToast();
+                  }, 2_000);
+                },
+                (error) => {
+                  toastManager.update(
+                    toastId,
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Unable to copy recording path",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                      actionProps: revealAction,
+                    }),
+                  );
+                },
+              );
+            };
+
+            const revealAction = {
+              children: revealInFileExplorerLabel(navigator.platform),
+              onClick: () => void bridge.revealArtifact(artifact.path),
+            };
+            const updateRecordingToast = () => {
+              toastManager.update(
+                toastId,
+                stackedThreadToast({
+                  type: "success",
+                  title: "Recording saved",
+                  actionProps: revealAction,
+                  data: {
+                    secondaryActionProps: {
+                      children: pathCopied ? "Copied!" : "Copy path",
+                      disabled: pathCopied,
+                      onClick: copyPath,
+                    },
+                    secondaryActionVariant: "outline",
+                  },
+                }),
+              );
+            };
+
+            toastId = toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: "Recording saved",
+                actionProps: revealAction,
+                data: {
+                  secondaryActionProps: {
+                    children: "Copy path",
+                    onClick: copyPath,
+                  },
+                  secondaryActionVariant: "outline",
+                },
+              }),
+            );
           },
           (error) => {
             toastManager.add({
@@ -181,13 +258,126 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         });
         return;
       }
-      void previewBridge.captureScreenshot(tabId).then(
+      void bridge.captureScreenshot(tabId).then(
         (artifact) => {
-          toastManager.add({
-            type: "success",
-            title: "Screenshot saved",
-            description: artifact.path,
-          });
+          const revealAction = {
+            children: revealInFileExplorerLabel(navigator.platform),
+            onClick: () => void bridge.revealArtifact(artifact.path),
+          };
+          let pathCopied = false;
+          let imageCopied = false;
+          let toastId: ReturnType<typeof toastManager.add>;
+
+          const updateScreenshotToast = (
+            type: "success" | "error" = "success",
+            title = "Screenshot saved",
+            description?: string,
+          ) => {
+            toastManager.update(
+              toastId,
+              stackedThreadToast({
+                type,
+                title,
+                description,
+                actionProps: {
+                  children: imageCopied ? "Copied!" : "Copy image",
+                  disabled: imageCopied,
+                  onClick: copyImage,
+                },
+                data: {
+                  additionalActions: [
+                    {
+                      id: "copy-path",
+                      props: {
+                        children: pathCopied ? "Copied!" : "Copy path",
+                        disabled: pathCopied,
+                        onClick: copyPath,
+                      },
+                    },
+                  ],
+                  secondaryActionProps: {
+                    ...revealAction,
+                  },
+                  secondaryActionVariant: "outline",
+                },
+              }),
+            );
+          };
+
+          const copyPath = () => {
+            if (!navigator.clipboard?.writeText) {
+              updateScreenshotToast(
+                "error",
+                "Unable to copy screenshot path",
+                "Clipboard API unavailable.",
+              );
+              return;
+            }
+
+            void navigator.clipboard.writeText(artifact.path).then(
+              () => {
+                pathCopied = true;
+                updateScreenshotToast();
+                window.setTimeout(() => {
+                  pathCopied = false;
+                  updateScreenshotToast();
+                }, 2_000);
+              },
+              (error) => {
+                updateScreenshotToast(
+                  "error",
+                  "Unable to copy screenshot path",
+                  error instanceof Error ? error.message : "An error occurred.",
+                );
+              },
+            );
+          };
+
+          const copyImage = () => {
+            void bridge.copyArtifactToClipboard(artifact.path).then(
+              () => {
+                imageCopied = true;
+                updateScreenshotToast();
+                window.setTimeout(() => {
+                  imageCopied = false;
+                  updateScreenshotToast();
+                }, 2_000);
+              },
+              (error) => {
+                updateScreenshotToast(
+                  "error",
+                  "Unable to copy screenshot",
+                  error instanceof Error ? error.message : "An error occurred.",
+                );
+              },
+            );
+          };
+
+          toastId = toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title: "Screenshot saved",
+              actionProps: {
+                children: "Copy image",
+                onClick: copyImage,
+              },
+              data: {
+                additionalActions: [
+                  {
+                    id: "copy-path",
+                    props: {
+                      children: "Copy path",
+                      onClick: copyPath,
+                    },
+                  },
+                ],
+                secondaryActionProps: {
+                  ...revealAction,
+                },
+                secondaryActionVariant: "outline",
+              },
+            }),
+          );
         },
         (error) => {
           toastManager.add({
@@ -287,7 +477,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           handleRefresh();
           return;
         case "focus-url":
-          setFocusUrlNonce((value) => value + 1);
+          setFocusUrlNonce((value) => (value ?? 0) + 1);
           return;
         case "zoom-in":
           handleZoomIn();
@@ -346,23 +536,31 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {tabId && snapshot ? (
+        {tabId && snapshot && !showEmptyState ? (
           <BrowserSurfaceSlot
             key={tabId}
             tabId={tabId}
             visible={visible && !isUnreachable}
             className="absolute inset-0 h-full w-full"
           />
-        ) : (
+        ) : null}
+        {showEmptyState ? (
           <PreviewEmptyState
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
             recentlySeenUrls={previewState.recentlySeenUrls}
             onOpenUrl={(next) => void handleSubmitUrl(next)}
           />
-        )}
+        ) : null}
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
+        ) : null}
+        {tabId && desktopOverlay && !showEmptyState && !isUnreachable ? (
+          <AgentBrowserCursor
+            tabId={tabId}
+            zoomFactor={desktopOverlay.zoomFactor}
+            controller={controller}
+          />
         ) : null}
         {controller !== "none" ? (
           <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur">

@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
+import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { ensureEnvironmentApi } from "~/environmentApi";
 import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewStateStore";
 
@@ -20,19 +21,26 @@ import { previewBridge } from "./previewBridge";
 export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: string }): void {
   const { threadRef, tabId } = input;
   const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
+  const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const bridge = previewBridge;
 
   // One bridge subscription does both jobs (mirror state + forward to
   // server) so the desktop bridge keeps a single listener entry per tab.
   const lastReportedUrl = useRef<string | null>(null);
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
+  const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   useEffect(() => {
     if (!bridge || typeof window === "undefined") return;
     const api = ensureEnvironmentApi(threadRef.environmentId);
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
+    lastDesktopNavStatus.current = null;
     const unsubscribe = bridge.onStateChange((changedTabId, state) => {
       if (changedTabId !== tabId) return;
+      if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
+        clearBrowserPointer(tabId);
+      }
+      lastDesktopNavStatus.current = state.navStatus;
       applyDesktopState(threadRef, tabId, projectDesktopState(state));
       const reported = buildReportInput({
         threadId: threadRef.threadId,
@@ -47,7 +55,17 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       void api.preview.reportStatus(reported.input).catch(() => undefined);
     });
     return unsubscribe;
-  }, [applyDesktopState, bridge, tabId, threadRef]);
+  }, [applyDesktopState, bridge, clearBrowserPointer, tabId, threadRef]);
+}
+
+function shouldClearBrowserPointer(
+  previous: DesktopPreviewTabState["navStatus"] | null,
+  current: DesktopPreviewTabState["navStatus"],
+): boolean {
+  if (!previous) return false;
+  if (current.kind === "Loading" && previous.kind !== "Loading") return true;
+  if (current.kind === "Idle" || previous.kind === "Idle") return false;
+  return current.url !== previous.url;
 }
 
 function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {

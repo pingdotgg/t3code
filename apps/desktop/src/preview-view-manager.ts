@@ -8,6 +8,8 @@
  * here). Single layer-scoped browser session partition.
  */
 import type {
+  DesktopPreviewAnnotationTheme,
+  DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
   DesktopPreviewRecordingArtifact,
@@ -26,9 +28,17 @@ import type {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { app, type BrowserWindow, type Session, session, webContents } from "electron";
+import {
+  type BrowserWindow,
+  type Session,
+  clipboard,
+  nativeImage,
+  session,
+  shell,
+  webContents,
+} from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -40,6 +50,7 @@ const START_PICK_CHANNEL = "preview:start-pick";
 const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
 const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
 const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
+const ANNOTATION_THEME_CHANNEL = "preview:annotation-theme";
 const HUMAN_INPUT_CHANNEL = "preview:human-input";
 
 // Re-export the guest webview security posture from its dedicated module so
@@ -83,6 +94,43 @@ const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 const MAX_SCREENSHOT_WIDTH = 1280;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
+const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
+const AGENT_CURSOR_MOVE_MS = 160;
+const AGENT_CURSOR_CLICK_LEAD_MS = 40;
+const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
+  colorScheme: "light",
+  radius: "0.625rem",
+  background: "white",
+  foreground: "oklch(0.269 0 0)",
+  popover: "white",
+  popoverForeground: "oklch(0.269 0 0)",
+  primary: "oklch(0.488 0.217 264)",
+  primaryForeground: "white",
+  muted: "rgb(0 0 0 / 4%)",
+  mutedForeground: "oklch(0.556 0 0)",
+  accent: "rgb(0 0 0 / 4%)",
+  accentForeground: "oklch(0.269 0 0)",
+  border: "rgb(0 0 0 / 8%)",
+  input: "rgb(0 0 0 / 10%)",
+  ring: "oklch(0.488 0.217 264)",
+  fontSans: "system-ui, sans-serif",
+  fontMono: "ui-monospace, monospace",
+};
+
+const artifactSiteSlug = (rawUrl: string): string => {
+  try {
+    const url = new URL(rawUrl);
+    const slug = url.hostname
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, MAX_ARTIFACT_SITE_SLUG_LENGTH)
+      .replace(/-+$/g, "");
+    return slug || "site";
+  } catch {
+    return "site";
+  }
+};
 
 interface CdpEvaluationResult {
   readonly result?: {
@@ -182,10 +230,14 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 type Listener = (tabId: string, state: PreviewTabState) => void;
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => void;
 
+type PreviewInputSignal =
+  | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
+  | { readonly kind: "key"; readonly key: string; readonly code: string };
+
 interface ManagedListeners {
   navigate: () => void;
   failed: (event: Event, code: number, description: string) => void;
-  humanInput: () => void;
+  humanInput: (_event: unknown, signal?: unknown) => void;
 }
 
 interface PickSession {
@@ -205,6 +257,13 @@ interface BrowserDiagnostics {
   readonly requests: Map<string, { url: string; method: string }>;
 }
 
+type PointerEventListener = (event: DesktopPreviewPointerEvent) => void;
+
+interface ExpectedAgentInput {
+  readonly signal: PreviewInputSignal;
+  readonly expiresAt: number;
+}
+
 const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   key: string;
   meta: boolean;
@@ -221,22 +280,115 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   { key: "w", meta: true, shift: false, control: false },
 ]);
 
+const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
+  if (typeof value !== "object" || value === null || !("kind" in value)) return false;
+  if (value.kind === "pointer") {
+    return (
+      "x" in value &&
+      typeof value.x === "number" &&
+      "y" in value &&
+      typeof value.y === "number" &&
+      "button" in value &&
+      typeof value.button === "number"
+    );
+  }
+  return (
+    value.kind === "key" &&
+    "key" in value &&
+    typeof value.key === "string" &&
+    "code" in value &&
+    typeof value.code === "string"
+  );
+};
+
+const inputSignalsMatch = (left: PreviewInputSignal, right: PreviewInputSignal): boolean => {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "pointer" && right.kind === "pointer") {
+    return (
+      Math.abs(left.x - right.x) <= 1 &&
+      Math.abs(left.y - right.y) <= 1 &&
+      left.button === right.button
+    );
+  }
+  return (
+    left.kind === "key" &&
+    right.kind === "key" &&
+    left.key === right.key &&
+    left.code === right.code
+  );
+};
+
 export class PreviewViewManager {
+  private annotationTheme = DEFAULT_ANNOTATION_THEME;
+  private artifactDirectory: string | null = null;
   private mainWindow: BrowserWindow | null = null;
   private readonly tabs = new Map<string, PreviewTabState>();
   private readonly attached = new Map<number, ManagedListeners>();
   private readonly browserSessions = new Map<string, Session>();
   private readonly listeners = new Set<Listener>();
+  private readonly pointerEventListeners = new Set<PointerEventListener>();
   private readonly recordingFrameListeners = new Set<RecordingFrameListener>();
   /** In-flight preview annotation sessions, keyed by tabId. */
   private readonly pickSessions = new Map<string, PickSession>();
   /** One long-lived CDP attachment and serialized command queue per guest. */
   private readonly controlSessions = new Map<number, BrowserControlSession>();
   private readonly diagnostics = new Map<number, BrowserDiagnostics>();
+  private readonly expectedAgentInputs = new Map<string, ExpectedAgentInput[]>();
   private readonly controlEpoch = new Map<string, number>();
   private readonly actionTimeline = new Map<string, PreviewAutomationActionEvent[]>();
   private actionSequence = 0;
+  private pointerSequence = 0;
   private recordingTabId: string | null = null;
+
+  configureArtifactDirectory(directory: string): void {
+    this.artifactDirectory = resolve(directory);
+  }
+
+  private requireArtifactDirectory(): string {
+    if (!this.artifactDirectory) {
+      throw new Error("Preview artifact directory is not configured.");
+    }
+    return this.artifactDirectory;
+  }
+
+  private resolveArtifactPath(path: string): string {
+    const directory = this.requireArtifactDirectory();
+    const resolvedPath = resolve(path);
+    const relativePath = relative(directory, resolvedPath);
+    if (
+      relativePath.length === 0 ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error("Preview artifact path is outside the configured artifact directory.");
+    }
+    return resolvedPath;
+  }
+
+  revealArtifact(path: string): void {
+    const resolvedPath = this.resolveArtifactPath(path);
+    shell.showItemInFolder(resolvedPath);
+  }
+
+  copyArtifactToClipboard(path: string): void {
+    const resolvedPath = this.resolveArtifactPath(path);
+    const image = nativeImage.createFromPath(resolvedPath);
+    if (image.isEmpty()) {
+      throw new Error("Preview artifact could not be loaded as an image.");
+    }
+    clipboard.writeImage(image);
+  }
+
+  setAnnotationTheme(theme: DesktopPreviewAnnotationTheme): void {
+    this.annotationTheme = theme;
+    for (const tab of this.tabs.values()) {
+      if (tab.webContentsId == null) continue;
+      const wc = webContents.fromId(tab.webContentsId);
+      if (!wc || wc.isDestroyed()) continue;
+      wc.send(ANNOTATION_THEME_CHANNEL, theme);
+    }
+  }
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window;
@@ -338,6 +490,7 @@ export class PreviewViewManager {
       throw new PreviewWebContentsNotFoundError(tabId, webContentsId);
     }
     if (tab.webContentsId === webContentsId && this.attached.has(webContentsId)) {
+      wc.send(ANNOTATION_THEME_CHANNEL, this.annotationTheme);
       return;
     }
     if (tab.webContentsId != null && tab.webContentsId !== webContentsId) {
@@ -366,6 +519,7 @@ export class PreviewViewManager {
       canGoForward: wc.navigationHistory.canGoForward(),
       zoomFactor: tab.zoomFactor,
     });
+    wc.send(ANNOTATION_THEME_CHANNEL, this.annotationTheme);
   }
 
   async navigate(tabId: string, rawUrl: string): Promise<void> {
@@ -513,7 +667,7 @@ export class PreviewViewManager {
         // wc may be torn down; the next try/catch settles.
       }
       try {
-        wc.send(START_PICK_CHANNEL);
+        wc.send(START_PICK_CHANNEL, this.annotationTheme);
       } catch {
         settle(null);
       }
@@ -561,8 +715,8 @@ export class PreviewViewManager {
   async captureScreenshot(tabId: string): Promise<DesktopPreviewScreenshotArtifact> {
     const wc = this.requireWebContents(tabId);
     const createdAt = new Date().toISOString();
-    const id = `browser-screenshot-${Date.now().toString(36)}`;
-    const directory = join(app.getPath("userData"), "browser-artifacts");
+    const id = `browser-screenshot-${artifactSiteSlug(wc.getURL())}-${Date.now().toString(36)}`;
+    const directory = this.requireArtifactDirectory();
     const path = join(directory, `${id}.png`);
     const data = (await wc.capturePage()).toPNG();
     await mkdir(directory, { recursive: true });
@@ -587,7 +741,7 @@ export class PreviewViewManager {
     const createdAt = new Date().toISOString();
     const id = `browser-recording-${Date.now().toString(36)}`;
     const extension = mimeType.includes("mp4") ? "mp4" : "webm";
-    const directory = join(app.getPath("userData"), "browser-artifacts");
+    const directory = this.requireArtifactDirectory();
     const path = join(directory, `${id}.${extension}`);
     await mkdir(directory, { recursive: true });
     await writeFile(path, data);
@@ -793,6 +947,25 @@ export class PreviewViewManager {
           `Click coordinates (${x}, ${y}) are outside the preview viewport.`,
         );
       }
+      this.emitPointerEvent({
+        tabId,
+        phase: "move",
+        x,
+        y,
+        sequence: this.pointerSequence++,
+        createdAt: new Date().toISOString(),
+      });
+      await sleep(AGENT_CURSOR_MOVE_MS);
+      this.emitPointerEvent({
+        tabId,
+        phase: "click",
+        x,
+        y,
+        sequence: this.pointerSequence++,
+        createdAt: new Date().toISOString(),
+      });
+      await sleep(AGENT_CURSOR_CLICK_LEAD_MS);
+      this.expectAgentInput(tabId, { kind: "pointer", x, y, button: 0 });
       await send("Input.dispatchMouseEvent", {
         type: "mousePressed",
         x,
@@ -886,6 +1059,7 @@ export class PreviewViewManager {
         modifiers,
         ...(text ? { text, unmodifiedText: text } : {}),
       };
+      this.expectAgentInput(tabId, { kind: "key", key, code: params.code });
       await send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
       await send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
     });
@@ -1345,11 +1519,50 @@ export class PreviewViewManager {
     };
   }
 
+  onPointerEvent(listener: PointerEventListener): () => void {
+    this.pointerEventListeners.add(listener);
+    return () => {
+      this.pointerEventListeners.delete(listener);
+    };
+  }
+
+  private emitPointerEvent(event: DesktopPreviewPointerEvent): void {
+    for (const listener of this.pointerEventListeners) listener(event);
+  }
+
+  private expectAgentInput(tabId: string, signal: PreviewInputSignal): void {
+    const now = Date.now();
+    const pending = (this.expectedAgentInputs.get(tabId) ?? []).filter(
+      (expected) => expected.expiresAt > now,
+    );
+    pending.push({ signal, expiresAt: now + 1_000 });
+    this.expectedAgentInputs.set(tabId, pending);
+  }
+
+  private consumeExpectedAgentInput(tabId: string, signal: PreviewInputSignal): boolean {
+    const now = Date.now();
+    const pending = (this.expectedAgentInputs.get(tabId) ?? []).filter(
+      (expected) => expected.expiresAt > now,
+    );
+    const index = pending.findIndex((expected) => inputSignalsMatch(expected.signal, signal));
+    if (index < 0) {
+      if (pending.length === 0) this.expectedAgentInputs.delete(tabId);
+      else this.expectedAgentInputs.set(tabId, pending);
+      return false;
+    }
+    pending.splice(index, 1);
+    if (pending.length === 0) this.expectedAgentInputs.delete(tabId);
+    else this.expectedAgentInputs.set(tabId, pending);
+    return true;
+  }
+
   destroy(): void {
     for (const tabId of Array.from(this.tabs.keys())) {
       this.closeTab(tabId);
     }
     this.listeners.clear();
+    this.expectedAgentInputs.clear();
+    this.pointerEventListeners.clear();
     this.recordingFrameListeners.clear();
   }
 
@@ -1375,7 +1588,10 @@ export class PreviewViewManager {
         },
       });
     };
-    const humanInput = (): void => {
+    const humanInput = (_event: unknown, rawSignal?: unknown): void => {
+      if (isPreviewInputSignal(rawSignal) && this.consumeExpectedAgentInput(tabId, rawSignal)) {
+        return;
+      }
       this.controlEpoch.set(tabId, (this.controlEpoch.get(tabId) ?? 0) + 1);
       this.update(tabId, { controller: "human" });
       void sleep(750).then(() => {

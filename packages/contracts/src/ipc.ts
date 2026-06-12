@@ -455,6 +455,15 @@ export interface DesktopPreviewTabState {
   updatedAt: string;
 }
 
+export interface DesktopPreviewPointerEvent {
+  tabId: string;
+  phase: "move" | "click";
+  x: number;
+  y: number;
+  sequence: number;
+  createdAt: string;
+}
+
 /**
  * Static config a renderer needs to mount a preview `<webview>`. Returned
  * atomically by `DesktopPreviewBridge.getPreviewConfig()` so the renderer
@@ -476,6 +485,26 @@ export interface DesktopPreviewWebviewConfig {
    * renderer must then disable element-pick affordances.
    */
   preloadUrl: string | null;
+}
+
+export interface DesktopPreviewAnnotationTheme {
+  colorScheme: "light" | "dark";
+  radius: string;
+  background: string;
+  foreground: string;
+  popover: string;
+  popoverForeground: string;
+  primary: string;
+  primaryForeground: string;
+  muted: string;
+  mutedForeground: string;
+  accent: string;
+  accentForeground: string;
+  border: string;
+  input: string;
+  ring: string;
+  fontSans: string;
+  fontMono: string;
 }
 
 export interface DesktopPreviewRecordingFrame {
@@ -700,6 +729,7 @@ export interface DesktopPreviewBridge {
    * the contract + main, not the renderer's mount logic.
    */
   getPreviewConfig: (environmentId: EnvironmentId) => Promise<DesktopPreviewWebviewConfig>;
+  setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with
    * the picked payload, or `null` when the user cancels (Escape / nav). The
@@ -709,6 +739,8 @@ export interface DesktopPreviewBridge {
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  revealArtifact: (path: string) => Promise<void>;
+  copyArtifactToClipboard: (path: string) => Promise<void>;
   recording: {
     startScreencast: (tabId: string) => Promise<void>;
     stopScreencast: (tabId: string) => Promise<void>;
@@ -730,6 +762,7 @@ export interface DesktopPreviewBridge {
     waitFor: (tabId: string, input: PreviewAutomationWaitForInput) => Promise<void>;
   };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
+  onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
 }
 
 /**

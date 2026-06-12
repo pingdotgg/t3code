@@ -143,11 +143,14 @@ export const PreviewToolkitRegistrationLive = Layer.effectDiscard(
                     ],
                   });
                 }
+                const encodedResultText = JSON.stringify(result.encodedResult) ?? "null";
                 return new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent:
-                    typeof result.encodedResult === "object" ? result.encodedResult : undefined,
-                  content: [{ type: "text", text: JSON.stringify(result.encodedResult) }],
+                    result.encodedResult !== null && typeof result.encodedResult === "object"
+                      ? result.encodedResult
+                      : undefined,
+                  content: [{ type: "text", text: encodedResultText }],
                 });
               },
             }),

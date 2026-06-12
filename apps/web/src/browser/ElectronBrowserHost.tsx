@@ -1,14 +1,18 @@
 "use client";
 
 import { parseScopedThreadKey } from "@t3tools/client-runtime";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { isElectron } from "~/env";
+import { useTheme } from "~/hooks/useTheme";
 import { usePreviewStateStore } from "~/previewStateStore";
 
+import { readPreviewAnnotationTheme } from "./annotationTheme";
+import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 
 export function ElectronBrowserHost() {
+  const { resolvedTheme } = useTheme();
   const previewByThreadKey = usePreviewStateStore((state) => state.byThreadKey);
   const sessions = useMemo(
     () =>
@@ -24,6 +28,47 @@ export function ElectronBrowserHost() {
       }),
     [previewByThreadKey],
   );
+
+  useEffect(() => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+
+    let lastSerializedTheme = "";
+    const syncTheme = () => {
+      const theme = readPreviewAnnotationTheme();
+      const serializedTheme = JSON.stringify(theme);
+      if (serializedTheme === lastSerializedTheme) return;
+      lastSerializedTheme = serializedTheme;
+      void preview.setAnnotationTheme(theme).catch(() => {
+        lastSerializedTheme = "";
+      });
+    };
+    const frameId = window.requestAnimationFrame(syncTheme);
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
+    const headObserver = new MutationObserver(syncTheme);
+    headObserver.observe(document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer.disconnect();
+      headObserver.disconnect();
+    };
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    return preview.onPointerEvent((event) => {
+      useBrowserPointerStore.getState().apply(event);
+    });
+  }, []);
 
   if (!isElectron) return null;
   return (

@@ -65,6 +65,7 @@ import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { terminalSessionManager } from "../terminalSessionState";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -1801,6 +1802,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
     });
+    useRightPanelStore.persist.clearStorage();
+    useRightPanelStore.setState({ byThreadKey: {} });
   });
 
   afterEach(() => {
@@ -2054,12 +2057,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const toggle = await waitForElement(
-        () =>
-          document.querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal drawer"]'),
-        "Unable to find terminal drawer toggle.",
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "j",
+          metaKey: isMacPlatform(navigator.platform),
+          ctrlKey: !isMacPlatform(navigator.platform),
+          bubbles: true,
+          cancelable: true,
+        }),
       );
-      toggle.click();
 
       await vi.waitFor(
         () => {
@@ -2072,9 +2078,136 @@ describe("ChatView timeline estimator parity (full app)", () => {
             terminalId: DEFAULT_TERMINAL_ID,
             cwd: "/repo/project",
           });
+          expect(
+            selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF)
+              .isOpen,
+          ).toBe(false);
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps multiple terminal panel surfaces separate from the bottom drawer", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-open-inline-terminal-panel" as MessageId,
+        targetText: "open inline terminal panel",
+      }),
+    });
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "b",
+          altKey: true,
+          metaKey: isMacPlatform(navigator.platform),
+          ctrlKey: !isMacPlatform(navigator.platform),
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      const addSurface = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Add panel surface"]'),
+        "Unable to find add panel surface button.",
+      );
+      expect(document.body.textContent).toContain("Open a surface");
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+      ).toEqual({
+        isOpen: true,
+        activeSurfaceId: null,
+        surfaces: [],
+      });
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.terminalOpen)).toBe(false);
+
+      addSurface.click();
+
+      const terminalItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (item) => item.textContent?.trim() === "Terminal",
+          ) ?? null,
+        "Unable to find Terminal panel menu item.",
+      );
+      terminalItem.click();
+
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF)
+            .surfaces.filter((surface) => surface.kind === "terminal")
+            .map((surface) => surface.resourceId),
+        ).toEqual(["term-1"]);
+      });
+
+      addSurface.click();
+      const secondTerminalItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (item) => item.textContent?.trim() === "Terminal",
+          ) ?? null,
+        "Unable to find Terminal panel menu item.",
+      );
+      secondTerminalItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF)
+              .surfaces.filter((surface) => surface.kind === "terminal")
+              .map((surface) => surface.resourceId),
+          ).toEqual(["term-1", "term-2"]);
+          expect(
+            document.querySelector('[data-preview-panel-mode="inline"] .thread-terminal-drawer'),
+          ).not.toBeNull();
+          expect(
+            wsRequests
+              .filter((request) => request._tag === WS_METHODS.terminalOpen)
+              .map((request) => ("terminalId" in request ? request.terminalId : null)),
+          ).toEqual(expect.arrayContaining(["term-1", "term-2"]));
+          const attachRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.terminalAttach &&
+              "terminalId" in request &&
+              request.terminalId === "term-2",
+          );
+          expect(attachRequest).toMatchObject({
+            _tag: WS_METHODS.terminalAttach,
+            threadId: THREAD_ID,
+            terminalId: "term-2",
+            cwd: "/repo/project",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const drawerToggle = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal drawer"]'),
+        "Unable to find terminal drawer toggle.",
+      );
+      drawerToggle.click();
+
+      await vi.waitFor(() => {
+        expect(
+          useTerminalUiStateStore.getState().terminalUiStateByThreadKey[THREAD_KEY],
+        ).toMatchObject({
+          terminalOpen: true,
+          terminalIds: ["term-3"],
+        });
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === WS_METHODS.terminalAttach &&
+              "terminalId" in request &&
+              request.terminalId === "term-3",
+          ),
+        ).toBe(true);
+      });
     } finally {
       await mounted.cleanup();
     }

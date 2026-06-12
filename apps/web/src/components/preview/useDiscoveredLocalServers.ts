@@ -1,10 +1,10 @@
 import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { ensureEnvironmentApi } from "~/environmentApi";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { useDiscoveredPorts } from "~/portDiscoveryState";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured" | "recent";
@@ -22,23 +22,13 @@ interface UseDiscoveredLocalServersInput {
 }
 
 /**
- * Subscribe to live localhost port scans, merge in configured /
- * recently-seen URLs, and return a stable sorted list. Retains the scanner
- * while mounted.
+ * Merge the environment-level port snapshot with configured / recently-seen
+ * URLs and return a stable sorted list.
  */
 export function useDiscoveredLocalServers(
   input: UseDiscoveredLocalServersInput,
 ): ReadonlyArray<PreviewableServer> {
-  const [scannerSnapshot, setScannerSnapshot] = useState<ReadonlyArray<DiscoveredLocalServer>>([]);
-
-  useEffect(() => {
-    const api = ensureEnvironmentApi(input.environmentId);
-    setScannerSnapshot([]);
-    const unsubscribe = api.preview.subscribePorts((next) => {
-      setScannerSnapshot(next.servers);
-    });
-    return unsubscribe;
-  }, [input.environmentId]);
+  const scannerSnapshot = useDiscoveredPorts(input.environmentId);
 
   return useMemo(
     () =>
@@ -72,6 +62,7 @@ export function mergeServers(input: {
       url: parsed.url,
       processName: null,
       pid: null,
+      terminal: null,
       source: "configured",
       listening: false,
     });
@@ -87,6 +78,7 @@ export function mergeServers(input: {
         ...existing,
         processName: server.processName ?? existing.processName,
         pid: server.pid ?? existing.pid,
+        terminal: server.terminal ?? existing.terminal,
         listening: true,
       });
       continue;
@@ -105,6 +97,7 @@ export function mergeServers(input: {
       url: parsed.url,
       processName: null,
       pid: null,
+      terminal: null,
       source: "recent",
       listening: false,
     });

@@ -9,6 +9,7 @@ const scannerServer = (overrides: Partial<DiscoveredLocalServer>): DiscoveredLoc
   url: "http://localhost:5173",
   processName: "vite",
   pid: 1234,
+  terminal: null,
   ...overrides,
 });
 
