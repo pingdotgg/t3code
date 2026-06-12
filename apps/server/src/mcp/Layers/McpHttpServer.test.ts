@@ -75,14 +75,16 @@ it.effect("registers annotated tools and preserves authenticated request context
                     height: 5,
                   },
                 }
-              : {
-                  available: true,
-                  visible: true,
-                  tabId,
-                  url: "http://example.test/",
-                  title: "Example",
-                  loading: false,
-                },
+              : request.operation === "press"
+                ? undefined
+                : {
+                    available: true,
+                    visible: true,
+                    tabId,
+                    url: "http://example.test/",
+                    title: "Example",
+                    loading: false,
+                  },
         }),
       ).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
@@ -146,6 +148,16 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
+
+      const press = yield* server
+        .callTool({ name: "preview_press", arguments: { key: "Enter" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(press.isError).toBe(false);
+      expect(press.structuredContent).toBeUndefined();
+      expect(press.content).toEqual([{ type: "text", text: "null" }]);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

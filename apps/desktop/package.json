@@ -29,6 +29,7 @@
     "@types/node": "catalog:",
     "cross-env": "^10.1.0",
     "electron-builder": "26.8.1",
+    "tailwindcss": "^4.0.0",
     "vite-plus": "catalog:"
   },
   "productName": "T3 Code (Alpha)"

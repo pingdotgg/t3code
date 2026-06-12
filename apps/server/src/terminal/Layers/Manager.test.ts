@@ -204,6 +204,7 @@ interface CreateManagerOptions {
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
+    readonly processIds: ReadonlyArray<number>;
   }>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -745,7 +746,8 @@ it.layer(
       let inspect: {
         readonly hasRunningSubprocess: boolean;
         readonly childCommand: string | null;
-      } = { hasRunningSubprocess: false, childCommand: null };
+        readonly processIds: ReadonlyArray<number>;
+      } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
       const { manager, getEvents } = yield* createManager(5, {
         subprocessInspector: () => Effect.succeed(inspect),
         subprocessPollIntervalMs: 20,
@@ -754,7 +756,7 @@ it.layer(
       yield* manager.open(openInput());
       expect((yield* getEvents).some((event) => event.type === "activity")).toBe(false);
 
-      inspect = { hasRunningSubprocess: true, childCommand: "vim" };
+      inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100, 101] };
       yield* waitFor(
         Effect.map(getEvents, (events) =>
           events.some(
@@ -767,7 +769,7 @@ it.layer(
         "1200 millis",
       );
 
-      inspect = { hasRunningSubprocess: false, childCommand: null };
+      inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
       yield* waitFor(
         Effect.map(getEvents, (events) =>
           events.some(
@@ -788,7 +790,11 @@ it.layer(
       const { manager } = yield* createManager(5, {
         subprocessInspector: () => {
           checks += 1;
-          return Effect.succeed({ hasRunningSubprocess: false, childCommand: null });
+          return Effect.succeed({
+            hasRunningSubprocess: false,
+            childCommand: null,
+            processIds: [],
+          });
         },
         subprocessPollIntervalMs: 20,
       });

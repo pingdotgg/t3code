@@ -2,6 +2,7 @@
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
+  DesktopPreviewAnnotationTheme,
   PickedElementPayload,
   PickedElementStackFrame,
   PreviewAnnotationPayload,
@@ -12,16 +13,18 @@ import type {
   PreviewAnnotationStyleChange,
 } from "@t3tools/contracts";
 
+import { previewAnnotationStyles } from "./preview-annotation-styles.generated.ts";
+
 const START_PICK_CHANNEL = "preview:start-pick";
 const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
 const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
 const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
+const ANNOTATION_THEME_CHANNEL = "preview:annotation-theme";
 const HUMAN_INPUT_CHANNEL = "preview:human-input";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const Z_INDEX_OVERLAY = 2147483646;
-const ACCENT = "#7c3aed";
-const ACCENT_FILL = "rgba(124,58,237,0.12)";
-const BLUE = "#2563eb";
+const PRIMARY = "var(--t3-primary)";
+const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
@@ -38,17 +41,63 @@ interface SelectedElement {
 
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
+  applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
 let idSequence = 0;
+let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
-const reportHumanInput = (event: Event): void => {
-  if (event.isTrusted) ipcRenderer.send(HUMAN_INPUT_CHANNEL);
+const applyAnnotationTheme = (
+  host: HTMLElement,
+  theme: DesktopPreviewAnnotationTheme | null,
+): void => {
+  if (!theme) return;
+  host.style.colorScheme = theme.colorScheme;
+  const variables = {
+    "--t3-radius": theme.radius,
+    "--t3-background": theme.background,
+    "--t3-foreground": theme.foreground,
+    "--t3-popover": theme.popover,
+    "--t3-popover-foreground": theme.popoverForeground,
+    "--t3-primary": theme.primary,
+    "--t3-primary-foreground": theme.primaryForeground,
+    "--t3-muted": theme.muted,
+    "--t3-muted-foreground": theme.mutedForeground,
+    "--t3-accent": theme.accent,
+    "--t3-accent-foreground": theme.accentForeground,
+    "--t3-border": theme.border,
+    "--t3-input": theme.input,
+    "--t3-ring": theme.ring,
+    "--t3-font-sans": theme.fontSans,
+    "--t3-font-mono": theme.fontMono,
+  };
+  for (const [name, value] of Object.entries(variables)) {
+    host.style.setProperty(name, value);
+  }
 };
 
-window.addEventListener("pointerdown", reportHumanInput, true);
-window.addEventListener("keydown", reportHumanInput, true);
+const reportHumanPointerInput = (event: PointerEvent): void => {
+  if (!event.isTrusted) return;
+  ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
+    kind: "pointer",
+    x: event.clientX,
+    y: event.clientY,
+    button: event.button,
+  });
+};
+
+const reportHumanKeyInput = (event: KeyboardEvent): void => {
+  if (!event.isTrusted) return;
+  ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
+    kind: "key",
+    key: event.key,
+    code: event.code,
+  });
+};
+
+window.addEventListener("pointerdown", reportHumanPointerInput, true);
+window.addEventListener("keydown", reportHumanKeyInput, true);
 
 const nextId = (prefix: string): string => {
   idSequence += 1;
@@ -76,13 +125,15 @@ const normalizeRect = (
 
 const isUsableRect = (rect: PreviewAnnotationRect): boolean => rect.width >= 3 && rect.height >= 3;
 
-function unionRects(rects: ReadonlyArray<PreviewAnnotationRect>): PreviewAnnotationRect | null {
+function unionRects(
+  rects: ReadonlyArray<PreviewAnnotationRect>,
+  padding = 20,
+): PreviewAnnotationRect | null {
   if (rects.length === 0) return null;
   const left = Math.min(...rects.map((rect) => rect.x));
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  const padding = 20;
   const x = Math.max(0, left - padding);
   const y = Math.max(0, top - padding);
   const maxWidth = Math.max(1, window.innerWidth - x);
@@ -151,19 +202,13 @@ function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
 function createLabel(): HTMLDivElement {
   const label = document.createElement("div");
   label.setAttribute(OVERLAY_ATTRIBUTE, "");
+  label.className =
+    "fixed z-1 max-w-70 overflow-hidden rounded-md bg-primary px-2 py-1 font-sans text-xs font-semibold text-primary-foreground shadow-md";
   label.style.cssText = [
     "position:fixed",
     "pointer-events:none",
-    `background:${ACCENT}`,
-    "color:white",
-    "font:600 11px/1.2 ui-sans-serif,system-ui,-apple-system,sans-serif",
-    "padding:2px 6px",
-    "border-radius:4px",
     "white-space:nowrap",
-    "max-width:280px",
-    "overflow:hidden",
     "text-overflow:ellipsis",
-    "box-shadow:0 1px 3px rgba(0,0,0,.3)",
     `z-index:${CONTENT_LAYER_Z_INDEX}`,
   ].join(";");
   return label;
@@ -222,22 +267,15 @@ function createButton(label: string, title: string): HTMLButtonElement {
   button.type = "button";
   button.textContent = label;
   button.title = title;
-  button.style.cssText = [
-    "border:0",
-    "border-radius:7px",
-    "padding:6px 9px",
-    "font:600 12px/1 ui-sans-serif,system-ui,-apple-system,sans-serif",
-    "background:transparent",
-    "color:#27272a",
-    "cursor:pointer",
-  ].join(";");
+  button.className =
+    "inline-flex h-7 cursor-pointer items-center justify-center rounded-md border border-transparent px-2 font-sans text-xs font-medium text-foreground outline-none hover:bg-accent disabled:pointer-events-none disabled:opacity-60";
   return button;
 }
 
 function styleControl(input: HTMLInputElement | HTMLSelectElement): void {
   input.setAttribute("aria-label", input.getAttribute("aria-label") ?? "Style value");
-  input.style.cssText +=
-    ";min-width:0;width:100%;height:26px;border:0;border-radius:7px;background:rgba(255,255,255,.78);color:#27272a;padding:3px 8px;box-sizing:border-box;font:500 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.09);appearance:none";
+  input.className =
+    "h-7 min-w-0 w-full appearance-none rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground shadow-xs outline-none";
 }
 
 function createUnitControl(input: HTMLInputElement): HTMLElement {
@@ -245,8 +283,8 @@ function createUnitControl(input: HTMLInputElement): HTMLElement {
   wrapper.style.cssText = "position:relative;min-width:0";
   const unit = document.createElement("span");
   unit.textContent = input.dataset.unit ?? "";
-  unit.style.cssText =
-    "position:absolute;right:8px;top:50%;transform:translateY(-50%);pointer-events:none;color:#a1a1aa;font:500 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace";
+  unit.className =
+    "pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 font-mono text-xs text-muted-foreground";
   wrapper.append(input, unit);
   return wrapper;
 }
@@ -256,8 +294,8 @@ function createField(
   input: HTMLInputElement | HTMLSelectElement,
 ): HTMLLabelElement {
   const label = document.createElement("label");
-  label.style.cssText =
-    "display:grid;grid-template-columns:82px minmax(0,1fr);align-items:center;gap:8px;min-height:28px;font:500 11px/1.2 ui-sans-serif,system-ui;color:#52525b";
+  label.className =
+    "grid min-h-7 grid-cols-[82px_minmax(0,1fr)] items-center gap-2 font-sans text-xs font-medium text-muted-foreground";
   const text = document.createElement("span");
   text.textContent = labelText;
   styleControl(input);
@@ -270,7 +308,7 @@ function createField(
 
 function createStyleSection(): HTMLElement {
   const section = document.createElement("section");
-  section.style.cssText = "display:grid;gap:3px;padding:7px 0;border-top:1px solid rgba(0,0,0,.07)";
+  section.className = "grid gap-1 border-t border-border py-2";
   return section;
 }
 
@@ -314,16 +352,27 @@ function strokeBounds(
 function startAnnotation(): void {
   activeSession?.teardown(false);
   let finished = false;
+  const host = document.createElement("div");
+  host.setAttribute(OVERLAY_ATTRIBUTE, "");
+  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  applyAnnotationTheme(host, annotationTheme);
+  const shadowRoot = host.attachShadow({ mode: "closed" });
+  const themeStyle = document.createElement("style");
+  themeStyle.textContent = previewAnnotationStyles;
+  shadowRoot.appendChild(themeStyle);
+
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
-  root.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif`;
+  root.className = "fixed inset-0 font-sans text-foreground";
+  root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
   cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
-  root.appendChild(cursorStyle);
+  document.documentElement.appendChild(cursorStyle);
+  shadowRoot.appendChild(root);
 
-  const hoverOutline = createBox(BLUE, "rgba(37,99,235,.10)");
-  const marqueeBox = createBox(ACCENT, ACCENT_FILL);
+  const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
+  const marqueeBox = createBox(PRIMARY, PRIMARY_FILL);
   root.append(hoverOutline, marqueeBox);
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -337,57 +386,55 @@ function startAnnotation(): void {
 
   const toolbar = document.createElement("div");
   toolbar.setAttribute(OVERLAY_ATTRIBUTE, "");
-  toolbar.style.cssText = `position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:${CHROME_LAYER_Z_INDEX};pointer-events:auto;display:flex;gap:2px;padding:3px;border:1px solid rgba(0,0,0,.10);border-radius:9px;background:rgba(255,255,255,.94);box-shadow:0 5px 16px rgba(0,0,0,.12);backdrop-filter:blur(12px)`;
+  toolbar.className =
+    "pointer-events-auto fixed top-2.5 left-1/2 flex -translate-x-1/2 gap-0.5 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl";
+  toolbar.style.zIndex = String(CHROME_LAYER_Z_INDEX);
   root.appendChild(toolbar);
 
   const editor = document.createElement("div");
   editor.setAttribute(OVERLAY_ATTRIBUTE, "");
-  editor.style.cssText = `position:fixed;right:12px;bottom:12px;z-index:${CHROME_LAYER_Z_INDEX};width:min(306px,calc(100vw - 24px));max-height:calc(100vh - 32px);overflow:hidden;pointer-events:auto;display:none;flex-direction:column;border:1px solid rgba(0,0,0,.09);border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 14px 36px rgba(0,0,0,.18);color:#18181b;box-sizing:border-box;backdrop-filter:blur(18px)`;
+  editor.className =
+    "pointer-events-auto fixed hidden max-h-[calc(100vh-16px)] w-[min(360px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-popover/96 text-popover-foreground shadow-2xl backdrop-blur-xl";
+  editor.style.zIndex = String(CHROME_LAYER_Z_INDEX);
   root.appendChild(editor);
 
-  const editorHeader = document.createElement("div");
-  editorHeader.style.cssText =
-    "display:flex;align-items:center;gap:7px;padding:7px 8px;border-bottom:1px solid rgba(0,0,0,.06);cursor:grab;user-select:none";
-  const adjustIcon = document.createElement("div");
-  adjustIcon.innerHTML =
-    '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 6h8M15 6h2M3 14h2M9 14h8M11 3v6M7 11v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="13" cy="6" r="2" fill="white" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="14" r="2" fill="white" stroke="currentColor" stroke-width="1.5"/></svg>';
-  adjustIcon.style.cssText =
-    "display:grid;place-items:center;width:24px;height:24px;border-radius:999px;background:#f4f4f5;color:#52525b;font:700 14px/1 ui-sans-serif";
-  editorHeader.appendChild(adjustIcon);
+  const composerRow = document.createElement("div");
+  composerRow.className = "flex items-start gap-2 p-2";
 
-  const status = document.createElement("div");
-  status.style.cssText =
-    "min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 11px/1.2 ui-sans-serif,system-ui;color:#71717a";
-  editorHeader.appendChild(status);
-  const dragHandle = document.createElement("div");
-  dragHandle.textContent = "⠿";
-  dragHandle.title = "Drag annotation editor";
-  dragHandle.style.cssText = "color:#a1a1aa;font:700 18px/1 ui-sans-serif";
-  editorHeader.appendChild(dragHandle);
-  editor.appendChild(editorHeader);
+  const adjust = createButton("", "Expand annotation editor");
+  adjust.setAttribute("aria-label", "Expand annotation editor");
+  adjust.setAttribute("aria-expanded", "false");
+  adjust.className +=
+    " h-8 w-8 shrink-0 bg-muted p-0 text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+  adjust.innerHTML =
+    '<svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12M7 3v4M13 8v4M9 13v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  composerRow.appendChild(adjust);
 
   const comment = document.createElement("textarea");
   comment.placeholder = "Describe the change…";
-  comment.rows = 2;
-  comment.style.cssText =
-    "width:100%;resize:none;min-height:48px;border:0;padding:10px 12px;font:500 12px/1.35 ui-sans-serif,system-ui;color:#18181b;box-sizing:border-box;outline:none;background:transparent";
-  editor.appendChild(comment);
+  comment.rows = 1;
+  comment.className =
+    "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
+  composerRow.appendChild(comment);
+
+  const dragHandle = document.createElement("button");
+  dragHandle.type = "button";
+  dragHandle.textContent = "⠿";
+  dragHandle.title = "Drag annotation editor";
+  dragHandle.className =
+    "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
+  composerRow.appendChild(dragHandle);
+
+  const submit = createButton("Attach", "Attach annotation and screenshot");
+  submit.className +=
+    " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
+  composerRow.appendChild(submit);
+  editor.appendChild(composerRow);
 
   const stylePanel = document.createElement("div");
-  stylePanel.style.cssText =
-    "display:none;max-height:min(380px,calc(100vh - 180px));overflow:auto;padding:0 10px;background:rgba(250,250,250,.62);border-top:1px solid rgba(0,0,0,.06)";
+  stylePanel.className =
+    "hidden max-h-[min(176px,calc(100vh-180px))] overflow-auto border-t border-border bg-muted/40 px-3";
   editor.appendChild(stylePanel);
-
-  const footer = document.createElement("div");
-  footer.style.cssText =
-    "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border-top:1px solid rgba(0,0,0,.06);background:rgba(255,255,255,.92)";
-  const adjust = createButton("Adjust", "Show style controls for selected elements");
-  adjust.style.cssText +=
-    ";display:none;padding:5px 7px;color:#52525b;background:#f4f4f5;font-size:11px";
-  const submit = createButton("Attach", "Attach annotation and screenshot");
-  submit.style.cssText += `;background:${ACCENT};color:white;padding:6px 9px;font-size:11px`;
-  footer.append(adjust, submit);
-  editor.appendChild(footer);
 
   const selected = new Map<Element, SelectedElement>();
   const regions: PreviewAnnotationRegionTarget[] = [];
@@ -398,28 +445,30 @@ function startAnnotation(): void {
   let dragStart: PreviewAnnotationPoint | null = null;
   let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
   let pendingCapture = false;
-  let stylesExpanded = false;
+  let editorExpanded = false;
   let editorWasShown = false;
   let editorPosition: { left: number; top: number } | null = null;
   let editorDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null;
+  let editorLayoutFrame: number | null = null;
+
+  const resizeComment = (): void => {
+    const maxHeight = 96;
+    comment.style.height = "auto";
+    const nextHeight = Math.min(comment.scrollHeight, maxHeight);
+    comment.style.height = `${nextHeight}px`;
+    comment.style.overflowY = comment.scrollHeight > maxHeight ? "auto" : "hidden";
+    queueEditorLayout();
+  };
+  comment.addEventListener("input", resizeComment);
 
   const updateStatus = (): void => {
-    const parts = [
-      selected.size > 0 ? `${selected.size} element${selected.size === 1 ? "" : "s"}` : "",
-      regions.length > 0 ? `${regions.length} region${regions.length === 1 ? "" : "s"}` : "",
-      strokes.length > 0 ? `${strokes.length} drawing${strokes.length === 1 ? "" : "s"}` : "",
-    ].filter(Boolean);
-    const hasTargets = parts.length > 0;
-    status.textContent = parts.join(" · ");
+    const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
     editor.style.display = hasTargets ? "flex" : "none";
     submit.disabled = !hasTargets;
     submit.style.opacity = hasTargets ? "1" : "0.45";
-    adjust.style.display = selected.size > 0 ? "block" : "none";
-    if (selected.size === 0 && stylesExpanded) {
-      stylesExpanded = false;
-      stylePanel.style.display = "none";
-      adjust.textContent = "Adjust";
-    }
+    adjust.disabled = !hasTargets;
+    stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
+    queueEditorLayout();
     if (hasTargets && !editorWasShown) {
       editorWasShown = true;
       window.setTimeout(() => comment.focus({ preventScroll: true }), 0);
@@ -429,8 +478,9 @@ function startAnnotation(): void {
   const refreshToolButtons = (): void => {
     for (const [candidate, button] of toolButtons) {
       const active = candidate === tool;
-      button.style.background = active ? ACCENT_FILL : "transparent";
-      button.style.color = active ? ACCENT : "#27272a";
+      button.classList.toggle("bg-primary/10", active);
+      button.classList.toggle("text-primary", active);
+      button.classList.toggle("text-foreground", !active);
     }
     if (tool !== "select") hoverOutline.style.display = "none";
     if (tool !== "marquee") marqueeBox.style.display = "none";
@@ -458,7 +508,7 @@ function startAnnotation(): void {
     const target: SelectedElement = {
       id: nextId("element"),
       element,
-      outline: createBox(ACCENT, ACCENT_FILL),
+      outline: createBox(PRIMARY, PRIMARY_FILL),
       label: createLabel(),
       baselineStyles: new Map(),
     };
@@ -466,7 +516,10 @@ function startAnnotation(): void {
     root.append(target.outline, target.label);
     updateSelectedVisual(target);
     updateStatus();
-    if (stylesExpanded) syncStyleControls();
+    if (editorExpanded) {
+      stylePanel.style.display = "grid";
+      syncStyleControls();
+    }
   };
 
   const toggleSelected = (element: Element, additive: boolean): void => {
@@ -552,13 +605,13 @@ function startAnnotation(): void {
     section: HTMLElement,
   ): { row: HTMLLabelElement; color: HTMLInputElement; text: HTMLInputElement } => {
     const row = document.createElement("label");
-    row.style.cssText =
-      "display:grid;grid-template-columns:82px minmax(0,1fr);align-items:center;gap:8px;min-height:28px;font:500 11px/1.2 ui-sans-serif,system-ui;color:#52525b";
+    row.className =
+      "grid min-h-7 grid-cols-[82px_minmax(0,1fr)] items-center gap-2 font-sans text-xs font-medium text-muted-foreground";
     const label = document.createElement("span");
     label.textContent = labelText;
     const control = document.createElement("div");
-    control.style.cssText =
-      "display:grid;grid-template-columns:22px minmax(0,1fr);align-items:center;gap:5px;height:26px;padding:2px 5px;border-radius:7px;background:rgba(255,255,255,.78);box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)";
+    control.className =
+      "grid h-7 grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded-md border border-input bg-background px-1 shadow-xs";
     const color = document.createElement("input");
     color.type = "color";
     color.setAttribute("aria-label", labelText);
@@ -567,8 +620,8 @@ function startAnnotation(): void {
     const text = document.createElement("input");
     text.type = "text";
     text.setAttribute("aria-label", `${labelText} value`);
-    text.style.cssText =
-      "min-width:0;width:100%;border:0;background:transparent;color:#52525b;font:500 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none";
+    text.className =
+      "min-w-0 w-full border-0 bg-transparent font-mono text-xs text-foreground outline-none";
     color.addEventListener("input", () => {
       text.value = color.value;
       setStyleForSelected(property, color.value);
@@ -594,7 +647,7 @@ function startAnnotation(): void {
   opacity.max = "1";
   opacity.step = "0.05";
   opacity.value = "1";
-  opacity.style.accentColor = ACCENT;
+  opacity.style.accentColor = PRIMARY;
   opacity.addEventListener("input", () => setStyleForSelected("opacity", opacity.value));
   colorsSection.appendChild(createField("Opacity", opacity));
 
@@ -623,8 +676,7 @@ function startAnnotation(): void {
   dimensions.style.cssText =
     "display:grid;grid-template-columns:82px minmax(0,1fr);gap:8px;align-items:center";
   const dimensionLabel = document.createElement("div");
-  dimensionLabel.style.cssText =
-    "display:grid;gap:9px;font:500 11px/1.2 ui-sans-serif,system-ui;color:#52525b";
+  dimensionLabel.className = "grid gap-2 font-sans text-xs font-medium text-muted-foreground";
   dimensionLabel.innerHTML = "<span>Width</span><span>Height</span>";
   const dimensionControls = document.createElement("div");
   dimensionControls.style.cssText = "position:relative;display:grid;gap:3px;padding-left:22px";
@@ -635,7 +687,8 @@ function startAnnotation(): void {
   const aspectLock = createButton("", "Lock aspect ratio");
   aspectLock.setAttribute("aria-pressed", "true");
   aspectLock.style.cssText +=
-    ";position:absolute;left:0;top:50%;transform:translateY(-50%);width:18px;height:38px;padding:0;border-radius:6px;background:#ede9fe;color:#6d28d9";
+    ";position:absolute;left:0;top:50%;transform:translateY(-50%);width:18px;height:38px;padding:0";
+  aspectLock.className += " bg-primary/10 text-primary";
   dimensionControls.append(
     createUnitControl(widthInput),
     createUnitControl(heightInput),
@@ -651,8 +704,10 @@ function startAnnotation(): void {
       ? '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M8 6.5 9.5 5A3.5 3.5 0 0 1 14.5 10l-1.5 1.5M12 13.5 10.5 15A3.5 3.5 0 0 1 5.5 10L7 8.5M7.5 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
       : '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m6 6 8 8M8 6.5 9.5 5A3.5 3.5 0 0 1 14 9M12 13.5 10.5 15A3.5 3.5 0 0 1 6 11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
     aspectLock.setAttribute("aria-pressed", String(aspectLocked));
-    aspectLock.style.background = aspectLocked ? "#ede9fe" : "#f4f4f5";
-    aspectLock.style.color = aspectLocked ? "#6d28d9" : "#71717a";
+    aspectLock.classList.toggle("bg-primary/10", aspectLocked);
+    aspectLock.classList.toggle("text-primary", aspectLocked);
+    aspectLock.classList.toggle("bg-muted", !aspectLocked);
+    aspectLock.classList.toggle("text-muted-foreground", !aspectLocked);
   };
   aspectLock.addEventListener("click", () => {
     aspectLocked = !aspectLocked;
@@ -733,7 +788,7 @@ function startAnnotation(): void {
   ];
   for (const [candidate, label, title] of tools) {
     const button = createButton(label, title);
-    button.style.cssText += ";padding:5px 7px;font-size:11px;border-radius:6px";
+    button.className += " h-8 px-2.5 text-sm";
     button.addEventListener("click", () => {
       tool = candidate;
       refreshToolButtons();
@@ -741,14 +796,6 @@ function startAnnotation(): void {
     toolButtons.set(candidate, button);
     toolbar.appendChild(button);
   }
-
-  adjust.addEventListener("click", () => {
-    if (selected.size === 0) return;
-    stylesExpanded = !stylesExpanded;
-    stylePanel.style.display = stylesExpanded ? "grid" : "none";
-    adjust.textContent = stylesExpanded ? "Hide styles" : "Adjust";
-    if (stylesExpanded) syncStyleControls();
-  });
 
   const clampEditorPosition = (left: number, top: number): { left: number; top: number } => {
     const margin = 8;
@@ -766,23 +813,98 @@ function startAnnotation(): void {
   };
 
   const applyEditorPosition = (position: { left: number; top: number }): void => {
-    editorPosition = clampEditorPosition(position.left, position.top);
-    editor.style.left = `${editorPosition.left}px`;
-    editor.style.top = `${editorPosition.top}px`;
+    const clamped = clampEditorPosition(position.left, position.top);
+    editor.style.left = `${clamped.left}px`;
+    editor.style.top = `${clamped.top}px`;
     editor.style.right = "auto";
     editor.style.bottom = "auto";
+    if (editorExpanded) editorPosition = clamped;
   };
 
+  const getAnnotationBounds = (): PreviewAnnotationRect | null =>
+    unionRects(
+      [
+        ...Array.from(selected.values(), (target) =>
+          rectFromDomRect(target.element.getBoundingClientRect()),
+        ),
+        ...regions.map((region) => region.rect),
+        ...strokes.map((stroke) => stroke.bounds),
+      ],
+      0,
+    );
+
+  const positionCompactEditor = (): void => {
+    const bounds = getAnnotationBounds();
+    if (!bounds) return;
+    const editorRect = editor.getBoundingClientRect();
+    const gap = 8;
+    const candidates = [
+      { left: bounds.x + bounds.width + gap, top: bounds.y },
+      { left: bounds.x - editorRect.width - gap, top: bounds.y },
+      {
+        left: bounds.x + bounds.width - editorRect.width,
+        top: bounds.y + bounds.height + gap,
+      },
+      {
+        left: bounds.x + bounds.width - editorRect.width,
+        top: bounds.y - editorRect.height - gap,
+      },
+    ];
+    const overflow = (position: { left: number; top: number }): number =>
+      Math.max(0, -position.left) +
+      Math.max(0, -position.top) +
+      Math.max(0, position.left + editorRect.width - window.innerWidth) +
+      Math.max(0, position.top + editorRect.height - window.innerHeight);
+    const best = candidates.reduce((current, candidate) =>
+      overflow(candidate) < overflow(current) ? candidate : current,
+    );
+    applyEditorPosition(best);
+  };
+
+  function queueEditorLayout(): void {
+    if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
+    editorLayoutFrame = window.requestAnimationFrame(() => {
+      editorLayoutFrame = null;
+      if (editor.style.display === "none") return;
+      if (editorExpanded && editorPosition) applyEditorPosition(editorPosition);
+      else positionCompactEditor();
+    });
+  }
+
+  adjust.addEventListener("click", () => {
+    if (selected.size === 0) return;
+    if (!editorExpanded) {
+      const rect = editor.getBoundingClientRect();
+      editorExpanded = true;
+      editorPosition = { left: rect.left, top: rect.top };
+      stylePanel.style.display = selected.size > 0 ? "grid" : "none";
+      dragHandle.style.display = "block";
+      adjust.setAttribute("aria-expanded", "true");
+      adjust.title = "Collapse annotation editor";
+      adjust.setAttribute("aria-label", "Collapse annotation editor");
+      if (selected.size > 0) syncStyleControls();
+    } else {
+      editorExpanded = false;
+      editorPosition = null;
+      stylePanel.style.display = "none";
+      dragHandle.style.display = "none";
+      adjust.setAttribute("aria-expanded", "false");
+      adjust.title = "Expand annotation editor";
+      adjust.setAttribute("aria-label", "Expand annotation editor");
+    }
+    queueEditorLayout();
+  });
+
   const onEditorPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !editorExpanded) return;
     const rect = editor.getBoundingClientRect();
     editorDrag = {
       pointerId: event.pointerId,
       offsetX: event.clientX - rect.left,
       offsetY: event.clientY - rect.top,
     };
-    editorHeader.setPointerCapture(event.pointerId);
-    editorHeader.style.cursor = "grabbing";
+    dragHandle.setPointerCapture(event.pointerId);
+    dragHandle.style.cursor = "grabbing";
     event.preventDefault();
     event.stopPropagation();
   };
@@ -800,20 +922,20 @@ function startAnnotation(): void {
   const onEditorPointerUp = (event: PointerEvent): void => {
     if (!editorDrag || editorDrag.pointerId !== event.pointerId) return;
     editorDrag = null;
-    editorHeader.style.cursor = "grab";
-    if (editorHeader.hasPointerCapture(event.pointerId))
-      editorHeader.releasePointerCapture(event.pointerId);
+    dragHandle.style.cursor = "grab";
+    if (dragHandle.hasPointerCapture(event.pointerId))
+      dragHandle.releasePointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
   };
-  editorHeader.addEventListener("pointerdown", onEditorPointerDown);
-  editorHeader.addEventListener("pointermove", onEditorPointerMove);
-  editorHeader.addEventListener("pointerup", onEditorPointerUp);
-  editorHeader.addEventListener("pointercancel", onEditorPointerUp);
+  dragHandle.addEventListener("pointerdown", onEditorPointerDown);
+  dragHandle.addEventListener("pointermove", onEditorPointerMove);
+  dragHandle.addEventListener("pointerup", onEditorPointerUp);
+  dragHandle.addEventListener("pointercancel", onEditorPointerUp);
 
   const repaint = (): void => {
     for (const target of selected.values()) updateSelectedVisual(target);
-    if (editorPosition) applyEditorPosition(editorPosition);
+    queueEditorLayout();
   };
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
@@ -941,7 +1063,7 @@ function startAnnotation(): void {
     if (tool === "draw") {
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
-        color: ACCENT,
+        color: annotationTheme?.primary ?? "#2563eb",
         width: 4,
         points: [dragStart],
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },
@@ -971,7 +1093,10 @@ function startAnnotation(): void {
         if (found === 0) {
           const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
           regions.push(region);
-          const regionBox = createBox(ACCENT, "rgba(124,58,237,.06)");
+          const regionBox = createBox(
+            PRIMARY,
+            "color-mix(in srgb, var(--t3-primary) 6%, transparent)",
+          );
           regionBox.setAttribute("data-region-id", region.id);
           positionBox(regionBox, rect);
           root.appendChild(regionBox);
@@ -1024,14 +1149,16 @@ function startAnnotation(): void {
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
-    editorHeader.removeEventListener("pointerdown", onEditorPointerDown);
-    editorHeader.removeEventListener("pointermove", onEditorPointerMove);
-    editorHeader.removeEventListener("pointerup", onEditorPointerUp);
-    editorHeader.removeEventListener("pointercancel", onEditorPointerUp);
+    dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
+    dragHandle.removeEventListener("pointermove", onEditorPointerMove);
+    dragHandle.removeEventListener("pointerup", onEditorPointerUp);
+    dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
+    if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
-    root.remove();
+    cursorStyle.remove();
+    host.remove();
     activeSession = null;
     if (notifyMain) ipcRenderer.send(ELEMENT_PICKED_CHANNEL, null);
   };
@@ -1115,11 +1242,21 @@ function startAnnotation(): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
-  document.documentElement.appendChild(root);
+  document.documentElement.appendChild(host);
   refreshToolButtons();
   updateStatus();
-  activeSession = { teardown };
+  activeSession = {
+    teardown,
+    applyTheme: (theme) => applyAnnotationTheme(host, theme),
+  };
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, () => startAnnotation());
+ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
+  if (theme) annotationTheme = theme;
+  startAnnotation();
+});
+ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
+  annotationTheme = theme;
+  activeSession?.applyTheme(theme);
+});
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));

@@ -59,6 +59,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.savedEnvironmentRegistryPath, "/tmp/t3/dev/saved-environments.json");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/dev/settings.json");
       assert.equal(environment.logDir, "/tmp/t3/dev/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/dev/browser-artifacts");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
@@ -89,6 +90,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.isDevelopment, false);
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
     }),
   );

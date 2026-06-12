@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  Globe2Icon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -75,6 +76,7 @@ import {
 } from "../store";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../terminalSessionState";
+import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
@@ -198,6 +200,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
+import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -349,6 +352,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
+  const discoveredPorts = useThreadDiscoveredPorts({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
@@ -418,6 +425,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
     [handleThreadClick, orderedProjectThreadKeys, threadRef],
+  );
+  const handleOpenDiscoveredPort = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const port = discoveredPorts[0];
+      if (!port) return;
+      event.preventDefault();
+      event.stopPropagation();
+      navigateToThread(threadRef);
+      void openDiscoveredPort({ threadRef, port });
+    },
+    [discoveredPorts, navigateToThread, threadRef],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -609,6 +627,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {discoveredPorts.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`Open localhost:${discoveredPorts[0]?.port ?? ""}`}
+                    className="inline-flex cursor-pointer items-center justify-center text-emerald-600 outline-hidden focus-visible:ring-1 focus-visible:ring-ring dark:text-emerald-400"
+                    onClick={handleOpenDiscoveredPort}
+                  />
+                }
+              >
+                <Globe2Icon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                Open localhost:{discoveredPorts[0]?.port}
+                {discoveredPorts.length > 1 ? ` (+${discoveredPorts.length - 1})` : ""}
+              </TooltipPopup>
+            </Tooltip>
+          )}
           {terminalStatus && (
             <Tooltip>
               <TooltipTrigger

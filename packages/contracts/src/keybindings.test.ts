@@ -29,6 +29,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsed.command, "terminal.toggle");
 
+    const parsedRightPanelToggle = yield* decode(KeybindingRule, {
+      key: "mod+alt+b",
+      command: "rightPanel.toggle",
+    });
+    assert.strictEqual(parsedRightPanelToggle.command, "rightPanel.toggle");
+
     const parsedClose = yield* decode(KeybindingRule, {
       key: "mod+w",
       command: "terminal.close",
@@ -100,8 +106,9 @@ it.effect("parses keybindings array payload", () =>
     const parsed = yield* decode(KeybindingsConfig, [
       { key: "mod+j", command: "terminal.toggle" },
       { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
+      { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
     ]);
-    assert.lengthOf(parsed, 2);
+    assert.lengthOf(parsed, 3);
   }),
 );
 

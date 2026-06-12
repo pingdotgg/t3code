@@ -13,32 +13,42 @@
  */
 import * as net from "node:net";
 
-import type { DiscoveredLocalServer } from "@t3tools/contracts";
+import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
-import { Cause, Data, Duration, Effect, Layer, Ref, Schedule } from "effect";
+import { Cause, Duration, Effect, Layer, Ref, Schedule } from "effect";
 
-import { ProcessRunner, type ProcessRunnerShape } from "../../processRunner.ts";
+import { ProcessRunner } from "../../processRunner.ts";
 import {
   COMMON_DEV_PORTS,
-  PreviewPortScanner,
-  type PreviewPortScannerShape,
+  PortDiscovery,
+  type PortDiscoveryShape,
 } from "../Services/PortScanner.ts";
 
 const POLL_INTERVAL = Duration.seconds(3);
 const TCP_PROBE_TIMEOUT_MS = 200;
 const LSOF_TIMEOUT_MS = 5_000;
+const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
-
-class LsofProbeError extends Data.TaggedError("LsofProbeError")<{
-  readonly cause: unknown;
-}> {}
 
 interface ScannerState {
   readonly lastSnapshot: ReadonlyArray<DiscoveredLocalServer>;
 }
 
-const parseLsofOutput = (raw: string): ReadonlyArray<DiscoveredLocalServer> => {
+interface TerminalProcessOwner {
+  readonly threadId: ThreadId;
+  readonly terminalId: string;
+}
+
+const terminalOwnerKey = (owner: {
+  readonly threadId: string;
+  readonly terminalId: string;
+}): string => `${owner.threadId}\u0000${owner.terminalId}`;
+
+const parseLsofOutput = (
+  raw: string,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<string, DiscoveredLocalServer>();
   let pid: number | null = null;
   let processName: string | null = null;
@@ -69,6 +79,7 @@ const parseLsofOutput = (raw: string): ReadonlyArray<DiscoveredLocalServer> => {
         url,
         processName,
         pid,
+        terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
       });
     }
   }
@@ -91,22 +102,31 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const probeLsof = (
-  processRunner: ProcessRunnerShape,
-): Effect.Effect<ReadonlyArray<DiscoveredLocalServer> | null> =>
-  processRunner
-    .run({
-      command: "lsof",
-      args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
-      timeout: Duration.millis(LSOF_TIMEOUT_MS),
-      maxOutputBytes: 1024 * 1024,
-      outputMode: "truncate",
-    })
-    .pipe(
-      Effect.mapError((cause) => new LsofProbeError({ cause })),
-      Effect.map((result) => parseLsofOutput(result.stdout)),
-      Effect.orElseSucceed(() => null),
-    );
+const parseWindowsListenerOutput = (
+  raw: string,
+  terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+): ReadonlyArray<DiscoveredLocalServer> => {
+  const seen = new Map<number, DiscoveredLocalServer>();
+  for (const line of raw.split(/\r?\n/g)) {
+    const [hostRaw, portRaw, pidRaw, processNameRaw] = line.trim().split("|", 4);
+    const host = hostRaw?.trim() ?? "";
+    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") continue;
+    const port = Number(portRaw);
+    const pid = Number(pidRaw);
+    if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
+    const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
+    if (seen.has(port)) continue;
+    seen.set(port, {
+      host: "localhost",
+      port,
+      url: `http://localhost:${port}`,
+      processName: processNameRaw?.trim() || null,
+      pid: normalizedPid,
+      terminal: normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null),
+    });
+  }
+  return [...seen.values()].toSorted((left, right) => left.port - right.port);
+};
 
 const probeTcpPort = (port: number): Promise<boolean> =>
   new Promise((resolve) => {
@@ -138,6 +158,7 @@ const probeCommonPorts = (): Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>
         url: `http://localhost:${r.port}`,
         processName: null,
         pid: null,
+        terminal: null,
       }));
   });
 
@@ -155,7 +176,9 @@ const serversEqual = (
       a.port !== b.port ||
       a.url !== b.url ||
       a.processName !== b.processName ||
-      a.pid !== b.pid
+      a.pid !== b.pid ||
+      a.terminal?.threadId !== b.terminal?.threadId ||
+      a.terminal?.terminalId !== b.terminal?.terminalId
     ) {
       return false;
     }
@@ -163,12 +186,19 @@ const serversEqual = (
   return true;
 };
 
-export const makePreviewPortScanner = Effect.gen(function* () {
+export const makePortDiscovery = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
   });
   const listeners = new Set<Listener>();
+  const terminalProcesses = new Map<
+    string,
+    {
+      readonly owner: TerminalProcessOwner;
+      readonly processIds: ReadonlySet<number>;
+    }
+  >();
   // Plain integer because the release callback returned by `retain()` runs
   // outside any Effect context (the WS subscriber's release path) and must
   // be a synchronous side-effect-only function.
@@ -176,11 +206,43 @@ export const makePreviewPortScanner = Effect.gen(function* () {
 
   const scanOnce = (): Effect.Effect<ReadonlyArray<DiscoveredLocalServer>> =>
     Effect.gen(function* () {
+      const terminalByProcessId = new Map<number, TerminalProcessOwner>();
+      for (const registration of terminalProcesses.values()) {
+        for (const processId of registration.processIds) {
+          terminalByProcessId.set(processId, registration.owner);
+        }
+      }
       if (process.platform === "win32") {
+        const command =
+          'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
+        const listeners = yield* processRunner
+          .run({
+            command: "powershell.exe",
+            args: ["-NoProfile", "-NonInteractive", "-Command", command],
+            timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+            maxOutputBytes: 1024 * 1024,
+            outputMode: "truncate",
+          })
+          .pipe(
+            Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
+            Effect.catchCause(() => Effect.succeed(null)),
+          );
+        if (listeners !== null) return listeners;
         return yield* probeCommonPorts();
       }
-      const lsof = yield* probeLsof(processRunner);
-      if (lsof !== null) return lsof;
+      const lsofResult = yield* processRunner
+        .run({
+          command: "lsof",
+          args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
+          timeout: Duration.millis(LSOF_TIMEOUT_MS),
+          maxOutputBytes: 1024 * 1024,
+          outputMode: "truncate",
+        })
+        .pipe(
+          Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+      if (lsofResult !== null) return lsofResult;
       return yield* probeCommonPorts();
     });
 
@@ -204,7 +266,7 @@ export const makePreviewPortScanner = Effect.gen(function* () {
   // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
   yield* Effect.forkScoped(pollTick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 
-  const retain: PreviewPortScannerShape["retain"] = () =>
+  const retain: PortDiscoveryShape["retain"] = () =>
     Effect.gen(function* () {
       const wasIdle = retainCount === 0;
       retainCount += 1;
@@ -221,7 +283,7 @@ export const makePreviewPortScanner = Effect.gen(function* () {
       };
     });
 
-  const subscribe: PreviewPortScannerShape["subscribe"] = (listener) =>
+  const subscribe: PortDiscoveryShape["subscribe"] = (listener) =>
     Effect.sync(() => {
       listeners.add(listener);
       return () => {
@@ -229,18 +291,43 @@ export const makePreviewPortScanner = Effect.gen(function* () {
       };
     });
 
+  const registerTerminalProcesses: PortDiscoveryShape["registerTerminalProcesses"] = (input) =>
+    Effect.sync(() => {
+      const owner = {
+        threadId: ThreadId.make(input.threadId),
+        terminalId: input.terminalId,
+      };
+      const processIds = new Set(
+        input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
+      );
+      const key = terminalOwnerKey(owner);
+      if (processIds.size === 0) {
+        terminalProcesses.delete(key);
+        return;
+      }
+      terminalProcesses.set(key, { owner, processIds });
+    });
+
+  const unregisterTerminal: PortDiscoveryShape["unregisterTerminal"] = (input) =>
+    Effect.sync(() => {
+      terminalProcesses.delete(terminalOwnerKey(input));
+    });
+
   return {
     scan: scanOnce,
     subscribe,
     retain,
-  } satisfies PreviewPortScannerShape;
+    registerTerminalProcesses,
+    unregisterTerminal,
+  } satisfies PortDiscoveryShape;
 });
 
-export const PreviewPortScannerLive = Layer.effect(PreviewPortScanner, makePreviewPortScanner);
+export const PortDiscoveryLive = Layer.effect(PortDiscovery, makePortDiscovery);
 
 /** Exposed for tests. */
 export const __testing = {
   parseLsofOutput,
   parsePortFromLsofName,
+  parseWindowsListenerOutput,
   serversEqual,
 };

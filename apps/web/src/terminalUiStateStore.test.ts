@@ -56,6 +56,24 @@ describe("terminalUiStateStore actions", () => {
     ]);
   });
 
+  it("stacks vertically split terminals in the active group", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminalVertical(THREAD_REF, "terminal-2");
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
+        splitDirection: "vertical",
+      },
+    ]);
+  });
+
   it("materializes the default terminal when opening an empty drawer", () => {
     useTerminalUiStateStore.getState().setTerminalOpen(THREAD_REF, true);
 

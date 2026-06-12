@@ -1,17 +1,17 @@
 /**
- * PreviewPortScanner - Discovers listening localhost ports for the preview
- * empty-state recommendations.
+ * PortDiscovery - Discovers listening localhost ports and attributes them to
+ * registered terminal process families.
  *
  * Reference-counted polling: the scanner only runs when at least one client
  * has called `retain()`. This keeps idle desktops from running `lsof` every
  * 3 seconds for nothing.
  *
- * @module PreviewPortScanner
+ * @module PortDiscovery
  */
 import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import { Context, type Effect } from "effect";
 
-export interface PreviewPortScannerShape {
+export interface PortDiscoveryShape {
   /** One-shot snapshot of currently listening localhost ports. */
   readonly scan: () => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
   /** Subscribe to changes. Listener invoked on every diff. Returns unsubscribe fn. */
@@ -23,12 +23,22 @@ export interface PreviewPortScannerShape {
    * release fn. When release count hits 0, polling stops.
    */
   readonly retain: () => Effect.Effect<() => void>;
+  /** Associate a terminal with its current process family for port attribution. */
+  readonly registerTerminalProcesses: (input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly processIds: ReadonlyArray<number>;
+  }) => Effect.Effect<void>;
+  /** Remove process attribution for a terminal that stopped or closed. */
+  readonly unregisterTerminal: (input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+  }) => Effect.Effect<void>;
 }
 
-export class PreviewPortScanner extends Context.Service<
-  PreviewPortScanner,
-  PreviewPortScannerShape
->()("t3/preview/Services/PortScanner/PreviewPortScanner") {}
+export class PortDiscovery extends Context.Service<PortDiscovery, PortDiscoveryShape>()(
+  "t3/preview/Services/PortScanner/PortDiscovery",
+) {}
 
 /** Curated list of common dev-server ports for the Windows TCP-probe fallback. */
 export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([

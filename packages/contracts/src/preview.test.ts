@@ -123,6 +123,7 @@ describe("DiscoveredLocalServer", () => {
       url: "http://localhost:5173",
       processName: "node",
       pid: 12345,
+      terminal: null,
     });
     expect(server.port).toBe(5173);
     expect(server.processName).toBe("node");
@@ -135,6 +136,7 @@ describe("DiscoveredLocalServer", () => {
       url: "http://localhost:3000",
       processName: null,
       pid: null,
+      terminal: null,
     });
     expect(server.processName).toBeNull();
   });
@@ -147,6 +149,7 @@ describe("DiscoveredLocalServer", () => {
         url: "http://localhost:0",
         processName: null,
         pid: null,
+        terminal: null,
       }),
     ).toThrow();
     expect(() =>
@@ -156,6 +159,7 @@ describe("DiscoveredLocalServer", () => {
         url: "http://localhost:70000",
         processName: null,
         pid: null,
+        terminal: null,
       }),
     ).toThrow();
   });

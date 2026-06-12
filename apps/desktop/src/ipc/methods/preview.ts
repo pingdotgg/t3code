@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import type { DesktopPreviewAnnotationTheme } from "@t3tools/contracts";
 import { BrowserWindow } from "electron";
 import { pathToFileURL } from "node:url";
 
@@ -25,6 +26,14 @@ previewViewManager.onRecordingFrame((frame) => {
   }
 });
 
+previewViewManager.onPointerEvent((event) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event);
+    }
+  }
+});
+
 const tabIdFrom = (raw: unknown): string => {
   if (typeof raw !== "object" || raw === null || !("tabId" in raw)) {
     throw new Error("preview tab id is required");
@@ -41,6 +50,44 @@ const inputFrom = (raw: unknown): unknown => {
     throw new Error("preview automation input is required");
   }
   return raw.input;
+};
+
+const annotationThemeFrom = (raw: unknown): DesktopPreviewAnnotationTheme => {
+  if (typeof raw !== "object" || raw === null || !("theme" in raw)) {
+    throw new Error("preview annotation theme is required");
+  }
+  const theme = raw.theme;
+  if (typeof theme !== "object" || theme === null) {
+    throw new Error("preview annotation theme must be an object");
+  }
+  const record = theme as Record<string, unknown>;
+  const stringKeys = [
+    "radius",
+    "background",
+    "foreground",
+    "popover",
+    "popoverForeground",
+    "primary",
+    "primaryForeground",
+    "muted",
+    "mutedForeground",
+    "accent",
+    "accentForeground",
+    "border",
+    "input",
+    "ring",
+    "fontSans",
+    "fontMono",
+  ] as const;
+  for (const key of stringKeys) {
+    if (typeof record[key] !== "string" || record[key].length === 0) {
+      throw new Error(`preview annotation theme ${key} must be a non-empty string`);
+    }
+  }
+  if (record["colorScheme"] !== "light" && record["colorScheme"] !== "dark") {
+    throw new Error("preview annotation theme colorScheme must be light or dark");
+  }
+  return record as unknown as DesktopPreviewAnnotationTheme;
 };
 
 class PreviewIpcError extends Data.TaggedError("PreviewIpcError")<{
@@ -117,6 +164,9 @@ export const previewMethods = [
       preloadUrl: pathToFileURL(preloadPath).href,
     };
   }),
+  method(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, (raw) =>
+    previewViewManager.setAnnotationTheme(annotationThemeFrom(raw)),
+  ),
   method(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, (raw) =>
     previewViewManager.pickElement(tabIdFrom(raw)),
   ),
@@ -126,6 +176,20 @@ export const previewMethods = [
   method(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, (raw) =>
     previewViewManager.captureScreenshot(tabIdFrom(raw)),
   ),
+  method(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, (raw) => {
+    const path = typeof raw === "object" && raw !== null && "path" in raw ? raw.path : null;
+    if (typeof path !== "string" || path.trim().length === 0) {
+      throw new Error("preview artifact path is required");
+    }
+    return previewViewManager.revealArtifact(path);
+  }),
+  method(IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, (raw) => {
+    const path = typeof raw === "object" && raw !== null && "path" in raw ? raw.path : null;
+    if (typeof path !== "string" || path.trim().length === 0) {
+      throw new Error("preview artifact path is required");
+    }
+    return previewViewManager.copyArtifactToClipboard(path);
+  }),
   method(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, (raw) =>
     previewViewManager.automationStatus(tabIdFrom(raw)),
   ),

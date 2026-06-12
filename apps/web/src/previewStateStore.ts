@@ -58,6 +58,7 @@ export interface PreviewStateStoreState {
     tabId: string,
     overlay: DesktopPreviewOverlay | null,
   ) => void;
+  removeSession: (ref: ScopedThreadRef, tabId: string) => void;
   setActiveTab: (ref: ScopedThreadRef, tabId: string) => void;
   rememberUrl: (ref: ScopedThreadRef, url: string) => void;
   removeThread: (ref: ScopedThreadRef) => void;
@@ -91,6 +92,27 @@ const removeThreadKey = (
 const dedupeRecentUrls = (existing: string[], url: string): string[] => {
   const next = [url, ...existing.filter((entry) => entry !== url)];
   return next.slice(0, PREVIEW_RECENT_URL_LIMIT);
+};
+
+const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPreviewState => {
+  if (!current.sessions[tabId]) return current;
+  const { [tabId]: _closed, ...sessions } = current.sessions;
+  const { [tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
+  const nextSnapshot =
+    Object.values(sessions)
+      .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .at(-1) ?? null;
+  const activeTabId =
+    current.activeTabId === tabId ? (nextSnapshot?.tabId ?? null) : current.activeTabId;
+  const snapshot = activeTabId ? (sessions[activeTabId] ?? nextSnapshot) : nextSnapshot;
+  return {
+    ...current,
+    sessions,
+    desktopByTabId,
+    activeTabId: snapshot?.tabId ?? null,
+    snapshot,
+    desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
+  };
 };
 
 export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
@@ -145,28 +167,9 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
           });
           break;
         case "closed":
-          nextByThread = updateThread(state, threadKey, (current) => {
-            if (!current.sessions[event.tabId]) return current;
-            const { [event.tabId]: _closed, ...sessions } = current.sessions;
-            const { [event.tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
-            const nextSnapshot =
-              Object.values(sessions)
-                .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
-                .at(-1) ?? null;
-            const activeTabId =
-              current.activeTabId === event.tabId
-                ? (nextSnapshot?.tabId ?? null)
-                : current.activeTabId;
-            const snapshot = activeTabId ? (sessions[activeTabId] ?? nextSnapshot) : nextSnapshot;
-            return {
-              ...current,
-              sessions,
-              desktopByTabId,
-              activeTabId: snapshot?.tabId ?? null,
-              snapshot,
-              desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
-            };
-          });
+          nextByThread = updateThread(state, threadKey, (current) =>
+            removeSession(current, event.tabId),
+          );
           break;
       }
       return { byThreadKey: nextByThread };
@@ -215,6 +218,13 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
         };
       });
       return { byThreadKey: nextByThread };
+    }),
+  removeSession: (ref, tabId) =>
+    set((state) => {
+      const threadKey = scopedThreadKey(ref);
+      return {
+        byThreadKey: updateThread(state, threadKey, (current) => removeSession(current, tabId)),
+      };
     }),
   setActiveTab: (ref, tabId) =>
     set((state) => {

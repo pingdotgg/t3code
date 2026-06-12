@@ -72,7 +72,7 @@ import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { PreviewManager } from "./preview/Services/Manager.ts";
-import { PreviewPortScanner } from "./preview/Services/PortScanner.ts";
+import { PortDiscovery } from "./preview/Services/PortScanner.ts";
 import { previewAutomationBroker } from "./mcp/Layers/PreviewAutomationBroker.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
@@ -257,7 +257,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const previewManager = yield* PreviewManager;
-      const previewPortScanner = yield* PreviewPortScanner;
+      const portDiscovery = yield* PortDiscovery;
       const providerRegistry = yield* ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
@@ -1426,14 +1426,14 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             Stream.callback<DiscoveredLocalServerList>((queue) =>
               Effect.acquireRelease(
                 Effect.gen(function* () {
-                  const release = yield* previewPortScanner.retain();
-                  const initial = yield* previewPortScanner.scan();
+                  const release = yield* portDiscovery.retain();
+                  const initial = yield* portDiscovery.scan();
                   const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
                   yield* Queue.offer(queue, {
                     servers: initial,
                     scannedAt: initialScannedAt,
                   });
-                  const unsubscribe = yield* previewPortScanner.subscribe((servers) =>
+                  const unsubscribe = yield* portDiscovery.subscribe((servers) =>
                     Effect.gen(function* () {
                       const scannedAt = DateTime.formatIso(yield* DateTime.now);
                       yield* Queue.offer(queue, { servers, scannedAt });

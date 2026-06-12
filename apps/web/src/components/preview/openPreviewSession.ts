@@ -1,4 +1,4 @@
-import type { EnvironmentApi, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { PreviewStateStoreState } from "~/previewStateStore";
 
@@ -10,7 +10,9 @@ interface OpenPreviewSessionInput {
   rememberUrl: PreviewStateStoreState["rememberUrl"];
 }
 
-export async function openPreviewSession(input: OpenPreviewSessionInput): Promise<void> {
+export async function openPreviewSession(
+  input: OpenPreviewSessionInput,
+): Promise<PreviewSessionSnapshot> {
   const snapshot = await input.previewApi.open({
     threadId: input.threadRef.threadId,
     url: input.url,
@@ -20,4 +22,5 @@ export async function openPreviewSession(input: OpenPreviewSessionInput): Promis
     input.threadRef,
     snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
   );
+  return snapshot;
 }

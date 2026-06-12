@@ -154,6 +154,42 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.recentlySeenUrls).toContain("http://localhost:5173/");
   });
 
+  it("optimistically removes a session before the server close event arrives", () => {
+    const first = makeSnapshot({ tabId: "tab_a" });
+    const second = makeSnapshot({
+      tabId: "tab_b",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+    const store = usePreviewStateStore.getState();
+    store.applyServerSnapshot(ref, first);
+    store.applyServerSnapshot(ref, second);
+
+    store.removeSession(ref, second.tabId);
+
+    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, ref);
+    expect(Object.keys(state.sessions)).toEqual([first.tabId]);
+    expect(state.activeTabId).toBe(first.tabId);
+    expect(state.snapshot?.tabId).toBe(first.tabId);
+  });
+
+  it("treats a late server close event after optimistic removal as a no-op", () => {
+    const snapshot = makeSnapshot();
+    const store = usePreviewStateStore.getState();
+    store.applyServerSnapshot(ref, snapshot);
+    store.removeSession(ref, snapshot.tabId);
+
+    store.applyServerEvent(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, ref);
+    expect(state.sessions).toEqual({});
+    expect(state.snapshot).toBeNull();
+  });
+
   it("closed event for a different tab is a no-op", () => {
     const snapshot = makeSnapshot({ tabId: "tab_a" });
     const store = usePreviewStateStore.getState();

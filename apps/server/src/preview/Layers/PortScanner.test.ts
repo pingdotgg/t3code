@@ -1,18 +1,20 @@
 import * as net from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { COMMON_DEV_PORTS, PreviewPortScanner } from "../Services/PortScanner.ts";
+import { COMMON_DEV_PORTS, PortDiscovery } from "../Services/PortScanner.ts";
 import { ProcessRunner } from "../../processRunner.ts";
-import { __testing, PreviewPortScannerLive } from "./PortScanner.ts";
+import { __testing, PortDiscoveryLive } from "./PortScanner.ts";
 
-const { parseLsofOutput, parsePortFromLsofName, serversEqual } = __testing;
+const { parseLsofOutput, parsePortFromLsofName, parseWindowsListenerOutput, serversEqual } =
+  __testing;
 const TestProcessRunner = Layer.succeed(ProcessRunner, {
   run: () => Effect.die("ProcessRunner should not be used by Windows TCP probe tests"),
 });
-const TestPreviewPortScannerLive = PreviewPortScannerLive.pipe(Layer.provide(TestProcessRunner));
+const TestPortDiscoveryLive = PortDiscoveryLive.pipe(Layer.provide(TestProcessRunner));
 
 describe("parsePortFromLsofName", () => {
   it("parses *:port", () => {
@@ -70,6 +72,7 @@ describe("parseLsofOutput", () => {
         url: "http://localhost:3000",
         processName: "next-server",
         pid: 67890,
+        terminal: null,
       },
       {
         host: "localhost",
@@ -77,6 +80,7 @@ describe("parseLsofOutput", () => {
         url: "http://localhost:5173",
         processName: "node",
         pid: 12345,
+        terminal: null,
       },
       {
         host: "localhost",
@@ -84,6 +88,7 @@ describe("parseLsofOutput", () => {
         url: "http://localhost:9229",
         processName: "next-server",
         pid: 67890,
+        terminal: null,
       },
     ]);
   });
@@ -98,6 +103,26 @@ describe("parseLsofOutput", () => {
     expect(servers).toHaveLength(1);
     expect(servers[0]?.port).toBe(5173);
   });
+
+  it("attributes listeners to a registered terminal process", () => {
+    const servers = parseLsofOutput(
+      ["p12345", "cnode", "n*:5173"].join("\n"),
+      new Map([
+        [
+          12345,
+          {
+            threadId: ThreadId.make("thread-1"),
+            terminalId: "terminal-1",
+          },
+        ],
+      ]),
+    );
+
+    expect(servers[0]?.terminal).toEqual({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+    });
+  });
 });
 
 describe("serversEqual", () => {
@@ -107,6 +132,7 @@ describe("serversEqual", () => {
     url: "http://localhost:5173",
     processName: "node",
     pid: 1,
+    terminal: null,
   };
   it("returns true for identical lists", () => {
     expect(serversEqual([a], [{ ...a }])).toBe(true);
@@ -119,12 +145,43 @@ describe("serversEqual", () => {
   });
 });
 
+describe("parseWindowsListenerOutput", () => {
+  it("parses and attributes PowerShell listener records", () => {
+    const servers = parseWindowsListenerOutput(
+      "0.0.0.0|5173|12345|node",
+      new Map([
+        [
+          12345,
+          {
+            threadId: ThreadId.make("thread-1"),
+            terminalId: "terminal-1",
+          },
+        ],
+      ]),
+    );
+
+    expect(servers).toEqual([
+      {
+        host: "localhost",
+        port: 5173,
+        url: "http://localhost:5173",
+        processName: "node",
+        pid: 12345,
+        terminal: {
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+        },
+      },
+    ]);
+  });
+});
+
 /**
  * Integration tests against a real TCP listener. We force the Windows code
  * path (TCP-probe fallback) by monkey-patching `process.platform` for the
  * duration of the test so we don't depend on `lsof` being installed.
  */
-describe("PreviewPortScanner integration (TCP probe path)", () => {
+describe("PortDiscovery integration (TCP probe fallback)", () => {
   let originalPlatform: NodeJS.Platform;
   let server: net.Server;
   let port: number;
@@ -158,18 +215,18 @@ describe("PreviewPortScanner integration (TCP probe path)", () => {
 
   effectIt.effect("scan() returns a server we just opened on a curated dev port", () =>
     Effect.gen(function* () {
-      const scanner = yield* PreviewPortScanner;
+      const scanner = yield* PortDiscovery;
       const result = yield* scanner.scan();
       const found = result.find((server) => server.port === port);
       expect(found).toBeDefined();
       expect(found?.host).toBe("localhost");
-    }).pipe(Effect.provide(TestPreviewPortScannerLive)),
+    }).pipe(Effect.provide(TestPortDiscoveryLive)),
   );
 
   effectIt.effect("retain() drives an immediate broadcast to subscribers", () => {
     const received: number[] = [];
     return Effect.gen(function* () {
-      const scanner = yield* PreviewPortScanner;
+      const scanner = yield* PortDiscovery;
       const unsubscribe = yield* scanner.subscribe((servers) =>
         Effect.sync(() => {
           for (const server of servers) received.push(server.port);
@@ -179,6 +236,6 @@ describe("PreviewPortScanner integration (TCP probe path)", () => {
       unsubscribe();
       release();
       expect(received).toContain(port);
-    }).pipe(Effect.provide(TestPreviewPortScannerLive));
+    }).pipe(Effect.provide(TestPortDiscoveryLive));
   });
 });
