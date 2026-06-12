@@ -555,13 +555,41 @@ function runtimeEventToActivities(
     }
 
     case "content.delta": {
+      if (event.payload.delta.trim().length === 0) {
+        return [];
+      }
+      if (
+        event.payload.streamKind === "command_output" ||
+        event.payload.streamKind === "file_change_output" ||
+        event.payload.streamKind === "unknown"
+      ) {
+        const summary =
+          event.payload.streamKind === "command_output"
+            ? "Command output"
+            : event.payload.streamKind === "file_change_output"
+              ? "File change output"
+              : "Tool output";
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "tool",
+            kind: "tool.output",
+            summary,
+            payload: {
+              detail: truncateDetail(event.payload.delta),
+              streamKind: event.payload.streamKind,
+              ...(event.itemId ? { itemId: event.itemId } : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       if (
         event.payload.streamKind !== "reasoning_text" &&
         event.payload.streamKind !== "reasoning_summary_text"
       ) {
-        return [];
-      }
-      if (event.payload.delta.trim().length === 0) {
         return [];
       }
       return [
