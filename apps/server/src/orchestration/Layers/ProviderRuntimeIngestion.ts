@@ -554,6 +554,45 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "content.delta": {
+      if (
+        event.payload.streamKind !== "reasoning_text" &&
+        event.payload.streamKind !== "reasoning_summary_text"
+      ) {
+        return [];
+      }
+      if (event.payload.delta.trim().length === 0) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind:
+            event.payload.streamKind === "reasoning_summary_text"
+              ? "reasoning.summary"
+              : "reasoning.update",
+          summary:
+            event.payload.streamKind === "reasoning_summary_text"
+              ? "Reasoning summary"
+              : "Reasoning update",
+          payload: {
+            detail: truncateDetail(event.payload.delta),
+            streamKind: event.payload.streamKind,
+            ...(event.payload.contentIndex !== undefined
+              ? { contentIndex: event.payload.contentIndex }
+              : {}),
+            ...(event.payload.summaryIndex !== undefined
+              ? { summaryIndex: event.payload.summaryIndex }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
