@@ -2730,6 +2730,68 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("projects provider tool output deltas into normalized thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-command-output-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-output"),
+      itemId: asItemId("item-command"),
+      payload: {
+        streamKind: "command_output",
+        delta: "stdout: tests passed",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-file-output-delta"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-output"),
+      itemId: asItemId("item-file"),
+      payload: {
+        streamKind: "file_change_output",
+        delta: "updated README.md",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.filter(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.output",
+        ).length >= 2,
+    );
+
+    const commandOutput = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-command-output-delta",
+    );
+    expect(commandOutput?.kind).toBe("tool.output");
+    expect(commandOutput?.summary).toBe("Command output");
+    expect(commandOutput?.payload).toMatchObject({
+      detail: "stdout: tests passed",
+      streamKind: "command_output",
+      itemId: "item-command",
+    });
+
+    const fileOutput = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-file-output-delta",
+    );
+    expect(fileOutput?.kind).toBe("tool.output");
+    expect(fileOutput?.summary).toBe("File change output");
+    expect(fileOutput?.payload).toMatchObject({
+      detail: "updated README.md",
+      streamKind: "file_change_output",
+      itemId: "item-file",
+    });
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
