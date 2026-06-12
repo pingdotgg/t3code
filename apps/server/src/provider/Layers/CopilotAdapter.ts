@@ -16,6 +16,7 @@ import {
   type ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
@@ -215,6 +216,50 @@ function toCopilotResumeCursor(sessionId: string): { schemaVersion: 1; sessionId
   };
 }
 
+function readTrimmedStringProperty(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? trimOrUndefined(value) : undefined;
+}
+
+function providerRefsFromSdkEvent(
+  raw: SessionEvent | undefined,
+  requestId: string | undefined,
+): ProviderRuntimeEvent["providerRefs"] | undefined {
+  const refs: {
+    providerTurnId?: string;
+    providerItemId?: ProviderItemId;
+    providerRequestId?: string;
+  } = {};
+
+  if (requestId) {
+    refs.providerRequestId = requestId;
+  }
+
+  const data = raw ? stringRecord(raw.data) : undefined;
+  if (data) {
+    const providerTurnId = readTrimmedStringProperty(data, "turnId");
+    if (providerTurnId) {
+      refs.providerTurnId = providerTurnId;
+    }
+
+    const providerRequestId = readTrimmedStringProperty(data, "requestId");
+    if (providerRequestId) {
+      refs.providerRequestId = providerRequestId;
+    }
+
+    const providerItemId =
+      readTrimmedStringProperty(data, "messageId") ??
+      readTrimmedStringProperty(data, "reasoningId") ??
+      readTrimmedStringProperty(data, "toolCallId") ??
+      readTrimmedStringProperty(stringRecord(data.permissionRequest) ?? {}, "toolCallId");
+    if (providerItemId) {
+      refs.providerItemId = ProviderItemId.make(providerItemId);
+    }
+  }
+
+  return Object.keys(refs).length > 0 ? refs : undefined;
+}
+
 function createBaseEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId?: TurnId | undefined;
@@ -223,6 +268,7 @@ function createBaseEvent(input: {
   readonly createdAt?: string | undefined;
   readonly raw?: SessionEvent | undefined;
 }) {
+  const providerRefs = providerRefsFromSdkEvent(input.raw, input.requestId);
   return {
     eventId: EventId.make(randomUUID()),
     provider: PROVIDER,
@@ -231,6 +277,7 @@ function createBaseEvent(input: {
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
+    ...(providerRefs ? { providerRefs } : {}),
     ...(input.raw
       ? {
           raw: {
