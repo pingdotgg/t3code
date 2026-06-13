@@ -4,7 +4,10 @@ import {
   type GitRunStackedActionResult,
   type VcsCreateRefResult,
   type VcsCreateWorktreeResult,
+  type VcsFetchResult,
   type VcsPullResult,
+  type VcsPushResult,
+  type VcsSyncResult,
   type VcsStatusResult,
   type VcsSwitchRefResult,
 } from "@t3tools/contracts";
@@ -122,6 +125,9 @@ function createActionFinishedEvent(): Extract<GitActionProgressEvent, { kind: "a
 function createMockClient() {
   const refreshDeferred = createDeferred<VcsStatusResult>();
   const pullDeferred = createDeferred<VcsPullResult>();
+  const fetchDeferred = createDeferred<VcsFetchResult>();
+  const pushDeferred = createDeferred<VcsPushResult>();
+  const syncDeferred = createDeferred<VcsSyncResult>();
   const switchRefDeferred = createDeferred<VcsSwitchRefResult>();
   const createRefDeferred = createDeferred<VcsCreateRefResult>();
   const createWorktreeDeferred = createDeferred<VcsCreateWorktreeResult>();
@@ -132,6 +138,9 @@ function createMockClient() {
   const client: VcsActionClient = {
     refreshStatus: vi.fn(() => refreshDeferred.promise),
     pull: vi.fn(() => pullDeferred.promise),
+    fetch: vi.fn(() => fetchDeferred.promise),
+    push: vi.fn(() => pushDeferred.promise),
+    sync: vi.fn(() => syncDeferred.promise),
     switchRef: vi.fn(() => switchRefDeferred.promise),
     createRef: vi.fn(() => createRefDeferred.promise),
     createWorktree: vi.fn(() => createWorktreeDeferred.promise),
@@ -146,6 +155,9 @@ function createMockClient() {
     client,
     refreshDeferred,
     pullDeferred,
+    fetchDeferred,
+    pushDeferred,
+    syncDeferred,
     switchRefDeferred,
     createRefDeferred,
     createWorktreeDeferred,

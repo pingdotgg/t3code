@@ -18,7 +18,11 @@ import {
   type SourceControlPublishRepositoryResult,
   type SourceControlRepositoryVisibility,
   type ThreadId,
+  type VcsFetchResult,
   type VcsPullResult,
+  type VcsPushResult,
+  type VcsSyncInput,
+  type VcsSyncResult,
 } from "@t3tools/contracts";
 import {
   useCallback,
@@ -38,6 +42,9 @@ import { vcsRefManager } from "./vcsRefState";
 type SourceControlActionKind =
   | "init"
   | "pull"
+  | "fetch"
+  | "push"
+  | "sync"
   | "publishRepository"
   | "runStackedAction"
   | "preparePullRequestThread";
@@ -115,6 +122,12 @@ function getVcsActionOperationForKind(kind: SourceControlActionKind): VcsActionO
       return "init";
     case "pull":
       return "pull";
+    case "fetch":
+      return "fetch";
+    case "push":
+      return "push";
+    case "sync":
+      return "sync";
     case "runStackedAction":
       return "run_change_request";
     case "publishRepository":
@@ -328,6 +341,51 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
     operation: "pull",
     scope,
     unavailableMessage: "Git pull is unavailable.",
+    action,
+  });
+}
+
+export function useVcsFetchAction(scope: SourceControlActionScope) {
+  const action = useCallback(async (): Promise<VcsFetchResult | null> => {
+    if (!scope.cwd || !scope.environmentId) throw new Error("Git fetch is unavailable.");
+    return vcsActionManager.fetch(scope);
+  }, [scope]);
+
+  return useVcsManagerAction({
+    operation: "fetch",
+    scope,
+    unavailableMessage: "Git fetch is unavailable.",
+    action,
+  });
+}
+
+export function useVcsPushAction(scope: SourceControlActionScope) {
+  const action = useCallback(async (): Promise<VcsPushResult | null> => {
+    if (!scope.cwd || !scope.environmentId) throw new Error("Git push is unavailable.");
+    return vcsActionManager.push(scope);
+  }, [scope]);
+
+  return useVcsManagerAction({
+    operation: "push",
+    scope,
+    unavailableMessage: "Git push is unavailable.",
+    action,
+  });
+}
+
+export function useVcsSyncAction(scope: SourceControlActionScope) {
+  const action = useCallback(
+    async (input?: Omit<VcsSyncInput, "cwd">): Promise<VcsSyncResult | null> => {
+      if (!scope.cwd || !scope.environmentId) throw new Error("Git sync is unavailable.");
+      return vcsActionManager.sync(scope, input);
+    },
+    [scope],
+  );
+
+  return useVcsManagerAction({
+    operation: "sync",
+    scope,
+    unavailableMessage: "Git sync is unavailable.",
     action,
   });
 }

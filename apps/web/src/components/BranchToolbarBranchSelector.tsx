@@ -32,6 +32,7 @@ import {
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+import { GitSyncControl } from "./GitSyncControl";
 import { Button } from "./ui/button";
 import {
   Combobox,
@@ -592,88 +593,95 @@ export function BranchToolbarBranchSelector({
   }
 
   return (
-    <Combobox
-      items={branchPickerItems}
-      filteredItems={filteredBranchPickerItems}
-      autoHighlight
-      virtualized
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
-          return;
-        }
-        branchListRef.current?.scrollIndexIntoView?.({
-          index: eventDetails.index,
-          animated: false,
-        });
-      }}
-      onOpenChange={handleOpenChange}
-      open={isBranchMenuOpen}
-      value={resolvedActiveBranch}
-    >
-      <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className={cn("min-w-0 text-muted-foreground/70 hover:text-foreground/80", className)}
-        disabled={isInitialBranchesLoadPending || isBranchActionPending}
+    <div className={cn("flex min-w-0 items-center gap-0.5", className)}>
+      <Combobox
+        items={branchPickerItems}
+        filteredItems={filteredBranchPickerItems}
+        autoHighlight
+        virtualized
+        onItemHighlighted={(_value, eventDetails) => {
+          if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
+            return;
+          }
+          branchListRef.current?.scrollIndexIntoView?.({
+            index: eventDetails.index,
+            animated: false,
+          });
+        }}
+        onOpenChange={handleOpenChange}
+        open={isBranchMenuOpen}
+        value={resolvedActiveBranch}
       >
-        <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-        <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-      </ComboboxTrigger>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
-        <div className="shrink-0 px-3 pt-2.5">
-          <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
-            <SearchIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
-            />
-            <ComboboxInput
-              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
-              inputClassName="rounded-none bg-transparent text-sm"
-              placeholder="Search refs..."
-              showTrigger={false}
-              size="sm"
-              unstyled
-              value={branchQuery}
-              onChange={(event) => setBranchQuery(event.target.value)}
-            />
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
-          <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
-            <ComboboxListVirtualized className="size-full min-w-0 p-0">
-              <LegendList<string>
-                ref={branchListRef}
-                data={filteredBranchPickerItems}
-                keyExtractor={(item) => item}
-                renderItem={({ item, index }) => renderPickerItem(item, index)}
-                estimatedItemSize={28}
-                drawDistance={336}
-                onEndReached={() => {
-                  if (hasNextPage && !isFetchingNextPage) {
-                    fetchNextBranchPage();
-                  }
-                }}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
-                className={cn(
-                  "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1 [--fade-size:1.5rem]",
-                  showTopBranchScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
-                  showBottomBranchScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
-                )}
-                style={{ maxHeight: "14rem" }}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size="xs" />}
+          className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
+          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+        >
+          <GitBranchIcon className="size-3 shrink-0 opacity-70" />
+          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+          <div className="shrink-0 px-3 pt-2.5">
+            <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+              <SearchIcon
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
               />
-            </ComboboxListVirtualized>
+              <ComboboxInput
+                className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+                inputClassName="rounded-none bg-transparent text-sm"
+                placeholder="Search refs..."
+                showTrigger={false}
+                size="sm"
+                unstyled
+                value={branchQuery}
+                onChange={(event) => setBranchQuery(event.target.value)}
+              />
+            </div>
           </div>
-          {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
-        </div>
-      </ComboboxPopup>
-    </Combobox>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <ComboboxEmpty>No refs found.</ComboboxEmpty>
+            <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
+              <ComboboxListVirtualized className="size-full min-w-0 p-0">
+                <LegendList<string>
+                  ref={branchListRef}
+                  data={filteredBranchPickerItems}
+                  keyExtractor={(item) => item}
+                  renderItem={({ item, index }) => renderPickerItem(item, index)}
+                  estimatedItemSize={28}
+                  drawDistance={336}
+                  onEndReached={() => {
+                    if (hasNextPage && !isFetchingNextPage) {
+                      fetchNextBranchPage();
+                    }
+                  }}
+                  onLayout={() => {
+                    updateBranchListScrollFades();
+                    maybeFetchNextBranchPage();
+                  }}
+                  onScroll={() => {
+                    updateBranchListScrollFades();
+                    maybeFetchNextBranchPage();
+                  }}
+                  className={cn(
+                    "scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1 [--fade-size:1.5rem]",
+                    showTopBranchScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
+                    showBottomBranchScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
+                  )}
+                  style={{ maxHeight: "14rem" }}
+                />
+              </ComboboxListVirtualized>
+            </div>
+            {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+          </div>
+        </ComboboxPopup>
+      </Combobox>
+      <GitSyncControl
+        environmentId={environmentId}
+        cwd={branchCwd}
+        status={branchStatusQuery.data}
+      />
+    </div>
   );
 }

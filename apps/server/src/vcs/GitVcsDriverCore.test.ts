@@ -512,4 +512,164 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
   });
+
+  describe("branch sync", () => {
+    // Helper: a repo on `main` tracking a bare `origin`, both at the initial commit.
+    const initRepoWithRemote = (cwd: string, remote: string) =>
+      Effect.gen(function* () {
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+      });
+
+    it.effect("pushes when the branch is ahead of its upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+        yield* writeTextFile(cwd, "ahead.txt", "ahead\n");
+        yield* git(cwd, ["add", "ahead.txt"]);
+        yield* git(cwd, ["commit", "-m", "ahead commit"]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).syncCurrentBranch(cwd);
+
+        assert.deepStrictEqual(result, {
+          refName: "main",
+          fetched: true,
+          pull: "skipped",
+          push: "pushed",
+          setUpstream: false,
+        });
+        assert.equal(yield* git(remote, ["log", "-1", "--pretty=%s", "main"]), "ahead commit");
+      }),
+    );
+
+    it.effect("fast-forward pulls when the branch is behind its upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+        // Advance the upstream, then rewind the local branch so it is purely behind.
+        yield* writeTextFile(cwd, "second.txt", "second\n");
+        yield* git(cwd, ["add", "second.txt"]);
+        yield* git(cwd, ["commit", "-m", "second commit"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).syncCurrentBranch(cwd);
+
+        assert.deepStrictEqual(result, {
+          refName: "main",
+          fetched: true,
+          pull: "pulled",
+          push: "skipped",
+          setUpstream: false,
+        });
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "second commit");
+      }),
+    );
+
+    it.effect("fails with GitDivergedError when history has diverged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+        // Upstream gains a commit the local branch never sees...
+        yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
+        yield* git(cwd, ["add", "upstream.txt"]);
+        yield* git(cwd, ["commit", "-m", "upstream commit"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+        // ...while the local branch grows its own commit.
+        yield* writeTextFile(cwd, "local.txt", "local\n");
+        yield* git(cwd, ["add", "local.txt"]);
+        yield* git(cwd, ["commit", "-m", "local commit"]);
+
+        const error = yield* (yield* GitVcsDriver.GitVcsDriver)
+          .syncCurrentBranch(cwd)
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitDivergedError");
+        if (error._tag === "GitDivergedError") {
+          assert.equal(error.refName, "main");
+          assert.isAtLeast(error.aheadCount, 1);
+          assert.isAtLeast(error.behindCount, 1);
+        }
+        // The working tree must be left clean — no half-finished rebase/merge.
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "local commit");
+      }),
+    );
+
+    it.effect("rebases and pushes when the diverged sync opts into rebase", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+        yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
+        yield* git(cwd, ["add", "upstream.txt"]);
+        yield* git(cwd, ["commit", "-m", "upstream commit"]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+        yield* writeTextFile(cwd, "local.txt", "local\n");
+        yield* git(cwd, ["add", "local.txt"]);
+        yield* git(cwd, ["commit", "-m", "local commit"]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).syncCurrentBranch(cwd, {
+          mode: "rebase",
+        });
+
+        assert.deepStrictEqual(result, {
+          refName: "main",
+          fetched: true,
+          pull: "rebased",
+          push: "pushed",
+          setUpstream: false,
+        });
+        // Local commit replayed on top of the upstream commit and pushed back.
+        assert.equal(yield* git(remote, ["log", "-1", "--pretty=%s", "main"]), "local commit");
+      }),
+    );
+
+    it.effect("publishes a branch that has no upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createRef({ cwd, refName: "feature/publish-sync" });
+        yield* driver.switchRef({ cwd, refName: "feature/publish-sync" });
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+
+        const result = yield* driver.syncCurrentBranch(cwd);
+
+        assert.deepStrictEqual(result, {
+          refName: "feature/publish-sync",
+          fetched: true,
+          pull: "skipped",
+          push: "pushed",
+          setUpstream: true,
+        });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "origin/feature/publish-sync",
+        );
+      }),
+    );
+
+    it.effect("reports the branch and upstream when fetching", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithRemote(cwd, remote);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).fetchCurrentBranch(cwd);
+
+        assert.deepStrictEqual(result, { refName: "main", hasUpstream: true });
+      }),
+    );
+  });
 });

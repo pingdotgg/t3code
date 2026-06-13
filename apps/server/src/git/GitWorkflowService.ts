@@ -5,6 +5,11 @@ import * as Layer from "effect/Layer";
 import {
   GitManagerError,
   GitCommandError,
+  type GitDivergedError,
+  type VcsFetchResult,
+  type VcsPushResult,
+  type VcsSyncInput,
+  type VcsSyncResult,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -46,6 +51,12 @@ export interface GitWorkflowServiceShape {
   readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+  readonly fetchCurrentBranch: (cwd: string) => Effect.Effect<VcsFetchResult, GitCommandError>;
+  readonly pushCurrentBranch: (cwd: string) => Effect.Effect<VcsPushResult, GitCommandError>;
+  readonly syncCurrentBranch: (
+    cwd: string,
+    options?: { readonly mode?: VcsSyncInput["mode"] },
+  ) => Effect.Effect<VcsSyncResult, GitCommandError | GitDivergedError>;
   readonly runStackedAction: (
     input: GitRunStackedActionInput,
     options?: GitRunStackedActionOptions,
@@ -271,6 +282,28 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     pullCurrentBranch: (cwd) =>
       ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
+      ),
+    fetchCurrentBranch: (cwd) =>
+      ensureGitCommand("GitWorkflowService.fetchCurrentBranch", cwd).pipe(
+        Effect.andThen(git.fetchCurrentBranch(cwd)),
+      ),
+    pushCurrentBranch: (cwd) =>
+      ensureGitCommand("GitWorkflowService.pushCurrentBranch", cwd).pipe(
+        // Reuse the exact driver call the stacked-action push path uses so the
+        // standalone push and the bundled push share upstream-setting logic.
+        Effect.andThen(git.pushCurrentBranch(cwd, null)),
+        Effect.map(
+          (result): VcsPushResult => ({
+            status: result.status,
+            refName: result.branch,
+            upstreamRef: result.upstreamBranch ?? null,
+            setUpstream: result.setUpstream ?? false,
+          }),
+        ),
+      ),
+    syncCurrentBranch: (cwd, options) =>
+      ensureGitCommand("GitWorkflowService.syncCurrentBranch", cwd).pipe(
+        Effect.andThen(git.syncCurrentBranch(cwd, options)),
       ),
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(

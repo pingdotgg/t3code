@@ -109,6 +109,27 @@ export const VcsPullInput = Schema.Struct({
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
+export const VcsFetchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsFetchInput = typeof VcsFetchInput.Type;
+
+export const VcsPushInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsPushInput = typeof VcsPushInput.Type;
+
+export const VcsSyncMode = Schema.Literals(["ff", "rebase"]);
+export type VcsSyncMode = typeof VcsSyncMode.Type;
+
+export const VcsSyncInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  // "ff" (default) refuses to integrate diverged history; "rebase" replays local
+  // commits onto the upstream after the user explicitly confirms it.
+  mode: Schema.optional(VcsSyncMode),
+});
+export type VcsSyncInput = typeof VcsSyncInput.Type;
+
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
@@ -316,6 +337,31 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
+export const VcsFetchResult = Schema.Struct({
+  refName: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  hasUpstream: Schema.Boolean,
+});
+export type VcsFetchResult = typeof VcsFetchResult.Type;
+
+export const VcsPushResult = Schema.Struct({
+  status: Schema.Literals(["pushed", "skipped_up_to_date"]),
+  refName: TrimmedNonEmptyStringSchema,
+  upstreamRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  // True when this push created the upstream (publish / set -u) rather than
+  // pushing to an already-configured upstream.
+  setUpstream: Schema.Boolean,
+});
+export type VcsPushResult = typeof VcsPushResult.Type;
+
+export const VcsSyncResult = Schema.Struct({
+  refName: TrimmedNonEmptyStringSchema,
+  fetched: Schema.Boolean,
+  pull: Schema.Literals(["pulled", "rebased", "skipped_up_to_date", "skipped"]),
+  push: Schema.Literals(["pushed", "skipped"]),
+  setUpstream: Schema.Boolean,
+});
+export type VcsSyncResult = typeof VcsSyncResult.Type;
+
 // RPC / domain errors
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
@@ -326,6 +372,23 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 }) {
   override get message(): string {
     return `Git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
+  }
+}
+
+// Raised when `vcs.sync` cannot fast-forward because local and upstream history
+// have diverged. The client surfaces this distinctly to offer an explicit rebase.
+export class GitDivergedError extends Schema.TaggedErrorClass<GitDivergedError>()(
+  "GitDivergedError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    refName: Schema.String,
+    aheadCount: NonNegativeInt,
+    behindCount: NonNegativeInt,
+  },
+) {
+  override get message(): string {
+    return `Branch '${this.refName}' has diverged from its upstream (${this.aheadCount} ahead, ${this.behindCount} behind). Rebase or merge before syncing.`;
   }
 }
 

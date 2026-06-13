@@ -128,7 +128,14 @@ interface RunGitActionWithToastInput {
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
-const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const RUNNING_SOURCE_CONTROL_ACTIONS = [
+  "runStackedAction",
+  "pull",
+  "fetch",
+  "push",
+  "sync",
+  "publishRepository",
+] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {

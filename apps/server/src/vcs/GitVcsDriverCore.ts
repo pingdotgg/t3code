@@ -21,9 +21,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  GitDivergedError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
+  type VcsFetchResult,
   type VcsRef,
+  type VcsSyncResult,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -2223,6 +2226,152 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.branch,
     ]);
 
+  // Force an immediate fetch (independent of the cached status refresh) so the
+  // remote-tracking ref behind @{u} reflects the latest upstream commits.
+  const fetchCurrentBranch: GitVcsDriver.GitVcsDriverShape["fetchCurrentBranch"] = Effect.fn(
+    "fetchCurrentBranch",
+  )(function* (cwd) {
+    const details = yield* statusDetails(cwd);
+    const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
+    if (upstream) {
+      // Update exactly the tracking ref the ahead/behind counts are measured against.
+      yield* fetchRemoteTrackingBranch({
+        cwd,
+        remoteName: upstream.remoteName,
+        remoteBranch: upstream.branchName,
+      });
+    } else if (details.branch) {
+      // No upstream yet: fetch the branch's configured push remote so a newly
+      // published upstream becomes visible. Skip quietly when no remote exists.
+      const remoteName = yield* resolvePushRemoteName(cwd, details.branch).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (remoteName) {
+        yield* runGit("GitVcsDriver.fetchCurrentBranch.fetchRemote", cwd, [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+        ]);
+      }
+    }
+    return {
+      refName: details.branch,
+      hasUpstream: details.hasUpstream,
+    } satisfies VcsFetchResult;
+  });
+
+  // `git pull --rebase` that never leaves the tree mid-rebase: on conflict it
+  // aborts and surfaces a clear error so the user can resolve manually.
+  const rebaseOntoUpstream = Effect.fn("rebaseOntoUpstream")(function* (cwd: string) {
+    const result = yield* executeGit(
+      "GitVcsDriver.syncCurrentBranch.rebase",
+      cwd,
+      ["pull", "--rebase"],
+      { allowNonZeroExit: true, timeoutMs: 30_000 },
+    );
+    if (result.exitCode !== 0) {
+      yield* executeGit(
+        "GitVcsDriver.syncCurrentBranch.rebaseAbort",
+        cwd,
+        ["rebase", "--abort"],
+        { allowNonZeroExit: true },
+      );
+      return yield* createGitCommandError(
+        "GitVcsDriver.syncCurrentBranch.rebase",
+        cwd,
+        ["pull", "--rebase"],
+        "Rebase hit conflicts and was aborted. Resolve the divergence manually, then sync again.",
+      );
+    }
+  });
+
+  // One-click sync: fetch, then fast-forward pull and/or push as needed, pushing
+  // to the branch's configured push remote. Diverged history is reported as a
+  // typed GitDivergedError unless the caller opts into a rebase.
+  const syncCurrentBranch: GitVcsDriver.GitVcsDriverShape["syncCurrentBranch"] = Effect.fn(
+    "syncCurrentBranch",
+  )(function* (cwd, options) {
+    const mode = options?.mode ?? "ff";
+    yield* fetchCurrentBranch(cwd);
+    const details = yield* statusDetails(cwd);
+    const refName = details.branch;
+    if (!refName) {
+      return yield* createGitCommandError(
+        "GitVcsDriver.syncCurrentBranch",
+        cwd,
+        ["sync"],
+        "Cannot sync from detached HEAD.",
+      );
+    }
+
+    // No upstream yet: publish the branch (push -u sets the upstream).
+    if (!details.hasUpstream) {
+      const published = yield* pushCurrentBranch(cwd, refName);
+      return {
+        refName,
+        fetched: true,
+        pull: "skipped" as const,
+        push: published.status === "pushed" ? ("pushed" as const) : ("skipped" as const),
+        setUpstream: published.setUpstream ?? false,
+      } satisfies VcsSyncResult;
+    }
+
+    const ahead = details.aheadCount;
+    const behind = details.behindCount;
+
+    if (ahead > 0 && behind > 0) {
+      if (mode !== "rebase") {
+        return yield* new GitDivergedError({
+          operation: "GitVcsDriver.syncCurrentBranch",
+          cwd,
+          refName,
+          aheadCount: ahead,
+          behindCount: behind,
+        });
+      }
+      yield* rebaseOntoUpstream(cwd);
+      const pushed = yield* pushCurrentBranch(cwd, refName);
+      return {
+        refName,
+        fetched: true,
+        pull: "rebased" as const,
+        push: pushed.status === "pushed" ? ("pushed" as const) : ("skipped" as const),
+        setUpstream: pushed.setUpstream ?? false,
+      } satisfies VcsSyncResult;
+    }
+
+    if (behind > 0) {
+      const pulled = yield* pullCurrentBranch(cwd);
+      return {
+        refName,
+        fetched: true,
+        pull: pulled.status === "pulled" ? ("pulled" as const) : ("skipped_up_to_date" as const),
+        push: "skipped" as const,
+        setUpstream: false,
+      } satisfies VcsSyncResult;
+    }
+
+    if (ahead > 0) {
+      const pushed = yield* pushCurrentBranch(cwd, refName);
+      return {
+        refName,
+        fetched: true,
+        pull: "skipped" as const,
+        push: pushed.status === "pushed" ? ("pushed" as const) : ("skipped" as const),
+        setUpstream: pushed.setUpstream ?? false,
+      } satisfies VcsSyncResult;
+    }
+
+    return {
+      refName,
+      fetched: true,
+      pull: "skipped_up_to_date" as const,
+      push: "skipped" as const,
+      setUpstream: false,
+    } satisfies VcsSyncResult;
+  });
+
   const removeWorktree: GitVcsDriver.GitVcsDriverShape["removeWorktree"] = Effect.fn(
     "removeWorktree",
   )(function* (input) {
@@ -2399,6 +2548,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     commit,
     pushCurrentBranch,
     pullCurrentBranch,
+    fetchCurrentBranch,
+    syncCurrentBranch,
     readRangeContext,
     getReviewDiffPreview,
     readConfigValue,

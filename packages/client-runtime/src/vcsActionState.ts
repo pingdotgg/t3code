@@ -8,8 +8,14 @@ import type {
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
+  VcsFetchInput,
+  VcsFetchResult,
   VcsPullInput,
   VcsPullResult,
+  VcsPushInput,
+  VcsPushResult,
+  VcsSyncInput,
+  VcsSyncResult,
   VcsStatusResult,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
@@ -24,6 +30,9 @@ export type VcsActionOperation =
   | "refresh_status"
   | "run_change_request"
   | "pull"
+  | "fetch"
+  | "push"
+  | "sync"
   | "switch_ref"
   | "create_ref"
   | "create_worktree"
@@ -50,7 +59,15 @@ export interface VcsActionTarget {
 
 export type VcsActionClient = Pick<
   WsRpcClient["vcs"],
-  "refreshStatus" | "pull" | "switchRef" | "createRef" | "createWorktree" | "init"
+  | "refreshStatus"
+  | "pull"
+  | "fetch"
+  | "push"
+  | "sync"
+  | "switchRef"
+  | "createRef"
+  | "createWorktree"
+  | "init"
 > & {
   readonly runChangeRequest: WsRpcClient["git"]["runStackedAction"];
 };
@@ -322,6 +339,50 @@ export function createVcsActionManager(config: VcsActionManagerConfig) {
     });
   }
 
+  async function fetch(
+    target: VcsActionTarget,
+    client?: VcsActionClient,
+    options?: { readonly label?: string },
+  ): Promise<VcsFetchResult | null> {
+    return runOperation(target, {
+      operation: "fetch",
+      label: options?.label ?? "Fetching from remote",
+      client,
+      execute: (resolved) => resolved.fetch({ cwd: target.cwd! } satisfies VcsFetchInput),
+    });
+  }
+
+  async function push(
+    target: VcsActionTarget,
+    client?: VcsActionClient,
+    options?: { readonly label?: string },
+  ): Promise<VcsPushResult | null> {
+    return runOperation(target, {
+      operation: "push",
+      label: options?.label ?? "Pushing to remote",
+      client,
+      execute: (resolved) => resolved.push({ cwd: target.cwd! } satisfies VcsPushInput),
+    });
+  }
+
+  async function sync(
+    target: VcsActionTarget,
+    input?: Omit<VcsSyncInput, "cwd">,
+    client?: VcsActionClient,
+    options?: { readonly label?: string },
+  ): Promise<VcsSyncResult | null> {
+    return runOperation(target, {
+      operation: "sync",
+      label: options?.label ?? "Syncing with remote",
+      client,
+      execute: (resolved) =>
+        resolved.sync({
+          cwd: target.cwd!,
+          ...(input?.mode ? { mode: input.mode } : {}),
+        } satisfies VcsSyncInput),
+    });
+  }
+
   async function switchRef(
     target: VcsActionTarget,
     input: Omit<VcsSwitchRefInput, "cwd">,
@@ -448,6 +509,9 @@ export function createVcsActionManager(config: VcsActionManagerConfig) {
     getSnapshot,
     refreshStatus,
     pull,
+    fetch,
+    push,
+    sync,
     switchRef,
     createRef,
     createWorktree,
