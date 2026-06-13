@@ -157,6 +157,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       orchestration: {
         subscribeThread: vi.fn(() => () => {}),
       },
+      preview: {
+        subscribePorts: vi.fn(() => () => undefined),
+      },
     })),
     fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
     fetchRemoteSessionState: mockFetchRemoteSessionState,
@@ -653,6 +656,9 @@ describe("addSavedEnvironment", () => {
       client: {
         terminal: {
           onMetadata: vi.fn(() => () => undefined),
+        },
+        preview: {
+          subscribePorts: vi.fn(() => () => undefined),
         },
       },
       ensureBootstrapped: async () => undefined,

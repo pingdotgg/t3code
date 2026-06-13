@@ -61,6 +61,25 @@ const rpcClientMock = {
   filesystem: {
     browse: vi.fn(),
   },
+  assets: {
+    createUrl: vi.fn(),
+  },
+  preview: {
+    open: vi.fn(),
+    navigate: vi.fn(),
+    refresh: vi.fn(),
+    close: vi.fn(),
+    list: vi.fn(),
+    reportStatus: vi.fn(),
+    automation: {
+      connect: vi.fn(() => () => undefined),
+      respond: vi.fn(),
+      reportOwner: vi.fn(),
+      clearOwner: vi.fn(),
+    },
+    onEvent: vi.fn(() => () => undefined),
+    subscribePorts: vi.fn(() => () => undefined),
+  },
   sourceControl: {
     lookupRepository: vi.fn(),
     cloneRepository: vi.fn(),
