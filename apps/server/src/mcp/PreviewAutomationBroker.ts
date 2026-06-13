@@ -21,8 +21,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -71,6 +71,7 @@ interface BrokerState {
   readonly clients: ReadonlyMap<string, ClientConnection>;
   readonly owners: ReadonlyMap<string, PreviewAutomationOwner>;
   readonly pending: ReadonlyMap<string, PendingRequest>;
+  readonly requestSequence: number;
 }
 
 const makeResponseError = (
@@ -119,33 +120,35 @@ const makeResponseError = (
   }
 };
 
-const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
-  const state = yield* Ref.make<BrokerState>({
+const make = Effect.gen(function* PreviewAutomationBrokerMake() {
+  const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     owners: new Map(),
     pending: new Map(),
+    requestSequence: 0,
   });
-  let requestSequence = 0;
 
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
     clientId: string,
     queue: ClientConnection["queue"],
   ) {
-    const toFail: PendingRequest[] = [];
-    yield* Ref.update(state, (current) => {
-      if (current.clients.get(clientId)?.queue !== queue) return current;
+    const toFail = yield* SynchronizedRef.modify(state, (current) => {
+      if (current.clients.get(clientId)?.queue !== queue) {
+        return [[] as ReadonlyArray<PendingRequest>, current] as const;
+      }
       const clients = new Map(current.clients);
       const owners = new Map(current.owners);
       const pending = new Map(current.pending);
+      const disconnected: PendingRequest[] = [];
       clients.delete(clientId);
       owners.delete(clientId);
       for (const [requestId, entry] of pending) {
         if (entry.clientId === clientId) {
           pending.delete(requestId);
-          toFail.push(entry);
+          disconnected.push(entry);
         }
       }
-      return { clients, owners, pending };
+      return [disconnected, { ...current, clients, owners, pending }] as const;
     });
     yield* Effect.forEach(
       toFail,
@@ -165,12 +168,10 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
     "PreviewAutomationBroker.connect",
   )(function* (clientId) {
     const queue = yield* Queue.unbounded<import("@t3tools/contracts").PreviewAutomationRequest>();
-    let previous: ClientConnection | undefined;
-    yield* Ref.update(state, (current) => {
-      previous = current.clients.get(clientId);
+    const previous = yield* SynchronizedRef.modify(state, (current) => {
       const clients = new Map(current.clients);
       clients.set(clientId, { clientId, queue });
-      return { ...current, clients };
+      return [current.clients.get(clientId), { ...current, clients }] as const;
     });
     if (previous) yield* disconnect(clientId, previous.queue);
     return Stream.fromQueue(queue).pipe(Stream.ensuring(disconnect(clientId, queue)));
@@ -179,7 +180,7 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
   const reportOwner: PreviewAutomationBrokerShape["reportOwner"] = Effect.fn(
     "PreviewAutomationBroker.reportOwner",
   )(function* (owner) {
-    yield* Ref.update(state, (current) => {
+    yield* SynchronizedRef.update(state, (current) => {
       const owners = new Map(current.owners);
       owners.set(owner.clientId, owner);
       return { ...current, owners };
@@ -189,7 +190,7 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
   const clearOwner: PreviewAutomationBrokerShape["clearOwner"] = Effect.fn(
     "PreviewAutomationBroker.clearOwner",
   )(function* (clientId) {
-    yield* Ref.update(state, (current) => {
+    yield* SynchronizedRef.update(state, (current) => {
       const owners = new Map(current.owners);
       owners.delete(clientId);
       return { ...current, owners };
@@ -199,13 +200,12 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
   const respond: PreviewAutomationBrokerShape["respond"] = Effect.fn(
     "PreviewAutomationBroker.respond",
   )(function* (response) {
-    let pending: PendingRequest | undefined;
-    yield* Ref.update(state, (current) => {
-      pending = current.pending.get(response.requestId);
-      if (!pending) return current;
+    const pending = yield* SynchronizedRef.modify(state, (current) => {
+      const entry = current.pending.get(response.requestId);
+      if (!entry) return [undefined, current] as const;
       const next = new Map(current.pending);
       next.delete(response.requestId);
-      return { ...current, pending: next };
+      return [entry, { ...current, pending: next }] as const;
     });
     if (!pending) return;
     if (response.ok) {
@@ -225,7 +225,7 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBrokerShape["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
-    const current = yield* Ref.get(state);
+    const current = yield* SynchronizedRef.get(state);
     const candidates = Array.from(current.owners.values())
       .filter(
         (owner) =>
@@ -256,48 +256,52 @@ const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
         message: "The browser host does not have an active tab.",
       });
     }
-    const requestId = `preview-${requestSequence++}`;
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    yield* Ref.update(state, (next) => {
+    const requestId = yield* SynchronizedRef.modify(state, (next) => {
+      const requestId = `preview-${next.requestSequence}`;
       const pending = new Map(next.pending);
       pending.set(requestId, { clientId: owner.clientId, deferred });
-      return { ...next, pending };
+      return [requestId, { ...next, pending, requestSequence: next.requestSequence + 1 }] as const;
     });
-    const offered = yield* Queue.offer(connection.queue, {
-      requestId,
-      threadId: input.scope.threadId,
-      tabId: input.tabId ?? owner.tabId ?? undefined,
-      operation: input.operation,
-      input: input.input,
-      timeoutMs,
-    });
-    if (!offered) {
-      return yield* new PreviewAutomationUnavailableError({
-        message: "The preview automation client is no longer accepting requests.",
-      });
-    }
-    const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
-    yield* Ref.update(state, (next) => {
+    const removePending = SynchronizedRef.update(state, (next) => {
+      if (!next.pending.has(requestId)) return next;
       const pending = new Map(next.pending);
       pending.delete(requestId);
       return { ...next, pending };
     });
-    return yield* Option.match(result, {
-      onNone: () =>
-        Effect.fail(
-          new PreviewAutomationTimeoutError({
-            message: `Preview automation timed out after ${timeoutMs}ms.`,
-          }),
-        ),
-      onSome: (value) => Effect.succeed(value as A),
+    const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
+      const offered = yield* Queue.offer(connection.queue, {
+        requestId,
+        threadId: input.scope.threadId,
+        tabId: input.tabId ?? owner.tabId ?? undefined,
+        operation: input.operation,
+        input: input.input,
+        timeoutMs,
+      });
+      if (!offered) {
+        return yield* new PreviewAutomationUnavailableError({
+          message: "The preview automation client is no longer accepting requests.",
+        });
+      }
+      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      return yield* Option.match(result, {
+        onNone: () =>
+          Effect.fail(
+            new PreviewAutomationTimeoutError({
+              message: `Preview automation timed out after ${timeoutMs}ms.`,
+            }),
+          ),
+        onSome: (value) => Effect.succeed(value as A),
+      });
     });
+    return yield* awaitResponse().pipe(Effect.ensuring(removePending));
   });
 
   return PreviewAutomationBroker.of({ connect, reportOwner, clearOwner, respond, invoke });
-});
+}).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
-export const layer = Layer.effect(PreviewAutomationBroker, make());
+export const layer = Layer.effect(PreviewAutomationBroker, make);
 
 /** Exposed for tests. */
 export const __testing = {

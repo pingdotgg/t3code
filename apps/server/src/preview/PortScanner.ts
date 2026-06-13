@@ -8,13 +8,13 @@
  * Windows / lsof missing: checks a curated list of common dev ports through
  * the shared Net service.
  *
- * Polling is reference-counted via `retain()`. A single layer-scoped fiber
+ * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
  * polls forever, but each tick is a no-op when the retain count is zero.
  */
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
-import { Cause, Context, Duration, Effect, Layer, Ref, Schedule } from "effect";
+import { Cause, Context, Duration, Effect, Layer, Ref, Schedule, Scope } from "effect";
 
 import { ProcessRunner } from "../processRunner.ts";
 
@@ -22,8 +22,8 @@ export interface PortDiscoveryShape {
   readonly scan: () => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
   readonly subscribe: (
     listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
-  ) => Effect.Effect<() => void>;
-  readonly retain: () => Effect.Effect<() => void>;
+  ) => Effect.Effect<void, never, Scope.Scope>;
+  readonly retain: Effect.Effect<void, never, Scope.Scope>;
   readonly registerTerminalProcesses: (input: {
     readonly threadId: string;
     readonly terminalId: string;
@@ -51,6 +51,15 @@ type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect
 
 interface ScannerState {
   readonly lastSnapshot: ReadonlyArray<DiscoveredLocalServer>;
+  readonly listeners: ReadonlySet<Listener>;
+  readonly terminalProcesses: ReadonlyMap<
+    string,
+    {
+      readonly owner: TerminalProcessOwner;
+      readonly processIds: ReadonlySet<number>;
+    }
+  >;
+  readonly retainCount: number;
 }
 
 interface TerminalProcessOwner {
@@ -170,24 +179,15 @@ const serversEqual = (
   return true;
 };
 
-const make = Effect.fn("PortDiscovery.make")(function* () {
+const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
+    listeners: new Set(),
+    terminalProcesses: new Map(),
+    retainCount: 0,
   });
-  const listeners = new Set<Listener>();
-  const terminalProcesses = new Map<
-    string,
-    {
-      readonly owner: TerminalProcessOwner;
-      readonly processIds: ReadonlySet<number>;
-    }
-  >();
-  // Plain integer because the release callback returned by `retain()` runs
-  // outside any Effect context (the WS subscriber's release path) and must
-  // be a synchronous side-effect-only function.
-  let retainCount = 0;
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
@@ -214,8 +214,9 @@ const make = Effect.fn("PortDiscovery.make")(function* () {
   });
 
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
+    const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
-    for (const registration of terminalProcesses.values()) {
+    for (const registration of state.terminalProcesses.values()) {
       for (const processId of registration.processIds) {
         terminalByProcessId.set(processId, registration.owner);
       }
@@ -254,17 +255,23 @@ const make = Effect.fn("PortDiscovery.make")(function* () {
     return yield* probeCommonPorts();
   });
 
-  const broadcast = (servers: ReadonlyArray<DiscoveredLocalServer>): Effect.Effect<void> =>
-    Effect.forEach(Array.from(listeners), (listener) => listener(servers), { discard: true });
+  const broadcast = Effect.fn("PortDiscovery.broadcast")(function* (
+    servers: ReadonlyArray<DiscoveredLocalServer>,
+  ) {
+    const listeners = (yield* Ref.get(stateRef)).listeners;
+    yield* Effect.forEach(listeners, (listener) => listener(servers), { discard: true });
+  });
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      if (retainCount <= 0) return;
+      if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
       const next = yield* scanOnce();
-      const state = yield* Ref.get(stateRef);
-      if (serversEqual(state.lastSnapshot, next)) return;
-      yield* Ref.update(stateRef, (s) => ({ ...s, lastSnapshot: next }));
-      yield* broadcast(next);
+      const changed = yield* Ref.modify(stateRef, (state) =>
+        serversEqual(state.lastSnapshot, next)
+          ? [false, state]
+          : [true, { ...state, lastSnapshot: next }],
+      );
+      if (changed) yield* broadcast(next);
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
@@ -275,58 +282,70 @@ const make = Effect.fn("PortDiscovery.make")(function* () {
   // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
   yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 
-  const retain: PortDiscoveryShape["retain"] = Effect.fn("PortDiscovery.retain")(function* () {
-    const wasIdle = retainCount === 0;
-    retainCount += 1;
+  const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
+    const wasIdle = yield* Ref.modify(stateRef, (state) => [
+      state.retainCount === 0,
+      { ...state, retainCount: state.retainCount + 1 },
+    ]);
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
       // to wait up to POLL_INTERVAL for the first emission.
       yield* pollTick();
     }
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      retainCount = Math.max(0, retainCount - 1);
-    };
   });
 
+  const retain: PortDiscoveryShape["retain"] = Effect.acquireRelease(acquireRetention(), () =>
+    Ref.update(stateRef, (state) => ({
+      ...state,
+      retainCount: Math.max(0, state.retainCount - 1),
+    })),
+  );
+
   const subscribe: PortDiscoveryShape["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
-    function* (listener) {
-      return yield* Effect.sync(() => {
-        listeners.add(listener);
-        return () => {
-          listeners.delete(listener);
-        };
-      });
-    },
+    (listener) =>
+      Effect.acquireRelease(
+        Ref.update(stateRef, (state) => ({
+          ...state,
+          listeners: new Set([...state.listeners, listener]),
+        })),
+        () =>
+          Ref.update(stateRef, (state) => {
+            const listeners = new Set(state.listeners);
+            listeners.delete(listener);
+            return { ...state, listeners };
+          }),
+      ),
   );
 
   const registerTerminalProcesses: PortDiscoveryShape["registerTerminalProcesses"] = Effect.fn(
     "PortDiscovery.registerTerminalProcesses",
   )(function* (input) {
-    yield* Effect.sync(() => {
-      const owner = {
-        threadId: ThreadId.make(input.threadId),
-        terminalId: input.terminalId,
-      };
-      const processIds = new Set(
-        input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
-      );
+    const owner = {
+      threadId: ThreadId.make(input.threadId),
+      terminalId: input.terminalId,
+    };
+    const processIds = new Set(
+      input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
+    );
+    yield* Ref.update(stateRef, (state) => {
+      const terminalProcesses = new Map(state.terminalProcesses);
       const key = terminalOwnerKey(owner);
       if (processIds.size === 0) {
         terminalProcesses.delete(key);
-        return;
+      } else {
+        terminalProcesses.set(key, { owner, processIds });
       }
-      terminalProcesses.set(key, { owner, processIds });
+      return { ...state, terminalProcesses };
     });
   });
 
   const unregisterTerminal: PortDiscoveryShape["unregisterTerminal"] = Effect.fn(
     "PortDiscovery.unregisterTerminal",
   )(function* (input) {
-    yield* Effect.sync(() => {
+    yield* Ref.update(stateRef, (state) => {
+      const terminalProcesses = new Map(state.terminalProcesses);
       terminalProcesses.delete(terminalOwnerKey(input));
+      return { ...state, terminalProcesses };
     });
   });
 
@@ -337,9 +356,9 @@ const make = Effect.fn("PortDiscovery.make")(function* () {
     registerTerminalProcesses,
     unregisterTerminal,
   } satisfies PortDiscoveryShape;
-});
+}).pipe(Effect.withSpan("PortDiscovery.make"));
 
-export const layer = Layer.effect(PortDiscovery, make());
+export const layer = Layer.effect(PortDiscovery, make);
 
 /** Exposed for tests. */
 export const __testing = {

@@ -1425,29 +1425,21 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcStream(
             WS_METHODS.subscribeDiscoveredLocalServers,
             Stream.callback<DiscoveredLocalServerList>((queue) =>
-              Effect.acquireRelease(
-                Effect.gen(function* () {
-                  const release = yield* portDiscovery.retain();
-                  const initial = yield* portDiscovery.scan();
-                  const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-                  yield* Queue.offer(queue, {
-                    servers: initial,
-                    scannedAt: initialScannedAt,
-                  });
-                  const unsubscribe = yield* portDiscovery.subscribe((servers) =>
-                    Effect.gen(function* () {
-                      const scannedAt = DateTime.formatIso(yield* DateTime.now);
-                      yield* Queue.offer(queue, { servers, scannedAt });
-                    }),
-                  );
-                  return { unsubscribe, release };
-                }),
-                ({ unsubscribe, release }) =>
-                  Effect.sync(() => {
-                    unsubscribe();
-                    release();
+              Effect.gen(function* () {
+                yield* portDiscovery.retain;
+                const initial = yield* portDiscovery.scan();
+                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
+                yield* Queue.offer(queue, {
+                  servers: initial,
+                  scannedAt: initialScannedAt,
+                });
+                yield* portDiscovery.subscribe((servers) =>
+                  Effect.gen(function* () {
+                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                    yield* Queue.offer(queue, { servers, scannedAt });
                   }),
-              ),
+                );
+              }),
             ),
             { "rpc.aggregate": "preview" },
           ),

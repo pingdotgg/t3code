@@ -13,8 +13,15 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { PreviewToolkitHandlersLive } from "./toolkits/preview/handlers.ts";
-import { PreviewToolkit } from "./toolkits/preview/tools.ts";
+import {
+  PreviewSnapshotToolkitHandlersLive,
+  PreviewStandardToolkitHandlersLive,
+} from "./toolkits/preview/handlers.ts";
+import {
+  PreviewSnapshotTool,
+  PreviewSnapshotToolkit,
+  PreviewStandardToolkit,
+} from "./toolkits/preview/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -81,97 +88,95 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
 
-const registerPreviewToolkit = Effect.fn("McpHttpServer.registerPreviewToolkit")(function* () {
+const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
-  const built = yield* PreviewToolkit;
-  const handleTool = built.handle as unknown as (
-    name: keyof typeof built.tools,
-    payload: unknown,
-  ) => Effect.Effect<
-    Stream.Stream<{ readonly encodedResult: unknown }, Error>,
-    Error,
-    McpInvocationContext.McpInvocationContext
-  >;
-  for (const tool of Object.values(built.tools)) {
-    yield* server.addTool({
-      tool: new McpSchema.Tool({
-        name: tool.name,
-        description: Tool.getDescription(tool),
-        inputSchema: Tool.getJsonSchema(tool),
-        annotations: {
-          ...Context.getOption(tool.annotations, Tool.Title).pipe(
-            Option.map((title) => ({ title })),
-            Option.getOrUndefined,
-          ),
-          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
-          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
-          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
-        },
-      }),
-      annotations: tool.annotations,
-      handle: (payload) =>
-        handleTool(tool.name as keyof typeof built.tools, payload).pipe(
+  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const built = yield* PreviewSnapshotToolkit;
+  const tool = PreviewSnapshotTool;
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: tool.name,
+      description: Tool.getDescription(tool),
+      inputSchema: Tool.getJsonSchema(tool),
+      annotations: {
+        ...Context.getOption(tool.annotations, Tool.Title).pipe(
+          Option.map((title) => ({ title })),
+          Option.getOrUndefined,
+        ),
+        readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+        destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+        idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+        openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+      },
+    }),
+    annotations: tool.annotations,
+    handle: (payload) =>
+      Effect.withFiber((fiber) => {
+        const invocation = Context.getUnsafe(
+          fiber.context,
+          McpInvocationContext.McpInvocationContext,
+        );
+        return built.handle("preview_snapshot", payload).pipe(
           Stream.unwrap,
           Stream.run(Sink.last()),
           Effect.flatMap(Effect.fromOption),
+          Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCause({
             onFailure: (cause) =>
               new McpSchema.CallToolResult({
                 isError: true,
                 content: [{ type: "text", text: Cause.pretty(cause) }],
               }),
-            onSuccess: (result) => {
-              if (tool.name === "preview_snapshot") {
-                const snapshot = result.encodedResult as {
-                  readonly screenshot: {
-                    readonly mimeType: "image/png";
-                    readonly data: string;
-                    readonly width: number;
-                    readonly height: number;
-                  };
-                  readonly [key: string]: unknown;
+            onSuccess: ({ encodedResult }) => {
+              const snapshot = encodedResult as {
+                readonly screenshot: {
+                  readonly mimeType: "image/png";
+                  readonly data: string;
+                  readonly width: number;
+                  readonly height: number;
                 };
-                const { screenshot, ...page } = snapshot;
-                const metadata = {
-                  ...page,
-                  screenshot: {
-                    mimeType: screenshot.mimeType,
-                    width: screenshot.width,
-                    height: screenshot.height,
-                  },
-                };
-                return new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
-                  ],
-                });
-              }
-              const encodedResultText = JSON.stringify(result.encodedResult) ?? "null";
+                readonly [key: string]: unknown;
+              };
+              const { screenshot, ...page } = snapshot;
+              const metadata = {
+                ...page,
+                screenshot: {
+                  mimeType: screenshot.mimeType,
+                  width: screenshot.width,
+                  height: screenshot.height,
+                },
+              };
               return new McpSchema.CallToolResult({
                 isError: false,
-                structuredContent:
-                  result.encodedResult !== null && typeof result.encodedResult === "object"
-                    ? result.encodedResult
-                    : undefined,
-                content: [{ type: "text", text: encodedResultText }],
+                structuredContent: metadata,
+                content: [
+                  { type: "text", text: JSON.stringify(metadata) },
+                  {
+                    type: "image",
+                    data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                    mimeType: screenshot.mimeType,
+                  },
+                ],
               });
             },
           }),
-        ) as unknown as Effect.Effect<McpSchema.CallToolResult, never, McpSchema.McpServerClient>,
-    });
-  }
+        );
+      }),
+  });
 });
 
-export const PreviewToolkitRegistrationLive = Layer.effectDiscard(registerPreviewToolkit()).pipe(
-  Layer.provide(PreviewToolkitHandlersLive),
+const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
+  Layer.provide(PreviewStandardToolkitHandlersLive),
+);
+
+const PreviewSnapshotRegistrationLive = Layer.effectDiscard(registerPreviewSnapshot()).pipe(
+  Layer.provide(PreviewSnapshotToolkitHandlersLive),
+);
+
+export const PreviewToolkitRegistrationLive = Layer.mergeAll(
+  PreviewStandardToolkitRegistrationLive,
+  PreviewSnapshotRegistrationLive,
 );
 
 const McpTransportLive = McpServer.layerHttp({

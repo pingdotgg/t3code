@@ -249,20 +249,18 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
   );
 
   it.effect(
-    "retain() drives an immediate broadcast to subscribers",
+    "retain drives an immediate broadcast to subscribers",
     Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
       yield* windowsPlatform;
       const { port } = yield* commonDevServer;
       const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
-      const unsubscribe = yield* scanner.subscribe((servers) =>
+      yield* scanner.subscribe((servers) =>
         Effect.sync(() => {
           for (const server of servers) received.push(server.port);
         }),
       );
-      const release = yield* scanner.retain();
-      unsubscribe();
-      release();
+      yield* scanner.retain;
       expect(received).toContain(port);
     }),
   );
