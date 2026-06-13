@@ -22,6 +22,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import {
   DEFAULT_THEME_PALETTE,
   getThemePalette,
+  getThemePalettePreviewColors,
   isThemePalette,
   THEME_PALETTES,
   type ThemePalette,
@@ -109,13 +110,13 @@ function PaletteSwatches({
   paletteId: ThemePalette;
   resolvedTheme: "light" | "dark";
 }) {
-  const colors = getThemePalette(paletteId)[resolvedTheme];
+  const colors = getThemePalettePreviewColors(paletteId, resolvedTheme);
   return (
     <span
       className="inline-flex shrink-0 overflow-hidden rounded-full border border-border/70 shadow-sm"
       aria-hidden
     >
-      {colors.slice(0, 3).map((color) => (
+      {colors.map((color) => (
         <span key={color} className="size-2.5" style={{ backgroundColor: color }} />
       ))}
     </span>

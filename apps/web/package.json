@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev",
+    "generate:theme-css": "node scripts/generate-theme-css.ts",
+    "dev": "node scripts/generate-theme-css.ts && vp dev",
     "dev:debug": "NODE_OPTIONS=--inspect=127.0.0.1:9230 vp dev",
     "dev:debug:brk": "NODE_OPTIONS='--inspect=127.0.0.1:9230 --inspect-brk' vp dev",
-    "build": "vp build",
+    "build": "node scripts/generate-theme-css.ts && vp build",
     "preview": "vp preview",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests --project unit",

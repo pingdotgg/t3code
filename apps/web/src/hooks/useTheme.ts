@@ -77,7 +77,8 @@ function normalizeThemeColor(value: string | null | undefined): string | null {
 
 function resolveBrowserChromeSurface(): HTMLElement {
   return (
-    document.querySelector<HTMLElement>("main[data-slot='sidebar-inset']") ??
+    document.querySelector<HTMLElement>("[data-theme-surface]") ??
+    document.querySelector<HTMLElement>("[data-slot='sidebar-inset']") ??
     document.querySelector<HTMLElement>("[data-slot='sidebar-inner']") ??
     document.body
   );
@@ -99,20 +100,22 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, palette: ThemePalette, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  const root = document.documentElement;
+  if (!root || !root.dataset) return;
   if (suppressTransitions) {
-    document.documentElement.classList.add("no-transitions");
+    root.classList.add("no-transitions");
   }
   const isDark = theme === "dark" || (theme === "system" && getSystemDark());
-  document.documentElement.classList.toggle("dark", isDark);
-  document.documentElement.dataset.themePalette = palette;
+  root.classList.toggle("dark", isDark);
+  root.dataset.themePalette = palette;
   syncBrowserChromeTheme();
   syncDesktopTheme(theme);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions
-    document.documentElement.offsetHeight;
+    root.offsetHeight;
     requestAnimationFrame(() => {
-      document.documentElement.classList.remove("no-transitions");
+      root.classList.remove("no-transitions");
     });
   }
 }
