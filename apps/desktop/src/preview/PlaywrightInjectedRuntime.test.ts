@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { describe, expect } from "vite-plus/test";
 
 import {
   playwrightInjectedRuntimeInstallExpression,
@@ -6,15 +8,19 @@ import {
 } from "./PlaywrightInjectedRuntime.ts";
 
 describe("playwright injected runtime", () => {
-  it("extracts the pinned runtime from playwright-core", async () => {
-    const source = await playwrightInjectedRuntimeSource();
-    expect(source.length).toBeGreaterThan(100_000);
-    expect(source).toContain("InjectedScript");
-  });
+  effectIt.effect("extracts the pinned runtime from playwright-core", () =>
+    Effect.gen(function* () {
+      const source = yield* playwrightInjectedRuntimeSource();
+      expect(source.length).toBeGreaterThan(100_000);
+      expect(source).toContain("InjectedScript");
+    }),
+  );
 
-  it("builds an idempotent install expression", async () => {
-    const expression = await playwrightInjectedRuntimeInstallExpression();
-    expect(expression).toContain("__t3PlaywrightInjected");
-    expect(expression).toContain('testIdAttributeName":"data-testid');
-  });
+  effectIt.effect("builds an idempotent install expression", () =>
+    Effect.gen(function* () {
+      const expression = yield* playwrightInjectedRuntimeInstallExpression();
+      expect(expression).toContain("__t3PlaywrightInjected");
+      expect(expression).toContain('testIdAttributeName":"data-testid');
+    }),
+  );
 });

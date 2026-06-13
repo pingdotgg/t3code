@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import {
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
@@ -195,7 +194,7 @@ export const getPreviewConfig = makeIpcMethod({
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.getBrowserSession(environmentId);
     return {
-      partition: manager.getBrowserPartition(environmentId),
+      partition: yield* manager.getBrowserPartition(environmentId),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };

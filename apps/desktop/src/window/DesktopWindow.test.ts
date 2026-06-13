@@ -171,7 +171,7 @@ function makeTestLayer(input: {
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
-          getBrowserPartition: () => "persist:t3code-preview-test",
+          getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
         }),
       ),
     ),

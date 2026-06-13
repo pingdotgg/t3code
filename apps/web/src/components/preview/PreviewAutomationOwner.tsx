@@ -1,5 +1,4 @@
 "use client";
-// @effect-diagnostics cryptoRandomUUID:off
 
 import { scopedThreadKey } from "@t3tools/client-runtime";
 import type {
@@ -10,7 +9,7 @@ import type {
   PreviewAutomationStatus,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
 
 import { ensureEnvironmentApi } from "~/environmentApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
@@ -23,11 +22,6 @@ import {
 } from "~/browser/browserRecording";
 
 import { previewBridge } from "./previewBridge";
-
-const newAutomationClientId = (): string =>
-  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `preview-${Math.random().toString(36).slice(2)}`;
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -118,7 +112,7 @@ export function PreviewAutomationOwner(props: {
   readonly visible: boolean;
 }) {
   const { threadRef, visible } = props;
-  const [automationClientId] = useState(newAutomationClientId);
+  const automationClientId = useId();
   const ownerStateRef = useRef({ threadRef, visible });
   const handlerRef = useRef<(request: PreviewAutomationRequest) => Promise<unknown>>(
     async () => undefined,

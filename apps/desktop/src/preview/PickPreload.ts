@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDate:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
