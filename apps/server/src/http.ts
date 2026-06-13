@@ -24,15 +24,13 @@ import {
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
-import {
-  ATTACHMENTS_ROUTE_PREFIX,
-  normalizeAttachmentRelativePath,
-  resolveAttachmentRelativePath,
-} from "./attachmentPaths.ts";
-import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { resolveStaticDir, ServerConfig } from "./config.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  FALLBACK_PROJECT_FAVICON_SVG,
+  resolveAsset,
+} from "./assets/AssetAccess.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
-import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   annotateEnvironmentRequest,
@@ -43,8 +41,6 @@ import {
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
-const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
-const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -169,107 +165,50 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   ),
 );
 
-export const attachmentsRouteLayer = HttpRouter.add(
+export const assetRouteLayer = HttpRouter.add(
   "GET",
-  `${ATTACHMENTS_ROUTE_PREFIX}/*`,
+  `${ASSET_ROUTE_PREFIX}/*`,
   Effect.gen(function* () {
-    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
 
-    const config = yield* ServerConfig;
-    const rawRelativePath = url.value.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
-    const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
-    if (!normalizedRelativePath) {
-      return HttpServerResponse.text("Invalid attachment path", { status: 400 });
-    }
-
-    const isIdLookup =
-      !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
-    const filePath = isIdLookup
-      ? resolveAttachmentPathById({
-          attachmentsDir: config.attachmentsDir,
-          attachmentId: normalizedRelativePath,
-        })
-      : resolveAttachmentRelativePath({
-          attachmentsDir: config.attachmentsDir,
-          relativePath: normalizedRelativePath,
-        });
-    if (!filePath) {
-      return HttpServerResponse.text(isIdLookup ? "Not Found" : "Invalid attachment path", {
-        status: isIdLookup ? 404 : 400,
-      });
-    }
-
-    const fileSystem = yield* FileSystem.FileSystem;
-    const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
-    if (!fileInfo || fileInfo.type !== "File") {
+    const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+    const separatorIndex = suffix.indexOf("/");
+    if (separatorIndex <= 0) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
 
-    return yield* HttpServerResponse.file(filePath, {
-      status: 200,
-      headers: {
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    }).pipe(
-      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    const asset = yield* resolveAsset(
+      suffix.slice(0, separatorIndex),
+      suffix.slice(separatorIndex + 1),
     );
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-    }),
-  ),
-);
-
-export const projectFaviconRouteLayer = HttpRouter.add(
-  "GET",
-  "/api/project-favicon",
-  Effect.gen(function* () {
-    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
+    if (!asset) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
     }
-
-    const projectCwd = url.value.searchParams.get("cwd");
-    if (!projectCwd) {
-      return HttpServerResponse.text("Missing cwd parameter", { status: 400 });
-    }
-
-    const faviconResolver = yield* ProjectFaviconResolver;
-    const faviconFilePath = yield* faviconResolver.resolvePath(projectCwd);
-    if (!faviconFilePath) {
+    if (asset.kind === "project-favicon-fallback") {
       return HttpServerResponse.text(FALLBACK_PROJECT_FAVICON_SVG, {
         status: 200,
         contentType: "image/svg+xml",
         headers: {
-          "Cache-Control": PROJECT_FAVICON_CACHE_CONTROL,
+          "Cache-Control": "private, max-age=3600",
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }
 
-    return yield* HttpServerResponse.file(faviconFilePath, {
+    return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: {
-        "Cache-Control": PROJECT_FAVICON_CACHE_CONTROL,
+        "Cache-Control": "private, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
       },
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-    }),
-  ),
+  }),
 );
 
 export const staticAndDevRouteLayer = HttpRouter.add(

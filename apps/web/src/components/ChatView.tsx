@@ -37,6 +37,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useVcsStatus } from "~/lib/vcsStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
+import { resolveAssetUrl } from "../assets/assetUrls";
 import { isElectron } from "../env";
 import { PreviewAutomationOwner } from "./preview/PreviewAutomationOwner";
 import { readLocalApi } from "../localApi";
@@ -1915,8 +1916,64 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const [attachmentAssetUrlById, setAttachmentAssetUrlById] = useState<Record<string, string>>({});
   useEffect(() => {
-    if (typeof Image === "undefined" || !serverMessages || serverMessages.length === 0) {
+    if (!serverMessages) return;
+    const attachmentIds = [
+      ...new Set(
+        serverMessages.flatMap(
+          (message) =>
+            message.attachments?.flatMap((attachment) =>
+              attachment.type === "image" && !attachment.previewUrl ? [attachment.id] : [],
+            ) ?? [],
+        ),
+      ),
+    ].filter((attachmentId) => !attachmentAssetUrlById[attachmentId]);
+    if (attachmentIds.length === 0) return;
+
+    let cancelled = false;
+    void Promise.all(
+      attachmentIds.map(async (attachmentId) => {
+        const asset = await resolveAssetUrl(environmentId, {
+          _tag: "attachment",
+          attachmentId,
+        });
+        return [attachmentId, asset.url] as const;
+      }),
+    )
+      .then((entries) => {
+        if (!cancelled) {
+          setAttachmentAssetUrlById((current) => ({ ...current, ...Object.fromEntries(entries) }));
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentAssetUrlById, environmentId, serverMessages]);
+  const serverMessagesWithAssetUrls = useMemo(() => {
+    if (!serverMessages || Object.keys(attachmentAssetUrlById).length === 0) {
+      return serverMessages;
+    }
+    return serverMessages.map((message) => {
+      if (!message.attachments) return message;
+      let changed = false;
+      const attachments = message.attachments.map((attachment) => {
+        const previewUrl = attachmentAssetUrlById[attachment.id];
+        if (!previewUrl || attachment.previewUrl === previewUrl) return attachment;
+        changed = true;
+        return { ...attachment, previewUrl };
+      });
+      return changed ? { ...message, attachments } : message;
+    });
+  }, [attachmentAssetUrlById, serverMessages]);
+  useEffect(() => {
+    if (
+      typeof Image === "undefined" ||
+      !serverMessagesWithAssetUrls ||
+      serverMessagesWithAssetUrls.length === 0
+    ) {
       return;
     }
 
@@ -1929,7 +1986,7 @@ export default function ChatView(props: ChatViewProps) {
         continue;
       }
 
-      const serverMessage = serverMessages.find(
+      const serverMessage = serverMessagesWithAssetUrls.find(
         (message) => message.id === messageId && message.role === "user",
       );
       if (!serverMessage?.attachments || serverMessage.attachments.length === 0) {
@@ -1995,9 +2052,13 @@ export default function ChatView(props: ChatViewProps) {
         cleanup();
       }
     };
-  }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, serverMessages]);
+  }, [
+    attachmentPreviewHandoffByMessageId,
+    clearAttachmentPreviewHandoff,
+    serverMessagesWithAssetUrls,
+  ]);
   const timelineMessages = useMemo(() => {
-    const messages = serverMessages ?? [];
+    const messages = serverMessagesWithAssetUrls ?? [];
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
         ? messages
@@ -2048,7 +2109,7 @@ export default function ChatView(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
+  }, [serverMessagesWithAssetUrls, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
@@ -4760,6 +4821,7 @@ export default function ChatView(props: ChatViewProps) {
                 activeProposedPlan={sidebarProposedPlan}
                 label={planSidebarLabel}
                 environmentId={environmentId}
+                threadRef={activeThreadRef}
                 markdownCwd={gitCwd ?? undefined}
                 workspaceRoot={activeWorkspaceRoot}
                 timestampFormat={timestampFormat}

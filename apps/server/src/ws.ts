@@ -40,6 +40,7 @@ import {
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  AssetAccessError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -73,6 +74,7 @@ import { redactServerSettingsForClient, ServerSettingsService } from "./serverSe
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
@@ -162,6 +164,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -1201,6 +1204,52 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.assetsCreateUrl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.assetsCreateUrl,
+            Effect.gen(function* () {
+              if (input.resource._tag !== "workspace-file") {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
+              const thread = yield* projectionSnapshotQuery
+                .getThreadShellById(input.resource.threadId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetAccessError({
+                        message: "Failed to resolve workspace context.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(thread)) {
+                return yield* new AssetAccessError({
+                  message: "Workspace context was not found.",
+                });
+              }
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.value.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetAccessError({
+                        message: "Failed to resolve workspace context.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetAccessError({
+                  message: "Workspace context was not found.",
+                });
+              }
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+              });
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>

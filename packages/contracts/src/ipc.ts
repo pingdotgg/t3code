@@ -20,6 +20,7 @@ import type {
 } from "./git.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -1114,6 +1115,9 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+  };
+  assets: {
+    createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
   };
   sourceControl: {
     lookupRepository: (

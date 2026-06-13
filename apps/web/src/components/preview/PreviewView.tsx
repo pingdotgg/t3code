@@ -14,11 +14,13 @@ import {
 import { ensureLocalApi } from "~/localApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { readEnvironmentConnection } from "~/environments/runtime";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
+import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
 import { PreviewUnreachable } from "./PreviewUnreachable";
@@ -87,6 +89,15 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
   const loadProgress = useLoadingProgress(loading);
+  const environmentConnection = readEnvironmentConnection(threadRef.environmentId);
+  const displayUrl =
+    url && environmentConnection
+      ? (formatPreviewUrl({
+          url,
+          environmentLabel: environmentConnection.knownEnvironment.label,
+          environmentHttpBaseUrl: environmentConnection.knownEnvironment.target.httpBaseUrl,
+        }) ?? undefined)
+      : undefined;
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
@@ -501,6 +512,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     >
       <PreviewChromeRow
         url={url}
+        displayUrl={displayUrl}
         loading={loading}
         loadProgress={loadProgress}
         canGoBack={canGoBack}
