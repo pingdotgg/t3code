@@ -66,7 +66,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }),
   fetchSshSessionState: (httpBaseUrl, bearerToken) =>
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_SESSION_STATE_CHANNEL, { httpBaseUrl, bearerToken }),
-  issueSshWebSocketToken: (httpBaseUrl, bearerToken) =>
+  issueSshWebSocketTicket: (httpBaseUrl, bearerToken) =>
     ipcRenderer.invoke(IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL, { httpBaseUrl, bearerToken }),
   onSshPasswordPrompt: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
@@ -96,6 +96,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  createCloudAuthRequest: () => ipcRenderer.invoke(IpcChannels.CREATE_CLOUD_AUTH_REQUEST_CHANNEL),
+  getCloudAuthToken: () => ipcRenderer.invoke(IpcChannels.GET_CLOUD_AUTH_TOKEN_CHANNEL),
+  setCloudAuthToken: (token: string) =>
+    ipcRenderer.invoke(IpcChannels.SET_CLOUD_AUTH_TOKEN_CHANNEL, token),
+  clearCloudAuthToken: () => ipcRenderer.invoke(IpcChannels.CLEAR_CLOUD_AUTH_TOKEN_CHANNEL),
+  fetchCloudAuth: (input) => ipcRenderer.invoke(IpcChannels.FETCH_CLOUD_AUTH_CHANNEL, input),
+  onCloudAuthCallback: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, rawUrl: unknown) => {
+      if (typeof rawUrl !== "string") return;
+      listener(rawUrl);
+    };
+
+    ipcRenderer.on(IpcChannels.CLOUD_AUTH_CALLBACK_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CLOUD_AUTH_CALLBACK_CHANNEL, wrappedListener);
+    };
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

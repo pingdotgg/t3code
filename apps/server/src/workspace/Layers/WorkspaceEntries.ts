@@ -39,6 +39,7 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   ".next",
   ".turbo",
+  ".vite-plus",
   "dist",
   "build",
   "out",
@@ -187,7 +188,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const isInsideVcsWorkTree = (cwd: string): Effect.Effect<boolean> =>
     vcsRegistry.detect({ cwd }).pipe(
       Effect.map((handle) => handle !== null),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.orElseSucceed(() => false),
     );
 
   const filterVcsIgnoredPaths = (
@@ -199,31 +200,35 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         handle
           ? handle.driver.filterIgnoredPaths(cwd, relativePaths).pipe(
               Effect.map((paths) => [...paths]),
-              Effect.catch(() => Effect.succeed(relativePaths)),
+              Effect.orElseSucceed(() => relativePaths),
             )
           : Effect.succeed(relativePaths),
       ),
-      Effect.catch(() => Effect.succeed(relativePaths)),
+      Effect.orElseSucceed(() => relativePaths),
     );
 
   const buildWorkspaceIndexFromVcs = Effect.fn("WorkspaceEntries.buildWorkspaceIndexFromVcs")(
     function* (cwd: string) {
-      const vcs = yield* vcsRegistry.detect({ cwd }).pipe(Effect.catch(() => Effect.succeed(null)));
+      const vcs = yield* vcsRegistry.detect({ cwd }).pipe(Effect.orElseSucceed(() => null));
       if (!vcs) {
         return null;
       }
 
       const listedFiles = yield* vcs.driver
         .listWorkspaceFiles(cwd)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+        .pipe(Effect.orElseSucceed(() => null));
 
       if (!listedFiles) {
         return null;
       }
 
-      const listedPaths = [...listedFiles.paths]
-        .map((entry) => toPosixPath(entry))
-        .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+      const listedPaths: Array<string> = [];
+      for (const rawEntry of listedFiles.paths) {
+        const entry = toPosixPath(rawEntry);
+        if (entry.length > 0 && !isPathInIgnoredDirectory(entry)) {
+          listedPaths.push(entry);
+        }
+      }
       const filePaths = yield* vcs.driver.filterIgnoredPaths(cwd, listedPaths).pipe(
         Effect.map((paths) => [...paths]),
         Effect.catch(() => filterVcsIgnoredPaths(cwd, listedPaths)),
@@ -426,7 +431,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const invalidate: WorkspaceEntriesShape["invalidate"] = Effect.fn("WorkspaceEntries.invalidate")(
     function* (cwd) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
-        Effect.catch(() => Effect.succeed(cwd)),
+        Effect.orElseSucceed(() => cwd),
       );
       yield* Cache.invalidate(workspaceIndexCache, cwd);
       if (normalizedCwd !== cwd) {
@@ -452,25 +457,38 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             detail: `Unable to browse '${parentPath}': ${cause instanceof Error ? cause.message : String(cause)}`,
             cause,
           }),
-      });
+      }).pipe(
+        // The user can deny macOS TCC prompts for the target dir (Documents,
+        // Downloads, Music, etc.); surface an empty listing instead of an
+        // error so the caller doesn't retry-loop the prompt.
+        Effect.catchIf(
+          (error) => {
+            const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+            return code === "EACCES" || code === "EPERM";
+          },
+          () => Effect.succeed<Dirent[]>([]),
+        ),
+      );
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
+      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      for (const dirent of dirents) {
+        if (
+          dirent.isDirectory() &&
+          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
+          (showHidden || !dirent.name.startsWith("."))
+        ) {
+          entries.push({
+            name: dirent.name,
+            fullPath: path.join(parentPath, dirent.name),
+          });
+        }
+      }
 
       return {
         parentPath,
-        entries: dirents
-          .filter(
-            (dirent) =>
-              dirent.isDirectory() &&
-              dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-              (showHidden || !dirent.name.startsWith(".")),
-          )
-          .map((dirent) => ({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          }))
-          .toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
       };
     },
   );

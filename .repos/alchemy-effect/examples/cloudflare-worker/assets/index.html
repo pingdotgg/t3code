@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Room Chat</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      }
+      .container {
+        width: 100%;
+        max-width: 560px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        height: 90vh;
+      }
+      h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #94a3b8;
+      }
+      #status {
+        font-size: 0.8rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        display: inline-block;
+        align-self: flex-start;
+      }
+      #status.connected {
+        background: #065f46;
+        color: #6ee7b7;
+      }
+      #status.disconnected {
+        background: #7f1d1d;
+        color: #fca5a5;
+      }
+      #status.connecting {
+        background: #78350f;
+        color: #fcd34d;
+      }
+      #messages {
+        flex: 1;
+        overflow-y: auto;
+        background: #1e293b;
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        font-size: 0.9rem;
+        font-family: "SF Mono", "Fira Code", monospace;
+      }
+      .msg {
+        padding: 0.25rem 0;
+        border-bottom: 1px solid #334155;
+        word-break: break-word;
+      }
+      .msg.system {
+        color: #64748b;
+        font-style: italic;
+      }
+      #form {
+        display: flex;
+        gap: 0.5rem;
+      }
+      #input {
+        flex: 1;
+        padding: 0.6rem 0.75rem;
+        border-radius: 0.375rem;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-size: 0.9rem;
+        outline: none;
+      }
+      #input:focus {
+        border-color: #3b82f6;
+      }
+      button {
+        padding: 0.6rem 1.25rem;
+        border-radius: 0.375rem;
+        border: none;
+        background: #3b82f6;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      button:hover {
+        background: #2563eb;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      #avatar-btn {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 50%;
+        background: #334155;
+        border: 2px solid #475569;
+        color: #94a3b8;
+        font-size: 1rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition:
+          border-color 0.15s,
+          background 0.15s;
+        position: relative;
+      }
+      #avatar-btn:hover {
+        border-color: #3b82f6;
+        background: #1e293b;
+      }
+      #avatar-btn.active {
+        border-color: #3b82f6;
+        background: #1e293b;
+      }
+      #avatar-btn svg {
+        width: 1.1rem;
+        height: 1.1rem;
+        fill: currentColor;
+      }
+      #toggle {
+        background: #dc2626;
+        font-size: 0.8rem;
+        padding: 0.35rem 0.75rem;
+      }
+      #toggle:hover {
+        background: #b91c1c;
+      }
+      #toggle.off {
+        background: #16a34a;
+      }
+      #toggle.off:hover {
+        background: #15803d;
+      }
+      #actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+      #increment {
+        background: #7c3aed;
+      }
+      #increment:hover {
+        background: #6d28d9;
+      }
+      #increment:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      #workflow-run {
+        background: #0ea5e9;
+      }
+      #workflow-run:hover {
+        background: #0284c7;
+      }
+      #workflow-run:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      #workflow-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: #1e293b;
+        border-radius: 0.5rem;
+        border: 1px solid #334155;
+      }
+      #workflow-panel h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #workflow-status {
+        font-size: 0.75rem;
+        font-family: "SF Mono", "Fira Code", monospace;
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 2.5rem;
+        line-height: 1.4;
+      }
+      #artifacts-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: #1e293b;
+        border-radius: 0.5rem;
+        border: 1px solid #334155;
+      }
+      #artifacts-panel h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #artifacts-status {
+        font-size: 0.75rem;
+        font-family: "SF Mono", "Fira Code", monospace;
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 2.5rem;
+        line-height: 1.4;
+      }
+      #ai-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: #1e293b;
+        border-radius: 0.5rem;
+        border: 1px solid #334155;
+      }
+      #ai-panel h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #ai-status {
+        font-size: 0.75rem;
+        font-family: "SF Mono", "Fira Code", monospace;
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 2.5rem;
+        line-height: 1.4;
+      }
+      #auth-panel {
+        display: none;
+        flex-direction: column;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        background: #1e293b;
+        border-radius: 0.5rem;
+        border: 1px solid #334155;
+      }
+      #auth-panel.visible {
+        display: flex;
+      }
+      #auth-panel h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #auth-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.5rem;
+      }
+      #auth-fields input {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        border-radius: 0.375rem;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-size: 0.9rem;
+        outline: none;
+      }
+      #auth-fields input:focus {
+        border-color: #3b82f6;
+      }
+      #auth-email {
+        grid-column: 1 / -1;
+      }
+      #auth-name {
+        grid-column: 1 / -1;
+      }
+      #auth-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+      #auth-signup {
+        background: #2563eb;
+      }
+      #auth-signin {
+        background: #059669;
+      }
+      #auth-signin:hover {
+        background: #047857;
+      }
+      #auth-status {
+        font-size: 0.75rem;
+        font-family: "SF Mono", "Fira Code", monospace;
+        color: #cbd5e1;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 2.5rem;
+        line-height: 1.4;
+      }
+      @media (max-width: 640px) {
+        #auth-fields {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Room Chat</h1>
+        <div class="header-right">
+          <button
+            id="clear-chat"
+            title="Clear chat"
+            style="
+              background: #475569;
+              font-size: 0.8rem;
+              padding: 0.35rem 0.75rem;
+            "
+          >
+            Clear
+          </button>
+          <button id="toggle">Disconnect</button>
+          <button id="avatar-btn" title="Account">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <span id="status" class="disconnected">disconnected</span>
+      <div id="auth-panel">
+        <h2>Auth</h2>
+        <div id="auth-fields">
+          <input
+            id="auth-email"
+            type="email"
+            placeholder="Email"
+            autocomplete="email"
+          />
+          <input
+            id="auth-password"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+          />
+          <input
+            id="auth-name"
+            type="text"
+            placeholder="Display name"
+            autocomplete="name"
+          />
+        </div>
+        <div id="auth-actions">
+          <button id="auth-signup" type="button">Sign Up</button>
+          <button id="auth-signin" type="button">Sign In</button>
+        </div>
+        <div id="auth-status">Idle.</div>
+      </div>
+      <div id="messages"></div>
+      <div id="actions">
+        <button id="increment">Increment Counter</button>
+      </div>
+      <div id="reminder-panel">
+        <h2>Scheduled Reminders</h2>
+        <div style="display: flex; gap: 0.5rem">
+          <input
+            id="reminder-delay"
+            type="number"
+            min="1"
+            value="5"
+            style="
+              width: 4rem;
+              padding: 0.6rem 0.75rem;
+              border-radius: 0.375rem;
+              border: 1px solid #334155;
+              background: #0f172a;
+              color: #e2e8f0;
+              font-size: 0.9rem;
+              outline: none;
+            "
+          />
+          <span style="align-self: center; color: #94a3b8; font-size: 0.8rem"
+            >seconds</span
+          >
+          <input
+            id="reminder-msg"
+            type="text"
+            placeholder="Reminder message…"
+            style="
+              flex: 1;
+              padding: 0.6rem 0.75rem;
+              border-radius: 0.375rem;
+              border: 1px solid #334155;
+              background: #0f172a;
+              color: #e2e8f0;
+              font-size: 0.9rem;
+              outline: none;
+            "
+          />
+          <button
+            id="reminder-send"
+            type="button"
+            style="background: #f59e0b; padding: 0.6rem 1rem"
+          >
+            Schedule
+          </button>
+        </div>
+        <div
+          id="reminder-status"
+          style="
+            font-size: 0.75rem;
+            font-family: &quot;SF Mono&quot;, &quot;Fira Code&quot;, monospace;
+            color: #cbd5e1;
+            min-height: 1.2rem;
+            line-height: 1.4;
+          "
+        >
+          Type /remind &lt;seconds&gt; &lt;message&gt; in chat, or use the form
+          above.
+        </div>
+      </div>
+      <div id="artifacts-panel">
+        <h2>Artifacts (Git for Agents)</h2>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+          <input
+            id="artifacts-name"
+            type="text"
+            placeholder="repo name (e.g. starter-1234)"
+            style="
+              flex: 1;
+              min-width: 12rem;
+              padding: 0.6rem 0.75rem;
+              border-radius: 0.375rem;
+              border: 1px solid #334155;
+              background: #0f172a;
+              color: #e2e8f0;
+              font-size: 0.9rem;
+              outline: none;
+            "
+          />
+          <button
+            id="artifacts-create"
+            type="button"
+            style="background: #10b981"
+          >
+            Create
+          </button>
+          <button id="artifacts-info" type="button" style="background: #6366f1">
+            Info
+          </button>
+          <button
+            id="artifacts-token"
+            type="button"
+            style="background: #eab308; color: #1f2937"
+          >
+            New token
+          </button>
+          <button id="artifacts-list" type="button" style="background: #475569">
+            List
+          </button>
+        </div>
+        <div id="artifacts-status">
+          Create a repo, then mint scoped tokens for git clone/push.
+        </div>
+      </div>
+      <div id="ai-panel">
+        <h2>AI Gateway</h2>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+          <input
+            id="ai-prompt"
+            type="text"
+            placeholder="Ask the model anything…"
+            style="
+              flex: 1;
+              min-width: 12rem;
+              padding: 0.6rem 0.75rem;
+              border-radius: 0.375rem;
+              border: 1px solid #334155;
+              background: #0f172a;
+              color: #e2e8f0;
+              font-size: 0.9rem;
+              outline: none;
+            "
+          />
+          <button id="ai-send" type="button" style="background: #f43f5e">
+            Ask
+          </button>
+        </div>
+        <div id="ai-status">
+          Routes Workers AI calls through Cloudflare AI Gateway for caching,
+          rate limiting and observability.
+        </div>
+      </div>
+      <div id="workflow-panel">
+        <h2>NotifyWorkflow</h2>
+        <button id="workflow-run" type="button">
+          Run workflow (broadcasts to this room)
+        </button>
+        <div id="workflow-status">
+          Idle — messages will appear in the chat above.
+        </div>
+      </div>
+      <form id="form">
+        <input
+          id="input"
+          type="text"
+          placeholder="Type a message…"
+          autocomplete="off"
+        />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+    <script>
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const BASE = `${proto}//${location.host}`;
+      const roomId =
+        new URLSearchParams(location.search).get("room") || "default";
+
+      const statusEl = document.getElementById("status");
+      const messagesEl = document.getElementById("messages");
+      const form = document.getElementById("form");
+      const input = document.getElementById("input");
+      const authEmailEl = document.getElementById("auth-email");
+      const authPasswordEl = document.getElementById("auth-password");
+      const authNameEl = document.getElementById("auth-name");
+      const authSignUpBtn = document.getElementById("auth-signup");
+      const authSignInBtn = document.getElementById("auth-signin");
+      const authStatusEl = document.getElementById("auth-status");
+
+      function setStatus(s) {
+        statusEl.textContent = s;
+        statusEl.className = s;
+      }
+
+      function addMessage(text, system = false) {
+        const div = document.createElement("div");
+        div.className = "msg" + (system ? " system" : "");
+        div.textContent = text;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function setAuthStatus(text) {
+        authStatusEl.textContent = text;
+      }
+
+      async function readResponseBody(response) {
+        const text = await response.text();
+        try {
+          return JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          return text || "(empty)";
+        }
+      }
+
+      function getAuthPayload() {
+        return {
+          email: authEmailEl.value.trim(),
+          password: authPasswordEl.value,
+          name: authNameEl.value.trim() || "Room Chat User",
+        };
+      }
+
+      async function submitAuth(path, body, buttonLabel) {
+        authSignUpBtn.disabled = true;
+        authSignInBtn.disabled = true;
+        setAuthStatus(`${buttonLabel}…`);
+        try {
+          const response = await fetch(path, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify(body),
+          });
+          const payload = await readResponseBody(response);
+          setAuthStatus(`status: ${response.status}\n${payload}`);
+          addMessage(`${buttonLabel} -> HTTP ${response.status}`, true);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          setAuthStatus(`request failed: ${message}`);
+          addMessage(`${buttonLabel} failed: ${message}`, true);
+        } finally {
+          authSignUpBtn.disabled = false;
+          authSignInBtn.disabled = false;
+        }
+      }
+
+      authSignUpBtn.addEventListener("click", async () => {
+        const { email, password, name } = getAuthPayload();
+        if (!email || !password) {
+          setAuthStatus("Email and password are required.");
+          return;
+        }
+        await submitAuth(
+          "/auth/sign-up/email",
+          { email, password, name },
+          "Sign Up",
+        );
+      });
+
+      authSignInBtn.addEventListener("click", async () => {
+        const { email, password } = getAuthPayload();
+        if (!email || !password) {
+          setAuthStatus("Email and password are required.");
+          return;
+        }
+        await submitAuth("/auth/sign-in/email", { email, password }, "Sign In");
+      });
+
+      document.getElementById("clear-chat").addEventListener("click", () => {
+        messagesEl.innerHTML = "";
+      });
+
+      const avatarBtn = document.getElementById("avatar-btn");
+      const authPanel = document.getElementById("auth-panel");
+      avatarBtn.addEventListener("click", () => {
+        authPanel.classList.toggle("visible");
+        avatarBtn.classList.toggle("active");
+      });
+
+      const toggleBtn = document.getElementById("toggle");
+      let ws;
+      let autoReconnect = true;
+      let reconnectTimer;
+
+      function connect() {
+        setStatus("connecting");
+        addMessage(`Connecting to room "${roomId}"…`, true);
+
+        ws = new WebSocket(`${BASE}/room/${roomId}`);
+
+        ws.addEventListener("open", () => {
+          setStatus("connected");
+          addMessage("Connected.", true);
+        });
+
+        ws.addEventListener("message", (e) => {
+          addMessage(e.data);
+        });
+
+        ws.addEventListener("close", (e) => {
+          setStatus("disconnected");
+          addMessage(`Disconnected (code ${e.code}).`, true);
+          if (autoReconnect) {
+            reconnectTimer = setTimeout(connect, 2000);
+          }
+        });
+
+        ws.addEventListener("error", () => {
+          setStatus("disconnected");
+          addMessage("WebSocket error.", true);
+        });
+      }
+
+      toggleBtn.addEventListener("click", () => {
+        if (autoReconnect) {
+          autoReconnect = false;
+          toggleBtn.textContent = "Connect";
+          toggleBtn.className = "off";
+          clearTimeout(reconnectTimer);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        } else {
+          autoReconnect = true;
+          toggleBtn.textContent = "Disconnect";
+          toggleBtn.className = "";
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            connect();
+          }
+        }
+      });
+
+      const incrementBtn = document.getElementById("increment");
+      incrementBtn.addEventListener("click", async () => {
+        incrementBtn.disabled = true;
+        incrementBtn.textContent = "Incrementing…";
+        try {
+          const resp = await fetch("/sandbox/increment", { method: "POST" });
+          const data = await resp.json();
+          addMessage(`Counter incremented to ${data.counter}`, true);
+        } catch (err) {
+          addMessage(`Increment failed: ${err.message}`, true);
+        } finally {
+          incrementBtn.disabled = false;
+          incrementBtn.textContent = "Increment Counter";
+        }
+      });
+
+      const workflowRunBtn = document.getElementById("workflow-run");
+      const workflowStatusEl = document.getElementById("workflow-status");
+
+      function isWorkflowTerminal(status) {
+        if (!status || typeof status.status !== "string") return false;
+        const s = status.status.toLowerCase();
+        return (
+          s === "complete" ||
+          s === "completed" ||
+          s === "errored" ||
+          s === "failed" ||
+          s === "terminated" ||
+          s === "canceled" ||
+          s === "cancelled" ||
+          (status.error != null && status.error !== undefined)
+        );
+      }
+
+      function formatWorkflowStatus(status) {
+        const lines = [
+          `status: ${status.status ?? "(none)"}`,
+          status.output !== undefined
+            ? `output: ${JSON.stringify(status.output)}`
+            : null,
+          status.error ? `error: ${JSON.stringify(status.error)}` : null,
+        ].filter(Boolean);
+        return lines.join("\n");
+      }
+
+      let workflowPollTimer = null;
+
+      workflowRunBtn.addEventListener("click", async () => {
+        if (workflowPollTimer) {
+          clearTimeout(workflowPollTimer);
+          workflowPollTimer = null;
+        }
+        workflowRunBtn.disabled = true;
+        workflowStatusEl.textContent = "Starting workflow…";
+        addMessage(
+          `Starting NotifyWorkflow for room "${roomId}" (watch for [workflow] lines)…`,
+          true,
+        );
+        try {
+          const startResp = await fetch(
+            `/workflow/start/${encodeURIComponent(roomId)}`,
+            { method: "POST" },
+          );
+          if (!startResp.ok) {
+            const errText = await startResp.text();
+            throw new Error(errText || `HTTP ${startResp.status}`);
+          }
+          const { instanceId } = await startResp.json();
+          if (!instanceId) {
+            throw new Error("No instanceId in response");
+          }
+          workflowStatusEl.textContent = `instance: ${instanceId}\npolling…`;
+
+          let pollCount = 0;
+          const maxPolls = 120;
+
+          const poll = async () => {
+            try {
+              pollCount += 1;
+              if (pollCount > maxPolls) {
+                workflowStatusEl.textContent = `instance: ${instanceId}\n(stopped polling after ${maxPolls} attempts — check logs)`;
+                workflowRunBtn.disabled = false;
+                addMessage("Workflow status polling timed out.", true);
+                return;
+              }
+              const stResp = await fetch(
+                `/workflow/status/${encodeURIComponent(instanceId)}`,
+              );
+              if (!stResp.ok) {
+                workflowStatusEl.textContent = `status fetch failed: HTTP ${stResp.status}`;
+                workflowRunBtn.disabled = false;
+                return;
+              }
+              const st = await stResp.json();
+              workflowStatusEl.textContent =
+                `instance: ${instanceId}\n` + formatWorkflowStatus(st);
+              if (isWorkflowTerminal(st)) {
+                workflowRunBtn.disabled = false;
+                addMessage(
+                  `Workflow finished: ${st.status}` +
+                    (st.output !== undefined
+                      ? ` — ${JSON.stringify(st.output)}`
+                      : ""),
+                  true,
+                );
+                return;
+              }
+              workflowPollTimer = setTimeout(poll, 600);
+            } catch (e) {
+              workflowStatusEl.textContent = `poll error: ${e.message}`;
+              workflowRunBtn.disabled = false;
+            }
+          };
+          await poll();
+        } catch (err) {
+          workflowStatusEl.textContent = `Error: ${err.message}`;
+          addMessage(`Workflow start failed: ${err.message}`, true);
+          workflowRunBtn.disabled = false;
+        }
+      });
+
+      const artifactsNameEl = document.getElementById("artifacts-name");
+      const artifactsStatusEl = document.getElementById("artifacts-status");
+      const artifactsCreateBtn = document.getElementById("artifacts-create");
+      const artifactsInfoBtn = document.getElementById("artifacts-info");
+      const artifactsTokenBtn = document.getElementById("artifacts-token");
+      const artifactsListBtn = document.getElementById("artifacts-list");
+
+      function setArtifactsStatus(label, payload) {
+        const body =
+          typeof payload === "string"
+            ? payload
+            : JSON.stringify(payload, null, 2);
+        artifactsStatusEl.textContent = `${label}\n${body}`;
+      }
+
+      async function callArtifacts(method, path, body) {
+        const init = { method };
+        if (body !== undefined) {
+          init.headers = { "content-type": "application/json" };
+          init.body = JSON.stringify(body);
+        }
+        const resp = await fetch(path, init);
+        const text = await resp.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+        return { status: resp.status, body: parsed };
+      }
+
+      function getRepoName() {
+        const name = artifactsNameEl.value.trim();
+        if (!name) {
+          setArtifactsStatus("error", "repo name is required");
+          return null;
+        }
+        return name;
+      }
+
+      artifactsCreateBtn.addEventListener("click", async () => {
+        const name = getRepoName();
+        if (!name) return;
+        artifactsCreateBtn.disabled = true;
+        setArtifactsStatus(`POST /repos/create ${name}`, "...");
+        try {
+          const { status, body } = await callArtifacts(
+            "POST",
+            "/repos/create",
+            { name, description: "Created from Room Chat" },
+          );
+          setArtifactsStatus(`HTTP ${status}`, body);
+          addMessage(
+            `Artifacts: created repo "${name}" -> HTTP ${status}`,
+            true,
+          );
+        } catch (e) {
+          setArtifactsStatus("request failed", e.message);
+        } finally {
+          artifactsCreateBtn.disabled = false;
+        }
+      });
+
+      artifactsInfoBtn.addEventListener("click", async () => {
+        const name = getRepoName();
+        if (!name) return;
+        artifactsInfoBtn.disabled = true;
+        setArtifactsStatus(`GET /repos/info?name=${name}`, "...");
+        try {
+          const { status, body } = await callArtifacts(
+            "GET",
+            `/repos/info?name=${encodeURIComponent(name)}`,
+          );
+          setArtifactsStatus(`HTTP ${status}`, body);
+        } catch (e) {
+          setArtifactsStatus("request failed", e.message);
+        } finally {
+          artifactsInfoBtn.disabled = false;
+        }
+      });
+
+      artifactsTokenBtn.addEventListener("click", async () => {
+        const name = getRepoName();
+        if (!name) return;
+        artifactsTokenBtn.disabled = true;
+        setArtifactsStatus(`POST /repos/token ${name}`, "...");
+        try {
+          const { status, body } = await callArtifacts("POST", "/repos/token", {
+            name,
+            scope: "write",
+            ttl: 3600,
+          });
+          setArtifactsStatus(`HTTP ${status}`, body);
+        } catch (e) {
+          setArtifactsStatus("request failed", e.message);
+        } finally {
+          artifactsTokenBtn.disabled = false;
+        }
+      });
+
+      artifactsListBtn.addEventListener("click", async () => {
+        artifactsListBtn.disabled = true;
+        setArtifactsStatus("GET /repos/list", "...");
+        try {
+          const { status, body } = await callArtifacts("GET", "/repos/list");
+          setArtifactsStatus(`HTTP ${status}`, body);
+        } catch (e) {
+          setArtifactsStatus("request failed", e.message);
+        } finally {
+          artifactsListBtn.disabled = false;
+        }
+      });
+
+      const aiPromptEl = document.getElementById("ai-prompt");
+      const aiSendBtn = document.getElementById("ai-send");
+      const aiStatusEl = document.getElementById("ai-status");
+
+      aiSendBtn.addEventListener("click", async () => {
+        const prompt = aiPromptEl.value.trim();
+        if (!prompt) {
+          aiStatusEl.textContent = "Enter a prompt first.";
+          return;
+        }
+        aiSendBtn.disabled = true;
+        aiStatusEl.textContent = `> ${prompt}\n…`;
+        try {
+          const resp = await fetch("/ai", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          });
+          const text = await resp.text();
+          let parsed;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = text;
+          }
+          const out =
+            typeof parsed === "object" && parsed && "response" in parsed
+              ? parsed.response
+              : typeof parsed === "string"
+                ? parsed
+                : JSON.stringify(parsed, null, 2);
+          aiStatusEl.textContent = `> ${prompt}\n${out}`;
+          addMessage(`AI Gateway -> HTTP ${resp.status}`, true);
+        } catch (e) {
+          aiStatusEl.textContent = `Error: ${e.message}`;
+        } finally {
+          aiSendBtn.disabled = false;
+        }
+      });
+
+      const reminderSendBtn = document.getElementById("reminder-send");
+      const reminderDelayEl = document.getElementById("reminder-delay");
+      const reminderMsgEl = document.getElementById("reminder-msg");
+      const reminderStatusEl = document.getElementById("reminder-status");
+
+      reminderSendBtn.addEventListener("click", () => {
+        const delay = parseInt(reminderDelayEl.value, 10);
+        const msg = reminderMsgEl.value.trim() || "ping!";
+        if (!delay || delay < 1) {
+          reminderStatusEl.textContent = "Delay must be at least 1 second.";
+          return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          reminderStatusEl.textContent = "Not connected.";
+          return;
+        }
+        ws.send(`/remind ${delay} ${msg}`);
+        reminderStatusEl.textContent = `Sent: /remind ${delay} ${msg}`;
+        reminderMsgEl.value = "";
+      });
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(text);
+        input.value = "";
+      });
+
+      connect();
+    </script>
+  </body>
+</html>

@@ -1,29 +1,29 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
+// @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentOrchestrationHttpApi } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli } from "./bin.ts";
+import { cli, makeCli } from "./bin.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
-import {
-  orchestrationDispatchRouteLayer,
-  orchestrationSnapshotRouteLayer,
-} from "./orchestration/http.ts";
+import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import {
@@ -31,12 +31,18 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
-import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
-import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
 
-const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
+const connectCli = makeCli({ cloudEnabled: true });
+const noConnectCli = makeCli({ cloudEnabled: false });
+const runCli = (args: ReadonlyArray<string>, command = cli) =>
+  Command.runWith(command, { version: "0.0.0" })(args);
+const runConnectCli = (args: ReadonlyArray<string>) => runCli(args, connectCli);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
   runCli(args).pipe(Effect.provide(CliRuntimeLayer));
 
@@ -105,18 +111,18 @@ const readPersistedSnapshot = (baseDir: string) =>
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
-    const routesLayer = Layer.mergeAll(
-      orchestrationSnapshotRouteLayer,
-      orchestrationDispatchRouteLayer,
+    const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
+      Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(environmentAuthenticatedAuthLayer),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
       Layer.provideMerge(
-        ServerAuthLive.pipe(
+        EnvironmentAuth.layer.pipe(
           Layer.provideMerge(SqlitePersistenceLayerLive),
-          Layer.provide(ServerSecretStoreLive),
+          Layer.provide(ServerSecretStore.layer),
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
@@ -173,6 +179,123 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
+  it.effect("rejects connect commands when public configuration is missing", () =>
+    Effect.gen(function* () {
+      const error = yield* runCli(["connect", "status"], noConnectCli).pipe(Effect.flip);
+
+      if (!CliError.isCliError(error)) {
+        assert.fail(`Expected CliError, got ${String(error)}`);
+      }
+      if (error._tag !== "ShowHelp") {
+        assert.fail(`Expected ShowHelp, got ${error._tag}`);
+      }
+      assert.deepEqual(error.commandPath, ["t3", "connect"]);
+      assert.include(error.errors[0]?.message ?? "", "missing T3 Connect public configuration");
+
+      const output = (yield* TestConsole.errorLines).join("\n");
+      assert.include(output, "ERROR");
+      assert.include(output, "missing T3 Connect public configuration");
+    }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
+  );
+
+  it.effect("reports fresh headless connect state without requiring local configuration", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-status-test-"));
+      const { output } = yield* captureStdout(
+        runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
+      const status = JSON.parse(output) as {
+        readonly desired: boolean;
+        readonly authenticated: boolean;
+        readonly linked: boolean;
+        readonly cloudUserId: string | null;
+        readonly relayUrl: string | null;
+      };
+
+      assert.equal(status.desired, false);
+      assert.equal(status.authenticated, false);
+      assert.equal(status.linked, false);
+      assert.equal(status.cloudUserId, null);
+      assert.equal(status.relayUrl, null);
+    }),
+  );
+
+  it.effect("reports actionable human-readable headless connect state", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-status-human-test-"));
+      const { output } = yield* captureStdout(
+        runConnectCli(["connect", "status", "--base-dir", baseDir]),
+      );
+
+      assert.include(output, "T3 Connect\n  Exposure: disabled");
+      assert.include(output, "  Authorization: missing");
+      assert.include(output, "  Environment link: not provisioned");
+      assert.include(output, "Next: Run `t3 connect link` to authorize and enable T3 Connect.");
+    }),
+  );
+
+  it.effect("logs in to headless connect without enabling access", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-login-test-"));
+      const { secretsDir } = yield* deriveServerPaths(baseDir, undefined);
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(
+        join(secretsDir, "cloud-cli-oauth-token.bin"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
+        JSON.stringify({
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        }),
+      );
+
+      const login = yield* captureStdout(
+        runConnectCli(["connect", "login", "--base-dir", baseDir]),
+      );
+      const status = yield* captureStdout(
+        runConnectCli(["connect", "status", "--base-dir", baseDir, "--json"]),
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
+      const decoded = JSON.parse(status.output) as {
+        readonly desired: boolean;
+        readonly authenticated: boolean;
+      };
+
+      assert.equal(login.output, "Signed in to T3 Connect.");
+      assert.isFalse(decoded.desired);
+      assert.isTrue(decoded.authenticated);
+    }),
+  );
+
+  it.effect("disables headless connect without a running server", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-unlink-test-"));
+      const { output } = yield* captureStdout(
+        runConnectCli(["connect", "unlink", "--base-dir", baseDir]),
+      );
+
+      assert.equal(output, "T3 Connect is disabled locally.");
+    }),
+  );
+
+  it.effect("logs out of headless connect and removes the stored CLI authorization", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-cloud-logout-test-"));
+      const { secretsDir } = yield* deriveServerPaths(baseDir, undefined);
+      const tokenPath = join(secretsDir, "cloud-cli-oauth-token.bin");
+      mkdirSync(secretsDir, { recursive: true });
+      writeFileSync(tokenPath, "invalid persisted token");
+
+      const { output } = yield* captureStdout(
+        runConnectCli(["connect", "logout", "--base-dir", baseDir]),
+      );
+
+      assert.equal(output, "Signed out of T3 Connect locally.");
+      assert.isFalse(existsSync(tokenPath));
+    }),
+  );
+
   it.effect("executes auth pairing subcommands and redacts secrets from list output", () =>
     Effect.gen(function* () {
       const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-auth-pairing-test-"));
@@ -214,7 +337,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const issued = JSON.parse(issuedOutput.output) as {
         readonly sessionId: string;
         readonly token: string;
-        readonly role: string;
+        readonly scopes: ReadonlyArray<string>;
       };
       const listedOutput = yield* captureStdout(
         runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
@@ -223,15 +346,33 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const listed = JSON.parse(listedOutput.output) as ReadonlyArray<{
         readonly sessionId: string;
         readonly token?: string;
-        readonly role: string;
+        readonly scopes: ReadonlyArray<string>;
       }>;
 
       assert.equal(typeof issued.sessionId, "string");
       assert.equal(typeof issued.token, "string");
-      assert.equal(issued.role, "owner");
+      assert.deepEqual(issued.scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.sessionId, issued.sessionId);
-      assert.equal(listed[0]?.role, "owner");
+      assert.deepEqual(listed[0]?.scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
       assert.equal("token" in (listed[0] ?? {}), false);
     }),
   );

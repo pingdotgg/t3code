@@ -13,6 +13,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import {
@@ -32,12 +33,13 @@ const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
-  "test/CursorAdapter",
+  "t3/provider/Layers/CursorAdapter.test/CursorAdapter",
 ) {}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const bunExe = "bun";
+const mockAgentCommand = "node";
+const mockAgentArgs = [mockAgentPath] as const;
 
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
@@ -51,7 +53,7 @@ async function makeMockAgentWrapper(
   const script = `#!/bin/sh
 ${envExports}
 ${options?.initialDelaySeconds ? `sleep ${JSON.stringify(String(options.initialDelaySeconds))}` : ""}
-exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
+exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
 `;
   await writeFile(wrapperPath, script, "utf8");
   await chmod(wrapperPath, 0o755);
@@ -73,7 +75,7 @@ printf '%s\t' "$@" >> ${JSON.stringify(argvLogPath)}
 printf '\n' >> ${JSON.stringify(argvLogPath)}
 export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
 ${envExports}
-exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
+exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
 `;
   await writeFile(wrapperPath, script, "utf8");
   await chmod(wrapperPath, 0o755);
@@ -226,6 +228,82 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           { step: "Implement the requested change", status: "inProgress" },
         ]);
       }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-steer-thread");
+
+      // Keep the first prompt in flight long enough for the steer to land.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "run 5 commands",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+
+      // Poll until the first prompt is in flight — sendTurn binds the active
+      // turn id before prompting. The mock agent runs on the real clock, so
+      // each TestClock.adjust just provides the scheduler hops for its stdio
+      // responses to land.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          const sessions = yield* adapter.listSessions();
+          const session = sessions.find((entry) => entry.threadId === threadId);
+          if (session?.activeTurnId !== undefined) {
+            return;
+          }
+          yield* TestClock.adjust("10 millis");
+        }
+        throw new Error("Timed out waiting for the first prompt to be in flight.");
+      });
+
+      // Steer: a second sendTurn while the first prompt is still in flight
+      // continues the same turn.
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "actually run 15",
+        attachments: [],
+      });
+      const firstTurn = yield* Fiber.join(firstTurnFiber);
+      assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // One turn boundary for the whole run: the superseded first prompt
+      // resolving must not settle the merged turn.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
 
       yield* adapter.stopSession(threadId);
     }),

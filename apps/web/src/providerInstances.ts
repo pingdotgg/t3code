@@ -66,13 +66,15 @@ export interface ProviderInstanceEntry {
  * will take precedence over this fallback.
  */
 function humanizeInstanceId(instanceId: ProviderInstanceId): string {
-  return instanceId
+  const words: string[] = [];
+  for (const token of instanceId
     .replace(/[_-]+/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(" ")
-    .filter((token) => token.length > 0)
-    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
-    .join(" ");
+    .split(" ")) {
+    if (token.length === 0) continue;
+    words.push(token.charAt(0).toUpperCase() + token.slice(1));
+  }
+  return words.join(" ");
 }
 
 function driverKindLabel(driverKind: ProviderDriverKind): string {

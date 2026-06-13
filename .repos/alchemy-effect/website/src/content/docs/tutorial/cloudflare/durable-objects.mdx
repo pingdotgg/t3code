@@ -1,0 +1,347 @@
+---
+title: Add a Durable Object
+description: Add a Durable Object to your Worker — persist state per key, expose RPC methods, and stream values back to the client.
+sidebar:
+  order: 1
+---
+
+By the end of [Part 5](/tutorial/part-5) you have a Worker
+deploying to multiple stages from CI. From here, the Cloudflare
+track adds one stateful primitive at a time. First up: a `Counter`
+Durable Object that keeps a per-key count in transactional storage,
+exposes RPC methods, and streams a sequence of numbers back to the
+caller.
+
+## Create the Counter file
+
+A Durable Object is a globally-unique stateful instance addressed
+by name (or by id). Like Workers, it has two `Effect.gen` blocks:
+the outer one runs at init time, and the inner one runs every time
+a new instance starts up and returns the public API.
+
+Create `src/counter.ts` with the smallest possible DO — empty
+public API, no state yet:
+
+```typescript twoslash
+// src/counter.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class Counter extends Cloudflare.DurableObjectNamespace<Counter>()(
+  "Counter",
+  Effect.gen(function* () {
+    // Outer (init): runs once when the DO class is bound to a
+    // Worker. Resolve shared dependencies here.
+    return Effect.gen(function* () {
+      // Inner (per-instance): runs every time a new DO instance is
+      // constructed. Returns the public API for that instance.
+      return {};
+    });
+  }),
+) {}
+```
+
+:::tip[Why `Counter<Counter>()(...)` ?]
+The empty `()` after `Counter<Counter>` lets TypeScript capture the
+class identity for the typed RPC stub. It's a one-time bit of
+ceremony — the rest of your DO code looks completely normal.
+:::
+
+## Persist the count
+
+Each DO instance has its own key/value storage, backed by SQLite.
+Pull the current count out of storage in the inner init so it
+survives restarts and hibernation:
+
+```diff lang="typescript"
+return Effect.gen(function* () {
++  const state = yield* Cloudflare.DurableObjectState;
++  let count = (yield* state.storage.get<number>("count")) ?? 0;
+  return {};
+});
+```
+
+`Cloudflare.DurableObjectState` is the same per-instance handle
+Cloudflare exposes for `storage`, `setAlarm`, `acceptWebSocket`,
+and friends. We'll use it more in the next part for WebSockets.
+
+## Add `increment` and `get`
+
+Any function you return from the inner Effect that produces an
+`Effect` becomes a typed RPC method. Add one to mutate the count
+and one to read it:
+
+```diff lang="typescript"
+return Effect.gen(function* () {
+  const state = yield* Cloudflare.DurableObjectState;
+  let count = (yield* state.storage.get<number>("count")) ?? 0;
+-  return {};
++  return {
++    increment: () =>
++      Effect.gen(function* () {
++        count += 1;
++        yield* state.storage.put("count", count);
++        return count;
++      }),
++    get: () => Effect.succeed(count),
++  };
+});
+```
+
+Workers will see `counter.increment()` returning
+`Effect<number>` and `counter.get()` returning `Effect<number>`,
+fully type-checked through the Cloudflare RPC machinery.
+
+## Bind the DO to the Worker
+
+Yield the `Counter` class in your Worker's init phase to get a
+namespace handle:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
++    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+`yield* Counter` in init registers the DO with the Worker
+(binding + class-migration metadata) and hands you the namespace.
+
+## Call the DO from `fetch`
+
+Inside the `fetch` handler, route `POST /counter/:name` to the DO
+by calling `getByName(...)` to obtain a typed stub, then invoking
+`increment()`:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++
++        if (request.url.startsWith("/counter/") && request.method === "POST") {
++          const name = request.url.split("/").pop()!;
++          const next = yield* counters.getByName(name).increment();
++          return HttpServerResponse.text(String(next));
++        }
++
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+`counters.getByName(name)` returns a typed stub: the Worker sees
+`increment(): Effect<number>` and `get(): Effect<number>` exactly as
+you defined them. Calling `.increment()` round-trips through
+Cloudflare's RPC machinery to the durable instance.
+
+## Deploy and verify
+
+Re-deploy. Alchemy plans a Worker update and a new `Counter`
+namespace:
+
+```sh
+bun alchemy deploy
+```
+
+Add a test that hits `/counter/foo` twice (expecting `1` then `2`)
+and `/counter/bar` once (expecting `1`) — each name addresses its
+own stateful instance:
+
+```diff lang="typescript"
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
++test(
++   "Counter persists per key",
++   Effect.gen(function* () {
++     const { url } = yield* stack;
++
++     const a1 = yield* HttpClient.post(`${url}/counter/foo`);
++     expect(yield* a1.text).toBe("1");
++
++     const a2 = yield* HttpClient.post(`${url}/counter/foo`);
++     expect(yield* a2.text).toBe("2");
++
++     const b1 = yield* HttpClient.post(`${url}/counter/bar`);
++     expect(yield* b1.text).toBe("1");
++   }),
++);
+```
+
+```sh
+bun test test/integ.test.ts
+```
+
+## Stream RPC return values
+
+RPC isn't limited to single values — any `Effect` (or `Stream`) you
+return becomes a typed RPC method. Let's add a `tick(n)` method that
+emits a sequence of numbers `100ms` apart, then expose an HTTP route
+that streams them back to the client.
+
+Add `tick` to `src/counter.ts`:
+
+```diff lang="typescript"
+// src/counter.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
++import * as Stream from "effect/Stream";
+
+export default class Counter extends Cloudflare.DurableObjectNamespace<Counter>()(
+  "Counter",
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
+      const state = yield* Cloudflare.DurableObjectState;
+      let count = (yield* state.storage.get<number>("count")) ?? 0;
+
+      return {
+        increment: () =>
+          Effect.gen(function* () {
+            count += 1;
+            yield* state.storage.put("count", count);
+            return count;
+          }),
+        get: () => Effect.succeed(count),
++        tick: (n: number) =>
++          Stream.iterate(0, (i) => i + 1).pipe(
++            Stream.take(n),
++            Stream.schedule(Schedule.spaced("100 millis")),
++          ),
+      };
+    });
+  }),
+) {}
+```
+
+Forward the stream from the Worker's `fetch` handler. Use
+`HttpServerResponse.stream` to flush each chunk as it arrives:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import * as Stream from "effect/Stream";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        if (request.url.startsWith("/counter/") && request.method === "POST") {
+          const name = request.url.split("/").pop()!;
+          const next = yield* counters.getByName(name).increment();
+          return HttpServerResponse.text(String(next));
+        }
+
++        if (request.url.startsWith("/tick/") && request.method === "GET") {
++          const n = Number(request.url.split("/").pop()!);
++          const stream = counters.getByName("tick").tick(n).pipe(
++            Stream.map((i) => `${i}\n`),
++            Stream.encodeText,
++          );
++          return HttpServerResponse.stream(stream, {
++            headers: { "content-type": "text/plain" },
++          });
++        }
++
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+Add the test:
+
+```diff lang="typescript"
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
++import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
++test(
++   "tick streams 5 sequential values",
++   Effect.gen(function* () {
++     const { url } = yield* stack;
++
++     const response = yield* HttpClient.get(`${url}/tick/5`);
++     const lines = yield* response.stream.pipe(
++       Stream.decodeText,
++       Stream.splitLines,
++       Stream.runCollect,
++     );
++     expect([...lines]).toEqual(["0", "1", "2", "3", "4"]);
++   }),
++);
+```
+
+The DO produces values lazily, the runtime ferries each chunk back
+to the Worker, and the Worker pipes them straight onto the HTTP
+response — all type-checked end-to-end.
+
+Next you'll teach a Durable Object to
+[accept WebSocket connections](/tutorial/cloudflare/hibernatable-websockets) —
+and learn how Cloudflare hibernates idle DOs while keeping
+connections alive.

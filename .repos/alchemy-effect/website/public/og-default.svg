@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <rect width="1200" height="630" fill="#f5efe3"/>
+    <!-- subtle hairline frame -->
+    <rect x="24" y="24" width="1152" height="582" fill="none" stroke="#3f5a2a" stroke-opacity="0.18" stroke-width="1"/>
+    <!-- yantra centered, slightly above midline so wordmark sits below -->
+    <g transform="translate(490 75)" viewBox="0 0 24 24">
+      <svg width="220" height="220" viewBox="0 0 24 24" fill="none" stroke="#3f5a2a" stroke-width="0.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 21.5 L3.7272 7.25 L20.2728 7.25 Z"/><circle cx="12" cy="12" r="1.1" fill="#3f5a2a" stroke="none"/></svg>
+    </g>
+    <!-- wordmark -->
+    <text x="600" y="375" text-anchor="middle"
+      font-family="'Source Serif 4', 'Source Serif Pro', Georgia, serif"
+      font-style="italic" font-weight="500" font-size="96" fill="#2a2620"
+      letter-spacing="-2">alchemy</text>
+    <text x="600" y="435" text-anchor="middle"
+      font-family="'JetBrains Mono', ui-monospace, monospace"
+      font-size="20" fill="#3f5a2a" letter-spacing="4">
+      ZERO &#8594; PRODUCTION
+    </text>
+    <!-- bottom-right url tag -->
+    <text x="1152" y="582" text-anchor="end"
+      font-family="'JetBrains Mono', ui-monospace, monospace"
+      font-size="18" fill="#85714f">alchemy.run</text>
+  </svg>

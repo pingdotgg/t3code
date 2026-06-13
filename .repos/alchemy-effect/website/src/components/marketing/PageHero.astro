@@ -1,0 +1,67 @@
+---
+interface Props {
+  eyebrow: string;
+  title: string;
+  highlight?: string;
+  description?: string;
+}
+const { eyebrow, title, highlight, description } = Astro.props;
+---
+
+<div class="page-hero">
+  <div class="page-hero__inner">
+    <div class="page-hero__eyebrow">{eyebrow}</div>
+    <h1 class="page-hero__title">
+      {highlight && <span class="page-hero__highlight">{highlight}</span>}
+      {highlight && " "}
+      {title}
+    </h1>
+    {description && <p class="page-hero__desc">{description}</p>}
+    <div class="page-hero__cta"><slot name="cta" /></div>
+  </div>
+</div>
+
+<style>
+  .page-hero {
+    text-align: center;
+    padding: 8px 0 8px;
+  }
+  .page-hero__inner {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .page-hero__eyebrow {
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--alc-accent-deep);
+    font-weight: 500;
+  }
+  .page-hero__title {
+    font-family: var(--alc-font-serif);
+    font-weight: 500;
+    font-size: 56px;
+    line-height: 1.06;
+    letter-spacing: -0.02em;
+    margin: 18px 0 18px;
+    color: var(--alc-fg-1);
+  }
+  .page-hero__highlight {
+    color: var(--alc-accent-deep);
+    font-style: italic;
+  }
+  .page-hero__desc {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--alc-fg-2);
+    max-width: 620px;
+    margin: 0 auto 26px;
+  }
+  .page-hero__cta {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+</style>

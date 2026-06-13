@@ -1,0 +1,42 @@
+{
+  "name": "@monorepo-multi-stack/backend",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/monorepo-multi-stack/backend"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./Client": {
+      "bun": "./src/Client.ts",
+      "types": "./lib/Client.d.ts",
+      "import": "./lib/Client.js",
+      "default": "./lib/Client.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "logs": "alchemy logs",
+    "tail": "alchemy tail",
+    "test": "bun test"
+  }
+}

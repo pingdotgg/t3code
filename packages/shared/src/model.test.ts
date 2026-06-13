@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_MODEL,
   ProviderDriverKind,
@@ -93,6 +93,9 @@ describe("resolveModelSlugForProvider", () => {
     );
     expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
       DEFAULT_MODEL,
+    );
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("grok"), undefined)).toBe(
+      "grok-build",
     );
   });
 

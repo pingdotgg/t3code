@@ -100,7 +100,7 @@ export interface DesktopUpdatesShape {
 }
 
 export class DesktopUpdates extends Context.Service<DesktopUpdates, DesktopUpdatesShape>()(
-  "t3/desktop/Updates",
+  "@t3tools/desktop/updates/DesktopUpdates",
 ) {}
 
 const {
@@ -120,7 +120,7 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 
   return decodeAppUpdateYmlConfig(entries).pipe(
     Effect.map((config) => (config.provider ? Option.some(config) : Option.none())),
-    Effect.catch(() => Effect.succeed(Option.none<AppUpdateYmlConfig>())),
+    Effect.orElseSucceed(() => Option.none<AppUpdateYmlConfig>()),
   );
 }
 

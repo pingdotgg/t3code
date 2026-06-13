@@ -20,6 +20,7 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "../ui/sidebar";
+import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
 
 export type SettingsSectionPath =
   | "/settings/general"
@@ -104,18 +105,22 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={handleBackClick}
-            >
-              <ArrowLeftIcon className="size-4" />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <T3ConnectSidebarSignIn />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+          <SidebarMenu className="min-w-0">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={handleBackClick}
+              >
+                <ArrowLeftIcon className="size-4" />
+                <span>Back</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <T3ConnectSidebarAvatar />
+        </div>
       </SidebarFooter>
     </>
   );

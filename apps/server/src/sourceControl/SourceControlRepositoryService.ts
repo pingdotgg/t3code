@@ -39,7 +39,7 @@ export interface SourceControlRepositoryServiceShape {
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
   SourceControlRepositoryServiceShape
->()("t3/source-control/SourceControlRepositoryService") {}
+>()("t3/sourceControl/SourceControlRepositoryService") {}
 
 function detailFromUnknown(cause: unknown): string {
   if (typeof cause === "object" && cause !== null) {
@@ -277,12 +277,10 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
         })
         .pipe(
           Effect.map(() => true),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
         );
       if (!hasCommits) {
-        const details = yield* git
-          .statusDetails(input.cwd)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const details = yield* git.statusDetails(input.cwd).pipe(Effect.orElseSucceed(() => null));
         return {
           repository: toRepositoryInfo(providerKind, urls),
           remoteName,

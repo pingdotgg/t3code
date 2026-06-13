@@ -36,6 +36,7 @@ import {
   remoteStateKey,
   resolveSshTarget,
   runSshCommand,
+  SSH_COMMAND,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -160,13 +161,8 @@ const RemotePairingResult = Schema.Struct({
   credential: Schema.String,
 });
 
-const RemoteHttpError = Schema.Struct({
-  error: Schema.optional(Schema.String),
-});
-
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
 const decodeRemotePairingResult = Schema.decodeEffect(fromLenientJson(RemotePairingResult));
-const decodeRemoteHttpError = Schema.decodeEffect(Schema.fromJsonString(RemoteHttpError));
 
 const decodeRemoteJsonOutput = <A, E>(
   stdout: string,
@@ -991,92 +987,27 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
-function resolveLoopbackSshHttpUrl(
-  rawHttpBaseUrl: unknown,
-  pathname: string,
-): Effect.Effect<URL, SshHttpBridgeError> {
-  return Effect.try({
-    try: () => {
-      if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
-        throw new Error("Invalid SSH forwarded http base URL.");
-      }
-      const baseUrl = new URL(rawHttpBaseUrl);
-      if (!isLoopbackHostname(baseUrl.hostname)) {
-        throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
-      }
-      const url = new URL(baseUrl.toString());
-      url.pathname = pathname;
-      url.search = "";
-      url.hash = "";
-      return url;
-    },
-    catch: (cause) =>
-      new SshHttpBridgeError({
-        message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
-        cause,
-      }),
-  });
-}
-
-export const fetchLoopbackSshJson = Effect.fn("ssh/tunnel.fetchLoopbackSshJson")(function* <
-  T,
->(input: {
-  readonly httpBaseUrl: unknown;
-  readonly pathname: string;
-  readonly method?: "GET" | "POST";
-  readonly bearerToken?: unknown;
-  readonly body?: unknown;
-}): Effect.fn.Return<T, SshHttpBridgeError, HttpClient.HttpClient> {
-  const requestUrl = yield* resolveLoopbackSshHttpUrl(input.httpBaseUrl, input.pathname);
-  const bearerToken =
-    typeof input.bearerToken === "string" && input.bearerToken.trim().length > 0
-      ? input.bearerToken
-      : null;
-
-  const request = (
-    input.method === "POST"
-      ? HttpClientRequest.post(requestUrl.toString())
-      : HttpClientRequest.get(requestUrl.toString())
-  ).pipe(
-    input.body === undefined ? (req) => req : HttpClientRequest.bodyJsonUnsafe(input.body),
-    bearerToken
-      ? HttpClientRequest.setHeader("authorization", `Bearer ${bearerToken}`)
-      : (req) => req,
-  );
-  const client = yield* HttpClient.HttpClient;
-  const response = yield* client.execute(request).pipe(
-    Effect.mapError(
-      (cause) =>
+export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopbackSshHttpBaseUrl")(
+  function* (rawHttpBaseUrl: unknown): Effect.fn.Return<string, SshHttpBridgeError> {
+    return yield* Effect.try({
+      try: () => {
+        if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
+          throw new Error("Invalid SSH forwarded http base URL.");
+        }
+        const baseUrl = new URL(rawHttpBaseUrl);
+        if (!isLoopbackHostname(baseUrl.hostname)) {
+          throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
+        }
+        return baseUrl.toString();
+      },
+      catch: (cause) =>
         new SshHttpBridgeError({
-          message: `Failed to reach SSH forwarded endpoint ${requestUrl.toString()}.`,
+          message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
           cause,
         }),
-    ),
-  );
-  if (response.status < 200 || response.status >= 300) {
-    const text = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")));
-    const parsedError = yield* decodeRemoteHttpError(text).pipe(
-      Effect.catch(() => Effect.succeed(null)),
-    );
-    const message =
-      parsedError?.error && parsedError.error.trim().length > 0
-        ? parsedError.error
-        : text || `SSH forwarded request failed (${response.status}).`;
-    return yield* new SshHttpBridgeError({
-      status: response.status,
-      message: `[ssh_http:${response.status}] ${message} (${input.method ?? "GET"} ${requestUrl.toString()})`,
     });
-  }
-  return (yield* response.json.pipe(
-    Effect.mapError(
-      (cause) =>
-        new SshHttpBridgeError({
-          message: `SSH forwarded endpoint ${requestUrl.toString()} returned invalid JSON.`,
-          cause,
-        }),
-    ),
-  )) as T;
-});
+  },
+);
 
 const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(function* () {
   const net = yield* NetService.NetService;
@@ -1138,7 +1069,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
-  const tunnelCommand = ["ssh", ...args];
+  const tunnelCommand = [SSH_COMMAND, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
@@ -1151,9 +1082,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make("ssh", args, {
+      ChildProcess.make(SSH_COMMAND, args, {
         env: childEnvironment,
-        shell: process.platform === "win32",
         stdin: {
           stream: Stream.empty,
           endOnDone: true,
@@ -1753,10 +1683,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
 });
 
+/**
+ * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,
   SshEnvironmentManagerShape
->()("@t3tools/ssh/SshEnvironmentManager") {
+>()("@t3tools/ssh/tunnel/SshEnvironmentManager") {
   static readonly layer = (options: SshEnvironmentManagerOptions = {}) =>
     Layer.effect(SshEnvironmentManager, makeSshEnvironmentManager(options));
 }

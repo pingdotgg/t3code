@@ -1,6 +1,7 @@
 import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 
-import { resetGitStatusStateForTests } from "./lib/gitStatusState";
+import { resetVcsStatusStateForTests } from "./lib/vcsStatusState";
 import { resetSourceControlDiscoveryStateForTests } from "./lib/sourceControlDiscoveryState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
@@ -14,7 +15,6 @@ import {
   resetEnvironmentServiceForTests,
 } from "./environments/runtime";
 import { getPrimaryKnownEnvironment } from "./environments/primary";
-import { type WsRpcClient } from "./rpc/wsRpcClient";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import {
   readBrowserClientSettings,
@@ -206,7 +206,7 @@ export async function __resetLocalApiForTests() {
   const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
   __resetClientSettingsPersistenceForTests();
   await resetEnvironmentServiceForTests();
-  resetGitStatusStateForTests();
+  resetVcsStatusStateForTests();
   resetSourceControlDiscoveryStateForTests();
   resetRequestLatencyStateForTests();
   resetSavedEnvironmentRegistryStoreForTests();

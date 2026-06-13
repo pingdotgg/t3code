@@ -140,14 +140,16 @@ export function keybindingConflictLabels(
   input: { readonly rowId: string; readonly key: string; readonly when: string },
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
-  const conflicts = rows
-    .filter(
-      (candidate) =>
-        candidate.id !== input.rowId &&
-        candidate.key === input.key &&
-        conflictsWithWhen(candidate.when, input.when),
-    )
-    .map((candidate) => commandLabel(candidate.command));
+  const conflicts: Array<string> = [];
+  for (const candidate of rows) {
+    if (
+      candidate.id !== input.rowId &&
+      candidate.key === input.key &&
+      conflictsWithWhen(candidate.when, input.when)
+    ) {
+      conflicts.push(commandLabel(candidate.command));
+    }
+  }
   return [...new Set(conflicts)].toSorted();
 }
 
@@ -274,12 +276,13 @@ export function commandLabel(command: KeybindingCommand): string {
 }
 
 function titleCaseCommandSegment(segment: string): string {
-  return segment
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(" ");
+  const words: Array<string> = [];
+  for (const part of segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[-_\s]+/)) {
+    if (part.length > 0) {
+      words.push(part.slice(0, 1).toUpperCase() + part.slice(1));
+    }
+  }
+  return words.join(" ");
 }
 
 export function normalizeShortcutKeyToken(key: string): string | null {

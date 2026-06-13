@@ -21,7 +21,7 @@ export class AzureDevOpsCliError extends Schema.TaggedErrorClass<AzureDevOpsCliE
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -94,7 +94,7 @@ export interface AzureDevOpsCliShape {
 }
 
 export class AzureDevOpsCli extends Context.Service<AzureDevOpsCli, AzureDevOpsCliShape>()(
-  "t3/source-control/AzureDevOpsCli",
+  "t3/sourceControl/AzureDevOpsCli",
 ) {}
 
 function errorText(error: VcsError | unknown): string {
@@ -208,10 +208,13 @@ function parseRepositorySpecifier(repository: string): {
   readonly project: string | null;
   readonly name: string;
 } {
-  const parts = repository
-    .split("/")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const parts: Array<string> = [];
+  for (const part of repository.split("/")) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) {
+      parts.push(trimmed);
+    }
+  }
   return {
     project: parts.length > 1 ? (parts.at(-2) ?? null) : null,
     name: parts.at(-1) ?? repository.trim(),

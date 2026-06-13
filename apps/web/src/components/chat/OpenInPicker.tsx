@@ -146,7 +146,8 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       value: "file-manager",
     },
   ];
-  return baseOptions.filter((option) => availableEditors.includes(option.value));
+  const availableEditorSet = new Set(availableEditors);
+  return baseOptions.filter((option) => availableEditorSet.has(option.value));
 };
 
 export const OpenInPicker = memo(function OpenInPicker({

@@ -263,7 +263,7 @@ export interface AcpClientShape {
 }
 
 export class AcpClient extends Context.Service<AcpClient, AcpClientShape>()(
-  "effect-acp/AcpClient",
+  "effect-acp/client/AcpClient",
 ) {}
 
 interface AcpCoreRequestHandlers {

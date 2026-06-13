@@ -116,7 +116,7 @@ export interface DesktopBackendManagerShape {
 export class DesktopBackendManager extends Context.Service<
   DesktopBackendManager,
   DesktopBackendManagerShape
->()("t3/desktop/BackendManager") {}
+>()("@t3tools/desktop/backend/DesktopBackendManager") {}
 
 const { logWarning: logBackendManagerWarning, logError: logBackendManagerError } =
   DesktopObservability.makeComponentLogger("desktop-backend-manager");
@@ -329,9 +329,19 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
         }
 
         yield* Ref.set(desktopState.backendReady, false);
-        const config = yield* configuration.resolve;
+        const config = yield* configuration.resolve.pipe(
+          Effect.tapError((error) =>
+            logBackendManagerError("failed to generate desktop backend configuration", {
+              cause: error.message,
+            }),
+          ),
+          Effect.option,
+        );
+        if (Option.isNone(config)) {
+          return;
+        }
         const entryExists = yield* fileSystem
-          .exists(config.entryPath)
+          .exists(config.value.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
 
         yield* cancelRestart;
@@ -339,11 +349,11 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           ...latest,
           desiredRunning: true,
           ready: false,
-          config: Option.some(config),
+          config: Option.some(config.value),
         }));
 
         if (!entryExists) {
-          yield* scheduleRestart(`missing server entry at ${config.entryPath}`);
+          yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
           return;
         }
 
@@ -425,7 +435,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
         });
 
         const program = runBackendProcess({
-          ...config,
+          ...config.value,
           onStarted: Effect.fn("desktop.backendManager.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
@@ -433,7 +443,7 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
             }));
             yield* backendOutputLog.writeSessionBoundary({
               phase: "START",
-              details: `pid=${pid} port=${config.bootstrap.port} cwd=${config.cwd}`,
+              details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
           }),
           onReady: Effect.fn("desktop.backendManager.onReady")(function* () {

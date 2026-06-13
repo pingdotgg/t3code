@@ -14,6 +14,7 @@ import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
@@ -24,6 +25,7 @@ const DEFAULT_MAX_FILES = 10;
 const DEFAULT_BATCH_WINDOW_MS = 200;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
+const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
@@ -87,26 +89,13 @@ function resolveStreamLabel(stream: EventNdjsonStream): string {
 const toLogMessage = Effect.fn("toLogMessage")(function* (
   event: unknown,
 ): Effect.fn.Return<string | undefined> {
-  const serialized = yield* Effect.sync(() => {
-    try {
-      return { ok: true as const, value: JSON.stringify(event) };
-    } catch (error) {
-      return { ok: false as const, error };
-    }
-  });
-
-  if (!serialized.ok) {
-    yield* logWarning("failed to serialize provider event log record", {
-      error: serialized.error,
-    });
-    return undefined;
-  }
-
-  if (typeof serialized.value !== "string") {
-    return undefined;
-  }
-
-  return serialized.value;
+  return yield* encodeUnknownJsonString(event).pipe(
+    Effect.catch((error) =>
+      logWarning("failed to serialize provider event log record", { error }).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
 });
 
 const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {

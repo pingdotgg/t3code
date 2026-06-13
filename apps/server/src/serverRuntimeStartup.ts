@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -31,7 +32,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -170,6 +171,8 @@ export const resolveWelcomeBase = Effect.gen(function* () {
 });
 
 export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const randomUUID = crypto.randomUUIDv4;
   const serverConfig = yield* ServerConfig;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -188,12 +191,12 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
       if (Option.isNone(existingProject)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
-        nextProjectId = ProjectId.make(crypto.randomUUID());
+        nextProjectId = ProjectId.make(yield* randomUUID);
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
         yield* orchestrationEngine.dispatch({
           type: "project.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* randomUUID),
           projectId: nextProjectId,
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
@@ -210,10 +213,10 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
       if (Option.isNone(existingThreadId)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const createdThreadId = ThreadId.make(crypto.randomUUID());
+        const createdThreadId = ThreadId.make(yield* randomUUID);
         yield* orchestrationEngine.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(crypto.randomUUID()),
+          commandId: CommandId.make(yield* randomUUID),
           threadId: createdThreadId,
           projectId: nextProjectId,
           title: "New thread",
@@ -241,7 +244,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
-  const serverAuth = yield* ServerAuth;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
     serverConfig.host && !isWildcardHost(serverConfig.host)
@@ -286,6 +289,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
+  const crypto = yield* Crypto.Crypto;
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
@@ -358,7 +362,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         runStartupPhase(
           "welcome.autobootstrap",
           Effect.gen(function* () {
-            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets;
+            const bootstrapTargets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+            );
             if (!bootstrapTargets.bootstrapProjectId && !bootstrapTargets.bootstrapThreadId) {
               return;
             }

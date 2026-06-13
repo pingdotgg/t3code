@@ -1,10 +1,9 @@
 /**
  * CursorDriver — `ProviderDriver` for the Cursor Agent (`agent`) runtime.
  *
- * Cursor exposes an ACP-based CLI. The driver is still a plain value, but
- * its snapshot uses `makeManagedServerProvider`'s optional `enrichSnapshot`
- * hook to run the slow ACP model-capability probe in the background without
- * blocking the initial `ready`-state publish.
+ * Cursor exposes an ACP-based CLI. Model catalog and capability refreshes
+ * happen during the managed provider status check via Cursor's
+ * `list_available_models` extension method.
  *
  * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
  * drives `runtime.prompt` with a structured-output schema and collects the
@@ -14,6 +13,7 @@
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -61,6 +61,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
 
 export type CursorDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
@@ -137,20 +138,17 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialCursorProviderSnapshot(settings).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        // Preserve the background ACP model-capability probe that used to
-        // live on `CursorProviderLive`. Only fires when the snapshot reports
-        // an authenticated, enabled provider with at least one non-custom
-        // model whose capabilities haven't been captured yet.
+        // Model catalog and capabilities come exclusively from Cursor's
+        // list_available_models extension method during provider checks.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichCursorSnapshot({
             settings,
-            environment: processEnv,
             snapshot: currentSnapshot,
             maintenanceCapabilities,
             publishSnapshot,
             stampIdentity,
             httpClient,
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          }),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

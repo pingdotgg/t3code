@@ -1,0 +1,80 @@
+name: Deploy T3 Connect relay
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: none
+  statuses: write
+
+concurrency:
+  group: relay-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_relay:
+    name: Deploy production relay
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    environment:
+      name: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
+      AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
+      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
+      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+      APNS_BUNDLE_ID: ${{ vars.APNS_BUNDLE_ID }}
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Deploy production relay stage
+        id: deploy
+        run: vp run --filter t3code-relay deploy --stage prod --yes --github-output
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
+          PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
+          AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+
+      - name: Publish relay deploy commit status
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const result = "${{ steps.deploy.outputs.result }}";
+            const changed = "${{ steps.deploy.outputs.changed }}" === "true";
+            const description = changed
+              ? "Relay production deploy applied infrastructure changes."
+              : result === "noop"
+                ? "Relay production deploy was a no-op."
+                : `Relay production deploy completed with result: ${result}.`;
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: "success",
+              context: "Relay deploy / production",
+              description,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });

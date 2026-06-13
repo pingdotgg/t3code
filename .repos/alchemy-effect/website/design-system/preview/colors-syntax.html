@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Syntax</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .block {
+        background: var(--alc-bg-code);
+        color: var(--alc-code-var);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        padding: 16px 18px;
+        font-family: var(--alc-font-mono);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .k {
+        color: var(--alc-code-keyword);
+      }
+      .s {
+        color: var(--alc-code-string);
+      }
+      .f {
+        color: var(--alc-code-fn);
+      }
+      .t {
+        color: var(--alc-code-type);
+      }
+      .c {
+        color: var(--alc-code-comment);
+        font-style: italic;
+      }
+      .v {
+        color: var(--alc-code-var);
+      }
+      .n {
+        color: var(--alc-code-literal);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="block">
+        <span class="c">// github-dark-dimmed</span><br />
+        <span class="k">import</span> * <span class="k">as</span>
+        <span class="v">Cloudflare</span> <span class="k">from</span>
+        <span class="s">"alchemy/Cloudflare"</span>;<br />
+        <br />
+        <span class="k">const</span> <span class="v">Bucket</span> =
+        <span class="v">Cloudflare</span>.<span class="f">R2Bucket</span>(<span
+          class="s"
+          >"Bucket"</span
+        >);<br />
+        <br />
+        <span class="k">export default</span>
+        <span class="v">Alchemy</span>.<span class="f">Stack</span>(<span
+          class="s"
+          >"MyApp"</span
+        >, {<br />
+        &nbsp;&nbsp;<span class="v">providers</span>:
+        <span class="v">Cloudflare</span>.<span class="f">providers</span
+        >(),<br />
+        }, <span class="v">Effect</span>.<span class="f">gen</span>(<span
+          class="k"
+          >function</span
+        >* () {<br />
+        &nbsp;&nbsp;<span class="k">const</span> <span class="v">bucket</span> =
+        <span class="k">yield</span>* <span class="v">Bucket</span>;<br />
+        &nbsp;&nbsp;<span class="k">return</span> { <span class="v">url</span>:
+        <span class="v">bucket</span>.<span class="v">bucketName</span> };<br />
+        }));
+      </div>
+    </div>
+  </body>
+</html>

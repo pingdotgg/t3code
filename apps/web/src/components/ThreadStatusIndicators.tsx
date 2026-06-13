@@ -7,9 +7,9 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { useGitStatus } from "../lib/gitStatusState";
+import { useVcsStatus } from "../lib/vcsStatusState";
 import { type AppState, selectProjectByRef, useStore } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useThreadRunningTerminalIds } from "../terminalSessionState";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
@@ -81,7 +81,7 @@ export function resolveThreadPr(
 }
 
 export function terminalStatusFromRunningIds(
-  runningTerminalIds: string[],
+  runningTerminalIds: ReadonlyArray<string>,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
@@ -102,32 +102,45 @@ export function ThreadStatusLabel({
 }) {
   if (compact) {
     return (
-      <span
-        title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
-      >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
-        <span className="sr-only">{status.label}</span>
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              aria-label={status.label}
+              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+            />
+          }
+        >
+          <span
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-pulse" : ""
+            }`}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{status.label}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <span
-      title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden md:inline">{status.label}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={status.label}
+            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+          />
+        }
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-pulse" : ""
+          }`}
+        />
+        <span className="hidden md:inline">{status.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -150,7 +163,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     ),
   );
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const gitStatus = useGitStatus({
+  const gitStatus = useVcsStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
   });
@@ -195,11 +208,10 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const runningTerminalIds = useTerminalStateStore(
-    (state) =>
-      selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,
-  );
+  const runningTerminalIds = useThreadRunningTerminalIds({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
@@ -221,14 +233,20 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       {terminalStatus ? (
-        <span
-          role="img"
-          aria-label={terminalStatus.label}
-          title={terminalStatus.label}
-          className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-        >
-          <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              />
+            }
+          >
+            <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {isRemoteThread ? (
         <Tooltip>

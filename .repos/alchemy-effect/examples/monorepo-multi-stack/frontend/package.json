@@ -1,0 +1,31 @@
+{
+  "name": "@monorepo-multi-stack/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/monorepo-multi-stack/frontend"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@types/react-dom": "^19.2.3",
+    "@types/react": "^19.2.14",
+    "alchemy": "workspace:*",
+    "@monorepo-multi-stack/backend": "workspace:*",
+    "effect": "catalog:",
+    "react-dom": "^19.2.6",
+    "react": "^19.2.6",
+    "vite": "catalog:"
+  },
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "logs": "alchemy logs",
+    "tail": "alchemy tail",
+    "test": "bun test"
+  }
+}

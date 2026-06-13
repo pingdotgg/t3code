@@ -18,6 +18,8 @@ import {
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
   type VcsInitInput,
   type VcsListRefsInput,
   type VcsListRefsResult,
@@ -60,6 +62,17 @@ export interface GitStatusDetails {
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;
   workingTree: VcsStatusResult["workingTree"];
+  hasUpstream: boolean;
+  aheadCount: number;
+  behindCount: number;
+  aheadOfDefaultCount: number;
+}
+
+export interface GitRemoteStatusDetails {
+  isRepo: boolean;
+  isDefaultBranch: boolean;
+  branch: string | null;
+  upstreamRef: string | null;
   hasUpstream: boolean;
   aheadCount: number;
   behindCount: number;
@@ -160,6 +173,9 @@ export interface GitVcsDriverShape {
   readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
   readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
   readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+  readonly statusDetailsRemote: (
+    cwd: string,
+  ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
   readonly prepareCommitContext: (
     cwd: string,
     filePaths?: readonly string[],
@@ -179,6 +195,9 @@ export interface GitVcsDriverShape {
     cwd: string,
     baseRef: string,
   ) => Effect.Effect<GitRangeContext, GitCommandError>;
+  readonly getReviewDiffPreview: (
+    input: ReviewDiffPreviewInput,
+  ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
   readonly readConfigValue: (
     cwd: string,
     key: string,
@@ -398,7 +417,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       "GitVcsDriver.detectRepository.commonDir",
       cwd,
       ["rev-parse", "--git-common-dir"],
-    ).pipe(Effect.catch(() => Effect.succeed(null)));
+    ).pipe(Effect.orElseSucceed(() => null));
 
     return {
       kind: "git" as const,

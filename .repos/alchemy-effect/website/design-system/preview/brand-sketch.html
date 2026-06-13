@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Sketch diagram</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .wrap {
+        background: var(--alc-bg-elev-1);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        filter: invert(0);
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+        /* hand-drawn source is black ink on white — tint toward walnut to match the warm system */
+        mix-blend-mode: multiply;
+        opacity: 0.85;
+      }
+      .meta {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        color: var(--alc-fg-3);
+        text-align: center;
+        margin-top: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="wrap">
+        <img
+          src="../assets/diagram-triple.png"
+          alt="Function → Binding → Resource"
+        />
+      </div>
+      <div class="meta">
+        Signature hand-drawn diagram · Caveat labels · walnut ink on parchment
+      </div>
+    </div>
+  </body>
+</html>

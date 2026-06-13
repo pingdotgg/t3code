@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -23,13 +24,31 @@ import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
+
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+
+const WorkspaceConfig = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
+
+const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const repoRoot = yield* RepoRoot;
+  const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
+  return yield* decodeWorkspaceConfig(workspaceYaml);
+});
 
 interface DesktopBuildIconAssets {
   readonly macIconPng: string;
@@ -105,6 +124,36 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     ),
   );
 
+const COMMAND_OUTPUT_TAIL_LENGTH = 20_000;
+
+function appendOutputTail(acc: string, chunk: string): string {
+  const next = acc + chunk;
+  return next.length > COMMAND_OUTPUT_TAIL_LENGTH ? next.slice(-COMMAND_OUTPUT_TAIL_LENGTH) : next;
+}
+
+function formatOutputSection(label: string, output: string): string | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+  return `${label} tail:\n${trimmed}`;
+}
+
+const collectCommandStream = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  output: NodeJS.WriteStream,
+  verbose: boolean,
+): Effect.Effect<string, E> =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.runFoldEffect(
+      () => "",
+      (acc, chunk) =>
+        Effect.as(
+          verbose ? Effect.sync(() => output.write(chunk)) : Effect.void,
+          appendOutputTail(acc, chunk),
+        ),
+    ),
+  );
+
 const spawnAndCollectOutput = Effect.fn("spawnAndCollectOutput")(function* (
   command: ChildProcess.Command,
 ) {
@@ -129,13 +178,11 @@ const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRo
       cwd: repoRoot,
     }),
   ).pipe(
-    Effect.catch(() =>
-      Effect.succeed({
-        stdout: "",
-        stderr: "",
-        exitCode: 1,
-      }),
-    ),
+    Effect.orElseSucceed(() => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    })),
   );
 
   if (result.exitCode !== 0) {
@@ -171,13 +218,11 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
   const probe = yield* spawnAndCollectOutput(
     ChildProcess.make("python", ["-c", "import sys;print(sys.executable)"]),
   ).pipe(
-    Effect.catch(() =>
-      Effect.succeed({
-        stdout: "",
-        stderr: "",
-        exitCode: 1,
-      }),
-    ),
+    Effect.orElseSucceed(() => ({
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    })),
   );
 
   if (probe.exitCode !== 0) {
@@ -212,6 +257,7 @@ interface StagePackageJson {
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
   readonly private: true;
+  readonly packageManager: string;
   readonly description: string;
   readonly author: string;
   readonly main: string;
@@ -221,6 +267,29 @@ interface StagePackageJson {
     readonly electron: string;
   };
   readonly overrides: Record<string, unknown>;
+  readonly pnpm?: {
+    readonly patchedDependencies?: Record<string, string>;
+  };
+}
+
+export function createStagePnpmConfig(
+  patchedDependencies: Record<string, string>,
+  dependencies: Record<string, unknown>,
+): StagePackageJson["pnpm"] | undefined {
+  const stagePatchedDependencies = Object.fromEntries(
+    Object.entries(patchedDependencies).filter(([patchKey]) =>
+      Object.hasOwn(dependencies, getPatchedDependencyPackageName(patchKey)),
+    ),
+  );
+
+  return Object.keys(stagePatchedDependencies).length > 0
+    ? { patchedDependencies: stagePatchedDependencies }
+    : undefined;
+}
+
+function getPatchedDependencyPackageName(patchKey: string): string {
+  const versionSeparator = patchKey.lastIndexOf("@");
+  return versionSeparator > 0 ? patchKey.slice(0, versionSeparator) : patchKey;
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
@@ -278,7 +347,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 ) {
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
-  const env = yield* BuildEnvConfig.asEffect();
+  const env = yield* BuildEnvConfig;
 
   const platform = mergeOptions(
     input.platform,
@@ -336,20 +405,33 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   } satisfies ResolvedBuildOptions;
 });
 
-const commandOutputOptions = (verbose: boolean) =>
-  ({
-    stdout: verbose ? "inherit" : "ignore",
-    stderr: "inherit",
-  }) as const;
-
-const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
+const runCommand = Effect.fn("runCommand")(function* (
+  command: ChildProcess.Command,
+  options: {
+    readonly label?: string;
+    readonly verbose: boolean;
+  },
+) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* commandSpawner.spawn(command);
-  const exitCode = yield* child.exitCode;
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [
+      collectCommandStream(child.stdout, process.stdout, options.verbose),
+      collectCommandStream(child.stderr, process.stderr, options.verbose),
+      child.exitCode.pipe(Effect.map(Number)),
+    ],
+    { concurrency: "unbounded" },
+  );
 
   if (exitCode !== 0) {
+    const outputSections = [
+      options.label ? `Command: ${options.label}` : undefined,
+      formatOutputSection("stdout", stdout),
+      formatOutputSection("stderr", stderr),
+    ].filter((section): section is string => section !== undefined);
+    const outputSuffix = outputSections.length > 0 ? `\n\n${outputSections.join("\n\n")}` : "";
     return yield* new BuildScriptError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
+      message: `Command exited with non-zero exit code (${exitCode})${outputSuffix}`,
     });
   }
 });
@@ -369,24 +451,25 @@ function generateMacIconSet(
     const iconSizes = [16, 32, 128, 256, 512] as const;
     for (const size of iconSizes) {
       yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+        ChildProcess.make(
+          {},
+        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+        { label: `sips icon ${size}x${size}`, verbose },
       );
 
       const retinaSize = size * 2;
       yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+        ChildProcess.make(
+          {},
+        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+        { label: `sips icon ${size}x${size}@2x`, verbose },
       );
     }
 
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`iconutil -c icns ${iconsetDir} -o ${targetIcns}`,
-    );
+    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
+      label: "iconutil icns",
+      verbose,
+    });
   });
 }
 
@@ -407,17 +490,16 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
 
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`,
-    );
+    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
+      label: "sips mac icon",
+      verbose,
+    });
 
     yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
   });
 }
 
-function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
+function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -429,7 +511,45 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
 
     const iconPath = path.join(stageResourcesDir, "icon.png");
     yield* fs.copyFile(sourcePng, iconPath);
+
+    const iconsDir = path.join(stageResourcesDir, "icons");
+    yield* fs.makeDirectory(iconsDir, { recursive: true });
+    for (const iconSize of LINUX_ICON_SIZES) {
+      yield* stageLinuxIconSize(
+        sourcePng,
+        path.join(iconsDir, `${iconSize}x${iconSize}.png`),
+        iconSize,
+        verbose,
+      );
+    }
   });
+}
+
+function stageLinuxIconSize(
+  sourcePng: string,
+  targetPng: string,
+  iconSize: number,
+  verbose: boolean,
+) {
+  const resize = (command: string) =>
+    runCommand(
+      ChildProcess.make(command, [sourcePng, "-resize", `${iconSize}x${iconSize}`, targetPng]),
+      { label: `${command} linux icon ${iconSize}x${iconSize}`, verbose },
+    );
+
+  return resize("magick").pipe(
+    Effect.catch(() =>
+      resize("convert").pipe(
+        Effect.mapError(
+          () =>
+            new BuildScriptError({
+              message:
+                "ImageMagick is required to generate Linux desktop icon sizes. Install ImageMagick so either `magick` or `convert` is available.",
+            }),
+        ),
+      ),
+    ),
+  );
 }
 
 function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
@@ -593,6 +713,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      protocols: [
+        {
+          name: "T3 Code",
+          schemes: ["t3code"],
+        },
+      ],
     };
   }
 
@@ -600,7 +726,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.linux = {
       target: [target],
       executableName: "t3code",
-      icon: "icon.png",
+      icon: "icons",
       category: "Development",
       desktop: {
         entry: {
@@ -639,7 +765,7 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 
   if (platform === "linux") {
-    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng);
+    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng, verbose);
     return;
   }
 
@@ -654,6 +780,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
+  const workspaceConfig = yield* readWorkspaceConfig();
+  const workspaceCatalog = workspaceConfig.catalog ?? {};
+  const workspaceOverrides = workspaceConfig.overrides ?? {};
+  const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -672,26 +802,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const resolvedOverrides = yield* Effect.try({
-    try: () =>
-      resolveCatalogDependencies(
-        rootPackageJson.overrides,
-        rootPackageJson.workspaces.catalog,
-        "apps/desktop",
-      ),
+    try: () => resolveCatalogDependencies(workspaceOverrides, workspaceCatalog, "apps/desktop"),
     catch: (cause) =>
       new BuildScriptError({
-        message: "Could not resolve overrides from package.json.",
+        message: "Could not resolve overrides from pnpm-workspace.yaml.",
         cause,
       }),
   });
 
   const resolvedServerDependencies = yield* Effect.try({
-    try: () =>
-      resolveCatalogDependencies(
-        serverDependencies,
-        rootPackageJson.workspaces.catalog,
-        "apps/server",
-      ),
+    try: () => resolveCatalogDependencies(serverDependencies, workspaceCatalog, "apps/server"),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve production dependencies from apps/server/package.json.",
@@ -699,11 +819,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       }),
   });
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
-    try: () =>
-      resolveDesktopRuntimeDependencies(
-        desktopPackageJson.dependencies,
-        rootPackageJson.workspaces.catalog,
-      ),
+    try: () => resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, workspaceCatalog),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",
@@ -733,24 +849,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* runCommand(
       ChildProcess.make({
         cwd: repoRoot,
-        ...commandOutputOptions(options.verbose),
-        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+        // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
         shell: process.platform === "win32",
-      })`bun run build:desktop`,
+      })`vp run build:desktop`,
+      { label: "vp run build:desktop", verbose: options.verbose },
     );
   }
 
   for (const [label, dir] of Object.entries(distDirs)) {
     if (!(yield* fs.exists(dir))) {
       return yield* new BuildScriptError({
-        message: `Missing ${label} at ${dir}. Run 'bun run build:desktop' first.`,
+        message: `Missing ${label} at ${dir}. Run 'vp run build:desktop' first.`,
       });
     }
   }
 
   if (!(yield* fs.exists(bundledClientEntry))) {
     return yield* new BuildScriptError({
-      message: `Missing bundled server client at ${bundledClientEntry}. Run 'bun run build:desktop' first.`,
+      message: `Missing bundled server client at ${bundledClientEntry}. Run 'vp run build:desktop' first.`,
     });
   }
 
@@ -778,12 +894,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
+  const stageDependencies = {
+    ...resolvedServerDependencies,
+    ...resolvedDesktopRuntimeDependencies,
+  };
+  const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
+    packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
@@ -795,27 +917,29 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.mockUpdates,
       options.mockUpdateServerPort,
     ),
-    dependencies: {
-      ...resolvedServerDependencies,
-      ...resolvedDesktopRuntimeDependencies,
-    },
+    dependencies: stageDependencies,
     devDependencies: {
       electron: electronVersion,
     },
     overrides: resolvedOverrides,
+    ...(stagePnpmConfig ? { pnpm: stagePnpmConfig } : {}),
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
+  if (Object.keys(workspacePatchedDependencies).length > 0) {
+    yield* fs.copy(path.join(repoRoot, "patches"), path.join(stageAppDir, "patches"));
+  }
+
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+      // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --omit optional`,
+    })`vp install --prod --no-optional`,
+    { label: "vp install --prod --no-optional", verbose: options.verbose },
   );
 
   const buildEnv: NodeJS.ProcessEnv = {
@@ -844,18 +968,27 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.npm_config_msvs_version = buildEnv.npm_config_msvs_version ?? "2022";
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
+  if (options.verbose) {
+    buildEnv.DEBUG =
+      buildEnv.DEBUG === undefined || buildEnv.DEBUG === ""
+        ? "electron-builder,electron-builder:*"
+        : `${buildEnv.DEBUG},electron-builder,electron-builder:*`;
+  }
 
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
   yield* runCommand(
     ChildProcess.make({
-      cwd: stageAppDir,
+      cwd: repoRoot,
       env: buildEnv,
-      ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bun x --install=fallback electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`vp exec --filter @t3tools/desktop -- electron-builder --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    {
+      label: `vp exec --filter @t3tools/desktop -- electron-builder --projectDir ${stageAppDir} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+      verbose: options.verbose,
+    },
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
@@ -871,7 +1004,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const copiedArtifacts: string[] = [];
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
-    const stat = yield* fs.stat(from).pipe(Effect.catch(() => Effect.succeed(null)));
+    const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));
     if (!stat || stat.type !== "File") continue;
 
     const to = path.join(options.outputDir, entry);
@@ -915,7 +1048,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   skipBuild: Flag.boolean("skip-build").pipe(
     Flag.withDescription(
-      "Skip `bun run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
+      "Skip `vp run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
     ),
     Flag.optional,
   ),

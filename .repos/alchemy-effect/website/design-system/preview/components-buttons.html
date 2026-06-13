@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Buttons</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      body {
+        padding: 20px 24px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+      }
+      .label {
+        font-family: var(--alc-font-mono);
+        font-size: 10px;
+        color: var(--alc-fg-3);
+        width: 72px;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .btn {
+        font-family: var(--alc-font-sans);
+        font-size: 14px;
+        font-weight: 500;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .primary {
+        background: var(--alc-accent);
+        color: var(--alc-fg-on-accent);
+      }
+      .primary:hover {
+        background: var(--alc-accent-deep);
+      }
+      .secondary {
+        background: var(--alc-bg-elev-1);
+        border-color: var(--alc-hairline-3);
+        color: var(--alc-fg-1);
+      }
+      .secondary:hover {
+        border-color: var(--alc-accent);
+        color: var(--alc-accent-deep);
+      }
+      .ghost {
+        background: transparent;
+        color: var(--alc-fg-2);
+      }
+      .ghost:hover {
+        background: var(--alc-bg-sunk);
+        color: var(--alc-fg-1);
+      }
+      .danger {
+        background: transparent;
+        border-color: rgba(179, 70, 46, 0.4);
+        color: var(--alc-danger);
+      }
+      .focus {
+        outline: 2px solid var(--alc-accent);
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div class="label">primary</div>
+        <a class="btn primary">Get Started →</a>
+        <a class="btn primary focus">Focused</a>
+      </div>
+      <div class="row">
+        <div class="label">secondary</div>
+        <a class="btn secondary">Tutorial</a>
+        <a class="btn secondary">View on GitHub</a>
+      </div>
+      <div class="row">
+        <div class="label">ghost</div>
+        <a class="btn ghost">Learn more</a>
+        <a class="btn ghost">Docs</a>
+      </div>
+      <div class="row">
+        <div class="label">danger</div>
+        <a class="btn danger">Destroy stack</a>
+      </div>
+    </div>
+  </body>
+</html>

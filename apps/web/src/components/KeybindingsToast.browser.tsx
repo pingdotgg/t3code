@@ -20,7 +20,16 @@ import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
 import * as Schema from "effect/Schema";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -33,12 +42,38 @@ import { useStore } from "../store";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
-vi.mock("../lib/gitStatusState", () => ({
-  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
-  useGitStatuses: () => new Map(),
-  refreshGitStatus: () => Promise.resolve(null),
-  resetGitStatusStateForTests: () => undefined,
-}));
+vi.mock("../lib/vcsStatusState", () => {
+  const status = {
+    data: {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: true,
+      refName: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    },
+    error: null,
+    cause: null,
+    isPending: false,
+  };
+
+  return {
+    getVcsStatusSnapshot: () => status,
+    useVcsStatus: () => status,
+    useVcsStatuses: () => new Map(),
+    refreshVcsStatus: () => Promise.resolve(null),
+    resetVcsStatusStateForTests: () => undefined,
+  };
+});
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
@@ -70,7 +105,7 @@ function createBaseServerConfig(): ServerConfig {
     auth: {
       policy: "loopback-browser",
       bootstrapMethods: ["one-time-token"],
-      sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+      sessionMethods: ["browser-session-cookie", "bearer-access-token"],
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",
@@ -123,6 +158,7 @@ function createBaseServerConfig(): ServerConfig {
           launchArgs: "",
         },
         cursor: { enabled: true, binaryPath: "", apiEndpoint: "", customModels: [] },
+        grok: { enabled: true, binaryPath: "", customModels: [] },
         opencode: {
           enabled: true,
           binaryPath: "",

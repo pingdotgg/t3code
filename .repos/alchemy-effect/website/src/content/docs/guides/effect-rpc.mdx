@@ -1,0 +1,698 @@
+---
+title: Effect RPC
+description: Build a typed RPC API with Effect's Rpc module and deploy it as a Cloudflare Worker.
+sidebar:
+  order: 5
+---
+
+The [HTTP API guide](/guides/effect-http-api) showed how to build
+REST-style endpoints with schema validation. Effect RPC takes a
+different angle — you define **procedures** instead of HTTP
+endpoints, and you get a fully typed client for free with no URL
+construction or manual serialization.
+
+The transport is still HTTP under the hood, and both patterns
+produce the same `HttpEffect` type, so the wiring story is
+identical to the HTTP API guide:
+
+1. **Define schemas outside.** Domain types and tagged errors,
+   importable by both server and client.
+2. **Construct the service inside the Worker's Init phase.**
+   `RpcGroup.toLayer` is pure construction — safe to call at plan
+   time. Don't `yield*` the running server; it can't run without a
+   request.
+3. **Return `{ fetch }`** where `fetch` is the `HttpEffect`
+   produced by `RpcServer.toHttpEffect`.
+4. **Bonus:** deploy and call the procedures from a typed client
+   that shares the exact same `RpcGroup` value.
+
+## 1. Define the schemas
+
+Domain model and error types — pure schemas, no runtime concerns:
+
+```typescript
+// src/task.ts
+import * as Schema from "effect/Schema";
+
+export class Task extends Schema.Class<Task>("Task")({
+  id: Schema.String,
+  title: Schema.String,
+  completed: Schema.Boolean,
+}) {}
+
+export class TaskNotFound extends Schema.TaggedClass<TaskNotFound>()(
+  "TaskNotFound",
+  { id: Schema.String },
+) {}
+
+export class CreateTaskFailed extends Schema.TaggedClass<CreateTaskFailed>()(
+  "CreateTaskFailed",
+  { message: Schema.String },
+) {}
+```
+
+RPC errors are schema-backed tagged classes. The client receives
+them as typed values you can `match` on — not raw HTTP status codes.
+
+## 2. Declare the RPCs
+
+Each `Rpc.make` declares one procedure: a name, a payload schema,
+a success schema, and an error schema. `RpcGroup.make` collects them
+into a single value that both the server and the client will share.
+
+```typescript
+// src/rpcs.ts
+import * as Schema from "effect/Schema";
+import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Task, TaskNotFound, CreateTaskFailed } from "./task.ts";
+
+const getTask = Rpc.make("getTask", {
+  success: Task,
+  error: TaskNotFound,
+  payload: { id: Schema.String },
+});
+
+const createTask = Rpc.make("createTask", {
+  success: Task,
+  error: CreateTaskFailed,
+  payload: { title: Schema.String },
+});
+
+export class TaskRpcs extends RpcGroup.make(getTask, createTask) {}
+```
+
+`TaskRpcs` is just a value-level description. Nothing executes yet.
+
+## 3. Build the Worker
+
+Create `src/worker.ts` with an empty Init phase:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    return {};
+  }),
+);
+```
+
+The generator inside `Cloudflare.Worker` is the **Init phase** — it
+runs both at *plan time* and at *runtime*. Only do pure construction
+or resource-binding factories here; never `yield*` work that needs
+an incoming request.
+
+### 3a. Bind an R2 bucket for storage
+
+Tasks need durable storage. Declare an `R2Bucket` resource and bind
+it inside Init — `bind()` returns a typed handle whose `get` /
+`put` / `delete` / `list` methods we'll call from the handlers
+below.
+
+```typescript
+// src/bucket.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Tasks = Cloudflare.R2Bucket("Tasks");
+```
+
+```typescript twoslash
+// @noErrors
++import { Tasks } from "./bucket.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
++   const tasks = yield* Cloudflare.R2Bucket.bind(Tasks);
+
+    return {};
+  }),
+);
+```
+
+We'll provide the runtime side of this binding
+(`Cloudflare.R2BucketBindingLive`) in step 3c when we wire up the
+`fetch` handler.
+
+### 3b. Construct the handlers inside Init
+
+`TaskRpcs.toLayer` takes an `Effect` that returns one handler per
+procedure and produces a `Layer`. Like `HttpApiBuilder.group`, this
+is pure construction — it builds a value, it doesn't run the server.
+
+> Don't `yield* TaskRpcs.toLayer(...)` here. Building a layer is
+> fine, but actually executing the procedures requires an incoming
+> request. Init only constructs; the work happens later, on each
+> `fetch` call.
+
+```typescript twoslash
+// @noErrors
+  Effect.gen(function* () {
+    const tasks = yield* Cloudflare.R2Bucket.bind(Tasks);
+
++   const handlersLayer = TaskRpcs.toLayer({
++     getTask: ({ id }) =>
++       Effect.gen(function* () {
++         const object = yield* tasks.get(id);
++         if (!object) {
++           return yield* Effect.fail(new TaskNotFound({ id }));
++         }
++         return Schema.decodeUnknownSync(Task)(JSON.parse(yield* object.text()));
++       }).pipe(Effect.orDie),
++     createTask: ({ title }) =>
++       Effect.gen(function* () {
++         const task = new Task({
++           id: crypto.randomUUID(),
++           title,
++           completed: false,
++         });
++         yield* tasks.put(task.id, JSON.stringify(task));
++         return task;
++       }).pipe(
++         Effect.catchTag("R2Error", (error) =>
++           Effect.fail(new CreateTaskFailed({ message: error.message })),
++         ),
++       ),
++   });
+
+    return {};
+  }),
+```
+
+Each handler receives the typed payload and returns an `Effect`
+that either succeeds with the declared success schema or fails with
+the declared error schema. `getTask` uses `Effect.orDie` to turn
+unexpected R2 failures into 500s — `TaskNotFound` is the only
+client-visible error. `createTask` maps R2 failures into the
+declared `CreateTaskFailed` error so the client can match on it.
+
+### 3c. Return `{ fetch }`
+
+`RpcServer.toHttpEffect` converts the `RpcGroup` into an
+`HttpEffect` — exactly the type Workers expect for `fetch`. We
+provide two layers to it:
+
+- The `handlersLayer` we just built.
+- `RpcSerialization.layerJson` — tells the server to encode and
+  decode messages as JSON. (Swap for `layerNdjson`, `layerMsgPack`,
+  etc. as needed.)
+
+Unlike the HTTP API approach, RPC doesn't need `HttpPlatform.layer`
+or `Etag.layer` — the RPC server handles message framing internally.
+
+```typescript twoslash
+// @noErrors
+    return {
++     fetch: RpcServer.toHttpEffect(TaskRpcs).pipe(
++       Effect.provide(handlersLayer),
++       Effect.provide(RpcSerialization.layerJson),
++     ),
+    };
+```
+
+### Putting it together
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { Tasks } from "./bucket.ts";
+import { CreateTaskFailed, Task, TaskNotFound } from "./task.ts";
+import { TaskRpcs } from "./rpcs.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const tasks = yield* Cloudflare.R2Bucket.bind(Tasks);
+
+    const handlersLayer = TaskRpcs.toLayer({
+      getTask: ({ id }) =>
+        Effect.gen(function* () {
+          const object = yield* tasks.get(id);
+          if (!object) {
+            return yield* Effect.fail(new TaskNotFound({ id }));
+          }
+          return Schema.decodeUnknownSync(Task)(
+            JSON.parse(yield* object.text()),
+          );
+        }).pipe(Effect.orDie),
+      createTask: ({ title }) =>
+        Effect.gen(function* () {
+          const task = new Task({
+            id: crypto.randomUUID(),
+            title,
+            completed: false,
+          });
+          yield* tasks.put(task.id, JSON.stringify(task));
+          return task;
+        }).pipe(
+          Effect.catchTag("R2Error", (error) =>
+            Effect.fail(new CreateTaskFailed({ message: error.message })),
+          ),
+        ),
+    });
+
+    return {
+      fetch: RpcServer.toHttpEffect(TaskRpcs).pipe(
+        Effect.provide(handlersLayer),
+        Effect.provide(RpcSerialization.layerJson),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2BucketBindingLive)),
+);
+```
+
+## 4. Add to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Worker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "TaskRpc",
+  { providers: Cloudflare.providers() },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url };
+  }),
+);
+```
+
+## 5. Deploy
+
+```sh
+alchemy deploy
+```
+
+## Bonus: call it from a typed client
+
+Because `TaskRpcs` is just a value, the same group drives a fully
+typed client — no codegen. `client.createTask` accepts
+`{ title: string }` and returns `Effect<Task, CreateTaskFailed>`.
+
+```typescript
+// scripts/client.ts
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { FetchHttpClient } from "effect/unstable/http/FetchHttpClient";
+import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { TaskRpcs } from "../src/rpcs.ts";
+
+const program = Effect.gen(function* () {
+  const client = yield* RpcClient.make(TaskRpcs);
+
+  const task = yield* client.createTask({ title: "Write docs" });
+  console.log("Created:", task.id);
+
+  const fetched = yield* client.getTask({ id: task.id });
+  console.log("Fetched:", fetched.title);
+});
+
+Effect.runPromise(
+  program.pipe(
+    Effect.provide(
+      RpcClient.layerProtocolHttp({
+        url: process.env.TASK_RPC_URL!,
+      }),
+    ),
+    Effect.provide(RpcSerialization.layerJson),
+    Effect.provide(FetchHttpClient.layer),
+  ),
+);
+```
+
+Get the URL from the deploy output and run it:
+
+```sh
+TASK_RPC_URL=https://your-worker.workers.dev bun scripts/client.ts
+```
+
+The errors are typed values: `client.getTask` returns
+`Effect<Task, TaskNotFound>`, and you can `Effect.catchTag(
+"TaskNotFound", ...)` to handle the missing case explicitly.
+
+## Bonus: streaming responses
+
+An RPC's `success` doesn't have to be a single value. Wrapping it in
+`RpcSchema.Stream(item, error)` produces a procedure whose handler
+returns a `Stream` and whose client method also returns a `Stream`.
+The wire format is one frame per item, so pick a streaming-friendly
+serialization like `RpcSerialization.layerNdjson` instead of the
+buffered `layerJson` we used above.
+
+```typescript
+// src/rpcs.ts
+import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
+
+const countTasks = Rpc.make("countTasks", {
+  payload: { upto: Schema.Number },
+  success: RpcSchema.Stream(Schema.Number, Schema.Never),
+});
+
+export class TaskRpcs extends RpcGroup.make(getTask, createTask, countTasks) {}
+```
+
+The handler returns a `Stream<number>` directly:
+
+```diff lang="typescript"
++import * as Stream from "effect/Stream";
+
+    const handlersLayer = TaskRpcs.toLayer({
+      getTask: /* ... */,
+      createTask: /* ... */,
++     countTasks: ({ upto }) =>
++       Stream.fromIterable(Array.from({ length: upto }, (_, i) => i + 1)),
+    });
+
+    return {
+      fetch: RpcServer.toHttpEffect(TaskRpcs).pipe(
+        Effect.provide(handlersLayer),
+-       Effect.provide(RpcSerialization.layerJson),
++       Effect.provide(RpcSerialization.layerNdjson),
+      ),
+    };
+```
+
+On the client, `client.countTasks({ upto: 5 })` is a `Stream<number>`
+you consume with `Stream.runCollect`, `Stream.runForEach`, etc. Each
+emitted item arrives as soon as the server flushes its frame.
+
+## Bonus: route some RPCs to a Durable Object
+
+Just like an HTTP API can delegate endpoints to a DO, an `RpcServer`
+can run inside a Durable Object and the Worker can proxy calls to it
+through a typed `RpcClient`. The bridge is the same
+`Cloudflare.toHttpClient(stub)` helper — it just plugs into
+`RpcClient.layerProtocolHttp` instead of `HttpApiClient.makeWith`.
+
+### Split the RPCs into two groups
+
+Put the procedures the DO implements into one group, and the
+Worker-only proxies into another. `merge` produces the public group
+the Worker exposes:
+
+```typescript
+// src/rpcs.ts
+export const InnerRpcs = RpcGroup.make(getTask, createTask);
+
+export const DoRpcs = RpcGroup.make(
+  Rpc.make("getTaskDO", {
+    payload: { id: Schema.String },
+    success: Task,
+    error: TaskNotFound,
+  }),
+  Rpc.make("createTaskDO", {
+    payload: { title: Schema.String },
+    success: Task,
+    error: CreateTaskFailed,
+  }),
+);
+
+export class TaskRpcs extends InnerRpcs.merge(DoRpcs) {}
+```
+
+### Implement the DO
+
+The DO's Init returns `{ fetch }` produced by
+`RpcServer.toHttpEffect(InnerRpcs)`. State lives in
+`state.storage` instead of R2:
+
+```typescript
+// src/object.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import { InnerRpcs } from "./rpcs.ts";
+import { Task, TaskNotFound } from "./task.ts";
+
+export default class TasksObject extends Cloudflare.DurableObjectNamespace<TasksObject>()(
+  "TasksObject",
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
+      const state = yield* Cloudflare.DurableObjectState;
+
+      const handlersLayer = InnerRpcs.toLayer({
+        getTask: ({ id }) =>
+          state.storage.get<Task>(id).pipe(
+            Effect.flatMap((task) =>
+              task ? Effect.succeed(task) : Effect.fail(new TaskNotFound({ id })),
+            ),
+          ),
+        createTask: ({ title }) =>
+          Effect.sync(() => new Task({ id: crypto.randomUUID(), title, completed: false }))
+            .pipe(Effect.tap((task) => state.storage.put(task.id, task))),
+      });
+
+      return {
+        fetch: RpcServer.toHttpEffect(InnerRpcs).pipe(
+          Effect.provide(Layer.mergeAll(handlersLayer, RpcSerialization.layerNdjson)),
+        ),
+      };
+    });
+  }),
+) {}
+```
+
+### Bridge the DO into a typed RpcClient
+
+`Cloudflare.toHttpClient(stub)` produces an `HttpClient` whose
+`execute` calls into the DO's `fetch`. Provide that as the transport
+for `RpcClient.layerProtocolHttp` and you get a typed
+`RpcClient<DoRpcs>`:
+
+```diff lang="typescript"
++import * as HttpClient from "effect/unstable/http/HttpClient";
++import * as RpcClient from "effect/unstable/rpc/RpcClient";
++import TasksObject from "./object.ts";
++import { DoRpcs } from "./rpcs.ts";
+
+  Effect.gen(function* () {
+    const tasks = yield* Cloudflare.R2Bucket.bind(Tasks);
++   const tasksDO = yield* TasksObject;
++
++   const makeDOClient = (id: string = "default") =>
++     RpcClient.make(DoRpcs).pipe(
++       Effect.provide(
++         RpcClient.layerProtocolHttp({ url: "http://localhost" }).pipe(
++           Layer.provide(
++             Layer.succeed(
++               HttpClient.HttpClient,
++               Cloudflare.toHttpClient(tasksDO.getByName(id)),
++             ),
++           ),
++           Layer.provide(RpcSerialization.layerNdjson),
++         ),
++       ),
++     );
+```
+
+The `url` is a placeholder — the request never hits the network; it
+short-circuits to `tasksDO.getByName(id).fetch`.
+
+### Wire the proxy handlers
+
+The Worker's `*DO` handlers just construct a per-request DO client
+and forward the typed call:
+
+```diff lang="typescript"
+    const handlersLayer = TaskRpcs.toLayer({
+      getTask: /* ... R2 implementation ... */,
+      createTask: /* ... R2 implementation ... */,
++     getTaskDO: (payload) =>
++       makeDOClient().pipe(Effect.flatMap((client) => client.getTask(payload))),
++     createTaskDO: (payload) =>
++       makeDOClient().pipe(Effect.flatMap((client) => client.createTask(payload))),
+    });
+```
+
+For streaming RPCs the same pattern works with `Stream.unwrap`:
+
+```typescript
+countTasksDO: (payload) =>
+  Stream.unwrap(
+    makeDOClient().pipe(Effect.map((client) => client.countTasks(payload))),
+  ),
+```
+
+`getTaskDO` / `createTaskDO` now hit the DO; `getTask` / `createTask`
+still hit R2. One `TaskRpcs` value, one client, two storage backends.
+
+## HTTP API vs RPC
+
+Both approaches produce the same `HttpEffect` and wire into a Worker
+the same way. The difference is in how clients interact:
+
+- **HTTP API** — standard REST endpoints, any HTTP client can call
+  them. Best for public APIs.
+- **RPC** — typed procedures, ideal for service-to-service
+  communication where both sides share the schema definitions.
+
+You can even combine them in the same Worker — serve an HTTP API
+for external consumers and RPC for internal services.
+
+## Recap
+
+- **Schemas** (`Task`, `TaskNotFound`, `CreateTaskFailed`) and the
+  **RPC group** (`TaskRpcs`) live outside the Worker — pure
+  descriptions, importable by clients.
+- The **handlers** are constructed inside the Worker's Init phase
+  closure via `TaskRpcs.toLayer`. We build a `Layer` but never
+  `yield*` the running server.
+- The Worker's surface is `{ fetch }`, where `fetch` is the
+  `HttpEffect` produced by `RpcServer.toHttpEffect`.
+- The same `TaskRpcs` value drives a fully typed client via
+  `RpcClient.make`, with errors as typed values rather than HTTP
+  status codes.
+
+## Sugar: `Cloudflare.RpcWorker`
+
+The `Cloudflare.Worker(...)` + `RpcServer.toHttpEffect(...)` recipe is
+identical for every RPC Worker, so Alchemy ships a thin wrapper that
+takes the `RpcGroup` directly in props and removes the `{ fetch }`
+wrapper:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { TaskRpcs } from "./rpcs.ts";
+
+export default class Worker extends Cloudflare.RpcWorker<Worker>()(
+  "Worker",
+  { main: import.meta.filename, schema: TaskRpcs },
+  Effect.gen(function* () {
+    const handlers = TaskRpcs.toLayer({ getTask: /* ... */ });
+    return RpcServer.toHttpEffect(TaskRpcs).pipe(
+      Effect.provide(Layer.mergeAll(handlers, RpcSerialization.layerJson)),
+    );
+  }),
+) {}
+```
+
+Functionally identical to the long form above — yielding the class
+returns the same `Worker` resource — but `props.schema` lets a second
+Worker bind a typed client without re-importing `RpcClient`:
+
+```typescript
+// INIT: register the binding, get the typed client
+const tasks = yield* Cloudflare.RpcWorker.bind(TaskWorker);
+
+// PER-REQUEST: just call methods directly
+proxyGetTask: ({ id }) => tasks.getTask({ id }),
+```
+
+The bind goes over the in-account service binding (not the public
+internet) and the client is typed by `TaskWorker`'s declared schema.
+A `Proxy` defers each call's underlying `RpcClient` construction so
+Cloudflare's "no cross-request I/O" rule is satisfied transparently.
+See the [RPC Worker tutorial](/tutorial/cloudflare/rpc-worker) for an
+end-to-end walk-through.
+
+`RpcWorker` also supports a **modular form** that separates the
+class declaration from its runtime — useful when a consumer Worker
+should be able to import the class for binding without pulling in
+the host's runtime:
+
+```typescript
+// Modular: class declaration carries no impl.
+export class TaskWorker extends Cloudflare.RpcWorker<TaskWorker>()(
+  "TaskWorker",
+  { main: import.meta.filename, schema: TaskRpcs },
+) {}
+
+// Runtime lives in a separate Layer — only the host script imports it.
+export default TaskWorker.make(
+  Effect.gen(function* () {
+    const handlers = TaskRpcs.toLayer({ /* ... */ });
+    return RpcServer.toHttpEffect(TaskRpcs).pipe(
+      Effect.provide(Layer.mergeAll(handlers, RpcSerialization.layerJson)),
+    );
+  }),
+);
+```
+
+The class can also declare DOs it publishes via the second type
+argument — `RpcWorker<Self, Deps>()` mirrors
+`Cloudflare.Worker<Self, Bindings, Deps>` so cross-script
+`Counter.from(TaskWorker)` type-checks.
+
+## Sugar: `Cloudflare.RpcDurableObjectNamespace`
+
+The same shape applies to Durable Objects.
+`Cloudflare.RpcDurableObjectNamespace<Self>()(...)` mirrors the
+regular DO class but the inner Effect returns the piped
+`RpcServer.toHttpEffect(schema)` Effect directly:
+
+```typescript
+export default class Counter extends Cloudflare.RpcDurableObjectNamespace<Counter>()(
+  "Counter",
+  { schema: CounterRpcs },
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
+      const state = yield* Cloudflare.DurableObjectState;
+      const handlers = CounterRpcs.toLayer({ /* ... */ });
+      return RpcServer.toHttpEffect(CounterRpcs).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcSerialization.layerNdjson)),
+      );
+    });
+  }),
+) {}
+```
+
+`counters.getByName(id)` returns an `Effect<RpcClient<CounterRpcs>>`
+(yield it inside a per-request scope) rather than alchemy's built-in
+DO method bridge. Reach for this whenever DO method return values
+cross a `Schema.Class` boundary — the built-in bridge
+`JSON.stringify`s each value and loses class identity, while the RPC
+namespace round-trips through the shared `RpcSerialization` codec.
+
+Like `RpcWorker`, the RPC DO supports a **modular form** that
+separates the class from its runtime so consumer Workers can bind
+to it cross-script:
+
+```typescript
+// counter.ts — class declaration carries no impl.
+export class Counter extends Cloudflare.RpcDurableObjectNamespace<Counter>()(
+  "Counter",
+  { schema: CounterRpcs },
+) {}
+
+// Runtime lives in a separate Layer — only the host Worker imports it.
+export default Counter.make(
+  Effect.gen(function* () {
+    return Effect.gen(function* () {
+      const state = yield* Cloudflare.DurableObjectState;
+      const handlers = CounterRpcs.toLayer({ /* ... */ });
+      return RpcServer.toHttpEffect(CounterRpcs).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcSerialization.layerNdjson)),
+      );
+    });
+  }),
+);
+```
+
+From a consumer Worker, `Counter.from(HostWorker)` produces a
+typed namespace bound to the host's running DO instances:
+
+```typescript
+const counters = yield* Counter.from(HostWorker);
+const stub = yield* counters.getByName("shared");
+yield* stub.setTitle({ title: "hi" });
+```
+
+See the [RPC Durable Object tutorial](/tutorial/cloudflare/rpc-durable-object)
+for the full walk-through.

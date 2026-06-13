@@ -1,0 +1,33 @@
+---
+interface Props {
+  color?: string;
+}
+const { color } = Astro.props;
+---
+
+<div class="alc-eyebrow" style={color ? `color:${color};` : undefined}>
+  <slot />
+</div>
+
+<style>
+  .alc-eyebrow {
+    font-family: var(--alc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--alc-accent-deep);
+    font-weight: 500;
+  }
+  @media (max-width: 480px) {
+    .alc-eyebrow {
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+    }
+  }
+  @media (max-width: 360px) {
+    .alc-eyebrow {
+      font-size: 9px;
+      letter-spacing: 0.06em;
+    }
+  }
+</style>

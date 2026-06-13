@@ -1,0 +1,22 @@
+{
+  "semi": true,
+  "singleQuote": false,
+  "tabWidth": 2,
+  "useTabs": false,
+  "printWidth": 80,
+  "endOfLine": "lf",
+  "ternaries": true,
+  "experimental_sort_imports": {
+    "order": "asc"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "*.min.js",
+    "**/lib/**",
+    "**/mdx/**",
+    "**/*.mdx",
+    "**/*.md",
+    "**/.vendor/**",
+    "**/package.json"
+  ]
+}

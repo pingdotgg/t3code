@@ -7,11 +7,13 @@ import {
   sourceControlDiscoveryStateAtom,
 } from "@t3tools/client-runtime";
 import { EnvironmentId, type SourceControlDiscoveryResult } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import { Atom } from "effect/unstable/reactivity";
+import { useEffect } from "react";
 
 import { readPrimaryEnvironmentDescriptor } from "../environments/primary";
-import { readEnvironmentConnection } from "../environments/runtime";
+import {
+  readEnvironmentConnection,
+  subscribeEnvironmentConnections,
+} from "../environments/runtime";
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
@@ -35,7 +37,7 @@ function sourceControlDiscoveryTarget(
     : { key: environmentId };
 }
 
-export const sourceControlDiscoveryManager = createSourceControlDiscoveryManager({
+const sourceControlDiscoveryManager = createSourceControlDiscoveryManager({
   getRegistry: () => appAtomRegistry,
   getClient: (key) => {
     if (key === SOURCE_CONTROL_DISCOVERY_TARGET.key) {
@@ -59,20 +61,10 @@ export const sourceControlDiscoveryManager = createSourceControlDiscoveryManager
     }
     return null;
   },
+  subscribeClientChanges: subscribeEnvironmentConnections,
+  staleTimeMs: SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS,
+  idleTtlMs: SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS,
 });
-
-const sourceControlDiscoveryAutoRefreshAtom = Atom.family((targetKey: string) =>
-  Atom.make(() =>
-    Effect.promise(() => sourceControlDiscoveryManager.refresh({ key: targetKey })),
-  ).pipe(
-    Atom.swr({
-      staleTime: SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS,
-      revalidateOnMount: true,
-    }),
-    Atom.setIdleTTL(SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS),
-    Atom.withLabel(`source-control-discovery:auto-refresh:${targetKey}`),
-  ),
-);
 
 export function refreshSourceControlDiscovery(
   input?: SourceControlDiscoveryTargetInput,
@@ -97,7 +89,7 @@ export function useSourceControlDiscovery(
     getSourceControlDiscoveryTargetKey(sourceControlDiscoveryTarget(input)) ??
     SOURCE_CONTROL_DISCOVERY_TARGET.key;
 
-  useAtomValue(sourceControlDiscoveryAutoRefreshAtom(targetKey));
+  useEffect(() => sourceControlDiscoveryManager.watch({ key: targetKey }), [targetKey]);
 
   return useAtomValue(sourceControlDiscoveryStateAtom(targetKey));
 }

@@ -24,7 +24,7 @@ export interface DesktopShutdownShape {
 }
 
 export class DesktopShutdown extends Context.Service<DesktopShutdown, DesktopShutdownShape>()(
-  "t3/desktop/Shutdown",
+  "@t3tools/desktop/app/DesktopLifecycle/DesktopShutdown",
 ) {}
 
 const makeShutdown = Effect.gen(function* () {
@@ -61,8 +61,11 @@ export interface DesktopLifecycleShape {
   readonly register: Effect.Effect<void, never, Scope.Scope | DesktopLifecycleRuntimeServices>;
 }
 
+/**
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme
+ */
 export class DesktopLifecycle extends Context.Service<DesktopLifecycle, DesktopLifecycleShape>()(
-  "t3/desktop/Lifecycle",
+  "@t3tools/desktop/app/DesktopLifecycle",
 ) {}
 
 const { logInfo: logLifecycleInfo, logError: logLifecycleError } =

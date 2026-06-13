@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import { AuthSessionId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -60,17 +61,59 @@ export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
  * Current methods:
  * - `browser-session-cookie`: cookie-backed browser session, used by the web
  *   app after bootstrap/pairing
- * - `bearer-session-token`: token-based session suitable for non-cookie or
+ * - `bearer-access-token`: scoped token suitable for non-cookie or
  *   non-browser clients
+ * - `dpop-access-token`: scoped proof-of-possession token used by managed
+ *   relay connections
  */
 export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",
-  "bearer-session-token",
+  "bearer-access-token",
+  "dpop-access-token",
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
-export const AuthSessionRole = Schema.Literals(["owner", "client"]);
-export type AuthSessionRole = typeof AuthSessionRole.Type;
+export const AuthOrchestrationReadScope = "orchestration:read" as const;
+export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
+export const AuthTerminalOperateScope = "terminal:operate" as const;
+export const AuthReviewWriteScope = "review:write" as const;
+export const AuthAccessReadScope = "access:read" as const;
+export const AuthAccessWriteScope = "access:write" as const;
+export const AuthRelayReadScope = "relay:read" as const;
+export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthEnvironmentScope = Schema.Literals([
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+]);
+export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
+export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
+export type AuthEnvironmentScopes = typeof AuthEnvironmentScopes.Type;
+
+export const AuthStandardClientScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthRelayReadScope,
+] as const;
+export const AuthAdministrativeScopes = [
+  ...AuthStandardClientScopes,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayWriteScope,
+] as const;
+
+export const AuthTokenExchangeGrantType =
+  "urn:ietf:params:oauth:grant-type:token-exchange" as const;
+export const AuthAccessTokenType = "urn:ietf:params:oauth:token-type:access_token" as const;
+export const AuthEnvironmentBootstrapTokenType =
+  "urn:t3:params:oauth:token-type:environment-bootstrap" as const;
 
 /**
  * Server-advertised auth capabilities for a specific execution environment.
@@ -100,33 +143,61 @@ export const ServerAuthDescriptor = Schema.Struct({
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
-export const AuthBootstrapInput = Schema.Struct({
+export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,
 });
-export type AuthBootstrapInput = typeof AuthBootstrapInput.Type;
+export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
-export const AuthBootstrapResult = Schema.Struct({
+export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
-  role: AuthSessionRole,
+  scopes: AuthEnvironmentScopes,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
-export type AuthBootstrapResult = typeof AuthBootstrapResult.Type;
+export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
 
-export const AuthBearerBootstrapResult = Schema.Struct({
-  authenticated: Schema.Literal(true),
-  role: AuthSessionRole,
-  sessionMethod: Schema.Literal("bearer-session-token"),
-  expiresAt: Schema.DateTimeUtc,
-  sessionToken: TrimmedNonEmptyString,
-});
-export type AuthBearerBootstrapResult = typeof AuthBearerBootstrapResult.Type;
+export const AuthClientMetadataDeviceType = Schema.Literals([
+  "desktop",
+  "mobile",
+  "tablet",
+  "bot",
+  "unknown",
+]);
+export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.Type;
 
-export const AuthWebSocketTokenResult = Schema.Struct({
-  token: TrimmedNonEmptyString,
+export const AuthClientPresentationMetadata = Schema.Struct({
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  deviceType: Schema.optionalKey(AuthClientMetadataDeviceType),
+  os: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetadata.Type;
+
+export const AuthTokenExchangeRequest = Schema.Struct({
+  grant_type: Schema.Literal(AuthTokenExchangeGrantType),
+  subject_token: TrimmedNonEmptyString,
+  subject_token_type: Schema.Literal(AuthEnvironmentBootstrapTokenType),
+  requested_token_type: Schema.Literal(AuthAccessTokenType),
+  scope: Schema.optionalKey(TrimmedNonEmptyString),
+  client_label: Schema.optionalKey(TrimmedNonEmptyString),
+  client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
+  client_os: Schema.optionalKey(TrimmedNonEmptyString),
+}).pipe(HttpApiSchema.asFormUrlEncoded());
+export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
+
+export const AuthAccessTokenResult = Schema.Struct({
+  access_token: TrimmedNonEmptyString,
+  issued_token_type: Schema.Literal(AuthAccessTokenType),
+  token_type: Schema.Literals(["Bearer", "DPoP"]),
+  expires_in: Schema.Number,
+  scope: TrimmedNonEmptyString,
+});
+export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
+
+export const AuthWebSocketTicketResult = Schema.Struct({
+  ticket: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,
 });
-export type AuthWebSocketTokenResult = typeof AuthWebSocketTokenResult.Type;
+export type AuthWebSocketTicketResult = typeof AuthWebSocketTicketResult.Type;
 
 export const AuthPairingCredentialResult = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -139,22 +210,13 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
-  role: AuthSessionRole,
+  scopes: AuthEnvironmentScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthPairingLink = typeof AuthPairingLink.Type;
-
-export const AuthClientMetadataDeviceType = Schema.Literals([
-  "desktop",
-  "mobile",
-  "tablet",
-  "bot",
-  "unknown",
-]);
-export type AuthClientMetadataDeviceType = typeof AuthClientMetadataDeviceType.Type;
 
 export const AuthClientMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
@@ -169,7 +231,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
-  role: AuthSessionRole,
+  scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
@@ -214,6 +276,21 @@ export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
 export type AuthAccessStreamPairingLinkRemovedEvent =
   typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
 
+export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStreamError>()(
+  "AuthAccessStreamError",
+  {
+    message: Schema.String,
+  },
+) {}
+
+export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<EnvironmentAuthorizationError>()(
+  "EnvironmentAuthorizationError",
+  {
+    message: Schema.String,
+    requiredScope: AuthEnvironmentScope,
+  },
+) {}
+
 export const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
@@ -253,13 +330,14 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
+  scopes: Schema.optionalKey(AuthEnvironmentScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
-  role: Schema.optionalKey(AuthSessionRole),
+  scopes: Schema.optionalKey(AuthEnvironmentScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });

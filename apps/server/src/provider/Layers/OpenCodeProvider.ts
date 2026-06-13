@@ -137,11 +137,13 @@ function formatOpenCodeProbeError(input: {
 }
 
 function titleCaseSlug(value: string): string {
-  return value
-    .split(/[-_/]+/)
-    .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  const segments: Array<string> = [];
+  for (const segment of value.split(/[-_/]+/)) {
+    if (segment.length > 0) {
+      segments.push(segment.charAt(0).toUpperCase() + segment.slice(1));
+    }
+  }
+  return segments.join(" ");
 }
 
 function inferDefaultVariant(
@@ -408,35 +410,25 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const inventoryExit = yield* Effect.exit(
     Effect.scoped(
       Effect.gen(function* () {
-        const server = yield* openCodeRuntime
-          .connectToOpenCodeServer({
-            binaryPath: openCodeSettings.binaryPath,
-            serverUrl: openCodeSettings.serverUrl,
-            environment,
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-            ),
-          );
-        return yield* openCodeRuntime
-          .loadOpenCodeInventory(
-            openCodeRuntime.createOpenCodeSdkClient({
-              baseUrl: server.url,
-              directory: cwd,
-              ...(isExternalServer && openCodeSettings.serverPassword
-                ? { serverPassword: openCodeSettings.serverPassword }
-                : {}),
-            }),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-            ),
-          );
-      }),
+        const server = yield* openCodeRuntime.connectToOpenCodeServer({
+          binaryPath: openCodeSettings.binaryPath,
+          serverUrl: openCodeSettings.serverUrl,
+          environment,
+        });
+        return yield* openCodeRuntime.loadOpenCodeInventory(
+          openCodeRuntime.createOpenCodeSdkClient({
+            baseUrl: server.url,
+            directory: cwd,
+            ...(isExternalServer && openCodeSettings.serverPassword
+              ? { serverPassword: openCodeSettings.serverPassword }
+              : {}),
+          }),
+        );
+      }).pipe(
+        Effect.mapError(
+          (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        ),
+      ),
     ),
   );
   if (inventoryExit._tag === "Failure") {

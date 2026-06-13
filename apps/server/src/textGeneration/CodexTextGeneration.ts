@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -33,10 +32,8 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
-import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -77,25 +74,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     operation: string,
     prefix: string,
     content: string,
-  ): Effect.Effect<string, TextGenerationError, Scope.Scope> => {
-    return Effect.gen(function* () {
-      const tempFileId = yield* Random.nextUUIDv4;
-      return yield* fileSystem
-        .makeTempFileScoped({
-          prefix: `t3code-${prefix}-${process.pid}-${tempFileId}.tmp`,
-        })
-        .pipe(Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)));
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: `Failed to write temp file`,
-            cause,
-          }),
-      ),
-    );
-  };
+  ): Effect.Effect<string, TextGenerationError, Scope.Scope> =>
+    fileSystem
+      .makeTempFileScoped({
+        prefix: `t3code-${prefix}-${process.pid}-`,
+      })
+      .pipe(
+        Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: `Failed to write temp file`,
+              cause,
+            }),
+        ),
+      );
 
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
@@ -144,9 +138,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
         continue;
       }
-      const fileInfo = yield* fileSystem
-        .stat(resolvedPath)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const fileInfo = yield* fileSystem.stat(resolvedPath).pipe(Effect.orElseSucceed(() => null));
       if (!fileInfo || fileInfo.type !== "File") {
         continue;
       }
@@ -187,6 +179,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
+      const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const command = ChildProcess.make(
         codexConfig.binaryPath || "codex",
         [
@@ -199,9 +192,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           modelSelection.model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
-          ...(getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
-            ? ["--config", `service_tier="fast"`]
-            : []),
+          ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,
           "--output-last-message",

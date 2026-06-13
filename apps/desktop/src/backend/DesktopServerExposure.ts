@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,7 +23,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { DEFAULT_DESKTOP_SETTINGS, type DesktopSettings } from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
+import { readTailscaleStatus } from "@t3tools/tailscale";
 import * as DesktopAppSettingsService from "../settings/DesktopAppSettings.ts";
+
+const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
 export const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
@@ -275,7 +279,7 @@ export interface DesktopServerExposureShape {
 export class DesktopServerExposure extends Context.Service<
   DesktopServerExposure,
   DesktopServerExposureShape
->()("t3/desktop/ServerExposure") {}
+>()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
 export interface DesktopNetworkInterfacesServiceShape {
   readonly read: Effect.Effect<DesktopNetworkInterfaces>;
@@ -284,7 +288,7 @@ export interface DesktopNetworkInterfacesServiceShape {
 export class DesktopNetworkInterfacesService extends Context.Service<
   DesktopNetworkInterfacesService,
   DesktopNetworkInterfacesServiceShape
->()("t3/desktop/ServerExposure/NetworkInterfaces") {}
+>()("@t3tools/desktop/backend/DesktopServerExposure/DesktopNetworkInterfacesService") {}
 
 interface RuntimeState {
   readonly requestedMode: DesktopServerExposureMode;
@@ -412,6 +416,18 @@ const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettingsService.DesktopAppSettings;
   const stateRef = yield* Ref.make(initialRuntimeState());
 
+  // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
+  // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
+  // spawn re-triggers the "Other apps" TCC prompt.
+  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
+    readTailscaleStatus.pipe(
+      Effect.map((status) => status.magicDnsName),
+      Effect.orElseSucceed(() => null),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+    ),
+    TAILSCALE_STATUS_CACHE_TTL,
+  );
+
   const readNetworkInterfaces = networkInterfaces.read;
 
   const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
@@ -516,11 +532,20 @@ const make = Effect.gen(function* () {
       exposure: toResolvedExposure(state),
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
     });
+
+    // Don't spawn the Tailscale CLI when the user hasn't opted into any
+    // network exposure. The spawn itself triggers a macOS "Other apps"
+    // TCC prompt on Mac App Store Tailscale builds.
+    if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
+      return coreEndpoints;
+    }
+
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
       port: state.port,
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
+      readMagicDnsName: cachedReadMagicDnsName,
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),

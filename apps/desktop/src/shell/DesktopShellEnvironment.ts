@@ -26,7 +26,7 @@ export interface DesktopShellEnvironmentShape {
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   DesktopShellEnvironmentShape
->()("t3/desktop/ShellEnvironment") {}
+>()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
@@ -196,7 +196,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
     .pipe(
       Effect.timeoutOption(input.timeout),
       Effect.map(Option.getOrElse(() => "")),
-      Effect.catch(() => Effect.succeed("")),
+      Effect.orElseSucceed(() => ""),
     );
 });
 
@@ -241,7 +241,6 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       const output = yield* runCommandOutput({
         command,
         args,
-        shell: true,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
       const environment = extractEnvironment(output, names);

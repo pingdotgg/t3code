@@ -16,6 +16,7 @@ export {
 
 export {
   addSavedEnvironment,
+  addManagedRelayEnvironment,
   connectDesktopSshEnvironment,
   disconnectSavedEnvironment,
   ensureEnvironmentConnectionBootstrapped,
@@ -27,4 +28,5 @@ export {
   resetEnvironmentServiceForTests,
   startEnvironmentConnectionService,
   subscribeEnvironmentConnections,
+  subscribeProviderInvalidations,
 } from "./service";

@@ -33,7 +33,7 @@ export interface ElectronMenuShape {
 }
 
 export class ElectronMenu extends Context.Service<ElectronMenu, ElectronMenuShape>()(
-  "t3/desktop/electron/Menu",
+  "@t3tools/desktop/electron/ElectronMenu",
 ) {}
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
@@ -41,6 +41,12 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
 
   for (const sourceItem of source) {
     if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
+      continue;
+    }
+
+    // Header items are decorative section labels for the web fallback only —
+    // Electron's native menu has no equivalent affordance, so we skip them.
+    if (sourceItem.header === true) {
       continue;
     }
 

@@ -1,6 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs";
-import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import type { TurnId } from "@t3tools/contracts";
@@ -22,15 +20,20 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
-import { useGitStatus } from "~/lib/gitStatusState";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import { useCheckpointDiff } from "~/lib/checkpointDiffState";
+import { useVcsStatus } from "~/lib/vcsStatusState";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
-import { buildPatchCacheKey } from "../lib/diffRendering";
-import { resolveDiffThemeName } from "../lib/diffRendering";
+import {
+  buildFileDiffRenderKey,
+  getDiffCollapseIconClassName,
+  getRenderablePatch,
+  resolveDiffThemeName,
+  resolveFileDiffPath,
+} from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -39,6 +42,7 @@ import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -49,6 +53,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  --diffs-header-font-family: var(--font-sans) !important;
+  --diffs-font-family: var(--font-mono) !important;
   --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
@@ -89,6 +95,37 @@ const DIFF_PANEL_UNSAFE_CSS = `
   z-index: 4;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
+  align-items: center !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  min-height: 32px !important;
+  padding-block: 6px !important;
+}
+
+[data-diffs-header] [data-header-content] {
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-metadata] {
+  align-items: center !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-diffs-header] [data-additions-count],
+[data-diffs-header] [data-deletions-count] {
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-change-icon],
+[data-diffs-header] [data-rename-icon] {
+  display: block;
+  flex-shrink: 0;
 }
 
 [data-title] {
@@ -99,6 +136,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   text-decoration: underline;
   text-decoration-color: transparent;
   text-underline-offset: 2px;
+  font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
@@ -106,76 +144,6 @@ const DIFF_PANEL_UNSAFE_CSS = `
   text-decoration-color: currentColor;
 }
 `;
-
-type RenderablePatch =
-  | {
-      kind: "files";
-      files: FileDiffMetadata[];
-    }
-  | {
-      kind: "raw";
-      text: string;
-      reason: string;
-    };
-
-function getRenderablePatch(
-  patch: string | undefined,
-  cacheScope = "diff-panel",
-): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
-
-  try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
-    const files = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
-    if (files.length > 0) {
-      return { kind: "files", files };
-    }
-
-    return {
-      kind: "raw",
-      text: normalizedPatch,
-      reason: "Unsupported diff format. Showing raw patch.",
-    };
-  } catch {
-    return {
-      kind: "raw",
-      text: normalizedPatch,
-      reason: "Failed to parse patch. Showing raw patch.",
-    };
-  }
-}
-
-function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
-  if (raw.startsWith("a/") || raw.startsWith("b/")) {
-    return raw.slice(2);
-  }
-  return raw;
-}
-
-function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
-  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
-}
-
-function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
-  switch (fileDiff.type) {
-    case "new":
-      return "text-[var(--diffs-addition-base)]";
-    case "deleted":
-      return "text-[var(--diffs-deletion-base)]";
-    case "change":
-    case "rename-pure":
-    case "rename-changed":
-      return "text-[var(--diffs-modified-base)]";
-    default:
-      return "text-muted-foreground/80";
-  }
-}
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
@@ -218,7 +186,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitStatusQuery = useGitStatus({
+  const gitStatusQuery = useVcsStatus({
     environmentId: activeThread?.environmentId ?? null,
     cwd: activeCwd ?? null,
   });
@@ -261,12 +229,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [selectedCheckpointTurnCount],
   );
   const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = orderedTurnDiffSummaries
-      .map(
-        (summary) =>
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
-      )
-      .filter((value): value is number => typeof value === "number");
+    const turnCounts: Array<number> = [];
+    for (const summary of orderedTurnDiffSummaries) {
+      const value =
+        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof value === "number") {
+        turnCounts.push(value);
+      }
+    }
     if (turnCounts.length === 0) {
       return undefined;
     }
@@ -292,30 +262,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
   }, [orderedTurnDiffSummaries, selectedTurn]);
-  const activeCheckpointDiffQuery = useQuery(
-    checkpointDiffQueryOptions({
+  const activeCheckpointDiff = useCheckpointDiff(
+    {
       environmentId: activeThread?.environmentId ?? null,
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
-    }),
+    },
+    { enabled: isGitRepo },
   );
-  const selectedTurnCheckpointDiff = selectedTurn
-    ? activeCheckpointDiffQuery.data?.diff
-    : undefined;
-  const conversationCheckpointDiff = selectedTurn
-    ? undefined
-    : activeCheckpointDiffQuery.data?.diff;
-  const isLoadingCheckpointDiff = activeCheckpointDiffQuery.isLoading;
-  const checkpointDiffError =
-    activeCheckpointDiffQuery.error instanceof Error
-      ? activeCheckpointDiffQuery.error.message
-      : activeCheckpointDiffQuery.error
-        ? "Failed to load checkpoint diff."
-        : null;
+  const selectedTurnCheckpointDiff = selectedTurn ? activeCheckpointDiff.data?.diff : undefined;
+  const conversationCheckpointDiff = selectedTurn ? undefined : activeCheckpointDiff.data?.diff;
+  const isLoadingCheckpointDiff = activeCheckpointDiff.isPending;
+  const checkpointDiffError = activeCheckpointDiff.error;
 
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
@@ -534,35 +495,41 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             </div>
           </button>
           {orderedTurnDiffSummaries.map((summary) => (
-            <button
-              key={summary.turnId}
-              type="button"
-              className="shrink-0 rounded-md"
-              onClick={() => selectTurn(summary.turnId)}
-              title={summary.turnId}
-              data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
-            >
-              <div
-                className={cn(
-                  "rounded-md border px-2 py-1 text-left transition-colors",
-                  summary.turnId === selectedTurn?.turnId
-                    ? "border-border bg-accent text-accent-foreground"
-                    : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
-                )}
+            <Tooltip key={summary.turnId}>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={summary.turnId}
+                    className="shrink-0 rounded-md"
+                    onClick={() => selectTurn(summary.turnId)}
+                    data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
+                  />
+                }
               >
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] leading-tight font-medium">
-                    Turn{" "}
-                    {summary.checkpointTurnCount ??
-                      inferredCheckpointTurnCountByTurnId[summary.turnId] ??
-                      "?"}
-                  </span>
-                  <span className="text-[9px] leading-tight opacity-70">
-                    {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
-                  </span>
+                <div
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-left transition-colors",
+                    summary.turnId === selectedTurn?.turnId
+                      ? "border-border bg-accent text-accent-foreground"
+                      : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+                  )}
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] leading-tight font-medium">
+                      Turn{" "}
+                      {summary.checkpointTurnCount ??
+                        inferredCheckpointTurnCountByTurnId[summary.turnId] ??
+                        "?"}
+                    </span>
+                    <span className="text-[9px] leading-tight opacity-70 tabular-nums">
+                      {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </button>
+              </TooltipTrigger>
+              <TooltipPopup side="top">{summary.turnId}</TooltipPopup>
+            </Tooltip>
           ))}
         </div>
       </div>
@@ -586,30 +553,50 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             <Columns2Icon className="size-3" />
           </Toggle>
         </ToggleGroup>
-        <Toggle
-          aria-label={diffWordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
-          title={diffWordWrap ? "Disable line wrapping" : "Enable line wrapping"}
-          variant="outline"
-          size="xs"
-          pressed={diffWordWrap}
-          onPressedChange={(pressed) => {
-            setDiffWordWrap(Boolean(pressed));
-          }}
-        >
-          <TextWrapIcon className="size-3" />
-        </Toggle>
-        <Toggle
-          aria-label={diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
-          title={diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
-          variant="outline"
-          size="xs"
-          pressed={diffIgnoreWhitespace}
-          onPressedChange={(pressed) => {
-            setDiffIgnoreWhitespace(Boolean(pressed));
-          }}
-        >
-          <PilcrowIcon className="size-3" />
-        </Toggle>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  diffWordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"
+                }
+                variant="outline"
+                size="xs"
+                pressed={diffWordWrap}
+                onPressedChange={(pressed) => {
+                  setDiffWordWrap(Boolean(pressed));
+                }}
+              />
+            }
+          >
+            <TextWrapIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {diffWordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+                }
+                variant="outline"
+                size="xs"
+                pressed={diffIgnoreWhitespace}
+                onPressedChange={(pressed) => {
+                  setDiffIgnoreWhitespace(Boolean(pressed));
+                }}
+              />
+            }
+          >
+            <PilcrowIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+          </TooltipPopup>
+        </Tooltip>
       </div>
     </>
   );
@@ -683,26 +670,36 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       <FileDiff
                         fileDiff={fileDiff}
                         renderHeaderPrefix={() => (
-                          <button
-                            type="button"
-                            className={cn(
-                              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
-                              getDiffCollapseIconClassName(fileDiff),
-                            )}
-                            aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
-                            aria-expanded={!collapsed}
-                            title={collapsed ? "Expand diff" : "Collapse diff"}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleDiffFileCollapsed(fileKey);
-                            }}
-                          >
-                            {collapsed ? (
-                              <ChevronRightIcon className="size-4" />
-                            ) : (
-                              <ChevronDownIcon className="size-4" />
-                            )}
-                          </button>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                    getDiffCollapseIconClassName(fileDiff),
+                                  )}
+                                  aria-label={
+                                    collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
+                                  }
+                                  aria-expanded={!collapsed}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleDiffFileCollapsed(fileKey);
+                                  }}
+                                />
+                              }
+                            >
+                              {collapsed ? (
+                                <ChevronRightIcon className="size-4" />
+                              ) : (
+                                <ChevronDownIcon className="size-4" />
+                              )}
+                            </TooltipTrigger>
+                            <TooltipPopup side="top">
+                              {collapsed ? "Expand diff" : "Collapse diff"}
+                            </TooltipPopup>
+                          </Tooltip>
                         )}
                         options={{
                           collapsed,

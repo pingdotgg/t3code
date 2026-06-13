@@ -8,32 +8,22 @@
     "verbatimModuleSyntax": false,
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
     "paths": {
       "~/*": ["./src/*"]
     },
     "plugins": [
       {
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        // Diagnostic severities are deep-merged with tsconfig.base.json; list only web-specific overrides here.
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
-          "anyUnknownInErrorContext": "error",
-          "unsafeEffectTypeAssertion": "error",
-          "instanceOfSchema": "error",
-          "deterministicKeys": "error",
-          "strictEffectProvide": "off",
-          "missingEffectServiceDependency": "error",
-          "leakingRequirements": "error",
-          "globalErrorInEffectCatch": "error",
-          "globalErrorInEffectFailure": "error",
-          "unknownInEffectCatch": "error",
-          "strictBooleanExpressions": "off",
-          "preferSchemaOverJson": "error",
-          "schemaSyncInEffect": "error"
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
         }
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "vercel.ts", "test"]
+  "include": ["src", "vite.config.ts", "vercel.ts", "test", "../../scripts/lib/public-config.ts"]
 }

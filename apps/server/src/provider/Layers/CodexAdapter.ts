@@ -25,6 +25,7 @@ import {
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -36,10 +37,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -1349,6 +1348,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -1378,6 +1378,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const serviceTier =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? getCodexServiceTierOptionValue(input.modelSelection)
+            : undefined;
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -1392,10 +1396,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
-          ...(input.modelSelection?.instanceId === boundInstanceId &&
-          getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode") === true
-            ? { serviceTier: "fast" }
-            : {}),
+          ...(serviceTier ? { serviceTier } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
@@ -1406,6 +1407,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtime = yield* createRuntime(runtimeInput).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -1510,9 +1512,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
         : undefined;
-    const fastMode =
+    const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode")
+        ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
     return yield* session.runtime
       .sendTurn({
@@ -1525,7 +1527,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
             }
           : {}),
-        ...(fastMode === true ? { serviceTier: "fast" } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })

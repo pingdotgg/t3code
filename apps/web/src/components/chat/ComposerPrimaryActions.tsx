@@ -3,6 +3,7 @@ import { ChevronDownIcon, ChevronLeftIcon, LoaderIcon, MicIcon, SquareIcon } fro
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
 
 interface PendingActionState {
   questionIndex: number;
@@ -211,7 +212,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {isRunning ? (
         <button
           type="button"
-          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
           {...pointerFocusProps}
           onClick={onInterrupt}
           aria-label="Stop generation"
@@ -223,7 +224,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : null}
       <button
         type="submit"
-        className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+        className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-xs enabled:shadow-primary/24 enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-primary hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8"
         {...pointerFocusProps}
         disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
         aria-label={
@@ -239,24 +240,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         }
       >
         {isConnecting || isSendBusy ? (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="animate-spin"
-            aria-hidden="true"
-          >
-            <circle
-              cx="7"
-              cy="7"
-              r="5.5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeDasharray="20 12"
-            />
-          </svg>
+          <Spinner className="size-3.5" aria-hidden="true" />
         ) : (
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path

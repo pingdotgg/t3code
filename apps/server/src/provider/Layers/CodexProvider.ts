@@ -17,6 +17,7 @@ import type {
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
@@ -44,7 +45,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
-const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__ReasoningEffort, string> = {
+const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
   low: "Low",
@@ -52,6 +53,12 @@ const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__Reasoning
   high: "High",
   xhigh: "Extra High",
 };
+
+const DEFAULT_SERVICE_TIER_ID = "default";
+
+function reasoningEffortLabel(reasoningEffort: string): string {
+  return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
+}
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
@@ -93,46 +100,71 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-function mapCodexModelCapabilities(
+export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
           isDefault: true,
         }
       : {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const supportsFastMode = (model.additionalSpeedTiers ?? []).includes("fast");
+  const serviceTiers =
+    model.serviceTiers && model.serviceTiers.length > 0
+      ? model.serviceTiers
+      : (model.additionalSpeedTiers ?? []).map((id) => ({
+          id,
+          name: id === "fast" ? "Fast" : id,
+          description: "",
+        }));
+  const catalogDefaultServiceTier = serviceTiers.some(
+    (tier) => tier.id === model.defaultServiceTier,
+  )
+    ? model.defaultServiceTier
+    : null;
+  const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const optionDescriptors: ProviderOptionDescriptor[] = [];
+
+  if (reasoningOptions.length > 0) {
+    optionDescriptors.push({
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: reasoningOptions,
+      ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
+    });
+  }
+  if (serviceTiers.length > 0) {
+    optionDescriptors.push({
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        {
+          id: DEFAULT_SERVICE_TIER_ID,
+          label: "Standard",
+          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+        },
+        ...serviceTiers.map((tier) => ({
+          id: tier.id,
+          label: tier.name,
+          ...(tier.description ? { description: tier.description } : {}),
+          ...(defaultServiceTier === tier.id ? { isDefault: true } : {}),
+        })),
+      ],
+      currentValue: defaultServiceTier,
+    });
+  }
+
   return createModelCapabilities({
-    optionDescriptors: [
-      ...(reasoningOptions.length > 0
-        ? [
-            {
-              id: "reasoningEffort",
-              label: "Reasoning",
-              type: "select" as const,
-              options: reasoningOptions,
-              ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-            },
-          ]
-        : []),
-      ...(supportsFastMode
-        ? [
-            {
-              id: "fastMode",
-              label: "Fast Mode",
-              type: "boolean" as const,
-            },
-          ]
-        : []),
-    ],
+    optionDescriptors,
   });
 }
 
@@ -319,16 +351,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
-  codexSettings.customModels
-    .map((model) => model.trim())
-    .filter((model, index, models) => model.length > 0 && models.indexOf(model) === index)
-    .map((model) => ({
-      slug: model,
-      name: model,
-      isCustom: true,
-      capabilities: null,
-    }));
+const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
+  const models = new Set<string>();
+  for (const model of codexSettings.customModels) {
+    const trimmed = model.trim();
+    if (trimmed.length > 0) {
+      models.add(trimmed);
+    }
+  }
+  return Array.from(models, (model) => ({
+    slug: model,
+    name: model,
+    isCustom: true,
+    capabilities: null,
+  }));
+};
 
 const makePendingCodexProvider = (
   codexSettings: CodexSettings,

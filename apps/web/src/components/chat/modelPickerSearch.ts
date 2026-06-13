@@ -68,9 +68,13 @@ export function scoreModelPickerSearch(
   let score = 0;
 
   for (const token of tokens) {
-    const tokenScores = fields
-      .map((field, index) => scoreModelPickerSearchToken(field, token, index * 10))
-      .filter((fieldScore): fieldScore is number => fieldScore !== null);
+    const tokenScores: Array<number> = [];
+    for (let index = 0; index < fields.length; index += 1) {
+      const fieldScore = scoreModelPickerSearchToken(fields[index]!, token, index * 10);
+      if (fieldScore !== null) {
+        tokenScores.push(fieldScore);
+      }
+    }
 
     if (tokenScores.length === 0) {
       return null;

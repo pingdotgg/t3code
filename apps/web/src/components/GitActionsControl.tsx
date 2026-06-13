@@ -10,7 +10,6 @@ import type {
   SourceControlRepositoryVisibility,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -20,6 +19,7 @@ import {
   ChevronDownIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
+  GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
@@ -65,13 +65,13 @@ import { stackedThreadToast, toastManager, type ThreadToastData } from "~/compon
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
-  gitInitMutationOptions,
-  gitMutationKeys,
-  gitPullMutationOptions,
-  gitRunStackedActionMutationOptions,
-  sourceControlPublishRepositoryMutationOptions,
-} from "~/lib/gitReactQuery";
-import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
+  useGitStackedAction,
+  useSourceControlActionRunning,
+  useSourceControlPublishRepositoryAction,
+  useVcsInitAction,
+  useVcsPullAction,
+} from "~/lib/sourceControlActions";
+import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -128,6 +128,7 @@ interface RunGitActionWithToastInput {
 }
 
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
+const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
@@ -346,7 +347,6 @@ interface PublishRepositoryDialogProps {
 }
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const sourceControlDiscovery = useSourceControlDiscovery();
   const [publishProvider, setPublishProvider] = useState<PublishProviderKind>("github");
@@ -362,13 +362,14 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     null,
   );
   const [hasUserEditedPublishRepository, setHasUserEditedPublishRepository] = useState(false);
-  const publishRepositoryMutation = useMutation(
-    sourceControlPublishRepositoryMutationOptions({
+  const sourceControlScope = useMemo(
+    () => ({
       environmentId: props.environmentId,
       cwd: props.gitCwd,
-      queryClient,
     }),
+    [props.environmentId, props.gitCwd],
   );
+  const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
   const publishAccountByProvider = useMemo(() => {
     const accounts: Record<PublishProviderKind, string | null> = {
       github: null,
@@ -435,13 +436,13 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
   const canSubmitPublishRepository = useMemo(() => {
     if (!selectedPublishProviderReadiness.ready) return false;
-    if (publishRepositoryMutation.isPending) return false;
+    if (publishRepositoryAction.isPending) return false;
     const repositoryParts = publishRepository.trim().split("/");
     const owner = repositoryParts[0]?.trim() ?? "";
     const rest = repositoryParts.slice(1);
     const name = rest.join("/").trim();
     return owner.length > 0 && name.length > 0;
-  }, [publishRepository, publishRepositoryMutation.isPending, selectedPublishProviderReadiness]);
+  }, [publishRepository, publishRepositoryAction.isPending, selectedPublishProviderReadiness]);
 
   useEffect(() => {
     if (!props.open) {
@@ -465,8 +466,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
     setPublishError(null);
 
-    void publishRepositoryMutation
-      .mutateAsync({
+    void publishRepositoryAction
+      .run({
         provider: publishProvider,
         repository: publishRepository.trim(),
         visibility: publishVisibility,
@@ -478,7 +479,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           setPublishResult(result);
           setPublishWizardStep(2);
         });
-        void refreshGitStatus({ environmentId: props.environmentId, cwd: props.gitCwd }).catch(
+        void refreshVcsStatus({ environmentId: props.environmentId, cwd: props.gitCwd }).catch(
           () => undefined,
         );
       })
@@ -493,7 +494,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     publishProvider,
     publishRemoteName,
     publishRepository,
-    publishRepositoryMutation,
+    publishRepositoryAction,
     publishVisibility,
   ]);
 
@@ -689,7 +690,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         }
                       }}
                       placeholder={publishPathPlaceholder}
-                      disabled={publishRepositoryMutation.isPending}
+                      disabled={publishRepositoryAction.isPending}
                       className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
                     />
                   </div>
@@ -708,7 +709,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       setPublishVisibility(value as SourceControlRepositoryVisibility)
                     }
                     aria-labelledby="publish-visibility-cards-label"
-                    disabled={publishRepositoryMutation.isPending}
+                    disabled={publishRepositoryAction.isPending}
                     className="grid grid-cols-2 gap-2.5"
                   >
                     {[
@@ -780,7 +781,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                           value={publishRemoteName}
                           onChange={(event) => setPublishRemoteName(event.target.value)}
                           placeholder="origin"
-                          disabled={publishRepositoryMutation.isPending}
+                          disabled={publishRepositoryAction.isPending}
                         />
                       </label>
                       <div className="space-y-1.5">
@@ -796,7 +797,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                             setPublishProtocol(value as SourceControlCloneProtocol)
                           }
                           aria-labelledby="publish-protocol-label"
-                          disabled={publishRepositoryMutation.isPending}
+                          disabled={publishRepositoryAction.isPending}
                           className="grid grid-cols-2 gap-2"
                         >
                           {(["ssh", "https"] as const).map((value) => {
@@ -823,7 +824,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   ) : null}
                 </div>
 
-                {publishRepositoryMutation.isPending ? (
+                {publishRepositoryAction.isPending ? (
                   <div
                     role="status"
                     aria-live="polite"
@@ -833,7 +834,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     Publishing repository to {publishProviderLabel}...
                   </div>
                 ) : null}
-                {publishError && !publishRepositoryMutation.isPending ? (
+                {publishError && !publishRepositoryAction.isPending ? (
                   <div
                     role="alert"
                     className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
@@ -901,7 +902,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={publishRepositoryMutation.isPending}
+                  disabled={publishRepositoryAction.isPending}
                   onClick={() => {
                     if (publishWizardStep === 0) {
                       handleOpenChange(false);
@@ -926,7 +927,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     disabled={!canSubmitPublishRepository}
                     onClick={submitPublishRepository}
                   >
-                    {publishRepositoryMutation.isPending ? (
+                    {publishRepositoryAction.isPending ? (
                       <>
                         <Spinner className="size-3.5" aria-hidden />
                         Publishing...
@@ -969,7 +970,6 @@ export default function GitActionsControl({
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setThreadBranch = useStore((store) => store.setThreadBranch);
-  const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -978,6 +978,10 @@ export default function GitActionsControl({
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
   const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
+  const sourceControlScope = useMemo(
+    () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
+    [activeEnvironmentId, gitCwd],
+  );
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   const updateActiveProgressToast = useCallback(() => {
@@ -1054,7 +1058,7 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
+  const { data: gitStatus, error: gitStatusError } = useVcsStatus({
     environmentId: activeEnvironmentId,
     cwd: gitCwd,
   });
@@ -1074,32 +1078,13 @@ export default function GitActionsControl({
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
-  const initMutation = useMutation(
-    gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+  const initAction = useVcsInitAction(sourceControlScope);
+  const runImmediateGitAction = useGitStackedAction(sourceControlScope);
+  const pullAction = useVcsPullAction(sourceControlScope);
+  const isGitActionRunning = useSourceControlActionRunning(
+    sourceControlScope,
+    RUNNING_SOURCE_CONTROL_ACTIONS,
   );
-
-  const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({
-      environmentId: activeEnvironmentId,
-      cwd: gitCwd,
-      queryClient,
-    }),
-  );
-  const pullMutation = useMutation(
-    gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
-  );
-
-  const isRunStackedActionRunning =
-    useIsMutating({
-      mutationKey: gitMutationKeys.runStackedAction(activeEnvironmentId, gitCwd),
-    }) > 0;
-  const isPullRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.pull(activeEnvironmentId, gitCwd) }) > 0;
-  const isPublishRunning =
-    useIsMutating({
-      mutationKey: gitMutationKeys.publishRepository(activeEnvironmentId, gitCwd),
-    }) > 0;
-  const isGitActionRunning = isRunStackedActionRunning || isPullRunning || isPublishRunning;
   const isSelectingWorktreeBase =
     !activeServerThread &&
     activeDraftThread?.envMode === "worktree" &&
@@ -1178,7 +1163,7 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
+        void refreshVcsStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
           () => undefined,
         );
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
@@ -1376,7 +1361,7 @@ export default function GitActionsControl({
         updateActiveProgressToast();
       };
 
-      const promise = runImmediateGitActionMutation.mutateAsync({
+      const promise = runImmediateGitAction.run({
         actionId,
         action,
         ...(commitMessage ? { commitMessage } : {}),
@@ -1516,26 +1501,26 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.kind === "run_pull") {
-      const promise = pullMutation.mutateAsync();
-      void toastManager.promise<
-        Awaited<ReturnType<typeof pullMutation.mutateAsync>>,
-        ThreadToastData
-      >(promise, {
-        loading: { title: "Pulling...", data: threadToastData },
-        success: (result) => ({
-          title: result.status === "pulled" ? "Pulled" : "Already up to date",
-          description:
-            result.status === "pulled"
-              ? `Updated ${result.refName} from ${result.upstreamRef ?? "upstream"}`
-              : `${result.refName} is already synchronized.`,
-          data: threadToastData,
-        }),
-        error: (err) => ({
-          title: "Pull failed",
-          description: err instanceof Error ? err.message : "An error occurred.",
-          data: threadToastData,
-        }),
-      });
+      const promise = pullAction.run();
+      void toastManager.promise<Awaited<ReturnType<typeof pullAction.run>>, ThreadToastData>(
+        promise,
+        {
+          loading: { title: "Pulling...", data: threadToastData },
+          success: (result) => ({
+            title: result.status === "pulled" ? "Pulled" : "Already up to date",
+            description:
+              result.status === "pulled"
+                ? `Updated ${result.refName} from ${result.upstreamRef ?? "upstream"}`
+                : `${result.refName} is already synchronized.`,
+            data: threadToastData,
+          }),
+          error: (err) => ({
+            title: "Pull failed",
+            description: err instanceof Error ? err.message : "An error occurred.",
+            data: threadToastData,
+          }),
+        },
+      );
       void promise.catch(() => undefined);
       return;
     }
@@ -1622,10 +1607,15 @@ export default function GitActionsControl({
         <Button
           variant="outline"
           size="xs"
-          disabled={initMutation.isPending}
-          onClick={() => initMutation.mutate()}
+          disabled={initAction.isPending}
+          onClick={() => {
+            void initAction.run();
+          }}
         >
-          {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+          <GitBranchPlusIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">
+            {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          </span>
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
@@ -1671,7 +1661,7 @@ export default function GitActionsControl({
           <Menu
             onOpenChange={(open) => {
               if (open) {
-                void refreshGitStatus({
+                void refreshVcsStatus({
                   environmentId: activeEnvironmentId,
                   cwd: gitCwd,
                 }).catch(() => undefined);

@@ -321,11 +321,12 @@ function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<str
   const fallback = [".COM", ".EXE", ".BAT", ".CMD"];
   if (!rawValue) return fallback;
 
-  const parsed = rawValue
-    .split(";")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => (entry.startsWith(".") ? entry.toUpperCase() : `.${entry.toUpperCase()}`));
+  const parsed: string[] = [];
+  for (const entry of rawValue.split(";")) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) continue;
+    parsed.push(trimmed.startsWith(".") ? trimmed.toUpperCase() : `.${trimmed.toUpperCase()}`);
+  }
   return parsed.length > 0 ? Array.from(new Set(parsed)) : fallback;
 }
 
@@ -397,10 +398,13 @@ export function resolveCommandPath(
 
   const pathValue = resolvePathEnvironmentVariable(env);
   if (pathValue.length === 0) return null;
-  const pathEntries = pathValue
-    .split(pathDelimiterForPlatform(platform))
-    .map((entry) => stripWrappingQuotes(entry.trim()))
-    .filter((entry) => entry.length > 0);
+  const pathEntries: string[] = [];
+  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    const pathEntry = stripWrappingQuotes(entry.trim());
+    if (pathEntry.length > 0) {
+      pathEntries.push(pathEntry);
+    }
+  }
 
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {

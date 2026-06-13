@@ -79,7 +79,7 @@ import {
   selectSidebarThreadsAcrossEnvironments,
   useStore,
 } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   ADDON_ICON_CLASS,
@@ -337,9 +337,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
-  const terminalOpen = useTerminalStateStore((state) =>
+  const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
-      ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
 
@@ -562,11 +562,7 @@ function OpenCommandPaletteDialog() {
       !relativePathNeedsActiveProject,
   });
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
-  const {
-    filteredEntries: filteredBrowseEntries,
-    highlightedEntry: highlightedBrowseEntry,
-    exactEntry: exactBrowseEntry,
-  } = useMemo(
+  const { filteredEntries: filteredBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
     () => filterBrowseEntries({ browseEntries, browseFilterQuery, highlightedItemValue }),
     [browseEntries, browseFilterQuery, highlightedItemValue],
   );
@@ -587,27 +583,17 @@ function OpenCommandPaletteDialog() {
     [browseEnvironmentId, currentProjectCwdForBrowse, fetchBrowseResult, queryClient],
   );
 
-  // Prefetch the parent and the most likely next child so browse navigation
-  // stays warm without scanning every child directory in large trees.
+  // Prefetch only the parent (for back-navigation). Prefetching the
+  // highlighted child on every arrow-key press triggers a macOS TCC prompt
+  // whenever the highlighted entry is a permission-gated home dir (Music,
+  // Documents, Downloads, Desktop, etc.), so we wait for explicit navigation.
   useEffect(() => {
     if (!isBrowsing || filteredBrowseEntries.length === 0) return;
 
     if (canNavigateUp(query)) {
       prefetchBrowsePath(getBrowseParentPath(query)!);
     }
-
-    const nextChild = highlightedBrowseEntry ?? exactBrowseEntry;
-    if (nextChild) {
-      prefetchBrowsePath(appendBrowsePathSegment(query, nextChild.name));
-    }
-  }, [
-    exactBrowseEntry,
-    filteredBrowseEntries.length,
-    highlightedBrowseEntry,
-    isBrowsing,
-    prefetchBrowsePath,
-    query,
-  ]);
+  }, [filteredBrowseEntries.length, isBrowsing, prefetchBrowsePath, query]);
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
@@ -661,6 +647,7 @@ function OpenCommandPaletteDialog() {
       buildProjectActionItems({
         projects,
         valuePrefix: "new-thread-in",
+        shortcutCommand: "chat.new",
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
@@ -1584,61 +1571,78 @@ function OpenCommandPaletteDialog() {
             onKeyDown={handleKeyDown}
           />
           {addProjectCloneFlow?.step === "repository" ? (
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
-              aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-              disabled={!canSubmitRemoteProjectFlow}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitAddProjectCloneFlow();
-              }}
-              title={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-            >
-              <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
-              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-                <Kbd>Enter</Kbd>
-              </KbdGroup>
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    tabIndex={-1}
+                    className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+                    aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
+                    disabled={!canSubmitRemoteProjectFlow}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() => {
+                      void submitAddProjectCloneFlow();
+                    }}
+                  />
+                }
+              >
+                <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
+                <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                  <Kbd>Enter</Kbd>
+                </KbdGroup>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {remoteProjectButtonLabel ?? "Continue"} (Enter)
+              </TooltipPopup>
+            </Tooltip>
           ) : isBrowsing ? (
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
-              )}
-              aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={
-                relativePathNeedsActiveProject || (isCloneDestinationStep && isRemoteProjectPending)
-              }
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (relativePathNeedsActiveProject) {
-                  return;
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    tabIndex={-1}
+                    className={cn(
+                      "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                      hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+                    )}
+                    aria-label={`${submitActionLabel} (${addShortcutLabel})`}
+                    disabled={
+                      relativePathNeedsActiveProject ||
+                      (isCloneDestinationStep && isRemoteProjectPending)
+                    }
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() => {
+                      if (relativePathNeedsActiveProject) {
+                        return;
+                      }
+                      if (isCloneDestinationStep) {
+                        void submitAddProjectCloneFlow(resolvedAddProjectPath);
+                      } else {
+                        void handleAddProject(resolvedAddProjectPath);
+                      }
+                    }}
+                  />
                 }
-                if (isCloneDestinationStep) {
-                  void submitAddProjectCloneFlow(resolvedAddProjectPath);
-                } else {
-                  void handleAddProject(resolvedAddProjectPath);
-                }
-              }}
-              title={`${submitActionLabel} (${addShortcutLabel})`}
-            >
-              <span>
-                {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
-              </span>
-              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-                <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-              </KbdGroup>
-            </Button>
+              >
+                <span>
+                  {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+                </span>
+                <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                  <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+                </KbdGroup>
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {submitActionLabel} ({addShortcutLabel})
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
         </div>
         <CommandPanel className="max-h-[min(28rem,70vh)]">

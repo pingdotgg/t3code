@@ -1,0 +1,234 @@
+---
+title: Effect AI
+description: Wire Effect's LanguageModel and Chat services into a Cloudflare Worker — read API keys with effect/Config, provide the model layer to your handler, plug in persistence.
+sidebar:
+  order: 6
+---
+
+Effect's [`@effect/ai`](https://effect.website/docs/ai/introduction)
+package gives you a single `LanguageModel.LanguageModel` service that
+every model provider (OpenAI, Anthropic, Workers AI, …) ships as a
+`Layer`. Once that layer is in scope, the rest of the surface
+(`generateText`, `streamText`, `Toolkit`, `Chat`, …) is
+provider-agnostic.
+
+This guide is about the *Alchemy* side of that picture: how to build
+the `LanguageModel` layer inside a [Platform](/concepts/platform)
+(`Cloudflare.Worker`, `AWS.Lambda.Function`), where to read the API
+key from, and how to plug `Chat.Persistence` into a backing store
+that matches the platform. For the AI calls themselves —
+`LanguageModel.generateText`, `streamText`, `Toolkit`, structured
+outputs — refer to
+[Effect's AI documentation](https://effect.website/docs/ai/introduction).
+
+## The pattern
+
+Every Effect AI provider is two stacked layers:
+
+1. A **client** Layer that holds the API key and HTTP transport
+   (`OpenAiClient.layer({ apiKey })`, `AnthropicClient.layer({ apiKey })`, …).
+2. A **language model** Layer that picks the model and any defaults
+   (`OpenAiLanguageModel.layer({ model: "gpt-4o-mini" })`, …).
+
+You build that stack once in the Platform's **init phase** and
+`Effect.provide(...)` it on the handler:
+
+```typescript
+Effect.gen(function* () {
+  // 1. Init: build the LanguageModel layer (deploy bindings happen here).
+  const languageModel = ...;
+
+  return {
+    // 2. Exec: per-request handler with the model available.
+    fetch: Effect.gen(function* () {
+      const response = yield* LanguageModel.generateText({ prompt });
+      return HttpServerResponse.json({ text: response.text });
+    }).pipe(Effect.provide(languageModel)),
+  };
+});
+```
+
+`fetch` is just one example — the same `Effect.provide(languageModel)`
+pattern works in a Lambda handler, an HTTP API endpoint, an RPC
+procedure, a Workflow, or any other Effect.
+
+## Read the API key with `Config.redacted`
+
+Every upstream provider's client Layer (`OpenAiClient.layer`,
+`AnthropicClient.layer`, …) takes an `apiKey: Redacted<string>`.
+[`Config.redacted`](/concepts/secrets) resolved in the Platform's
+Init phase gives you exactly that `Redacted<string>` — and Alchemy
+automatically binds the value as a `secret_text` binding
+(Cloudflare) or environment variable (Lambda) at deploy time:
+
+```typescript
+import * as Config from "effect/Config";
+
+// outer init — resolves the value AND records the binding
+const apiKey = yield* Config.redacted("OPENAI_API_KEY");
+```
+
+`Config.redacted("OPENAI_API_KEY")` reads `OPENAI_API_KEY` from your
+`ConfigProvider` (e.g. `.env`) at deploy time, records the binding,
+and resolves from that binding again at runtime — one line, both
+phases. See [Concepts › Secrets and Config](/concepts/secrets) for
+the Init/Runtime split, `.env`, and transformations.
+
+Because the value is in scope right in Init, the model Layer can be
+built eagerly — no `Layer.unwrap` needed:
+
+```typescript
+import * as Layer from "effect/Layer";
+
+const languageModel = OpenAiLanguageModel.layer({
+  model: "gpt-4o-mini",
+}).pipe(
+  Layer.provide(OpenAiClient.layer({ apiKey })),
+  Layer.provide(FetchHttpClient.layer),
+);
+```
+
+## In a Cloudflare Worker
+
+`FetchHttpClient.layer` plugs the runtime `fetch` API into the
+Effect HTTP client that every provider's client Layer depends on:
+
+```typescript
+// src/Worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { LanguageModel } from "effect/unstable/ai";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.path },
+  Effect.gen(function* () {
+    const apiKey = yield* Config.redacted("OPENAI_API_KEY");
+
+    const languageModel = OpenAiLanguageModel.layer({
+      model: "gpt-4o-mini",
+    }).pipe(
+      Layer.provide(OpenAiClient.layer({ apiKey })),
+      Layer.provide(FetchHttpClient.layer),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        const response = yield* LanguageModel.generateText({
+          prompt: "Say hello.",
+        }).pipe(Effect.orDie);
+        return yield* HttpServerResponse.json({ text: response.text });
+      }).pipe(Effect.provide(languageModel)),
+    };
+  }),
+);
+```
+
+## Persisting chats
+
+For multi-turn conversations, Effect's `Chat` service holds the
+turn history and exposes the same `generateText` / `streamText`
+surface. `Chat.layerPersisted` wraps it with a
+`Chat.Persistence` interface that needs a `BackingPersistence`
+Layer underneath:
+
+```typescript
+import { Chat } from "effect/unstable/ai";
+import * as Persistence from "effect/unstable/persistence/Persistence";
+
+// inside your handler:
+const chat = yield* (yield* Chat.Persistence).getOrCreate("session-id");
+yield* chat.generateText({ prompt: "Hello again." });
+```
+
+The `BackingPersistence` Layer is what makes the chat history
+durable. Pick the one that matches your platform:
+
+| Platform | Backing |
+| --- | --- |
+| Cloudflare Worker + Durable Object | `Cloudflare.DurableObjectChatPersistence` — bytes live in `state.storage`, one DO instance per session |
+| Any platform, in-memory (tests) | `Persistence.layerBackingMemory` — lost on restart |
+| Anything else (KV, R2, DynamoDB, …) | Implement `BackingPersistence` against your store |
+
+The `Chat.Persistence` API and handler code never change — only the
+backing layer does.
+
+## Cloudflare AI Gateway
+
+For Workers AI on Cloudflare, `Cloudflare.AiGateway` declares an AI
+Gateway as a resource and `.bind(Gateway).model({...})` returns a
+`LanguageModel` Layer that proxies Workers AI through the gateway —
+with caching, rate limiting, retries, and a unified request log.
+
+Bind the gateway in the Init phase and call `aiGateway.model({...})`
+with a Workers AI model id. It returns a `LanguageModel` Layer
+directly — no API key, no `Layer.unwrap`, since the gateway binding
+handles auth and the URL:
+
+```typescript
+const aiGateway = yield* Cloudflare.AiGateway.bind(Gateway);
+
+const languageModel = aiGateway.model({
+  client: aiGateway,
+  model: "@cf/meta/llama-3.1-8b-instruct",
+  parameters: { temperature: 0.7, maxTokens: 1024 },
+});
+```
+
+That `languageModel` Layer slots into the same `Effect.provide(...)`
+spot as any other provider — the rest of your handler doesn't
+change. Provide `Cloudflare.AiGatewayBindingLive` once at the
+bottom of the Init layer chain so the binding resolves at runtime:
+
+```typescript
+Effect.gen(function* () {
+  const aiGateway = yield* Cloudflare.AiGateway.bind(Gateway);
+
+  const languageModel = aiGateway.model({
+    client: aiGateway,
+    model: "@cf/meta/llama-3.1-8b-instruct",
+    parameters: { temperature: 0.7, maxTokens: 1024 },
+  });
+
+  return {
+    fetch: Effect.gen(function* () {
+      const response = yield* LanguageModel.generateText({
+        prompt: "Say hello.",
+      }).pipe(Effect.orDie);
+      return yield* HttpServerResponse.json({ text: response.text });
+    }).pipe(Effect.provide(languageModel)),
+  };
+}).pipe(Effect.provide(Cloudflare.AiGatewayBindingLive));
+```
+
+The [AI Gateway tutorial](/tutorial/cloudflare/ai-gateway) walks
+through it end to end — declaring the resource, streaming with
+`streamText`, and tuning caching, rate limits, and DLP.
+
+## Picking a provider
+
+Each upstream provider is its own `@effect/ai-*` package. The
+shape — `*Client.layer({ apiKey })` + `*LanguageModel.layer({
+model })` — is the same.
+
+- [`@effect/ai-openai`](https://www.npmjs.com/package/@effect/ai-openai)
+- [`@effect/ai-anthropic`](https://www.npmjs.com/package/@effect/ai-anthropic)
+- [`@effect/ai-google`](https://www.npmjs.com/package/@effect/ai-google)
+- [`@effect/ai-amazon-bedrock`](https://www.npmjs.com/package/@effect/ai-amazon-bedrock)
+- `Cloudflare.AiGateway` (Workers AI, via Alchemy itself)
+
+## Where to go next
+
+- [Effect AI documentation](https://effect.website/docs/ai/introduction)
+  — the API surface (`generateText`, `streamText`, `Toolkit`,
+  structured outputs, embeddings).
+- [Add an AI Gateway](/tutorial/cloudflare/ai-gateway) — wire
+  Workers AI behind a Cloudflare AI Gateway with caching and
+  streaming.
+- [Secrets and env vars](/guides/secrets) — how `Config.redacted`
+  feeds the upstream providers' API keys at deploy and runtime.

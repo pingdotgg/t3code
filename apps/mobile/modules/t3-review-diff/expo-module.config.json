@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3ReviewDiffModule"],
+    "podspecPath": "T3ReviewDiffNative.podspec"
+  }
+}

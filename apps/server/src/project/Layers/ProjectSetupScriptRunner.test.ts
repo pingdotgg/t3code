@@ -2,7 +2,7 @@ import { ProjectId, type OrchestrationProject } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
@@ -54,12 +54,14 @@ describe("ProjectSetupScriptRunner", () => {
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,
+                attachStream: () => Effect.die(new Error("unused")),
                 write,
                 resize: () => Effect.void,
                 clear: () => Effect.void,
                 restart: () => Effect.die(new Error("unused")),
                 close: () => Effect.void,
                 subscribe: () => Effect.succeed(() => undefined),
+                subscribeMetadata: () => Effect.succeed(() => undefined),
               }),
             ),
           ),
@@ -92,6 +94,7 @@ describe("ProjectSetupScriptRunner", () => {
         history: "",
         exitCode: null,
         exitSignal: null,
+        label: "setup-setup",
         updatedAt: "2026-01-01T00:00:00.000Z",
       }),
     );
@@ -113,12 +116,14 @@ describe("ProjectSetupScriptRunner", () => {
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,
+                attachStream: () => Effect.die(new Error("unused")),
                 write,
                 resize: () => Effect.void,
                 clear: () => Effect.void,
                 restart: () => Effect.die(new Error("unused")),
                 close: () => Effect.void,
                 subscribe: () => Effect.succeed(() => undefined),
+                subscribeMetadata: () => Effect.succeed(() => undefined),
               }),
             ),
           ),
