@@ -4501,6 +4501,8 @@ export default function ChatView(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
+            terminalAvailable={Boolean(activeProject)}
+            terminalOpen={Boolean(terminalUiState.terminalOpen)}
             rightPanelAvailable={Boolean(activeProject)}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
@@ -4508,6 +4510,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            onToggleTerminal={toggleTerminalVisibility}
             onToggleRightPanel={toggleRightPanel}
           />
         </header>

@@ -9,7 +9,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { PanelRightIcon } from "lucide-react";
+import { PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
@@ -29,6 +29,8 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
+  terminalAvailable: boolean;
+  terminalOpen: boolean;
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   gitCwd: string | null;
@@ -36,6 +38,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
 
@@ -62,6 +65,8 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
+  terminalAvailable,
+  terminalOpen,
   rightPanelAvailable,
   rightPanelOpen,
   gitCwd,
@@ -69,6 +74,7 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onToggleTerminal,
   onToggleRightPanel,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -77,6 +83,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const terminalShortcutLabel = shortcutLabelForCommand(keybindings, "terminal.toggle");
   const rightPanelShortcutLabel = shortcutLabelForCommand(keybindings, "rightPanel.toggle");
 
   return (
@@ -123,6 +130,28 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={terminalOpen}
+                onPressedChange={onToggleTerminal}
+                aria-label="Toggle terminal drawer"
+                variant="ghost"
+                size="xs"
+                disabled={!terminalAvailable}
+              >
+                <PanelBottomIcon className="size-3.5" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {terminalAvailable
+              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : "Terminal drawer is unavailable"}
+          </TooltipPopup>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
