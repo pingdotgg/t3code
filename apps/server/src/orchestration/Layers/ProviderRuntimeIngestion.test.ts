@@ -2960,6 +2960,45 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activityPayload?.message).toBe("runtime activity exploded");
   });
 
+  it("maps tool.denied events into error-tone thread activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "tool.denied",
+      eventId: asEventId("evt-tool-denied"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-denied"),
+      payload: {
+        toolName: "Bash",
+        toolUseId: "toolu-denied-1",
+        reason: "Denied by auto mode",
+        agentId: "agent-reviewer",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-tool-denied"),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-denied",
+    );
+    const activityPayload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("tool.denied");
+    expect(activity?.tone).toBe("error");
+    expect(activity?.summary).toBe("Tool denied: Bash");
+    expect(activityPayload?.toolName).toBe("Bash");
+    expect(activityPayload?.toolUseId).toBe("toolu-denied-1");
+    expect(activityPayload?.detail).toBe("Denied by auto mode");
+    expect(activityPayload?.agentId).toBe("agent-reviewer");
+  });
+
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

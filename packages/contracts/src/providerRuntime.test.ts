@@ -203,4 +203,29 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.name).toBe("generated.png");
     expect(parsed.payload.dataUrl).toBe("data:image/png;base64,aGVsbG8=");
   });
+
+  it("decodes tool.denied events", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "tool.denied",
+      eventId: "event-tool-denied-1",
+      provider: "claudeAgent",
+      createdAt: "2026-02-28T00:00:06.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        toolName: "Bash",
+        toolUseId: "toolu-1",
+        reason: "Denied by auto mode",
+        agentId: "agent-1",
+      },
+    });
+
+    expect(parsed.type).toBe("tool.denied");
+    if (parsed.type !== "tool.denied") {
+      throw new Error("expected tool.denied");
+    }
+    expect(parsed.payload.toolName).toBe("Bash");
+    expect(parsed.payload.reason).toBe("Denied by auto mode");
+    expect(parsed.payload.agentId).toBe("agent-1");
+  });
 });

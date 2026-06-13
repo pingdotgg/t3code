@@ -194,6 +194,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "deprecation.notice",
   "files.persisted",
   "image.generated",
+  "tool.denied",
   "runtime.warning",
   "runtime.error",
 ]);
@@ -245,6 +246,7 @@ const ConfigWarningType = Schema.Literal("config.warning");
 const DeprecationNoticeType = Schema.Literal("deprecation.notice");
 const FilesPersistedType = Schema.Literal("files.persisted");
 const ImageGeneratedType = Schema.Literal("image.generated");
+const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
 
@@ -600,6 +602,14 @@ const ImageGeneratedPayload = Schema.Struct({
 });
 export type ImageGeneratedPayload = typeof ImageGeneratedPayload.Type;
 
+const ToolDeniedPayload = Schema.Struct({
+  toolName: TrimmedNonEmptyStringSchema,
+  toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  reason: Schema.optional(TrimmedNonEmptyStringSchema),
+  agentId: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type ToolDeniedPayload = typeof ToolDeniedPayload.Type;
+
 const RuntimeWarningPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   detail: Schema.optional(Schema.Unknown),
@@ -952,6 +962,13 @@ const ProviderRuntimeImageGeneratedEvent = Schema.Struct({
 });
 export type ProviderRuntimeImageGeneratedEvent = typeof ProviderRuntimeImageGeneratedEvent.Type;
 
+const ProviderRuntimeToolDeniedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: ToolDeniedType,
+  payload: ToolDeniedPayload,
+});
+export type ProviderRuntimeToolDeniedEvent = typeof ProviderRuntimeToolDeniedEvent.Type;
+
 const ProviderRuntimeWarningEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: RuntimeWarningType,
@@ -1013,6 +1030,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeDeprecationNoticeEvent,
   ProviderRuntimeFilesPersistedEvent,
   ProviderRuntimeImageGeneratedEvent,
+  ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
 ]);

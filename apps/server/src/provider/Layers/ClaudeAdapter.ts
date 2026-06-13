@@ -2781,6 +2781,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
     };
 
+    if ((message as { readonly subtype: string }).subtype === "thinking_tokens") {
+      return;
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({
@@ -2944,6 +2948,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               : {}),
           },
         });
+        return;
+      case "permission_denied":
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "tool.denied",
+          payload: {
+            toolName: message.tool_name,
+            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            ...(message.decision_reason ? { reason: message.decision_reason } : {}),
+            ...(message.agent_id ? { agentId: message.agent_id } : {}),
+          },
+        });
+        return;
+      case "mirror_error":
+        yield* emitRuntimeError(
+          context,
+          `Claude workspace mirror error: ${message.error}`,
+          message,
+        );
         return;
       default:
         yield* emitRuntimeWarning(

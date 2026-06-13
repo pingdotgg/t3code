@@ -1828,6 +1828,98 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("handles Claude SDK system subtypes without warning floods", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "thinking_tokens",
+        token_count: 4096,
+        uuid: "thinking-tokens-1",
+        session_id: "sdk-session-system-subtypes",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "permission_denied",
+        tool_name: "Bash",
+        tool_use_id: "toolu-denied-1",
+        tool_input: {},
+        decision_reason: "Denied by auto mode",
+        agent_id: "agent-reviewer",
+        message: "Permission denied",
+        uuid: "permission-denied-1",
+        session_id: "sdk-session-system-subtypes",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "mirror_error",
+        error: "append timed out",
+        key: {
+          projectKey: "project-1",
+          sessionId: "sdk-session-system-subtypes",
+        },
+        uuid: "mirror-error-1",
+        session_id: "sdk-session-system-subtypes",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "thread.started",
+          "tool.denied",
+          "runtime.error",
+        ],
+      );
+
+      const toolDenied = runtimeEvents.find((event) => event.type === "tool.denied");
+      assert.equal(toolDenied?.type, "tool.denied");
+      if (toolDenied?.type === "tool.denied") {
+        assert.deepEqual(toolDenied.payload, {
+          toolName: "Bash",
+          toolUseId: "toolu-denied-1",
+          reason: "Denied by auto mode",
+          agentId: "agent-reviewer",
+        });
+      }
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(
+          runtimeError.payload.message,
+          "Claude workspace mirror error: append timed out",
+        );
+      }
+
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "runtime.warning"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits thread token usage updates from Claude task progress", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
