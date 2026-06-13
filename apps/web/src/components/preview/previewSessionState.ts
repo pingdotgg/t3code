@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { ensureEnvironmentApi } from "~/environmentApi";
+import { readPreviewStateRevision } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const PREVIEW_SESSION_STALE_TIME_MS = 5_000;
@@ -21,14 +22,16 @@ class PreviewSessionQueryError extends Data.TaggedError("PreviewSessionQueryErro
 const previewSessionListAtom = Atom.family((threadKey: string) =>
   Atom.make(
     Effect.tryPromise({
-      try: () => {
+      try: async () => {
         const threadRef = parseScopedThreadKey(threadKey);
         if (!threadRef) {
           throw new Error(`Invalid scoped thread key: ${threadKey}`);
         }
-        return ensureEnvironmentApi(threadRef.environmentId).preview.list({
+        const revision = readPreviewStateRevision(threadRef);
+        const result = await ensureEnvironmentApi(threadRef.environmentId).preview.list({
           threadId: threadRef.threadId,
         });
+        return { result, revision };
       },
       catch: (cause) =>
         new PreviewSessionQueryError({
@@ -47,7 +50,10 @@ const previewSessionListAtom = Atom.family((threadKey: string) =>
 );
 
 export interface PreviewSessionQueryState {
-  readonly data: PreviewListResult | null;
+  readonly data: {
+    readonly result: PreviewListResult;
+    readonly revision: number;
+  } | null;
   readonly error: string | null;
   readonly isPending: boolean;
 }

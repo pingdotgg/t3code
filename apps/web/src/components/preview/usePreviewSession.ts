@@ -6,7 +6,7 @@ import { useEffect } from "react";
 
 import { ensureEnvironmentApi, readEnvironmentApi } from "~/environmentApi";
 import { readEnvironmentConnection, subscribeEnvironmentConnections } from "~/environments/runtime";
-import { usePreviewStateStore } from "~/previewStateStore";
+import { readPreviewStateRevision, usePreviewStateStore } from "~/previewStateStore";
 
 import { refreshPreviewSessionState, usePreviewSessionState } from "./previewSessionState";
 
@@ -24,14 +24,24 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
   const applyServerEvent = usePreviewStateStore((state) => state.applyServerEvent);
 
   useEffect(() => {
-    if (!query.data) return;
-    const threadIdValue = threadRef.threadId;
-    let cancelled = false;
-    if (query.data.sessions.length > 0) {
-      for (const snapshot of query.data.sessions) applyServerSnapshot(threadRef, snapshot);
+    // SWR retains stale data while revalidating. Do not project that stale
+    // snapshot back into the live store because it can resurrect a session
+    // that was just closed.
+    if (
+      query.isPending ||
+      !query.data ||
+      query.data.revision !== readPreviewStateRevision(threadRef)
+    ) {
       return;
     }
-    if (query.isPending) return;
+    const threadIdValue = threadRef.threadId;
+    let cancelled = false;
+    if (query.data.result.sessions.length > 0) {
+      for (const snapshot of query.data.result.sessions) {
+        applyServerSnapshot(threadRef, snapshot);
+      }
+      return;
+    }
 
     // Server has no sessions — try to recover what the renderer remembers
     // from before the disconnect.

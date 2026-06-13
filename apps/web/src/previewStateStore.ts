@@ -49,6 +49,16 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   recentlySeenUrls: [] as string[],
 });
 
+const revisionByThreadKey = new Map<string, number>();
+
+const bumpPreviewStateRevision = (threadKey: string): void => {
+  revisionByThreadKey.set(threadKey, (revisionByThreadKey.get(threadKey) ?? 0) + 1);
+};
+
+export function readPreviewStateRevision(ref: ScopedThreadRef): number {
+  return revisionByThreadKey.get(scopedThreadKey(ref)) ?? 0;
+}
+
 export interface PreviewStateStoreState {
   byThreadKey: Record<string, ThreadPreviewState>;
   applyServerEvent: (ref: ScopedThreadRef, event: PreviewEvent) => void;
@@ -120,6 +130,7 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
   applyServerEvent: (ref, event) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
+      bumpPreviewStateRevision(threadKey);
       let nextByThread = state.byThreadKey;
       switch (event.type) {
         case "opened":
@@ -177,6 +188,7 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
   applyServerSnapshot: (ref, snapshot) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
+      bumpPreviewStateRevision(threadKey);
       const nextByThread = updateThread(state, threadKey, (current) => {
         if (!snapshot && current.snapshot === null) return current;
         if (!snapshot) {
@@ -226,6 +238,7 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
   removeSession: (ref, tabId) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
+      bumpPreviewStateRevision(threadKey);
       return {
         byThreadKey: updateThread(state, threadKey, (current) => removeSession(current, tabId)),
       };
@@ -258,6 +271,7 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
   removeThread: (ref) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
+      bumpPreviewStateRevision(threadKey);
       if (!(threadKey in state.byThreadKey)) return state;
       return { byThreadKey: removeThreadKey(state.byThreadKey, threadKey) };
     }),
