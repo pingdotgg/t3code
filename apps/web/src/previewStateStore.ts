@@ -189,6 +189,10 @@ export const usePreviewStateStore = create<PreviewStateStoreState>()((set) => ({
             desktopByTabId: {},
           };
         }
+        const existing = current.sessions[snapshot.tabId];
+        if (existing && existing.updatedAt > snapshot.updatedAt) {
+          return current;
+        }
         const recentlySeenUrls =
           snapshot && snapshot.navStatus._tag !== "Idle"
             ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)

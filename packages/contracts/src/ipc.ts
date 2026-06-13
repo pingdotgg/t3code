@@ -1190,7 +1190,10 @@ export interface EnvironmentApi {
       reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
       clearOwner: (input: { clientId: string }) => Promise<void>;
     };
-    onEvent: (callback: (event: PreviewEvent) => void) => () => void;
+    onEvent: (
+      callback: (event: PreviewEvent) => void,
+      options?: { onResubscribe?: () => void },
+    ) => () => void;
     subscribePorts: (
       callback: (servers: DiscoveredLocalServerList) => void,
       options?: { onResubscribe?: () => void },

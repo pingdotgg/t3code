@@ -262,6 +262,31 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.snapshot).toBeNull();
   });
 
+  it("does not replace a streamed snapshot with older SWR data", () => {
+    const store = usePreviewStateStore.getState();
+    store.applyServerSnapshot(
+      ref,
+      makeSnapshot({
+        navStatus: { _tag: "Success", url: "http://localhost:5173/new", title: "New" },
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    store.applyServerSnapshot(
+      ref,
+      makeSnapshot({
+        navStatus: { _tag: "Success", url: "http://localhost:5173/old", title: "Old" },
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, ref);
+    expect(state.snapshot?.navStatus).toEqual({
+      _tag: "Success",
+      url: "http://localhost:5173/new",
+      title: "New",
+    });
+  });
+
   it("rememberUrl dedupes and caps at limit", () => {
     const store = usePreviewStateStore.getState();
     for (let i = 0; i < __testing.RECENT_URL_LIMIT + 5; i += 1) {

@@ -4,8 +4,11 @@ import { scopedThreadKey } from "@t3tools/client-runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect } from "react";
 
-import { ensureEnvironmentApi } from "~/environmentApi";
+import { ensureEnvironmentApi, readEnvironmentApi } from "~/environmentApi";
+import { readEnvironmentConnection, subscribeEnvironmentConnections } from "~/environments/runtime";
 import { usePreviewStateStore } from "~/previewStateStore";
+
+import { refreshPreviewSessionState, usePreviewSessionState } from "./previewSessionState";
 
 /**
  * Subscribes to the server's per-thread preview events and replays the
@@ -16,52 +19,82 @@ import { usePreviewStateStore } from "~/previewStateStore";
  * `preview.open` so subsequent events land on a real session.
  */
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
+  const query = usePreviewSessionState(threadRef);
   const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
   const applyServerEvent = usePreviewStateStore((state) => state.applyServerEvent);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const api = ensureEnvironmentApi(threadRef.environmentId);
+    if (!query.data) return;
     const threadIdValue = threadRef.threadId;
     let cancelled = false;
+    if (query.data.sessions.length > 0) {
+      for (const snapshot of query.data.sessions) applyServerSnapshot(threadRef, snapshot);
+      return;
+    }
+    if (query.isPending) return;
 
+    // Server has no sessions — try to recover what the renderer remembers
+    // from before the disconnect.
+    const localSnapshot =
+      usePreviewStateStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.snapshot;
+    const recoverableUrl =
+      localSnapshot && localSnapshot.navStatus._tag !== "Idle" ? localSnapshot.navStatus.url : null;
+    if (!recoverableUrl) {
+      applyServerSnapshot(threadRef, null);
+      return;
+    }
+
+    const api = ensureEnvironmentApi(threadRef.environmentId);
     void api.preview
-      .list({ threadId: threadIdValue })
-      .then((result) => {
+      .open({ threadId: threadIdValue, url: recoverableUrl })
+      .then((snapshot) => {
         if (cancelled) return;
-        // Pick the most recent session. Server returns sessions sorted by
-        // `updatedAt` ascending, so the last one is freshest.
-        const serverSnapshot = result.sessions.at(-1) ?? null;
-        if (serverSnapshot) {
-          for (const snapshot of result.sessions) applyServerSnapshot(threadRef, snapshot);
-          return;
-        }
-        // Server has no sessions — try to recover what the renderer
-        // remembers from before the disconnect.
-        const localSnapshot =
-          usePreviewStateStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.snapshot;
-        const recoverableUrl =
-          localSnapshot && localSnapshot.navStatus._tag !== "Idle"
-            ? localSnapshot.navStatus.url
-            : null;
-        if (recoverableUrl) {
-          void api.preview
-            .open({ threadId: threadIdValue, url: recoverableUrl })
-            .catch(() => undefined);
-        } else {
-          applyServerSnapshot(threadRef, null);
-        }
+        applyServerSnapshot(threadRef, snapshot);
+        refreshPreviewSessionState(threadRef);
       })
       .catch(() => undefined);
 
-    const unsubscribe = api.preview.onEvent((event) => {
-      if (event.threadId !== threadIdValue) return;
-      applyServerEvent(threadRef, event);
-    });
-
     return () => {
       cancelled = true;
-      unsubscribe();
     };
-  }, [applyServerEvent, applyServerSnapshot, threadRef]);
+  }, [applyServerSnapshot, query.data, query.isPending, threadRef]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let clientIdentity: object | null = null;
+    let unsubscribeEvents: () => void = () => undefined;
+
+    const attach = () => {
+      const connection = readEnvironmentConnection(threadRef.environmentId);
+      const api = readEnvironmentApi(threadRef.environmentId);
+      const nextIdentity = connection?.client ?? api ?? null;
+      if (nextIdentity === clientIdentity) return;
+
+      unsubscribeEvents();
+      unsubscribeEvents = () => undefined;
+      clientIdentity = nextIdentity;
+      if (!api) return;
+
+      refreshPreviewSessionState(threadRef);
+      unsubscribeEvents = api.preview.onEvent(
+        (event) => {
+          if (event.threadId !== threadRef.threadId) return;
+          applyServerEvent(threadRef, event);
+          if (event.type === "opened" || event.type === "closed") {
+            refreshPreviewSessionState(threadRef);
+          }
+        },
+        {
+          onResubscribe: () => refreshPreviewSessionState(threadRef),
+        },
+      );
+    };
+
+    const unsubscribeConnections = subscribeEnvironmentConnections(attach);
+    attach();
+    return () => {
+      unsubscribeConnections();
+      unsubscribeEvents();
+    };
+  }, [applyServerEvent, threadRef]);
 }

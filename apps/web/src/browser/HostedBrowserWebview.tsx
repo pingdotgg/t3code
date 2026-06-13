@@ -1,8 +1,8 @@
 "use client";
 
-import type { DesktopPreviewWebviewConfig, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
@@ -10,6 +10,7 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useBrowserRecordingStore } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { acquireDesktopTab } from "./desktopTabLifetime";
+import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 
 interface ElectronWebview extends HTMLElement {
   src: string;
@@ -31,7 +32,7 @@ export function HostedBrowserWebview(props: {
   readonly initialUrl: string | null;
 }) {
   const { threadRef, tabId, initialUrl } = props;
-  const [config, setConfig] = useState<DesktopPreviewWebviewConfig | null>(null);
+  const config = usePreviewWebviewConfig(threadRef.environmentId);
   const initialSrcRef = useRef(initialUrl ?? "about:blank");
   const webviewRef = useRef<ElectronWebview | null>(null);
   const presentation = useBrowserSurfaceStore(useShallow((state) => state.byTabId[tabId] ?? null));
@@ -40,19 +41,6 @@ export function HostedBrowserWebview(props: {
   usePreviewBridge({ threadRef, tabId });
 
   useEffect(() => acquireDesktopTab(tabId), [tabId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void previewBridge
-      ?.getPreviewConfig(threadRef.environmentId)
-      .then((next) => {
-        if (!cancelled) setConfig(next);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [threadRef.environmentId]);
 
   const setWebviewRef = useCallback((node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
