@@ -169,37 +169,45 @@ export function PreviewChromeRow({
         </div>
 
         <InputGroup className="group/address h-7 flex-1 rounded-md border-transparent bg-transparent shadow-none before:shadow-none hover:bg-muted/40 focus-within:bg-background">
-          <InputGroupInput
-            ref={inputRef}
-            value={inputFocused ? draft : (displayUrl ?? draft)}
-            className={cn(
-              onOpenInBrowser && !inputFocused && "group-hover/address:pe-7 transition-[padding]",
-            )}
-            onChange={(event) => setDraft(event.target.value)}
-            onFocus={() => {
-              setDraft(url);
-              setInputFocused(true);
-              queueMicrotask(() => inputRef.current?.select());
-            }}
-            onBlur={() => {
-              setDraft(url);
-              setInputFocused(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") submit(event);
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setDraft(url);
-                inputRef.current?.blur();
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <InputGroupInput
+                  ref={inputRef}
+                  value={inputFocused ? draft : (displayUrl ?? draft)}
+                  className={cn(
+                    onOpenInBrowser &&
+                      !inputFocused &&
+                      "group-hover/address:pe-7 transition-[padding]",
+                  )}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onFocus={() => {
+                    setDraft(url);
+                    setInputFocused(true);
+                    queueMicrotask(() => inputRef.current?.select());
+                  }}
+                  onBlur={() => {
+                    setDraft(url);
+                    setInputFocused(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") submit(event);
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setDraft(url);
+                      inputRef.current?.blur();
+                    }
+                  }}
+                  placeholder="Search or enter URL"
+                  spellCheck={false}
+                  disabled={inputDisabled}
+                  data-preview-url-input
+                  size="sm"
+                />
               }
-            }}
-            placeholder="Search or enter URL"
-            spellCheck={false}
-            disabled={inputDisabled}
-            data-preview-url-input
-            title={!inputFocused && displayUrl ? url : undefined}
-            size="sm"
-          />
+            />
+            {!inputFocused && displayUrl ? <TooltipPopup>{url}</TooltipPopup> : null}
+          </Tooltip>
           {onOpenInBrowser && !inputFocused ? (
             <InputGroupAddon
               align="inline-end"

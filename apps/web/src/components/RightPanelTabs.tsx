@@ -7,6 +7,7 @@ import { isElectron } from "~/env";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
@@ -185,15 +186,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-1.5"
-                  onClick={() => props.onActivate(surface)}
-                  title={title}
-                >
-                  <SurfaceIcon surface={surface} sessions={props.previewSessions} />
-                  <span className="truncate">{title}</span>
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-center gap-1.5"
+                        onClick={() => props.onActivate(surface)}
+                      >
+                        <SurfaceIcon surface={surface} sessions={props.previewSessions} />
+                        <span className="truncate">{title}</span>
+                      </button>
+                    }
+                  />
+                  <TooltipPopup>{title}</TooltipPopup>
+                </Tooltip>
                 <button
                   type="button"
                   className="rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100 focus:opacity-100"
