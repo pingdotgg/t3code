@@ -329,6 +329,8 @@ interface SidebarThreadRowProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   threadDragInProgressRef: React.RefObject<boolean>;
   suppressThreadClickAfterDragRef: React.RefObject<boolean>;
+  /** When true the row sits inside a folder and is inset with a guide line. */
+  indented?: boolean;
 }
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -357,6 +359,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread,
     threadDragInProgressRef,
     suppressThreadClickAfterDragRef,
+    indented = false,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -607,7 +610,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <SidebarMenuSubItem
       ref={setDragNodeRef}
       style={{ transform: CSS.Translate.toString(dragTransform), transition: dragTransition }}
-      className={`w-full ${isDragging ? "z-20 opacity-80" : ""}`}
+      className={`w-full ${
+        indented ? "ml-3 border-l border-border/70 pl-2" : ""
+      } ${isDragging ? "z-20 opacity-80" : ""}`}
       data-thread-item
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
@@ -965,12 +970,13 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
 
   const renderThreadRow = useCallback(
-    (thread: SidebarThreadSummary) => {
+    (thread: SidebarThreadSummary, indented = false) => {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       return (
         <SidebarThreadRow
           key={threadKey}
           thread={thread}
+          indented={indented}
           projectCwd={projectCwd}
           orderedProjectThreadKeys={orderedProjectThreadKeys}
           isActive={activeRouteThreadKey === threadKey}
@@ -1092,7 +1098,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
                       )}
                       strategy={verticalListSortingStrategy}
                     >
-                      {section.threads.map((thread) => renderThreadRow(thread))}
+                      {section.threads.map((thread) => renderThreadRow(thread, true))}
                     </SortableContext>
                   ) : null}
                 </React.Fragment>
