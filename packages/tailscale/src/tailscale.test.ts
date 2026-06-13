@@ -146,7 +146,9 @@ describe("tailscale", () => {
       yield* TestClock.adjust(TAILSCALE_STATUS_TIMEOUT);
       const error = yield* Fiber.join(fiber);
 
-      assert.equal(error._tag, "TailscaleCommandError");
+      if (error._tag !== "TailscaleCommandError") {
+        assert.fail(`Expected TailscaleCommandError, received ${error._tag}.`);
+      }
       assert.equal(error.message, "Tailscale status timed out.");
       assert.equal(error.exitCode, null);
     }).pipe(Effect.provide(layer));
