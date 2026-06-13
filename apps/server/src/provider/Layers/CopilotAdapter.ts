@@ -657,6 +657,12 @@ function updateProviderSession(
   };
 }
 
+function readyStatusAfterTurnCompletion(
+  context: CopilotSessionContext,
+): Extract<ProviderSession["status"], "running" | "ready"> {
+  return context.queuedTurnIds.length > 0 ? "running" : "ready";
+}
+
 function commonPrefixLength(left: string, right: string): number {
   let index = 0;
   while (index < left.length && index < right.length && left[index] === right[index]) {
@@ -1194,7 +1200,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       context.activeTurnId = undefined;
     }
     updateProviderSession(context, {
-      status: status === "failed" ? "error" : context.stopped ? "closed" : "ready",
+      status:
+        status === "failed"
+          ? "error"
+          : context.stopped
+            ? "closed"
+            : readyStatusAfterTurnCompletion(context),
       ...(status === "failed" && input?.errorMessage ? { lastError: input.errorMessage } : {}),
       activeTurnId: undefined,
     });
@@ -1830,8 +1841,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             stopReason: event.data.aborted ? "aborted" : null,
           });
         }
+        const idleStatus = context.stopped ? "closed" : readyStatusAfterTurnCompletion(context);
+        const idleState = context.stopped ? "stopped" : readyStatusAfterTurnCompletion(context);
         updateProviderSession(context, {
-          status: context.stopped ? "closed" : "ready",
+          status: idleStatus,
           activeTurnId: undefined,
         });
         await emitAsync({
@@ -1841,7 +1854,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }),
           type: "session.state.changed",
           payload: {
-            state: context.stopped ? "stopped" : "ready",
+            state: idleState,
             reason: event.data.aborted ? "Copilot turn aborted." : "Copilot idle.",
           },
         });
@@ -2671,10 +2684,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
     ensureTurnSnapshot(context, turnId);
     context.queuedTurnIds.push(turnId);
-    context.activeTurnId = turnId;
+    const shouldPromoteQueuedTurn =
+      context.activeTurnId === undefined && context.activeSdkTurnId === undefined;
+    if (shouldPromoteQueuedTurn) {
+      context.activeTurnId = turnId;
+    }
     updateProviderSession(context, {
       status: "running",
-      activeTurnId: turnId,
+      ...(shouldPromoteQueuedTurn ? { activeTurnId: turnId } : {}),
       ...(modelSelection?.model ? { model: modelSelection.model } : {}),
     });
 
@@ -2704,10 +2721,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           if (queueIndex >= 0) {
             context.queuedTurnIds.splice(queueIndex, 1);
           }
-          context.activeTurnId = undefined;
+          if (context.activeTurnId === turnId) {
+            context.activeTurnId = undefined;
+          }
           updateProviderSession(context, {
-            status: "ready",
-            activeTurnId: undefined,
+            status: context.activeTurnId ? "running" : readyStatusAfterTurnCompletion(context),
+            ...(context.activeTurnId
+              ? { activeTurnId: context.activeTurnId }
+              : { activeTurnId: undefined }),
           });
           yield* emit({
             ...createBaseEvent({
