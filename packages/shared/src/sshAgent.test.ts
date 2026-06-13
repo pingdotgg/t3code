@@ -62,6 +62,54 @@ describe("resolveSshAuthSock", () => {
     ).toBe("/tmp/vscode-ssh-auth-22222222-2222-2222-2222-222222222222.sock");
   });
 
+  it("finds VS Code forwarded SSH agent sockets that use the sock numeric suffix", () => {
+    const readdir = vi.fn<() => ReadonlyArray<string>>(() => [
+      "vscode-ssh-auth-sock-243591993",
+    ]);
+    const stat = vi.fn<(path: string) => SshAgentSocketStats>(() =>
+      socketStats({ uid: 1000, mtimeMs: 10 }),
+    );
+
+    expect(
+      resolveSshAuthSock({
+        env: {},
+        platform: "linux",
+        tmpDir: "/tmp",
+        currentUid: 1000,
+        readdir,
+        stat,
+      }),
+    ).toBe("/tmp/vscode-ssh-auth-sock-243591993");
+  });
+
+  it("scans /tmp when the process temp directory is somewhere else", () => {
+    const readdir = vi.fn<(path: string) => ReadonlyArray<string>>((path) => {
+      if (path === "/custom-tmp") {
+        return [];
+      }
+      if (path === "/tmp") {
+        return ["vscode-ssh-auth-11111111-1111-1111-1111-111111111111.sock"];
+      }
+      return [];
+    });
+    const stat = vi.fn<(path: string) => SshAgentSocketStats>(() =>
+      socketStats({ uid: 1000, mtimeMs: 10 }),
+    );
+
+    expect(
+      resolveSshAuthSock({
+        env: {},
+        platform: "linux",
+        tmpDir: "/custom-tmp",
+        currentUid: 1000,
+        readdir,
+        stat,
+      }),
+    ).toBe("/tmp/vscode-ssh-auth-11111111-1111-1111-1111-111111111111.sock");
+    expect(readdir).toHaveBeenCalledWith("/custom-tmp");
+    expect(readdir).toHaveBeenCalledWith("/tmp");
+  });
+
   it("falls back from a stale inherited socket to a discovered VS Code socket", () => {
     const readdir = vi.fn<() => ReadonlyArray<string>>(() => [
       "vscode-ssh-auth-11111111-1111-1111-1111-111111111111.sock",
@@ -121,5 +169,32 @@ describe("resolveSshAuthSock", () => {
       }),
     ).toBeUndefined();
     expect(readdir).not.toHaveBeenCalled();
+  });
+
+  it("keeps inherited Windows OpenSSH named pipe sockets", () => {
+    const readdir = vi.fn<() => ReadonlyArray<string>>(() => []);
+    const stat = vi.fn<(path: string) => SshAgentSocketStats>(() =>
+      socketStats({ uid: 1000, mtimeMs: 10 }),
+    );
+
+    expect(
+      resolveSshAuthSock({
+        env: { SSH_AUTH_SOCK: "\\\\.\\pipe\\openssh-ssh-agent" },
+        platform: "win32",
+        readdir,
+        stat,
+      }),
+    ).toBe("\\\\.\\pipe\\openssh-ssh-agent");
+    expect(readdir).not.toHaveBeenCalled();
+    expect(stat).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-pipe inherited SSH_AUTH_SOCK values on Windows", () => {
+    expect(
+      resolveSshAuthSock({
+        env: { SSH_AUTH_SOCK: "/tmp/stale.sock" },
+        platform: "win32",
+      }),
+    ).toBeUndefined();
   });
 });
