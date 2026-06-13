@@ -15,7 +15,7 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
  * then the title, then the description. Body is intentionally not scored
  * (long bodies would dominate ranking with substring hits).
  */
-function scoreSavedSnippetItem(
+export function scoreSavedSnippetItem(
   item: Extract<ComposerCommandItem, { type: "saved-snippet" }>,
   query: string,
 ): number | null {

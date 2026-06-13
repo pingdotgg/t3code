@@ -7,6 +7,7 @@ import {
   getKnownTerminalSessionTarget,
   getKnownTerminalSessionListFilter,
   knownTerminalSessionsAtom,
+  knownTerminalSessionsAcrossEnvironmentsAtom,
   runningTerminalIdsAtom,
   terminalSessionStateAtom,
   type KnownTerminalSession,
@@ -64,6 +65,13 @@ export function useKnownTerminalSessions(input: {
   return useAtomValue(
     filter !== null ? knownTerminalSessionsAtom(filter) : EMPTY_KNOWN_TERMINAL_SESSIONS_ATOM,
   );
+}
+
+export function useKnownTerminalSessionsAcrossEnvironments(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyArray<KnownTerminalSession> {
+  const environmentIdsKey = JSON.stringify([...new Set(environmentIds)].sort());
+  return useAtomValue(knownTerminalSessionsAcrossEnvironmentsAtom(environmentIdsKey));
 }
 
 export function useThreadRunningTerminalIds(input: {

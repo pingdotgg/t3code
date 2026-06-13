@@ -1,3 +1,4 @@
+import type { KnownTerminalSession } from "@t3tools/client-runtime";
 import type { Project, SidebarThreadSummary } from "./types";
 
 export type AgentRunStatus =
@@ -13,6 +14,12 @@ export interface AgentRun {
   project: Project | null;
   status: AgentRunStatus;
   statusAt: string;
+}
+
+export interface TerminalProcessRun {
+  session: KnownTerminalSession;
+  thread: SidebarThreadSummary | null;
+  project: Project | null;
 }
 
 const STATUS_PRIORITY: Record<AgentRunStatus, number> = {
@@ -84,6 +91,36 @@ export function isAgentRunActive(run: AgentRun): boolean {
 export function isThreadAgentRunActive(thread: SidebarThreadSummary): boolean {
   const status = resolveAgentRunStatus(thread);
   return status !== null && isAgentRunStatusActive(status);
+}
+
+export function buildTerminalProcessRuns(input: {
+  sessions: readonly KnownTerminalSession[];
+  threads: readonly SidebarThreadSummary[];
+  projects: readonly Project[];
+}): TerminalProcessRun[] {
+  const threadsByKey = new Map(
+    input.threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread]),
+  );
+  const projectsByKey = new Map(
+    input.projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
+  );
+
+  return input.sessions
+    .filter((session) => session.state.hasRunningSubprocess)
+    .map((session) => {
+      const thread =
+        threadsByKey.get(`${session.target.environmentId}:${session.target.threadId}`) ?? null;
+      return {
+        session,
+        thread,
+        project: thread
+          ? (projectsByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
+          : null,
+      };
+    })
+    .sort((left, right) =>
+      (right.session.state.updatedAt ?? "").localeCompare(left.session.state.updatedAt ?? ""),
+    );
 }
 
 function isAgentRunStatusActive(status: AgentRunStatus): boolean {

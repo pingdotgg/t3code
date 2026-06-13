@@ -526,6 +526,24 @@ describe("GeneralSettingsPanel observability", () => {
     authAccessHarness.reset();
   });
 
+  it("applies and persists the selected color palette", async () => {
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await renderWithTestRouter(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const palettePicker = page.getByRole("combobox", { name: "Color palette" });
+    await expect.element(palettePicker).toBeInTheDocument();
+    await palettePicker.click();
+    await page.getByRole("option", { name: "Catppuccin" }).click();
+
+    expect(localStorage.getItem("t3code:theme-palette")).toBe("catppuccin");
+    expect(document.documentElement.dataset.themePalette).toBe("catppuccin");
+  });
+
   it("hides owner pairing tools in browser-served loopback builds without remote exposure", async () => {
     Reflect.deleteProperty(window, "desktopBridge");
     authAccessHarness.setSnapshot({

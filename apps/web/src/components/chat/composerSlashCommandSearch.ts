@@ -6,7 +6,7 @@ import {
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 
-function scoreSlashCommandItem(
+export function scoreSlashCommandItem(
   item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>,
   query: string,
 ): number | null {

@@ -32,7 +32,10 @@ export function SettingsSection({
     <section {...sectionProps} className={cn("space-y-2.5", className)}>
       <div className="flex items-center justify-between px-1">
         <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/50">
-          <span className="inline-block h-px w-3 bg-border" aria-hidden />
+          <span
+            className="inline-block h-px w-3 bg-linear-to-r from-primary/80 to-secondary/60"
+            aria-hidden
+          />
           {icon}
           {title}
         </h2>

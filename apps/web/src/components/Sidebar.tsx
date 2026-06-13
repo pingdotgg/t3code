@@ -78,7 +78,10 @@ import {
   useStore,
 } from "../store";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useThreadRunningTerminalIds } from "../terminalSessionState";
+import {
+  useKnownTerminalSessionsAcrossEnvironments,
+  useThreadRunningTerminalIds,
+} from "../terminalSessionState";
 import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
@@ -2583,7 +2586,14 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const runs = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
-  const activeRunCount = runs.filter(isThreadAgentRunActive).length;
+  const runEnvironmentIds = useMemo(
+    () => [...new Set(runs.map((thread) => thread.environmentId))],
+    [runs],
+  );
+  const terminalSessions = useKnownTerminalSessionsAcrossEnvironments(runEnvironmentIds);
+  const activeRunCount =
+    runs.filter(isThreadAgentRunActive).length +
+    terminalSessions.filter((session) => session.state.hasRunningSubprocess).length;
   const { isMobile, setOpenMobile } = useSidebar();
   const handleRunsClick = useCallback(() => {
     if (isMobile) {

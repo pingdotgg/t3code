@@ -7,6 +7,7 @@ import {
   newSnippetFromDraft,
   nextSnippetId,
   normalizeSnippetId,
+  replaceSnippet,
   removeSnippet,
   snippetIdList,
   updateSnippetFromDraft,
@@ -130,14 +131,14 @@ describe("SnippetsSettings.logic", () => {
   });
 
   describe("updateSnippetFromDraft", () => {
-    it("preserves id and createdAt; refreshes updatedAt", () => {
+    it("applies id changes, preserves createdAt, and refreshes updatedAt", () => {
       const current = makeSnippet({ createdAt: "2025-01-01T00:00:00.000Z" });
       const updated = updateSnippetFromDraft(
         current,
-        { title: "New title", description: "", body: "new body" },
+        { id: "renamed-trigger", title: "New title", description: "", body: "new body" },
         "2026-06-01T00:00:00.000Z",
       );
-      expect(updated.id).toBe(current.id);
+      expect(updated.id).toBe("renamed-trigger");
       expect(updated.createdAt).toBe("2025-01-01T00:00:00.000Z");
       expect(updated.updatedAt).toBe("2026-06-01T00:00:00.000Z");
       expect(updated.title).toBe("New title");
@@ -160,6 +161,17 @@ describe("SnippetsSettings.logic", () => {
       const map = makeSnippetMap([makeSnippet()]);
       const next = removeSnippet(map, "does-not-exist");
       expect(Object.keys(next)).toEqual(["explain-stack"]);
+    });
+  });
+
+  describe("replaceSnippet", () => {
+    it("removes the previous map key when a snippet trigger changes", () => {
+      const map = makeSnippetMap([makeSnippet()]);
+      const renamed = makeSnippet({ id: "renamed-trigger" as SnippetId });
+      const next = replaceSnippet(map, "explain-stack", renamed);
+
+      expect(Object.keys(next)).toEqual(["renamed-trigger"]);
+      expect(next[renamed.id]).toBe(renamed);
     });
   });
 

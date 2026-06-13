@@ -11,6 +11,7 @@ import {
   MessageCircleQuestionIcon,
   PlayIcon,
   ShieldAlertIcon,
+  SquareTerminalIcon,
   XCircleIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -19,12 +20,21 @@ import { useShallow } from "zustand/react/shallow";
 import { readEnvironmentApi } from "../environmentApi";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { newCommandId } from "../lib/utils";
-import { buildAgentRuns, isAgentRunActive, type AgentRun, type AgentRunStatus } from "../runs";
+import {
+  buildAgentRuns,
+  buildTerminalProcessRuns,
+  isAgentRunActive,
+  type AgentRun,
+  type AgentRunStatus,
+  type TerminalProcessRun,
+} from "../runs";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
   useStore,
 } from "../store";
+import { useKnownTerminalSessionsAcrossEnvironments } from "../terminalSessionState";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
@@ -56,16 +66,29 @@ export function RunsView() {
   const navigate = useNavigate();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const environmentIds = useMemo(
+    () => [...new Set(threads.map((thread) => thread.environmentId))],
+    [threads],
+  );
+  const terminalSessions = useKnownTerminalSessionsAcrossEnvironments(environmentIds);
+  const ensureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
+  const closeTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const { archiveThread } = useThreadActions();
   const [filter, setFilter] = useState<RunFilter>("all");
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const runs = useMemo(() => buildAgentRuns({ projects, threads }), [projects, threads]);
-  const activeCount = runs.filter(isAgentRunActive).length;
+  const processRuns = useMemo(
+    () => buildTerminalProcessRuns({ projects, sessions: terminalSessions, threads }),
+    [projects, terminalSessions, threads],
+  );
+  const activeCount = runs.filter(isAgentRunActive).length + processRuns.length;
   const visibleRuns = runs.filter((run) => {
     if (filter === "active") return isAgentRunActive(run);
     if (filter === "recent") return !isAgentRunActive(run);
     return true;
   });
+  const visibleProcessRuns = filter === "recent" ? [] : processRuns;
+  const hasVisibleRuns = visibleRuns.length > 0 || visibleProcessRuns.length > 0;
 
   const withPending = useCallback(async (key: string, action: () => Promise<void>) => {
     setPendingKeys((current) => new Set(current).add(key));
@@ -102,6 +125,33 @@ export function RunsView() {
       createdAt: new Date().toISOString(),
     });
   }, []);
+  const openProcessRun = useCallback(
+    (run: TerminalProcessRun): void => {
+      const threadRef = scopeThreadRef(
+        run.session.target.environmentId,
+        run.session.target.threadId,
+      );
+      ensureTerminal(threadRef, run.session.target.terminalId, { active: true, open: true });
+      void openRun(threadRef);
+    },
+    [ensureTerminal, openRun],
+  );
+  const stopProcessRun = useCallback(
+    async (run: TerminalProcessRun): Promise<void> => {
+      const api = readEnvironmentApi(run.session.target.environmentId);
+      if (!api) return;
+      await api.terminal.close({
+        threadId: run.session.target.threadId,
+        terminalId: run.session.target.terminalId,
+        deleteHistory: true,
+      });
+      closeTerminal(
+        scopeThreadRef(run.session.target.environmentId, run.session.target.threadId),
+        run.session.target.terminalId,
+      );
+    },
+    [closeTerminal],
+  );
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -123,9 +173,9 @@ export function RunsView() {
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
-                <h1 className="text-xl font-semibold tracking-tight">Agent runs</h1>
+                <h1 className="text-xl font-semibold tracking-tight">Runs</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Monitor work across every project and environment.
+                  Monitor agent activity and running processes across every environment.
                 </p>
               </div>
               <div className="flex rounded-lg border border-border bg-card p-0.5">
@@ -143,45 +193,129 @@ export function RunsView() {
               </div>
             </div>
 
-            {visibleRuns.length === 0 ? (
+            {!hasVisibleRuns ? (
               <Empty className="min-h-80 rounded-2xl border border-dashed border-border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
                     <Clock3Icon />
                   </EmptyMedia>
                   <EmptyTitle>
-                    {runs.length === 0 ? "No agent runs yet" : "No matching runs"}
+                    {runs.length === 0 && processRuns.length === 0
+                      ? "No runs yet"
+                      : "No matching runs"}
                   </EmptyTitle>
                   <EmptyDescription>
-                    {runs.length === 0
-                      ? "Runs will appear here as soon as an agent starts working."
+                    {runs.length === 0 && processRuns.length === 0
+                      ? "Agent activity and running terminal processes will appear here."
                       : "Choose another filter to see the rest of your runs."}
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : (
-              <div className="grid gap-3">
-                {visibleRuns.map((run) => {
-                  const threadRef = scopeThreadRef(run.thread.environmentId, run.thread.id);
-                  const runKey = `${run.thread.environmentId}:${run.thread.id}`;
-                  const isPending = pendingKeys.has(runKey);
-                  return (
-                    <RunCard
-                      key={runKey}
-                      run={run}
-                      isPending={isPending}
-                      onOpen={() => void openRun(threadRef)}
-                      onInterrupt={() => void withPending(runKey, () => interruptRun(run))}
-                      onArchive={() => void withPending(runKey, () => archiveThread(threadRef))}
-                    />
-                  );
-                })}
+              <div className="flex flex-col gap-6">
+                {visibleProcessRuns.length > 0 ? (
+                  <section className="grid gap-3">
+                    <h2 className="text-sm font-medium">Running processes</h2>
+                    {visibleProcessRuns.map((run) => {
+                      const runKey = `terminal:${run.session.target.environmentId}:${run.session.target.threadId}:${run.session.target.terminalId}`;
+                      return (
+                        <TerminalProcessCard
+                          key={runKey}
+                          run={run}
+                          isPending={pendingKeys.has(runKey)}
+                          onOpen={() => openProcessRun(run)}
+                          onStop={() => void withPending(runKey, () => stopProcessRun(run))}
+                        />
+                      );
+                    })}
+                  </section>
+                ) : null}
+                {visibleRuns.length > 0 ? (
+                  <section className="grid gap-3">
+                    {visibleProcessRuns.length > 0 ? (
+                      <h2 className="text-sm font-medium">Agent activity</h2>
+                    ) : null}
+                    {visibleRuns.map((run) => {
+                      const threadRef = scopeThreadRef(run.thread.environmentId, run.thread.id);
+                      const runKey = `agent:${run.thread.environmentId}:${run.thread.id}`;
+                      const isPending = pendingKeys.has(runKey);
+                      return (
+                        <RunCard
+                          key={runKey}
+                          run={run}
+                          isPending={isPending}
+                          onOpen={() => void openRun(threadRef)}
+                          onInterrupt={() => void withPending(runKey, () => interruptRun(run))}
+                          onArchive={() => void withPending(runKey, () => archiveThread(threadRef))}
+                        />
+                      );
+                    })}
+                  </section>
+                ) : null}
               </div>
             )}
           </div>
         </main>
       </div>
     </SidebarInset>
+  );
+}
+
+function TerminalProcessCard(props: {
+  run: TerminalProcessRun;
+  isPending: boolean;
+  onOpen: () => void;
+  onStop: () => void;
+}) {
+  const summary = props.run.session.state.summary;
+  const label = summary?.label?.trim() || props.run.session.target.terminalId;
+  const updatedAt = props.run.session.state.updatedAt;
+
+  return (
+    <Card className="rounded-xl">
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+            <SquareTerminalIcon className="size-4 animate-pulse" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="truncate text-left text-sm font-medium hover:underline"
+                onClick={props.onOpen}
+              >
+                {label}
+              </button>
+              <Badge variant="info" size="sm">
+                Process running
+              </Badge>
+            </div>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {props.run.project?.name ?? "Unknown project"}
+              {props.run.thread ? ` · ${props.run.thread.title}` : ""}
+              {summary?.cwd ? ` · ${summary.cwd}` : ""}
+              {updatedAt ? ` · ${formatRelativeTimeLabel(updatedAt)}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="xs"
+            variant="destructive-outline"
+            disabled={props.isPending}
+            onClick={props.onStop}
+          >
+            <CircleStopIcon />
+            Stop
+          </Button>
+          <Button size="xs" variant="outline" onClick={props.onOpen}>
+            <ExternalLinkIcon />
+            Open terminal
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

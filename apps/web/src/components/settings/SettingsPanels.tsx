@@ -20,6 +20,13 @@ import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
+  DEFAULT_THEME_PALETTE,
+  getThemePalette,
+  isThemePalette,
+  THEME_PALETTES,
+  type ThemePalette,
+} from "../../themePalettes";
+import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
@@ -94,6 +101,26 @@ const THEME_OPTIONS = [
     label: "Dark",
   },
 ] as const;
+
+function PaletteSwatches({
+  paletteId,
+  resolvedTheme,
+}: {
+  paletteId: ThemePalette;
+  resolvedTheme: "light" | "dark";
+}) {
+  const colors = getThemePalette(paletteId)[resolvedTheme];
+  return (
+    <span
+      className="inline-flex shrink-0 overflow-hidden rounded-full border border-border/70 shadow-sm"
+      aria-hidden
+    >
+      {colors.slice(0, 3).map((color) => (
+        <span key={color} className="size-2.5" style={{ backgroundColor: color }} />
+      ))}
+    </span>
+  );
+}
 
 const FONT_OPTIONS = [
   { value: "mono", label: "Fira Code" },
@@ -387,7 +414,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
-  const { theme, setTheme } = useTheme();
+  const { palette, setPalette, setTheme, theme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
 
@@ -399,6 +426,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(palette !== DEFAULT_THEME_PALETTE ? ["Color palette"] : []),
       ...(settings.appFont !== DEFAULT_UNIFIED_SETTINGS.appFont ? ["App font"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
@@ -438,6 +466,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       isGitWritingModelDirty,
+      palette,
       settings.autoOpenPlanSidebar,
       settings.appFont,
       settings.confirmThreadArchive,
@@ -465,6 +494,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
+    setPalette(DEFAULT_THEME_PALETTE);
     updateSettings({
       appFont: DEFAULT_UNIFIED_SETTINGS.appFont,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -481,7 +511,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [changedSettingLabels, onRestored, setPalette, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -490,7 +520,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
+  const { palette, resolvedTheme, setPalette, setTheme, theme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const observability = useServerObservability();
@@ -555,6 +585,48 @@ export function GeneralSettingsPanel() {
                 {THEME_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
                     {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Color palette"
+          description="Bring Noctalia's coordinated accent and surface colors across the app."
+          resetAction={
+            palette !== DEFAULT_THEME_PALETTE ? (
+              <SettingResetButton
+                label="color palette"
+                onClick={() => setPalette(DEFAULT_THEME_PALETTE)}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={palette}
+              onValueChange={(value) => {
+                if (isThemePalette(value)) {
+                  setPalette(value);
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="Color palette">
+                <SelectValue>
+                  <span className="flex items-center gap-2">
+                    <PaletteSwatches paletteId={palette} resolvedTheme={resolvedTheme} />
+                    {getThemePalette(palette).label}
+                  </span>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THEME_PALETTES.map((option) => (
+                  <SelectItem hideIndicator key={option.id} value={option.id}>
+                    <span className="flex items-center gap-2">
+                      <PaletteSwatches paletteId={option.id} resolvedTheme={resolvedTheme} />
+                      {option.label}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectPopup>

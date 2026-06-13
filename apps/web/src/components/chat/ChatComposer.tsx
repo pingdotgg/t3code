@@ -67,8 +67,7 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
-import { searchSlashCommandItems } from "./composerSlashCommandSearch";
-import { searchSavedSnippetItems } from "./composerSavedSnippetSearch";
+import { searchSlashMenuItems } from "./composerSlashMenuSearch";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -913,12 +912,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!query) {
         return slashCommandItems;
       }
-      const builtInAndProvider = searchSlashCommandItems(
-        [...builtInSlashCommandItems, ...providerSlashCommandItems],
-        query,
-      );
-      const rankedSnippets = searchSavedSnippetItems(savedSnippetItems, query);
-      return [...builtInAndProvider, ...rankedSnippets];
+      return searchSlashMenuItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(

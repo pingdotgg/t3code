@@ -172,11 +172,11 @@ export function newSnippetFromDraft(draft: NewSnippetDraft, now = nowIsoDateTime
 
 export function updateSnippetFromDraft(
   current: Snippet,
-  draft: { title: string; description: string; body: string },
+  draft: { id: string; title: string; description: string; body: string },
   now = nowIsoDateTime(),
 ): Snippet {
   const base: Snippet = {
-    id: current.id,
+    id: draft.id as SnippetId,
     createdAt: current.createdAt,
     title: draft.title,
     body: draft.body,
@@ -197,4 +197,13 @@ export function removeSnippet(snippets: SnippetMap, id: string): SnippetMap {
 
 export function upsertSnippet(snippets: SnippetMap, snippet: Snippet): SnippetMap {
   return { ...snippets, [snippet.id]: snippet };
+}
+
+export function replaceSnippet(
+  snippets: SnippetMap,
+  previousId: string,
+  snippet: Snippet,
+): SnippetMap {
+  const next = removeSnippet(snippets, previousId);
+  return upsertSnippet(next, snippet);
 }

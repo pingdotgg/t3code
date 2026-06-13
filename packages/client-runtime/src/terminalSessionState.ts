@@ -120,6 +120,12 @@ const knownTerminalSessionOrder = Order.mapInput(
   terminalIdOrder,
   (session: KnownTerminalSession) => session.target.terminalId,
 );
+const knownTerminalSessionAcrossEnvironmentsOrder = Order.make<KnownTerminalSession>(
+  (left, right) =>
+    (left.target.environmentId.localeCompare(right.target.environmentId) ||
+      left.target.threadId.localeCompare(right.target.threadId) ||
+      terminalIdOrder(left.target.terminalId, right.target.terminalId)) as -1 | 0 | 1,
+);
 
 export const terminalSessionMetadataAtom = Atom.family((environmentId: EnvironmentId) => {
   knownTerminalMetadataEnvironmentIds.add(environmentId);
@@ -305,6 +311,25 @@ export const knownTerminalSessionsAtom = Atom.family((filter: KnownTerminalSessi
       },
     ),
   ).pipe(Atom.keepAlive, Atom.withLabel(`terminal-session:known:${JSON.stringify(filter)}`)),
+);
+
+export const knownTerminalSessionsAcrossEnvironmentsAtom = Atom.family(
+  (environmentIdsKey: string) =>
+    Atom.make((get) => {
+      const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
+      return pipe(
+        environmentIds,
+        Arr.flatMap((environmentId) =>
+          listKnownSessionsFromMetadata(get(terminalSessionMetadataAtom(environmentId)), (target) =>
+            get(terminalSessionBufferAtom(target)),
+          ),
+        ),
+        Arr.sort(knownTerminalSessionAcrossEnvironmentsOrder),
+      );
+    }).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`terminal-session:known-across-environments:${environmentIdsKey}`),
+    ),
 );
 
 export const runningTerminalIdsAtom = Atom.family((filter: KnownTerminalSessionListFilter) =>

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Project, SidebarThreadSummary } from "./types";
 import {
   buildAgentRuns,
+  buildTerminalProcessRuns,
   isAgentRunActive,
   isThreadAgentRunActive,
   resolveAgentRunStatus,
@@ -75,5 +76,51 @@ describe("runs", () => {
     expect(runs[0]?.project).toBe(project);
     expect(isAgentRunActive(runs[0]!)).toBe(true);
     expect(isAgentRunActive(runs[1]!)).toBe(false);
+  });
+
+  it("builds runs only for terminal sessions with active subprocesses", () => {
+    const terminalRuns = buildTerminalProcessRuns({
+      projects: [project],
+      threads: [thread()],
+      sessions: [
+        {
+          target: {
+            environmentId: EnvironmentId.make("env-1"),
+            threadId: ThreadId.make("thread-1"),
+            terminalId: "term-1",
+          },
+          state: {
+            summary: null,
+            buffer: "",
+            status: "running",
+            error: null,
+            hasRunningSubprocess: true,
+            updatedAt: "2026-06-01T00:00:03.000Z",
+            version: 1,
+          },
+        },
+        {
+          target: {
+            environmentId: EnvironmentId.make("env-1"),
+            threadId: ThreadId.make("thread-1"),
+            terminalId: "term-2",
+          },
+          state: {
+            summary: null,
+            buffer: "",
+            status: "running",
+            error: null,
+            hasRunningSubprocess: false,
+            updatedAt: "2026-06-01T00:00:04.000Z",
+            version: 1,
+          },
+        },
+      ],
+    });
+
+    expect(terminalRuns).toHaveLength(1);
+    expect(terminalRuns[0]?.session.target.terminalId).toBe("term-1");
+    expect(terminalRuns[0]?.thread?.id).toBe("thread-1");
+    expect(terminalRuns[0]?.project).toBe(project);
   });
 });

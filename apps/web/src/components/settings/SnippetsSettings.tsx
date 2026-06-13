@@ -41,6 +41,7 @@ import {
   newSnippetFromDraft,
   nextSnippetId,
   normalizeSnippetId,
+  replaceSnippet,
   removeSnippet,
   snippetIdList,
   updateSnippetFromDraft,
@@ -184,14 +185,15 @@ function SnippetDialog({
   const titleError = errors.find((error) => error.field === "title");
   const bodyError = errors.find((error) => error.field === "body");
   const descriptionError = errors.find((error) => error.field === "description");
+  const trimmedId = id.trim();
+  const idConflict = trimmedId !== state.snippet?.id && existingIds.includes(trimmedId);
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       setHasAttemptedSubmit(true);
-      if (errors.length > 0) return;
+      if (errors.length > 0 || idConflict) return;
 
-      const trimmedId = id.trim();
       const trimmedTitle = title.trim();
       const trimmedDescription = description.trim();
       const currentSnippets = getServerPromptSnippets();
@@ -213,11 +215,12 @@ function SnippetDialog({
         });
       } else if (state.snippet) {
         const updated = updateSnippetFromDraft(state.snippet, {
+          id: trimmedId,
           title: trimmedTitle,
           description: trimmedDescription,
           body,
         });
-        const nextMap: SnippetMap = { ...currentSnippets, [updated.id]: updated };
+        const nextMap = replaceSnippet(currentSnippets, state.snippet.id, updated);
         updateSettings({ promptSnippets: nextMap });
         toastManager.add({
           title: "Snippet updated",
@@ -227,7 +230,18 @@ function SnippetDialog({
       }
       onOpenChange(false);
     },
-    [body, description, errors, id, onOpenChange, state.mode, state.snippet, title, updateSettings],
+    [
+      body,
+      description,
+      errors,
+      idConflict,
+      onOpenChange,
+      state.mode,
+      state.snippet,
+      title,
+      trimmedId,
+      updateSettings,
+    ],
   );
 
   const trigger = isEditing ? id : id.length > 0 ? id : suggestedId;
@@ -273,13 +287,15 @@ function SnippetDialog({
                     setIdDirty(true);
                   }}
                   placeholder="explain-stack"
-                  aria-invalid={showErrors && idError !== undefined}
+                  aria-invalid={showErrors && (idError !== undefined || idConflict)}
                   className="font-mono"
                 />
                 <span className="text-xs text-muted-foreground">{preview}</span>
               </div>
-              {showErrors && idError ? (
-                <p className="text-xs text-destructive">{idError.message}</p>
+              {showErrors && (idError || idConflict) ? (
+                <p className="text-xs text-destructive">
+                  {idError?.message ?? "That trigger is already used by another snippet."}
+                </p>
               ) : (
                 <p className="text-xs text-muted-foreground/80">
                   Lowercase letters, digits, and dashes. Up to {40} characters.
@@ -327,7 +343,7 @@ function SnippetDialog({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={showErrors && errors.length > 0}>
+            <Button type="submit" disabled={showErrors && (errors.length > 0 || idConflict)}>
               {isEditing ? "Save" : "Add snippet"}
             </Button>
           </DialogFooter>

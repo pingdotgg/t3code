@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { DEFAULT_THEME_PALETTE, isThemePalette, type ThemePalette } from "../themePalettes";
 
 type Theme = "light" | "dark" | "system";
 type ThemeSnapshot = {
+  palette: ThemePalette;
   theme: Theme;
   systemDark: boolean;
 };
 
 const STORAGE_KEY = "t3code:theme";
+const PALETTE_STORAGE_KEY = "t3code:theme-palette";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
+  palette: DEFAULT_THEME_PALETTE,
   theme: "system",
   systemDark: false,
 };
@@ -36,6 +40,12 @@ function getStored(): Theme {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === "light" || raw === "dark" || raw === "system") return raw;
   return DEFAULT_THEME_SNAPSHOT.theme;
+}
+
+function getStoredPalette(): ThemePalette {
+  if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.palette;
+  const raw = localStorage.getItem(PALETTE_STORAGE_KEY);
+  return isThemePalette(raw) ? raw : DEFAULT_THEME_SNAPSHOT.palette;
 }
 
 function ensureThemeColorMetaTag(): HTMLMetaElement {
@@ -87,13 +97,14 @@ export function syncBrowserChromeTheme() {
   ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
 }
 
-function applyTheme(theme: Theme, suppressTransitions = false) {
+function applyTheme(theme: Theme, palette: ThemePalette, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
   const isDark = theme === "dark" || (theme === "system" && getSystemDark());
   document.documentElement.classList.toggle("dark", isDark);
+  document.documentElement.dataset.themePalette = palette;
   syncBrowserChromeTheme();
   syncDesktopTheme(theme);
   if (suppressTransitions) {
@@ -123,19 +134,25 @@ function syncDesktopTheme(theme: Theme) {
 
 // Apply immediately on module load to prevent flash
 if (typeof document !== "undefined" && hasThemeStorage()) {
-  applyTheme(getStored());
+  applyTheme(getStored(), getStoredPalette());
 }
 
 function getSnapshot(): ThemeSnapshot {
   if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT;
   const theme = getStored();
+  const palette = getStoredPalette();
   const systemDark = theme === "system" ? getSystemDark() : false;
 
-  if (lastSnapshot && lastSnapshot.theme === theme && lastSnapshot.systemDark === systemDark) {
+  if (
+    lastSnapshot &&
+    lastSnapshot.theme === theme &&
+    lastSnapshot.palette === palette &&
+    lastSnapshot.systemDark === systemDark
+  ) {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark };
+  lastSnapshot = { palette, theme, systemDark };
   return lastSnapshot;
 }
 
@@ -150,15 +167,15 @@ function subscribe(listener: () => void): () => void {
   // Listen for system preference changes
   const mq = window.matchMedia(MEDIA_QUERY);
   const handleChange = () => {
-    if (getStored() === "system") applyTheme("system", true);
+    if (getStored() === "system") applyTheme("system", getStoredPalette(), true);
     emitChange();
   };
   mq.addEventListener("change", handleChange);
 
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) {
-      applyTheme(getStored(), true);
+    if (e.key === STORAGE_KEY || e.key === PALETTE_STORAGE_KEY) {
+      applyTheme(getStored(), getStoredPalette(), true);
       emitChange();
     }
   };
@@ -173,6 +190,7 @@ function subscribe(listener: () => void): () => void {
 
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const palette = snapshot.palette;
   const theme = snapshot.theme;
 
   const resolvedTheme: "light" | "dark" =
@@ -181,14 +199,24 @@ export function useTheme() {
   const setTheme = useCallback((next: Theme) => {
     if (!hasThemeStorage()) return;
     localStorage.setItem(STORAGE_KEY, next);
-    applyTheme(next, true);
+    applyTheme(next, getStoredPalette(), true);
     emitChange();
   }, []);
 
+  const setPalette = useCallback(
+    (next: ThemePalette) => {
+      if (!hasThemeStorage()) return;
+      localStorage.setItem(PALETTE_STORAGE_KEY, next);
+      applyTheme(theme, next, true);
+      emitChange();
+    },
+    [theme],
+  );
+
   // Keep DOM in sync on mount/change
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyTheme(theme, palette);
+  }, [palette, theme]);
 
-  return { theme, setTheme, resolvedTheme } as const;
+  return { palette, resolvedTheme, setPalette, setTheme, theme } as const;
 }
