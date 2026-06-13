@@ -102,6 +102,9 @@ export interface WsRpcClient {
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
   };
+  readonly assets: {
+    readonly createUrl: RpcUnaryMethod<typeof WS_METHODS.assetsCreateUrl>;
+  };
   readonly sourceControl: {
     readonly lookupRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlLookupRepository>;
     readonly cloneRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlCloneRepository>;
@@ -271,6 +274,10 @@ export function createWsRpcClient(
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),
+    },
+    assets: {
+      createUrl: (input) =>
+        transport.request((client) => client[WS_METHODS.assetsCreateUrl](input)),
     },
     sourceControl: {
       lookupRepository: (input) =>

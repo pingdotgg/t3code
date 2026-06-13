@@ -3,7 +3,6 @@ import {
   ArrowRight,
   Camera,
   ExternalLink,
-  Globe,
   MousePointerClick,
   RotateCw,
 } from "lucide-react";
@@ -23,6 +22,7 @@ import { cn } from "~/lib/utils";
 
 interface Props {
   url: string;
+  displayUrl?: string | undefined;
   loading: boolean;
   loadProgress: number;
   canGoBack: boolean;
@@ -61,6 +61,7 @@ const NOOP = () => {};
 
 export function PreviewChromeRow({
   url,
+  displayUrl,
   loading,
   loadProgress,
   canGoBack,
@@ -84,6 +85,7 @@ export function PreviewChromeRow({
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
+  const [inputFocused, setInputFocused] = useState(false);
 
   // Sync the input with external URL changes, but only when the user isn't
   // actively typing (preserves in-progress edits during navigation events).
@@ -96,7 +98,6 @@ export function PreviewChromeRow({
     const node = inputRef.current;
     if (!node) return;
     node.focus();
-    node.select();
   }, [focusUrlNonce]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
@@ -167,14 +168,23 @@ export function PreviewChromeRow({
           </Tooltip>
         </div>
 
-        <InputGroup className="h-7 flex-1 rounded-md">
-          <InputGroupAddon align="inline-start">
-            <Globe className="size-3.5 text-muted-foreground" aria-hidden />
-          </InputGroupAddon>
+        <InputGroup className="group/address h-7 flex-1 rounded-md border-transparent bg-transparent shadow-none before:shadow-none hover:bg-muted/40 focus-within:bg-background">
           <InputGroupInput
             ref={inputRef}
-            value={draft}
+            value={inputFocused ? draft : (displayUrl ?? draft)}
+            className={cn(
+              onOpenInBrowser && !inputFocused && "group-hover/address:pe-7 transition-[padding]",
+            )}
             onChange={(event) => setDraft(event.target.value)}
+            onFocus={() => {
+              setDraft(url);
+              setInputFocused(true);
+              queueMicrotask(() => inputRef.current?.select());
+            }}
+            onBlur={() => {
+              setDraft(url);
+              setInputFocused(false);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") submit(event);
               if (event.key === "Escape") {
@@ -187,10 +197,14 @@ export function PreviewChromeRow({
             spellCheck={false}
             disabled={inputDisabled}
             data-preview-url-input
+            title={!inputFocused && displayUrl ? url : undefined}
             size="sm"
           />
-          {onOpenInBrowser ? (
-            <InputGroupAddon align="inline-end">
+          {onOpenInBrowser && !inputFocused ? (
+            <InputGroupAddon
+              align="inline-end"
+              className="pointer-events-none absolute inset-y-0 right-0 opacity-0 transition-opacity group-hover/address:pointer-events-auto group-hover/address:opacity-100"
+            >
               <Tooltip>
                 <TooltipTrigger
                   render={

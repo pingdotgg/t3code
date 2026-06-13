@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -56,6 +56,7 @@ interface PlanSidebarProps {
   activeProposedPlan: LatestProposedPlanState | null;
   label?: string;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | undefined;
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
@@ -68,6 +69,7 @@ const PlanSidebar = memo(function PlanSidebar({
   activeProposedPlan,
   label = "Plan",
   environmentId,
+  threadRef,
   markdownCwd,
   workspaceRoot,
   timestampFormat,
@@ -257,6 +259,7 @@ const PlanSidebar = memo(function PlanSidebar({
                   <ChatMarkdown
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
+                    threadRef={threadRef}
                     isStreaming={false}
                   />
                 </div>

@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
-import { useState } from "react";
-import { resolveEnvironmentHttpUrl } from "../environments/runtime";
+import { useEffect, useState } from "react";
+import { useAssetUrl } from "../assets/assetUrls";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
@@ -10,20 +10,16 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string;
 }) {
-  const src = (() => {
-    try {
-      return resolveEnvironmentHttpUrl({
-        environmentId: input.environmentId,
-        pathname: "/api/project-favicon",
-        searchParams: { cwd: input.cwd },
-      });
-    } catch {
-      return null;
-    }
-  })();
+  const src = useAssetUrl(input.environmentId, {
+    _tag: "project-favicon",
+    cwd: input.cwd,
+  });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     src && loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
   );
+  useEffect(() => {
+    setStatus(src && loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading");
+  }, [src]);
 
   if (!src) {
     return (

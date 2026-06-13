@@ -7,9 +7,10 @@ import * as Path from "effect/Path";
 
 import { ProjectFaviconResolver } from "../Services/ProjectFaviconResolver.ts";
 import { ProjectFaviconResolverLive } from "./ProjectFaviconResolver.ts";
+import { WorkspacePathsLive } from "../../workspace/Layers/WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(ProjectFaviconResolverLive),
+  Layer.provideMerge(ProjectFaviconResolverLive.pipe(Layer.provide(WorkspacePathsLive))),
   Layer.provideMerge(NodeServices.layer),
 );
 
