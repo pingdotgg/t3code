@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   playwrightInjectedRuntimeInstallExpression,
   playwrightInjectedRuntimeSource,
-} from "./playwright-injected-runtime.ts";
+} from "./PlaywrightInjectedRuntime.ts";
 
 describe("playwright injected runtime", () => {
   it("extracts the pinned runtime from playwright-core", async () => {

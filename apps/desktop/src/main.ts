@@ -44,6 +44,8 @@ import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
+import * as PreviewBrowserSession from "./preview/BrowserSession.ts";
+import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
@@ -127,7 +129,15 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
-const desktopWindowLayer = DesktopWindow.layer.pipe(Layer.provideMerge(desktopServerExposureLayer));
+const desktopPreviewLayer = PreviewManager.layer.pipe(
+  Layer.provideMerge(PreviewBrowserSession.layer),
+  Layer.provideMerge(desktopFoundationLayer),
+);
+
+const desktopWindowLayer = DesktopWindow.layer.pipe(
+  Layer.provideMerge(desktopServerExposureLayer),
+  Layer.provideMerge(desktopPreviewLayer),
+);
 
 const desktopBackendLayer = DesktopBackendManager.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),

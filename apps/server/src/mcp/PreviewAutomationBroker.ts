@@ -119,14 +119,12 @@ const makeResponseError = (
   }
 };
 
-const makeService = (): PreviewAutomationBrokerShape => {
-  const state = Effect.runSync(
-    Ref.make<BrokerState>({
-      clients: new Map(),
-      owners: new Map(),
-      pending: new Map(),
-    }),
-  );
+const make = Effect.fn("PreviewAutomationBroker.make")(function* () {
+  const state = yield* Ref.make<BrokerState>({
+    clients: new Map(),
+    owners: new Map(),
+    pending: new Map(),
+  });
   let requestSequence = 0;
 
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
@@ -297,10 +295,11 @@ const makeService = (): PreviewAutomationBrokerShape => {
   });
 
   return PreviewAutomationBroker.of({ connect, reportOwner, clearOwner, respond, invoke });
+});
+
+export const layer = Layer.effect(PreviewAutomationBroker, make());
+
+/** Exposed for tests. */
+export const __testing = {
+  make,
 };
-
-const service = makeService();
-const make = Effect.succeed(service);
-export const layer = Layer.effect(PreviewAutomationBroker, make);
-
-export const makeForTest = Effect.sync(makeService);

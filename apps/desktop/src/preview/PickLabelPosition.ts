@@ -2,7 +2,7 @@
  * Pure clamp/flip math for the floating label that follows the cursor while
  * the user is picking an element in the in-app browser. Lives in its own
  * electron-free module so the geometry can be unit-tested without spinning
- * up an Electron preload context (`preview-pick-preload.ts` itself imports
+ * up an Electron preload context (`PickPreload.ts` itself imports
  * `electron` and `react-grab/primitives`, which can't load under vitest).
  *
  * - Horizontally pins the label to `targetLeft`, clamped into

@@ -5,15 +5,14 @@
  * stable line-prefixed field format; this is the only `lsof` flag set we rely
  * on).
  *
- * Windows / lsof missing: TCP-connects to a curated list of common dev ports
- * on 127.0.0.1.
+ * Windows / lsof missing: checks a curated list of common dev ports through
+ * the shared Net service.
  *
  * Polling is reference-counted via `retain()`. A single layer-scoped fiber
  * polls forever, but each tick is a no-op when the retain count is zero.
  */
-import * as net from "node:net";
-
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
+import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import { Cause, Context, Duration, Effect, Layer, Ref, Schedule } from "effect";
 
@@ -45,7 +44,6 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
 ]);
 
 const POLL_INTERVAL = Duration.seconds(3);
-const TCP_PROBE_TIMEOUT_MS = 200;
 const LSOF_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 
@@ -148,40 +146,6 @@ const parseWindowsListenerOutput = (
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
 };
 
-const probeTcpPort = (port: number): Promise<boolean> =>
-  new Promise((resolve) => {
-    const socket = new net.Socket();
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(TCP_PROBE_TIMEOUT_MS);
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-    socket.once("connect", () => finish(true));
-    socket.connect({ host: "127.0.0.1", port });
-  });
-
-const probeCommonPorts = (): Effect.Effect<ReadonlyArray<DiscoveredLocalServer>> =>
-  Effect.promise(async () => {
-    const results = await Promise.all(
-      COMMON_DEV_PORTS.map(async (port) => ({ port, listening: await probeTcpPort(port) })),
-    );
-    return results
-      .filter((r) => r.listening)
-      .map<DiscoveredLocalServer>((r) => ({
-        host: "localhost",
-        port: r.port,
-        url: `http://localhost:${r.port}`,
-        processName: null,
-        pid: null,
-        terminal: null,
-      }));
-  });
-
 const serversEqual = (
   left: ReadonlyArray<DiscoveredLocalServer>,
   right: ReadonlyArray<DiscoveredLocalServer>,
@@ -206,7 +170,8 @@ const serversEqual = (
   return true;
 };
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("PortDiscovery.make")(function* () {
+  const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
@@ -223,6 +188,30 @@ const make = Effect.gen(function* () {
   // outside any Effect context (the WS subscriber's release path) and must
   // be a synchronous side-effect-only function.
   let retainCount = 0;
+
+  const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
+    const results = yield* Effect.forEach(
+      COMMON_DEV_PORTS,
+      (port) =>
+        net.isPortAvailableOnLoopback(port).pipe(
+          Effect.map((available) => ({
+            port,
+            listening: !available,
+          })),
+        ),
+      { concurrency: "unbounded" },
+    );
+    return results
+      .filter((result) => result.listening)
+      .map<DiscoveredLocalServer>((result) => ({
+        host: "localhost",
+        port: result.port,
+        url: `http://localhost:${result.port}`,
+        processName: null,
+        pid: null,
+        terminal: null,
+      }));
+  });
 
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
@@ -268,14 +257,15 @@ const make = Effect.gen(function* () {
   const broadcast = (servers: ReadonlyArray<DiscoveredLocalServer>): Effect.Effect<void> =>
     Effect.forEach(Array.from(listeners), (listener) => listener(servers), { discard: true });
 
-  const pollTick = Effect.gen(function* () {
-    if (retainCount <= 0) return;
-    const next = yield* scanOnce();
-    const state = yield* Ref.get(stateRef);
-    if (serversEqual(state.lastSnapshot, next)) return;
-    yield* Ref.update(stateRef, (s) => ({ ...s, lastSnapshot: next }));
-    yield* broadcast(next);
-  }).pipe(
+  const pollTick = Effect.fn("PortDiscovery.pollTick")(
+    function* () {
+      if (retainCount <= 0) return;
+      const next = yield* scanOnce();
+      const state = yield* Ref.get(stateRef);
+      if (serversEqual(state.lastSnapshot, next)) return;
+      yield* Ref.update(stateRef, (s) => ({ ...s, lastSnapshot: next }));
+      yield* broadcast(next);
+    },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
     ),
@@ -283,7 +273,7 @@ const make = Effect.gen(function* () {
 
   // Single layer-scoped polling fiber. Ticks are no-ops when no client is
   // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
 
   const retain: PortDiscoveryShape["retain"] = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = retainCount === 0;
@@ -291,7 +281,7 @@ const make = Effect.gen(function* () {
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
       // to wait up to POLL_INTERVAL for the first emission.
-      yield* pollTick;
+      yield* pollTick();
     }
     let released = false;
     return () => {
@@ -349,7 +339,7 @@ const make = Effect.gen(function* () {
   } satisfies PortDiscoveryShape;
 });
 
-export const layer = Layer.effect(PortDiscovery, make);
+export const layer = Layer.effect(PortDiscovery, make());
 
 /** Exposed for tests. */
 export const __testing = {

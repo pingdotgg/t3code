@@ -4,7 +4,7 @@
  * surfaces inherit the same security posture.
  *
  * Lives in its own electron-free module so the value is unit-testable
- * without importing `preview-view-manager.ts` (which transitively imports
+ * without importing `Manager.ts` (which transitively imports
  * `electron` and blows up under vitest).
  *
  * - `contextIsolation=false`: the picker preload needs to share `globalThis`
@@ -22,7 +22,7 @@
  * - `nodeIntegration=false`: pinned for clarity (the page itself never gets
  *   Node access).
  *
- * Format notes (locked down by `preview-webview-preferences.test.ts`):
+ * Format notes (locked down by `WebviewPreferences.test.ts`):
  * - Whitespace-free. Electron's webpreferences parser splits on `,` and
  *   does not trim, so a leading space would turn a key into an unknown one
  *   and silently drop it.

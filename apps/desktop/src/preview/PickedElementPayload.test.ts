@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPickedElementPayload, isPreviewAnnotationPayload } from "./picked-element-payload.ts";
+import { isPickedElementPayload, isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 
 function validPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {

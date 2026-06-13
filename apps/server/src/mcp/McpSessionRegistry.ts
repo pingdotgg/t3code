@@ -184,8 +184,6 @@ export const layer: Layer.Layer<
   ),
 );
 
-export const makeForTest = make;
-
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,
 ): Effect.Effect<McpIssuedCredential | undefined> =>
@@ -200,3 +198,8 @@ export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =
 
 export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
+
+/** Exposed for tests. */
+export const __testing = {
+  make,
+};

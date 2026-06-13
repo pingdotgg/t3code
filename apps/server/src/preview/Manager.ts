@@ -127,7 +127,7 @@ const buildIdleSnapshot = (input: {
   updatedAt: input.updatedAt,
 });
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("PreviewManager.make")(function* () {
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to
   // block publishers if a subscriber is slow. WS clients backpressure on
@@ -359,4 +359,4 @@ const make = Effect.gen(function* () {
   } satisfies PreviewManagerShape;
 });
 
-export const layer = Layer.effect(PreviewManager, make);
+export const layer = Layer.effect(PreviewManager, make());

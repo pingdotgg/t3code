@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { PREVIEW_WEBVIEW_PREFERENCES } from "./preview-webview-preferences.ts";
+import { PREVIEW_WEBVIEW_PREFERENCES } from "./WebviewPreferences.ts";
 
 /**
  * Mirrors Electron's webview attribute parser closely enough to catch the

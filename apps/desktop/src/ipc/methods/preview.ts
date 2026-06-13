@@ -1,251 +1,378 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import type { DesktopPreviewAnnotationTheme } from "@t3tools/contracts";
+import {
+  DesktopPreviewAnnotationThemeInputSchema,
+  DesktopPreviewArtifactInputSchema,
+  DesktopPreviewAutomationClickInputSchema,
+  DesktopPreviewAutomationEvaluateInputSchema,
+  DesktopPreviewAutomationPressInputSchema,
+  DesktopPreviewAutomationScrollInputSchema,
+  DesktopPreviewAutomationTypeInputSchema,
+  DesktopPreviewAutomationWaitForInputSchema,
+  DesktopPreviewConfigInputSchema,
+  DesktopPreviewNavigateInputSchema,
+  DesktopPreviewRecordingArtifactSchema,
+  DesktopPreviewRecordingSaveInputSchema,
+  DesktopPreviewRegisterWebviewInputSchema,
+  DesktopPreviewScreenshotArtifactSchema,
+  DesktopPreviewTabInputSchema,
+  DesktopPreviewWebviewConfigSchema,
+  PreviewAnnotationPayloadSchema,
+  PreviewAutomationSnapshot,
+  PreviewAutomationStatus,
+} from "@t3tools/contracts";
 import { BrowserWindow } from "electron";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { pathToFileURL } from "node:url";
 
-import { previewViewManager } from "../../preview-view-manager.ts";
-import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview-webview-preferences.ts";
+import * as PreviewManager from "../../preview/Manager.ts";
+import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
-import type { DesktopIpcMethod } from "../DesktopIpc.ts";
+import { makeIpcMethod } from "../DesktopIpc.ts";
 
-previewViewManager.onStateChange((tabId, state) => {
+const broadcast = (channel: string, ...args: ReadonlyArray<unknown>): void => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state);
+      window.webContents.send(channel, ...args);
     }
   }
-});
-
-previewViewManager.onRecordingFrame((frame) => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame);
-    }
-  }
-});
-
-previewViewManager.onPointerEvent((event) => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event);
-    }
-  }
-});
-
-const tabIdFrom = (raw: unknown): string => {
-  if (typeof raw !== "object" || raw === null || !("tabId" in raw)) {
-    throw new Error("preview tab id is required");
-  }
-  const tabId = raw.tabId;
-  if (typeof tabId !== "string" || tabId.trim().length === 0) {
-    throw new Error("preview tab id must be a non-empty string");
-  }
-  return tabId;
 };
 
-const inputFrom = (raw: unknown): unknown => {
-  if (typeof raw !== "object" || raw === null || !("input" in raw)) {
-    throw new Error("preview automation input is required");
-  }
-  return raw.input;
-};
+export const installPreviewEventForwarding = Effect.fn(
+  "desktop.ipc.preview.installEventForwarding",
+)(function* () {
+  const manager = yield* PreviewManager.PreviewManager;
+  yield* manager.subscribeStateChanges((tabId, state) => {
+    broadcast(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state);
+  });
+  yield* manager.subscribeRecordingFrames((frame) => {
+    broadcast(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame);
+  });
+  yield* manager.subscribePointerEvents((event) => {
+    broadcast(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event);
+  });
+});
 
-const annotationThemeFrom = (raw: unknown): DesktopPreviewAnnotationTheme => {
-  if (typeof raw !== "object" || raw === null || !("theme" in raw)) {
-    throw new Error("preview annotation theme is required");
-  }
-  const theme = raw.theme;
-  if (typeof theme !== "object" || theme === null) {
-    throw new Error("preview annotation theme must be an object");
-  }
-  const record = theme as Record<string, unknown>;
-  const stringKeys = [
-    "radius",
-    "background",
-    "foreground",
-    "popover",
-    "popoverForeground",
-    "primary",
-    "primaryForeground",
-    "muted",
-    "mutedForeground",
-    "accent",
-    "accentForeground",
-    "border",
-    "input",
-    "ring",
-    "fontSans",
-    "fontMono",
-  ] as const;
-  for (const key of stringKeys) {
-    if (typeof record[key] !== "string" || record[key].length === 0) {
-      throw new Error(`preview annotation theme ${key} must be a non-empty string`);
-    }
-  }
-  if (record["colorScheme"] !== "light" && record["colorScheme"] !== "dark") {
-    throw new Error("preview annotation theme colorScheme must be light or dark");
-  }
-  return record as unknown as DesktopPreviewAnnotationTheme;
-};
+export const createTab = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CREATE_TAB_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.createTab(tabId);
+  }),
+});
 
-class PreviewIpcError extends Data.TaggedError("PreviewIpcError")<{
-  readonly cause: unknown;
-}> {}
+export const closeTab = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.closeTab")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.closeTab(tabId);
+  }),
+});
 
-const method = (
+export const registerWebview = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL,
+  payload: DesktopPreviewRegisterWebviewInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.registerWebview")(function* ({ tabId, webContentsId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.registerWebview(tabId, webContentsId);
+  }),
+});
+
+export const navigate = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_NAVIGATE_CHANNEL,
+  payload: DesktopPreviewNavigateInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.navigate")(function* ({ tabId, url }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.navigate(tabId, url);
+  }),
+});
+
+const tabMethod = (
   channel: string,
-  handler: (raw: unknown) => unknown | Promise<unknown>,
-): DesktopIpcMethod<PreviewIpcError, never> => ({
-  channel,
-  handler: (raw) =>
-    Effect.tryPromise({
-      try: () => Promise.resolve(handler(raw)),
-      catch: (cause) => new PreviewIpcError({ cause }),
+  name: string,
+  invoke: (
+    manager: PreviewManager.PreviewManagerShape,
+    tabId: string,
+  ) => Effect.Effect<void, PreviewManager.PreviewManagerError>,
+) =>
+  makeIpcMethod({
+    channel,
+    payload: DesktopPreviewTabInputSchema,
+    result: Schema.Void,
+    handler: Effect.fn(name)(function* ({ tabId }) {
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* invoke(manager, tabId);
     }),
+  });
+
+export const goBack = tabMethod(
+  IpcChannels.PREVIEW_GO_BACK_CHANNEL,
+  "desktop.ipc.preview.goBack",
+  (manager, tabId) => manager.goBack(tabId),
+);
+export const goForward = tabMethod(
+  IpcChannels.PREVIEW_GO_FORWARD_CHANNEL,
+  "desktop.ipc.preview.goForward",
+  (manager, tabId) => manager.goForward(tabId),
+);
+export const refresh = tabMethod(
+  IpcChannels.PREVIEW_REFRESH_CHANNEL,
+  "desktop.ipc.preview.refresh",
+  (manager, tabId) => manager.refresh(tabId),
+);
+export const zoomIn = tabMethod(
+  IpcChannels.PREVIEW_ZOOM_IN_CHANNEL,
+  "desktop.ipc.preview.zoomIn",
+  (manager, tabId) => manager.zoomIn(tabId),
+);
+export const zoomOut = tabMethod(
+  IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL,
+  "desktop.ipc.preview.zoomOut",
+  (manager, tabId) => manager.zoomOut(tabId),
+);
+export const resetZoom = tabMethod(
+  IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL,
+  "desktop.ipc.preview.resetZoom",
+  (manager, tabId) => manager.resetZoom(tabId),
+);
+export const hardReload = tabMethod(
+  IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL,
+  "desktop.ipc.preview.hardReload",
+  (manager, tabId) => manager.hardReload(tabId),
+);
+export const openDevTools = tabMethod(
+  IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
+  "desktop.ipc.preview.openDevTools",
+  (manager, tabId) => manager.openDevTools(tabId),
+);
+export const cancelPickElement = tabMethod(
+  IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
+  "desktop.ipc.preview.cancelPickElement",
+  (manager, tabId) => manager.cancelPickElement(tabId),
+);
+export const startRecording = tabMethod(
+  IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
+  "desktop.ipc.preview.startRecording",
+  (manager, tabId) => manager.startRecording(tabId),
+);
+export const stopRecording = tabMethod(
+  IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
+  "desktop.ipc.preview.stopRecording",
+  (manager, tabId) => manager.stopRecording(tabId),
+);
+
+export const clearCookies = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* () {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.clearCookies();
+  }),
 });
 
-export const previewMethods = [
-  method(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, (raw) =>
-    previewViewManager.createTab(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, (raw) =>
-    previewViewManager.closeTab(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, (raw) => {
-    const tabId = tabIdFrom(raw);
-    const webContentsId =
-      typeof raw === "object" && raw !== null && "webContentsId" in raw ? raw.webContentsId : null;
-    if (
-      typeof webContentsId !== "number" ||
-      !Number.isInteger(webContentsId) ||
-      webContentsId <= 0
-    ) {
-      throw new Error("preview webContentsId must be a positive integer");
-    }
-    return previewViewManager.registerWebview(tabId, webContentsId);
+export const clearCache = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.clearCache")(function* () {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.clearCache();
   }),
-  method(IpcChannels.PREVIEW_NAVIGATE_CHANNEL, (raw) => {
-    const tabId = tabIdFrom(raw);
-    const url = typeof raw === "object" && raw !== null && "url" in raw ? raw.url : null;
-    if (typeof url !== "string") throw new Error("preview url must be a string");
-    return previewViewManager.navigate(tabId, url);
-  }),
-  method(IpcChannels.PREVIEW_GO_BACK_CHANNEL, (raw) => previewViewManager.goBack(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, (raw) =>
-    previewViewManager.goForward(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_REFRESH_CHANNEL, (raw) => previewViewManager.refresh(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_ZOOM_IN_CHANNEL, (raw) => previewViewManager.zoomIn(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, (raw) => previewViewManager.zoomOut(tabIdFrom(raw))),
-  method(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, (raw) =>
-    previewViewManager.resetZoom(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, (raw) =>
-    previewViewManager.hardReload(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, (raw) =>
-    previewViewManager.openDevTools(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () => previewViewManager.clearCookies()),
-  method(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () => previewViewManager.clearCache()),
-  method(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, (raw) => {
-    const environmentId =
-      typeof raw === "object" && raw !== null && "environmentId" in raw ? raw.environmentId : null;
-    if (typeof environmentId !== "string" || environmentId.length === 0) {
-      throw new Error("preview environment id is required");
-    }
-    previewViewManager.getBrowserSession(environmentId);
-    const preloadPath = `${__dirname}/preview-pick-preload.cjs`;
+});
+
+export const getPreviewConfig = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
+  payload: DesktopPreviewConfigInputSchema,
+  result: DesktopPreviewWebviewConfigSchema,
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.getBrowserSession(environmentId);
     return {
-      partition: previewViewManager.getBrowserPartition(environmentId),
+      partition: manager.getBrowserPartition(environmentId),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: pathToFileURL(preloadPath).href,
+      preloadUrl: pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
   }),
-  method(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, (raw) =>
-    previewViewManager.setAnnotationTheme(annotationThemeFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, (raw) =>
-    previewViewManager.pickElement(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, (raw) =>
-    previewViewManager.cancelPickElement(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, (raw) =>
-    previewViewManager.captureScreenshot(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, (raw) => {
-    const path = typeof raw === "object" && raw !== null && "path" in raw ? raw.path : null;
-    if (typeof path !== "string" || path.trim().length === 0) {
-      throw new Error("preview artifact path is required");
-    }
-    return previewViewManager.revealArtifact(path);
+});
+
+export const setAnnotationTheme = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
+  payload: DesktopPreviewAnnotationThemeInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setAnnotationTheme")(function* ({ theme }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setAnnotationTheme(theme);
   }),
-  method(IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, (raw) => {
-    const path = typeof raw === "object" && raw !== null && "path" in raw ? raw.path : null;
-    if (typeof path !== "string" || path.trim().length === 0) {
-      throw new Error("preview artifact path is required");
-    }
-    return previewViewManager.copyArtifactToClipboard(path);
+});
+
+export const pickElement = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: Schema.NullOr(PreviewAnnotationPayloadSchema),
+  handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.pickElement(tabId);
   }),
-  method(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, (raw) =>
-    previewViewManager.automationStatus(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, (raw) =>
-    previewViewManager.automationSnapshot(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, (raw) =>
-    previewViewManager.automationClick(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationClick>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL, (raw) =>
-    previewViewManager.automationType(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationType>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL, (raw) =>
-    previewViewManager.automationPress(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationPress>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL, (raw) =>
-    previewViewManager.automationScroll(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationScroll>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL, (raw) =>
-    previewViewManager.automationEvaluate(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationEvaluate>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL, (raw) =>
-    previewViewManager.automationWaitFor(
-      tabIdFrom(raw),
-      inputFrom(raw) as Parameters<typeof previewViewManager.automationWaitFor>[1],
-    ),
-  ),
-  method(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, (raw) =>
-    previewViewManager.startRecording(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, (raw) =>
-    previewViewManager.stopRecording(tabIdFrom(raw)),
-  ),
-  method(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, (raw) => {
-    const tabId = tabIdFrom(raw);
-    if (typeof raw !== "object" || raw === null) throw new Error("recording payload is required");
-    const mimeType = "mimeType" in raw ? raw.mimeType : null;
-    const data = "data" in raw ? raw.data : null;
-    if (typeof mimeType !== "string" || !(data instanceof Uint8Array)) {
-      throw new Error("recording mimeType and bytes are required");
-    }
-    return previewViewManager.saveRecording(tabId, mimeType, data);
+});
+
+export const captureScreenshot = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopPreviewScreenshotArtifactSchema,
+  handler: Effect.fn("desktop.ipc.preview.captureScreenshot")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.captureScreenshot(tabId);
   }),
+});
+
+export const revealArtifact = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
+  payload: DesktopPreviewArtifactInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.revealArtifact")(function* ({ path }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.revealArtifact(path);
+  }),
+});
+
+export const copyArtifactToClipboard = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL,
+  payload: DesktopPreviewArtifactInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.copyArtifactToClipboard")(function* ({ path }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.copyArtifactToClipboard(path);
+  }),
+});
+
+export const automationStatus = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: PreviewAutomationStatus,
+  handler: Effect.fn("desktop.ipc.preview.automationStatus")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.automationStatus(tabId);
+  }),
+});
+
+export const automationSnapshot = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: PreviewAutomationSnapshot,
+  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.automationSnapshot(tabId);
+  }),
+});
+
+export const automationClick = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
+  payload: DesktopPreviewAutomationClickInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationClick")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationClick(tabId, input);
+  }),
+});
+
+export const automationType = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL,
+  payload: DesktopPreviewAutomationTypeInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationType")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationType(tabId, input);
+  }),
+});
+
+export const automationPress = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL,
+  payload: DesktopPreviewAutomationPressInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationPress")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationPress(tabId, input);
+  }),
+});
+
+export const automationScroll = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL,
+  payload: DesktopPreviewAutomationScrollInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationScroll")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationScroll(tabId, input);
+  }),
+});
+
+export const automationEvaluate = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL,
+  payload: DesktopPreviewAutomationEvaluateInputSchema,
+  result: Schema.Unknown,
+  handler: Effect.fn("desktop.ipc.preview.automationEvaluate")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.automationEvaluate(tabId, input);
+  }),
+});
+
+export const automationWaitFor = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL,
+  payload: DesktopPreviewAutomationWaitForInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.automationWaitFor")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.automationWaitFor(tabId, input);
+  }),
+});
+
+export const saveRecording = makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
+  payload: DesktopPreviewRecordingSaveInputSchema,
+  result: DesktopPreviewRecordingArtifactSchema,
+  handler: Effect.fn("desktop.ipc.preview.saveRecording")(function* ({ tabId, mimeType, data }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.saveRecording(tabId, mimeType, data);
+  }),
+});
+
+export const methods = [
+  createTab,
+  closeTab,
+  registerWebview,
+  navigate,
+  goBack,
+  goForward,
+  refresh,
+  zoomIn,
+  zoomOut,
+  resetZoom,
+  hardReload,
+  openDevTools,
+  clearCookies,
+  clearCache,
+  getPreviewConfig,
+  setAnnotationTheme,
+  pickElement,
+  cancelPickElement,
+  captureScreenshot,
+  revealArtifact,
+  copyArtifactToClipboard,
+  automationStatus,
+  automationSnapshot,
+  automationClick,
+  automationType,
+  automationPress,
+  automationScroll,
+  automationEvaluate,
+  automationWaitFor,
+  startRecording,
+  stopRecording,
+  saveRecording,
 ] as const;

@@ -18,15 +18,17 @@ const fakeEnvironment = ServerEnvironment.of({
 });
 
 const makeRegistry = (now: () => number) =>
-  McpSessionRegistry.makeForTest({
-    now,
-    idleTimeoutMs: 100,
-    maximumLifetimeMs: 1_000,
-  }).pipe(
-    Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
-    Effect.provideService(ServerEnvironment, fakeEnvironment),
-    Effect.provide(NodeServices.layer),
-  );
+  McpSessionRegistry.__testing
+    .make({
+      now,
+      idleTimeoutMs: 100,
+      maximumLifetimeMs: 1_000,
+    })
+    .pipe(
+      Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+      Effect.provideService(ServerEnvironment, fakeEnvironment),
+      Effect.provide(NodeServices.layer),
+    );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {

@@ -29,6 +29,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -166,6 +167,12 @@ function makeTestLayer(input: {
         } satisfies ElectronShell.ElectronShellShape),
         electronThemeLayer,
         electronWindowLayer,
+        Layer.mock(PreviewManager.PreviewManager)({
+          getBrowserSession: () => Effect.succeed({} as Electron.Session),
+          setMainWindow: () => Effect.void,
+          isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
+          getBrowserPartition: () => "persist:t3code-preview-test",
+        }),
       ),
     ),
   );

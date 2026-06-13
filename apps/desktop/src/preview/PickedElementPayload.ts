@@ -1,6 +1,6 @@
 /**
  * Strict structural validator for `PickedElementPayload` messages received
- * from the in-page picker preload (`apps/desktop/src/preview-pick-preload.ts`)
+ * from the in-page picker preload (`apps/desktop/src/preview/PickPreload.ts`)
  * via `wc.ipc`. Lives in its own electron-free module so the validator is
  * trivially unit-testable.
  *

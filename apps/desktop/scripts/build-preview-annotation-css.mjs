@@ -7,9 +7,9 @@ import { compile } from "tailwindcss";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const appRoot = join(directory, "..");
-const sourcePath = join(appRoot, "src", "preview-annotation.css");
-const preloadPath = join(appRoot, "src", "preview-pick-preload.ts");
-const outputPath = join(appRoot, "src", "preview-annotation-styles.generated.ts");
+const sourcePath = join(appRoot, "src", "preview", "Annotation.css");
+const preloadPath = join(appRoot, "src", "preview", "PickPreload.ts");
+const outputPath = join(appRoot, "src", "preview", "AnnotationStyles.generated.ts");
 const require = createRequire(import.meta.url);
 const tailwindRoot = dirname(require.resolve("tailwindcss/package.json"));
 

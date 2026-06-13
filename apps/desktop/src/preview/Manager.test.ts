@@ -40,7 +40,7 @@ describe("PreviewViewManager automation status", () => {
   });
 
   it("reports an unregistered webview as temporarily unavailable", async () => {
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
 
     expect(manager.automationStatus("tab_1")).toEqual({
@@ -95,7 +95,7 @@ describe("PreviewViewManager automation status", () => {
       },
       capturePage,
     } as never);
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
     manager.configureArtifactDirectory("/tmp/t3/dev/browser-artifacts");
     manager.createTab("tab_1");
@@ -127,7 +127,7 @@ describe("PreviewViewManager automation status", () => {
   });
 
   it("reveals only files inside the configured browser artifact directory", async () => {
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
     manager.configureArtifactDirectory("/tmp/t3/dev/browser-artifacts");
 
@@ -142,7 +142,7 @@ describe("PreviewViewManager automation status", () => {
   });
 
   it("copies screenshot artifacts to the system clipboard", async () => {
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
     manager.configureArtifactDirectory("/tmp/t3/dev/browser-artifacts");
     const artifactPath = "/tmp/t3/dev/browser-artifacts/browser-screenshot-test.png";
@@ -202,7 +202,7 @@ describe("PreviewViewManager automation status", () => {
         off: vi.fn(),
       },
     } as never);
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
     manager.onPointerEvent((event) => activity.push(event.phase));
     manager.createTab("tab_1");
@@ -271,7 +271,7 @@ describe("PreviewViewManager automation status", () => {
         off: vi.fn(),
       },
     } as never);
-    const { PreviewViewManager } = await import("./preview-view-manager.ts");
+    const { PreviewViewManager } = (await import("./Manager.ts")).__testing;
     const manager = new PreviewViewManager();
     manager.createTab("tab_1");
     manager.registerWebview("tab_1", 42);

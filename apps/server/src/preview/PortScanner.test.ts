@@ -2,8 +2,9 @@ import * as net from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
+import * as Net from "@t3tools/shared/Net";
 import { Effect, Layer } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ProcessRunner } from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -13,7 +14,60 @@ const { parseLsofOutput, parsePortFromLsofName, parseWindowsListenerOutput, serv
 const TestProcessRunner = Layer.succeed(ProcessRunner, {
   run: () => Effect.die("ProcessRunner should not be used by Windows TCP probe tests"),
 });
-const TestPortDiscoveryLive = PortScanner.layer.pipe(Layer.provide(TestProcessRunner));
+const TestPortDiscoveryLive = PortScanner.layer.pipe(
+  Layer.provide(Layer.mergeAll(TestProcessRunner, Net.layer)),
+);
+
+const openServer = (port: number): Effect.Effect<net.Server | null> =>
+  Effect.callback((resume) => {
+    const server = net.createServer();
+    server.once("error", () => {
+      resume(Effect.succeed(null));
+    });
+    server.listen(port, "127.0.0.1", () => {
+      resume(Effect.succeed(server));
+    });
+    return Effect.sync(() => {
+      server.close();
+    });
+  });
+
+const closeServer = (server: net.Server): Effect.Effect<void> =>
+  Effect.callback((resume) => {
+    server.close(() => resume(Effect.void));
+  });
+
+const windowsPlatform = Effect.acquireRelease(
+  Effect.sync(() => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    return originalPlatform;
+  }),
+  (originalPlatform) =>
+    Effect.sync(() => {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }),
+);
+
+const openCommonDevServer = Effect.fn("PortScannerTest.openCommonDevServer")(function* (
+  ports: ReadonlyArray<number>,
+) {
+  for (const port of ports) {
+    const server = yield* openServer(port);
+    if (server !== null) return { port, server };
+  }
+  return yield* Effect.die(
+    new Error("No common development port was available for the preview scanner test"),
+  );
+});
+
+const commonDevServer = Effect.acquireRelease(
+  openCommonDevServer(PortScanner.COMMON_DEV_PORTS),
+  ({ server }) => closeServer(server),
+);
 
 describe("parsePortFromLsofName", () => {
   it("parses *:port", () => {
@@ -180,51 +234,26 @@ describe("parseWindowsListenerOutput", () => {
  * path (TCP-probe fallback) by monkey-patching `process.platform` for the
  * duration of the test so we don't depend on `lsof` being installed.
  */
-describe("PortDiscovery integration (TCP probe fallback)", () => {
-  let originalPlatform: NodeJS.Platform;
-  let server: net.Server;
-  let port: number;
-
-  beforeEach(async () => {
-    originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-    for (const candidate of PortScanner.COMMON_DEV_PORTS) {
-      const candidateServer = net.createServer();
-      const listening = await new Promise<boolean>((resolve) => {
-        candidateServer.once("error", () => resolve(false));
-        candidateServer.listen(candidate, "127.0.0.1", () => resolve(true));
-      });
-      if (listening) {
-        server = candidateServer;
-        port = candidate;
-        return;
-      }
-      candidateServer.close();
-    }
-    throw new Error("No common development port was available for the preview scanner test");
-  });
-
-  afterEach(async () => {
-    Object.defineProperty(process, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
-
-  effectIt.effect("scan() returns a server we just opened on a curated dev port", () =>
-    Effect.gen(function* () {
+effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
+  it.effect(
+    "scan() returns a server we just opened on a curated dev port",
+    Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
+      yield* windowsPlatform;
+      const { port } = yield* commonDevServer;
       const scanner = yield* PortScanner.PortDiscovery;
       const result = yield* scanner.scan();
       const found = result.find((server) => server.port === port);
       expect(found).toBeDefined();
       expect(found?.host).toBe("localhost");
-    }).pipe(Effect.provide(TestPortDiscoveryLive)),
+    }),
   );
 
-  effectIt.effect("retain() drives an immediate broadcast to subscribers", () => {
-    const received: number[] = [];
-    return Effect.gen(function* () {
+  it.effect(
+    "retain() drives an immediate broadcast to subscribers",
+    Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
+      yield* windowsPlatform;
+      const { port } = yield* commonDevServer;
+      const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
       const unsubscribe = yield* scanner.subscribe((servers) =>
         Effect.sync(() => {
@@ -235,6 +264,6 @@ describe("PortDiscovery integration (TCP probe fallback)", () => {
       unsubscribe();
       release();
       expect(received).toContain(port);
-    }).pipe(Effect.provide(TestPortDiscoveryLive));
-  });
+    }),
+  );
 });

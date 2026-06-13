@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { computeLabelPosition } from "./preview-pick-label-position.ts";
+import { computeLabelPosition } from "./PickLabelPosition.ts";
 
 const VIEWPORT = { viewportWidth: 1280, viewportHeight: 800 };
 
