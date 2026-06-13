@@ -555,6 +555,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEndThreshold={0.1}
             maintainVisibleContentPosition={MAINTAIN_VISIBLE_CONTENT_POSITION_DATA_ANCHORED}
             onIsAtEndChange={onIsAtEndChange}
+            onItemSizeChanged={handleItemSizeChanged}
             className="h-full overflow-x-hidden overscroll-y-contain"
             style={{ height: "100%" }}
             data-testid="messages-timeline-list"
