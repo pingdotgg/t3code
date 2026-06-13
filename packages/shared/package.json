@@ -39,6 +39,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./sshAgent": {
+      "types": "./src/sshAgent.ts",
+      "import": "./src/sshAgent.ts"
+    },
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
