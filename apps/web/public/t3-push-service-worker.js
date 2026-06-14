@@ -14,6 +14,8 @@ const PENDING_NOTIFICATION_CLICK_REQUEST_PATH = "/__t3-notification-click/pendin
 // notifications and the default "salchi" tag must be excluded.
 const TURN_NOTIFICATION_TAG_PATTERN = /^thread:(.+):turn:[^:]+$/;
 const THREAD_NOTIFICATION_TAG_PREFIX = /^thread:(.+?):/;
+const SYNC_BADGE_MESSAGE_TYPE = "t3.sync-displayed-notification-badge";
+const CLEAR_TURN_COMPLETION_NOTIFICATIONS_MESSAGE_TYPE = "t3.clear-turn-completion-notifications";
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
@@ -38,7 +40,7 @@ self.addEventListener("push", (event) => {
         await closeSupersededThreadNotifications(tag);
       }
       await self.registration.showNotification(title, notification);
-      await syncDisplayedNotificationBadge({ skipVisibleClient: true });
+      await syncDisplayedNotificationBadge();
     })(),
   );
 });
@@ -56,7 +58,21 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("notificationclose", (event) => {
-  event.waitUntil(syncDisplayedNotificationBadge({ skipVisibleClient: true }));
+  event.waitUntil(syncDisplayedNotificationBadge());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(syncDisplayedNotificationBadge());
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === SYNC_BADGE_MESSAGE_TYPE) {
+    event.waitUntil(syncDisplayedNotificationBadge());
+    return;
+  }
+  if (event.data?.type === CLEAR_TURN_COMPLETION_NOTIFICATIONS_MESSAGE_TYPE) {
+    event.waitUntil(clearTurnCompletionNotificationsAndBadge());
+  }
 });
 
 function readPushPayload(event) {
@@ -148,20 +164,6 @@ function canSetAppBadge() {
   return typeof self.navigator?.setAppBadge === "function";
 }
 
-function isVisibleSameOriginClient(client) {
-  return (
-    isSameOriginUrl(client.url) && (client.focused === true || client.visibilityState === "visible")
-  );
-}
-
-async function hasVisibleSameOriginWindowClient() {
-  const clients = await self.clients.matchAll({
-    type: "window",
-    includeUncontrolled: true,
-  });
-  return clients.some((client) => isVisibleSameOriginClient(client));
-}
-
 function countUnseenTurnCompletionThreads(notifications) {
   const threadIds = new Set();
   for (const notification of notifications) {
@@ -174,17 +176,28 @@ function countUnseenTurnCompletionThreads(notifications) {
   return threadIds.size;
 }
 
-async function syncDisplayedNotificationBadge(options = {}) {
+async function syncDisplayedNotificationBadge() {
   if (!canSetAppBadge() || typeof self.registration?.getNotifications !== "function") {
-    return false;
-  }
-
-  if (options.skipVisibleClient === true && (await hasVisibleSameOriginWindowClient())) {
     return false;
   }
 
   const notifications = await self.registration.getNotifications();
   return writeServiceWorkerAppBadge(countUnseenTurnCompletionThreads(notifications));
+}
+
+async function clearTurnCompletionNotificationsAndBadge() {
+  if (typeof self.registration?.getNotifications !== "function") {
+    return writeServiceWorkerAppBadge(0);
+  }
+
+  const notifications = await self.registration.getNotifications();
+  for (const notification of notifications) {
+    const tag = typeof notification.tag === "string" ? notification.tag : "";
+    if (TURN_NOTIFICATION_TAG_PATTERN.test(tag) && typeof notification.close === "function") {
+      notification.close();
+    }
+  }
+  return writeServiceWorkerAppBadge(0);
 }
 
 async function closeSupersededThreadNotifications(tag) {

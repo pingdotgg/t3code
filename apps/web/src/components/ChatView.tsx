@@ -77,6 +77,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
+import { resyncAppBadge } from "../pwa/appBadge";
 import { closeThreadNotifications } from "../push/notifications";
 import { viewedThreadVisitedAt } from "../threadCompletion";
 import {
@@ -1252,14 +1253,17 @@ export default function ChatView(props: ChatViewProps) {
     if (!serverThread?.id) return;
     const threadId = serverThread.id;
     const threadKey = scopedThreadKey(scopeThreadRef(serverThread.environmentId, threadId));
+    const closeVisibleThreadNotifications = () => {
+      // Use the raw thread id: notification tags are issued server-side as
+      // `thread:{rawThreadId}:...`, not the scoped key used for visited state.
+      void closeThreadNotifications(threadId).then(resyncAppBadge);
+    };
     const markVisibleThreadVisited = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }
       markThreadVisited(threadKey, viewedThreadVisitedAt(serverThread.latestTurn?.completedAt));
-      // Use the raw thread id: notification tags are issued server-side as
-      // `thread:{rawThreadId}:…`, not the scoped key used for visited state.
-      void closeThreadNotifications(threadId);
+      closeVisibleThreadNotifications();
     };
 
     markVisibleThreadVisited();
@@ -1271,7 +1275,7 @@ export default function ChatView(props: ChatViewProps) {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         markThreadVisited(threadKey, viewedThreadVisitedAt(serverThread.latestTurn?.completedAt));
-        void closeThreadNotifications(threadId);
+        closeVisibleThreadNotifications();
       }
     };
 

@@ -1,10 +1,13 @@
-import { memo, useMemo, useReducer } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { getVscodeIconUrlForEntry } from "../../vscode-icons";
 import { FileIcon, FolderIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
-
-const failedIconUrls = new Set<string>();
-const loadedIconUrls = new Set<string>();
+import {
+  getVscodeIconLoadStatus,
+  markVscodeIconFailed,
+  markVscodeIconLoaded,
+  subscribeVscodeIconLoadStatus,
+} from "../../vscode-icon-load-store";
 
 export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   pathValue: string;
@@ -12,13 +15,17 @@ export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   theme: "light" | "dark";
   className?: string;
 }) {
-  const [, forceRender] = useReducer((tick: number) => tick + 1, 0);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const iconUrl = useMemo(
     () => getVscodeIconUrlForEntry(props.pathValue, props.kind, props.theme),
     [props.kind, props.pathValue, props.theme],
   );
-  const failed = failedIconUrls.has(iconUrl);
-  const loaded = loadedIconUrls.has(iconUrl);
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeVscodeIconLoadStatus(iconUrl, listener),
+    [iconUrl],
+  );
+  const getSnapshot = useCallback(() => getVscodeIconLoadStatus(iconUrl), [iconUrl]);
+  const status = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const fallback =
     props.kind === "directory" ? (
@@ -27,26 +34,27 @@ export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
       <FileIcon className={cn("size-4 shrink-0 text-muted-foreground/80", props.className)} />
     );
 
-  if (failed) return fallback;
+  useEffect(() => {
+    const image = imageRef.current;
+    if (status !== "loading" || !image) return;
+    if (image.complete && image.naturalWidth > 0) {
+      markVscodeIconLoaded(iconUrl);
+    }
+  }, [iconUrl, status]);
+
+  if (status === "error") return fallback;
 
   return (
     <>
-      {loaded ? null : fallback}
+      {status === "loaded" ? null : fallback}
       <img
+        ref={imageRef}
         src={iconUrl}
         alt=""
         aria-hidden="true"
-        className={cn("size-4 shrink-0", !loaded && "hidden", props.className)}
-        onLoad={() => {
-          if (!loadedIconUrls.has(iconUrl)) {
-            loadedIconUrls.add(iconUrl);
-            forceRender();
-          }
-        }}
-        onError={() => {
-          failedIconUrls.add(iconUrl);
-          forceRender();
-        }}
+        className={cn("size-4 shrink-0", status !== "loaded" && "hidden", props.className)}
+        onLoad={() => markVscodeIconLoaded(iconUrl)}
+        onError={() => markVscodeIconFailed(iconUrl)}
       />
     </>
   );

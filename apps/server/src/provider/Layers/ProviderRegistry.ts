@@ -182,6 +182,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
+  subscribeChanges: instance.snapshot.subscribeChanges,
 });
 
 export const ProviderRegistryLive = Layer.effect(
@@ -541,47 +542,28 @@ export const ProviderRegistryLive = Layer.effect(
           newlyAdded.push([instanceId, instance] as const);
         }
 
-        // Fork long-lived subscriptions to each new/rebuilt instance's
-        // change stream before reading its current snapshot. If the
-        // driver's own initial probe finishes during this sync, either
-        // the current read or the active subscriber observes the result.
-        for (const [, instance] of newlyAdded) {
-          const source = buildSnapshotSource(instance);
-          yield* Stream.runForEach(source.streamChanges, (provider) =>
+        const newlyAddedSources = newlyAdded.map(
+          ([instanceId, instance]) => [instanceId, buildSnapshotSource(instance)] as const,
+        );
+
+        // Acquire each subscription before reading the current snapshot.
+        // Managed providers update their snapshot ref before publishing,
+        // so the read observes everything before subscription and the
+        // pre-acquired subscription observes everything after it.
+        for (const [, source] of newlyAddedSources) {
+          const changes = yield* source.subscribeChanges;
+          yield* Stream.runForEach(Stream.fromSubscription(changes), (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
         }
-        yield* Effect.yieldNow;
 
         // Snapshot current state without starting a probe. Managed providers
-        // launch their startup refresh independently, so this closes the
-        // subscription race without putting external work on the registry
-        // or HTTP server construction path.
+        // launch their startup refresh independently, so this does not put
+        // external work on the registry or HTTP server construction path.
         yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
+          newlyAddedSources,
+          ([, source]) =>
             Effect.gen(function* () {
-              const source = buildSnapshotSource(instance);
-              const provider = yield* source.getSnapshot;
-              yield* correlateSnapshotWithSource(source, provider).pipe(
-                Effect.flatMap(syncProvider),
-              );
-            }).pipe(Effect.ignoreCause({ log: true })),
-          { concurrency: "unbounded", discard: true },
-        );
-
-        // Re-read snapshots after yielding to close the race between
-        // subscription establishment and the initial read. The managed
-        // provider updates its snapshot ref before publishing to the
-        // PubSub, so this second read captures any probe that landed
-        // after the first getSnapshot but before the forked subscriber
-        // became active. The subscriber then handles all future updates.
-        yield* Effect.yieldNow;
-        yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
-            Effect.gen(function* () {
-              const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
               yield* correlateSnapshotWithSource(source, provider).pipe(
                 Effect.flatMap(syncProvider),
@@ -648,19 +630,6 @@ export const ProviderRegistryLive = Layer.effect(
     // these via `upsertProviders` so on-disk state wins where present
     // and pending fallbacks fill the gaps.
     yield* upsertProviders(fallbackProviders, { publish: false });
-    // Subscribe to registry mutations BEFORE running the initial sync.
-    // `subscribeChanges` acquires the dequeue synchronously in this
-    // fibre; the subscription is active the instant this `yield*`
-    // returns. Forking the consumer loop later cannot lose a publish
-    // because no publish can reach a not-yet-subscribed dequeue.
-    //
-    // (Contrast with the pre-fix code that did
-    // `Stream.runForEach(instanceRegistry.streamChanges, …).pipe(Effect.forkScoped)`.
-    // `Stream.fromPubSub` defers `PubSub.subscribe` to stream start,
-    // and `forkScoped` only schedules the fibre — so a reconcile that
-    // published between "fibre scheduled" and "fibre starts running"
-    // was dropped, which made any settings change that replaced an
-    // instance never propagate to the aggregator's `providersRef`.)
     // Subscribe to registry mutations BEFORE running the initial sync.
     // `subscribeChanges` acquires the `PubSub.Subscription` synchronously
     // in this fibre; the subscription is registered with the PubSub the

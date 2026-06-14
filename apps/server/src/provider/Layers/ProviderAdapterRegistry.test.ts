@@ -122,6 +122,7 @@ const makeFakeInstance = (
       getSnapshot: Effect.succeed({} as unknown as ServerProvider),
       refresh: Effect.succeed({} as unknown as ServerProvider),
       streamChanges: Stream.empty,
+      subscribeChanges: Effect.flatMap(PubSub.unbounded<ServerProvider>(), PubSub.subscribe),
     },
     adapter,
     textGeneration: {} as unknown as TextGenerationShape,

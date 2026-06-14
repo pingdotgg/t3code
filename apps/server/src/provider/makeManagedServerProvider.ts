@@ -167,5 +167,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    get subscribeChanges() {
+      return PubSub.subscribe(changesPubSub);
+    },
   } satisfies ServerProviderShape;
 });

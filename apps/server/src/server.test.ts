@@ -34,11 +34,13 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -48,6 +50,7 @@ import {
   HttpClient,
   HttpRouter,
   HttpServer,
+  HttpServerResponse,
 } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -70,7 +73,6 @@ import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import {
   HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-  makeBunHttpServerOptions,
   makeNodeHttpServerOptions,
   makeRoutesLayer,
 } from "./server.ts";
@@ -882,6 +884,10 @@ class AuthenticationGetterError extends Data.TaggedError("AuthenticationGetterEr
   readonly message: string;
 }> {}
 
+class TestHttpRequestError extends Data.TaggedError("TestHttpRequestError")<{
+  readonly cause: unknown;
+}> {}
+
 const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, cookie } = yield* bootstrapBrowserSession(credential);
@@ -968,24 +974,100 @@ const getWsServerUrl = (
   });
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
-  it.effect("configures platform HTTP servers with zero preemptive shutdown grace", () =>
-    Effect.sync(() => {
+  it.effect("respects zero preemptive shutdown grace for active Node HTTP requests", () =>
+    Effect.gen(function* () {
+      assert.equal(HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS, 0);
+
+      const NodeHttp = yield* Effect.promise(() => import("node:http"));
+      const requestStarted = yield* Deferred.make<void>();
       const config = {
         host: "127.0.0.1",
         port: 0,
       };
+      const routesLayer = Layer.mergeAll(
+        HttpRouter.add("GET", "/ready", HttpServerResponse.text("ok")),
+        HttpRouter.add(
+          "GET",
+          "/hold",
+          Effect.gen(function* () {
+            yield* Deferred.succeed(requestStarted, undefined).pipe(Effect.ignore);
+            return yield* Effect.never;
+          }),
+        ),
+      );
+      const httpServerLayer = NodeHttpServer.layer(
+        NodeHttp.createServer,
+        makeNodeHttpServerOptions(config),
+      );
+      const servedRoutesLayer = HttpRouter.serve(routesLayer, {
+        disableListenLog: true,
+        disableLogger: true,
+      });
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(httpServerLayer, scope);
+      yield* Layer.buildWithScope(servedRoutesLayer, scope).pipe(Effect.provide(context));
+      const address = yield* Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer;
+        return server.address as HttpServer.TcpAddress;
+      }).pipe(Effect.provide(context));
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const getText = (url: string) =>
+        Effect.tryPromise({
+          try: () =>
+            new Promise<{ readonly status: number; readonly body: string }>((resolve, reject) => {
+              const request = NodeHttp.get(url, (response) => {
+                let body = "";
+                response.setEncoding("utf8");
+                response.on("data", (chunk: string) => {
+                  body += chunk;
+                });
+                response.on("end", () => {
+                  resolve({
+                    status: response.statusCode ?? 0,
+                    body,
+                  });
+                });
+              });
+              request.on("error", reject);
+            }),
+          catch: (cause) => new TestHttpRequestError({ cause }),
+        });
+      const heldRequest = NodeHttp.get(`${baseUrl}/hold`);
+      const heldRequestDone = new Promise<void>((resolve) => {
+        heldRequest.on("close", resolve);
+        heldRequest.on("error", () => resolve());
+      });
 
-      assert.deepEqual(makeBunHttpServerOptions(config), {
-        port: 0,
-        hostname: "127.0.0.1",
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      });
-      assert.deepEqual(makeNodeHttpServerOptions(config), {
-        host: "127.0.0.1",
-        port: 0,
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      });
-      assert.equal(HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS, 0);
+      try {
+        const readyResponse = yield* getText(`${baseUrl}/ready`);
+        assert.equal(readyResponse.status, 200);
+        assert.equal(readyResponse.body, "ok");
+
+        yield* Deferred.await(requestStarted).pipe(Effect.timeout("1 second"));
+
+        const startedAt = yield* Clock.currentTimeMillis;
+        const closeExit = yield* Scope.close(scope, Exit.void).pipe(
+          Effect.timeout("1 second"),
+          Effect.exit,
+        );
+        if (Exit.isFailure(closeExit) && !Exit.hasInterrupts(closeExit)) {
+          assert.fail("Server shutdown did not complete cleanly within the configured timeout");
+        }
+        const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+        assert.isBelow(
+          elapsedMs,
+          1_000,
+          "Server shutdown should not wait for Effect's default 20s preemptive drain",
+        );
+
+        yield* Effect.raceFirst(
+          Effect.promise(() => heldRequestDone),
+          Effect.sleep("1 second"),
+        );
+      } finally {
+        heldRequest.destroy();
+        yield* Scope.close(scope, Exit.void).pipe(Effect.timeoutOption("1 second"), Effect.ignore);
+      }
     }),
   );
 

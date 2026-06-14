@@ -107,9 +107,73 @@ function setDocumentVisibility(
   });
 }
 
+function createPushWindowStub(): EventTarget & {
+  isSecureContext: boolean;
+  PushManager: unknown;
+  Notification: unknown;
+} {
+  const target = new EventTarget() as EventTarget & {
+    isSecureContext: boolean;
+    PushManager: unknown;
+    Notification: unknown;
+  };
+  target.isSecureContext = true;
+  target.PushManager = function PushManager() {};
+  target.Notification = function Notification() {};
+  return target;
+}
+
+function makeDisplayedNotification(tag: string): Pick<Notification, "tag"> {
+  return { tag };
+}
+
+function installBadgeGlobals(
+  input: {
+    readonly displayedNotifications?: readonly Pick<Notification, "tag">[];
+    readonly getRegistration?: () => Promise<unknown>;
+    readonly visibilityState?: DocumentVisibilityState;
+  } = {},
+) {
+  let displayedNotifications = input.displayedNotifications ?? [];
+  const getRegistration = vi.fn(
+    input.getRegistration ??
+      (async () => ({
+        getNotifications: async () => displayedNotifications,
+      })),
+  );
+  const navigatorLike = {
+    setAppBadge: vi.fn(async () => {}),
+    clearAppBadge: vi.fn(async () => {}),
+    serviceWorker: { getRegistration },
+  };
+  const windowStub = createPushWindowStub();
+  const documentStub = createDocumentStub(input.visibilityState ?? "visible");
+  vi.stubGlobal("navigator", navigatorLike);
+  vi.stubGlobal("window", windowStub);
+  vi.stubGlobal("document", documentStub);
+  return {
+    navigatorLike,
+    windowStub,
+    documentStub,
+    getRegistration,
+    setDisplayedNotifications: (next: readonly Pick<Notification, "tag">[]) => {
+      displayedNotifications = next;
+    },
+  };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 async function flushBadgeSync(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 beforeEach(() => {
@@ -182,73 +246,161 @@ describe("writeAppBadgeCount", () => {
 });
 
 describe("installPwaAppBadgeSync", () => {
-  it("re-syncs on window focus even when the count matches the last page write", async () => {
-    const thread = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
-    setBadgeStoreState([thread]);
-    const navigatorLike = {
-      setAppBadge: vi.fn(async () => {}),
-      clearAppBadge: vi.fn(async () => {}),
-    };
-    const windowStub = new EventTarget();
-    const documentStub = createDocumentStub("visible");
-    vi.stubGlobal("navigator", navigatorLike);
-    vi.stubGlobal("window", windowStub);
-    vi.stubGlobal("document", documentStub);
+  it("clears completed-turn alerts on startup instead of restoring stale unseen thread state", async () => {
+    const thread1 = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
+    const thread2 = makeCompletedThread("thread-2", "2026-06-12T12:01:00.000Z");
+    setBadgeStoreState([thread1, thread2]);
+    const { navigatorLike } = installBadgeGlobals({
+      displayedNotifications: [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+    });
 
     installPwaAppBadgeSync();
+    await flushBadgeSync();
+
+    expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the badge when displayed notifications are unavailable", async () => {
+    const thread1 = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
+    const thread2 = makeCompletedThread("thread-2", "2026-06-12T12:01:00.000Z");
+    setBadgeStoreState([thread1, thread2]);
+    const { navigatorLike } = installBadgeGlobals({
+      getRegistration: async () => null,
+    });
+
+    installPwaAppBadgeSync();
+    await flushBadgeSync();
+
+    expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-syncs when displayed completed-turn notifications change", async () => {
+    const thread1 = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
+    const thread2 = makeCompletedThread("thread-2", "2026-06-12T12:01:00.000Z");
+    setBadgeStoreState([thread1, thread2]);
+    const { navigatorLike, setDisplayedNotifications } = installBadgeGlobals({
+      displayedNotifications: [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+    });
+
+    installPwaAppBadgeSync();
+    await flushBadgeSync();
+    navigatorLike.setAppBadge.mockClear();
+
+    setDisplayedNotifications([
+      makeDisplayedNotification("thread:thread-1:turn:turn-1"),
+      makeDisplayedNotification("thread:thread-2:turn:turn-1"),
+    ]);
+    resyncAppBadge();
+    await flushBadgeSync();
+
+    expect(navigatorLike.setAppBadge).toHaveBeenCalledWith(2);
+  });
+
+  it("does not let stale async notification reads overwrite newer badge syncs", async () => {
+    const thread1 = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
+    const thread2 = makeCompletedThread("thread-2", "2026-06-12T12:01:00.000Z");
+    setBadgeStoreState([thread1, thread2]);
+    const firstRegistration = createDeferred<unknown>();
+    const secondRegistration = createDeferred<unknown>();
+    const { navigatorLike, getRegistration } = installBadgeGlobals({
+      getRegistration: vi
+        .fn()
+        .mockResolvedValueOnce({ getNotifications: async () => [] })
+        .mockResolvedValueOnce({})
+        .mockImplementationOnce(() => firstRegistration.promise)
+        .mockImplementationOnce(() => secondRegistration.promise),
+    });
+
+    installPwaAppBadgeSync();
+    await flushBadgeSync();
+    expect(getRegistration).toHaveBeenCalledTimes(2);
+    navigatorLike.clearAppBadge.mockClear();
+
+    resyncAppBadge();
+    await Promise.resolve();
+    expect(getRegistration).toHaveBeenCalledTimes(3);
+
+    resyncAppBadge();
+    await Promise.resolve();
+    expect(getRegistration).toHaveBeenCalledTimes(4);
+
+    secondRegistration.resolve({
+      getNotifications: async () => [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+    });
     await flushBadgeSync();
 
     expect(navigatorLike.setAppBadge).toHaveBeenCalledWith(1);
     navigatorLike.setAppBadge.mockClear();
 
+    firstRegistration.resolve({
+      getNotifications: async () => [
+        makeDisplayedNotification("thread:thread-1:turn:turn-1"),
+        makeDisplayedNotification("thread:thread-2:turn:turn-1"),
+      ],
+    });
+    await flushBadgeSync();
+
+    expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("clears completed-turn alerts on window focus", async () => {
+    const thread = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
+    setBadgeStoreState([thread]);
+    const { navigatorLike, windowStub } = installBadgeGlobals({
+      displayedNotifications: [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+    });
+
+    installPwaAppBadgeSync();
+    await flushBadgeSync();
+
+    expect(navigatorLike.clearAppBadge).toHaveBeenCalledTimes(1);
+    navigatorLike.clearAppBadge.mockClear();
+
     windowStub.dispatchEvent(new Event("focus"));
     await flushBadgeSync();
 
-    expect(navigatorLike.setAppBadge).toHaveBeenCalledWith(1);
+    expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).toHaveBeenCalledTimes(1);
   });
 
-  it("re-syncs when the document becomes visible", async () => {
+  it("clears completed-turn alerts when the document becomes visible", async () => {
     const thread = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
     const threadKey = scopedThreadKey(scopeThreadRef(environmentId, thread.id));
     setBadgeStoreState([thread], {
       [threadKey]: "2026-06-12T11:59:00.000Z",
     });
-    const navigatorLike = {
-      setAppBadge: vi.fn(async () => {}),
-      clearAppBadge: vi.fn(async () => {}),
-    };
-    const windowStub = new EventTarget();
-    const documentStub = createDocumentStub("hidden");
-    vi.stubGlobal("navigator", navigatorLike);
-    vi.stubGlobal("window", windowStub);
-    vi.stubGlobal("document", documentStub);
+    const { navigatorLike, documentStub } = installBadgeGlobals({
+      displayedNotifications: [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+      visibilityState: "hidden",
+    });
 
     installPwaAppBadgeSync();
     await flushBadgeSync();
-    navigatorLike.setAppBadge.mockClear();
+    navigatorLike.clearAppBadge.mockClear();
 
     documentStub.dispatchEvent(new Event("visibilitychange"));
     await flushBadgeSync();
 
     expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).not.toHaveBeenCalled();
 
     setDocumentVisibility(documentStub, "visible");
     documentStub.dispatchEvent(new Event("visibilitychange"));
     await flushBadgeSync();
 
-    expect(navigatorLike.setAppBadge).toHaveBeenCalledWith(1);
+    expect(navigatorLike.setAppBadge).not.toHaveBeenCalled();
+    expect(navigatorLike.clearAppBadge).toHaveBeenCalledTimes(1);
   });
 
   it("allows callers to force a cache-bypassing re-sync", async () => {
     const thread = makeCompletedThread("thread-1", "2026-06-12T12:00:00.000Z");
     setBadgeStoreState([thread]);
-    const navigatorLike = {
-      setAppBadge: vi.fn(async () => {}),
-      clearAppBadge: vi.fn(async () => {}),
-    };
-    vi.stubGlobal("navigator", navigatorLike);
-    vi.stubGlobal("window", new EventTarget());
-    vi.stubGlobal("document", createDocumentStub("visible"));
+    const { navigatorLike } = installBadgeGlobals({
+      displayedNotifications: [makeDisplayedNotification("thread:thread-1:turn:turn-1")],
+    });
 
     installPwaAppBadgeSync();
     await flushBadgeSync();

@@ -126,8 +126,13 @@ function createInstallingServiceWorker(initialState: ServiceWorkerState = "insta
 function createRegistration(
   update: () => Promise<void> = () => Promise.resolve(),
   installing: ServiceWorker | null = null,
-): ServiceWorkerRegistration & { installing: ServiceWorker | null } {
-  return { installing, update: vi.fn(update) } as unknown as ServiceWorkerRegistration & {
+  active: Pick<ServiceWorker, "postMessage"> | null = null,
+): ServiceWorkerRegistration & {
+  active: Pick<ServiceWorker, "postMessage"> | null;
+  installing: ServiceWorker | null;
+} {
+  return { active, installing, update: vi.fn(update) } as unknown as ServiceWorkerRegistration & {
+    active: Pick<ServiceWorker, "postMessage"> | null;
     installing: ServiceWorker | null;
   };
 }
@@ -176,6 +181,26 @@ describe("registerPwaServiceWorker", () => {
     await flushMicrotasks();
 
     expect(usePwaServiceWorkerUpdateStore.getState().checkPhase).toBe("idle");
+  });
+
+  it("asks the active service worker to clear completed-turn alerts on registration and visibility", async () => {
+    const browserEnvironment = installBrowserEnvironment();
+    const postMessage = vi.fn();
+    const registration = createRegistration(() => Promise.resolve(), null, { postMessage });
+
+    registerPwaServiceWorker();
+    readRegisterSWOptions().onRegisteredSW?.("/t3-service-worker.js", registration);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "t3.clear-turn-completion-notifications",
+    });
+    postMessage.mockClear();
+
+    browserEnvironment.dispatchVisibilityChange();
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "t3.clear-turn-completion-notifications",
+    });
   });
 
   it("skips the startup update check while offline", () => {

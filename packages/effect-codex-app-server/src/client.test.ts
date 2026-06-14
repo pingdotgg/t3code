@@ -14,7 +14,6 @@ import * as CodexClient from "./client.ts";
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );
-const mockPeerArgs = (path: string) => [path];
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
   const makeHandle = () =>
@@ -158,7 +157,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       const scope = yield* Scope.make();
       const clientLayer = CodexClient.layerCommand({
         command: process.execPath,
-        args: mockPeerArgs(yield* mockPeerPath),
+        args: [yield* mockPeerPath],
         cwd: path.join(import.meta.dirname, ".."),
         env: {
           CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),

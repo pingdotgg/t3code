@@ -4,10 +4,18 @@ import { isElectron } from "../env";
 import { ensureLocalApi } from "../localApi";
 
 const SERVICE_WORKER_URL = "/t3-service-worker.js";
+const TURN_NOTIFICATION_TAG_PATTERN = /^thread:(.+):turn:[^:]+$/;
+export const SYNC_BADGE_MESSAGE_TYPE = "t3.sync-displayed-notification-badge";
+export const CLEAR_TURN_COMPLETION_NOTIFICATIONS_MESSAGE_TYPE =
+  "t3.clear-turn-completion-notifications";
 
 export interface BrowserPushSupport {
   readonly supported: boolean;
   readonly reason: "supported" | "electron" | "insecure-context" | "missing-browser-api";
+}
+
+export interface NotificationTagLike {
+  readonly tag?: unknown;
 }
 
 export function getBrowserPushSupport(): BrowserPushSupport {
@@ -74,6 +82,119 @@ export async function closeThreadNotifications(threadId: string): Promise<void> 
   } catch {
     // Closing notifications is best-effort and must never disrupt navigation.
   }
+}
+
+export function countTurnCompletionNotificationThreads(
+  notifications: readonly NotificationTagLike[],
+): number {
+  const threadIds = new Set<string>();
+  for (const notification of notifications) {
+    const tag = typeof notification.tag === "string" ? notification.tag : "";
+    const match = TURN_NOTIFICATION_TAG_PATTERN.exec(tag);
+    if (match) {
+      threadIds.add(match[1]!);
+    }
+  }
+  return threadIds.size;
+}
+
+export async function getDisplayedTurnCompletionThreadCount(): Promise<number | null> {
+  if (!getBrowserPushSupport().supported) {
+    return null;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration || typeof registration.getNotifications !== "function") {
+      return null;
+    }
+    const notifications = await registration.getNotifications();
+    return countTurnCompletionNotificationThreads(notifications);
+  } catch {
+    return null;
+  }
+}
+
+export async function closeTurnCompletionNotifications(
+  registration?: ServiceWorkerRegistration | null,
+): Promise<number | null> {
+  if (!getBrowserPushSupport().supported) {
+    return null;
+  }
+  try {
+    const resolvedRegistration = registration ?? (await navigator.serviceWorker.getRegistration());
+    if (!resolvedRegistration || typeof resolvedRegistration.getNotifications !== "function") {
+      return null;
+    }
+    const notifications = await resolvedRegistration.getNotifications();
+    let closedCount = 0;
+    for (const notification of notifications) {
+      const tag = typeof notification.tag === "string" ? notification.tag : "";
+      if (TURN_NOTIFICATION_TAG_PATTERN.test(tag) && typeof notification.close === "function") {
+        notification.close();
+        closedCount += 1;
+      }
+    }
+    return closedCount;
+  } catch {
+    return null;
+  }
+}
+
+function postServiceWorkerMessage(registration: ServiceWorkerRegistration, type: string): boolean {
+  const worker = registration.active ?? registration.waiting ?? registration.installing;
+  if (!worker || typeof worker.postMessage !== "function") {
+    return false;
+  }
+  // ServiceWorker.postMessage does not accept a target origin.
+  // oxlint-disable-next-line require-post-message-target-origin
+  worker.postMessage({ type });
+  return true;
+}
+
+export async function requestServiceWorkerBadgeSync(
+  registration?: ServiceWorkerRegistration | null,
+): Promise<boolean> {
+  if (isElectron || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return false;
+  }
+  try {
+    const resolvedRegistration = registration ?? (await navigator.serviceWorker.getRegistration());
+    if (!resolvedRegistration) {
+      return false;
+    }
+    return postServiceWorkerMessage(resolvedRegistration, SYNC_BADGE_MESSAGE_TYPE);
+  } catch {
+    return false;
+  }
+}
+
+export async function requestServiceWorkerTurnCompletionNotificationClear(
+  registration?: ServiceWorkerRegistration | null,
+): Promise<boolean> {
+  if (isElectron || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return false;
+  }
+  try {
+    const resolvedRegistration = registration ?? (await navigator.serviceWorker.getRegistration());
+    if (!resolvedRegistration) {
+      return false;
+    }
+    return postServiceWorkerMessage(
+      resolvedRegistration,
+      CLEAR_TURN_COMPLETION_NOTIFICATIONS_MESSAGE_TYPE,
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function clearTurnCompletionAlerts(
+  registration?: ServiceWorkerRegistration | null,
+): Promise<void> {
+  await Promise.allSettled([
+    closeTurnCompletionNotifications(registration),
+    requestServiceWorkerTurnCompletionNotificationClear(registration),
+  ]);
 }
 
 export async function getCurrentPushSubscription(): Promise<PushSubscription | null> {

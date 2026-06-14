@@ -201,6 +201,7 @@ describe("makeManagedServerProvider", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const checkCalls = yield* Ref.make(0);
+          const checkStarted = yield* Deferred.make<void>();
           const releaseCheck = yield* Deferred.make<void>();
           const provider = yield* makeManagedServerProvider<TestSettings>({
             maintenanceCapabilities,
@@ -208,10 +209,12 @@ describe("makeManagedServerProvider", () => {
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
-            checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
-              Effect.flatMap(() => Deferred.await(releaseCheck)),
-              Effect.as(refreshedSnapshot),
-            ),
+            checkProvider: Effect.gen(function* () {
+              yield* Ref.update(checkCalls, (count) => count + 1);
+              yield* Deferred.succeed(checkStarted, undefined).pipe(Effect.ignore);
+              yield* Deferred.await(releaseCheck);
+              return refreshedSnapshot;
+            }),
             refreshInterval: "1 hour",
           });
 
@@ -223,6 +226,7 @@ describe("makeManagedServerProvider", () => {
             Effect.forkChild,
           );
           yield* Effect.yieldNow;
+          yield* Deferred.await(checkStarted);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
 
           yield* Deferred.succeed(releaseCheck, undefined);

@@ -5,6 +5,7 @@ import {
   setPwaServiceWorkerUpdateCheckPhase,
   showPwaServiceWorkerUpdateAvailable,
 } from "./serviceWorkerUpdateState";
+import { clearTurnCompletionAlerts } from "../push/notifications";
 
 // How often to ask the browser to re-fetch the service worker and look for a
 // newer build while the app is left open.
@@ -69,6 +70,7 @@ export function registerPwaServiceWorker(): void {
       if (!registration) {
         return;
       }
+      void clearTurnCompletionAlerts(registration);
 
       let checkInFlight = false;
       const checkForUpdate = async (): Promise<void> => {
@@ -100,6 +102,7 @@ export function registerPwaServiceWorker(): void {
       // surfaces updates soon after the user returns to it.
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
+          void clearTurnCompletionAlerts(registration);
           void checkForUpdate();
         }
       });

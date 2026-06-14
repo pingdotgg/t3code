@@ -48,7 +48,7 @@ import { ServerSettingsService, type ServerSettingsShape } from "../../serverSet
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -298,6 +298,36 @@ function makeMutableServerSettingsService(
     } satisfies ServerSettingsShape;
   });
 }
+
+const waitForProviderSnapshot = (
+  registry: ProviderRegistryShape,
+  instanceId: ProviderInstanceId,
+  predicate: (provider: ServerProvider) => boolean,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const pull = yield* Stream.toPull(registry.streamChanges);
+      const findMatching = (providers: ReadonlyArray<ServerProvider>) => {
+        const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+        return provider !== undefined && predicate(provider) ? provider : undefined;
+      };
+
+      const initial = findMatching(yield* registry.getProviders);
+      if (initial !== undefined) {
+        return initial;
+      }
+
+      while (true) {
+        const providerUpdates = yield* pull;
+        for (const providers of providerUpdates) {
+          const match = findMatching(providers);
+          if (match !== undefined) {
+            return match;
+          }
+        }
+      }
+    }).pipe(Effect.timeout("5 seconds")),
+  );
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
@@ -633,6 +663,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 Effect.andThen(Effect.never),
               ),
               streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(
+                PubSub.unbounded<ServerProvider>(),
+                PubSub.subscribe,
+              ),
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -783,6 +817,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               getSnapshot: Effect.succeed(initialProvider),
               refresh: Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -877,6 +912,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               getSnapshot: Effect.succeed(cachedProvider),
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(
+                PubSub.unbounded<ServerProvider>(),
+                PubSub.subscribe,
+              ),
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -956,6 +995,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               getSnapshot: Effect.succeed(cachedProvider),
               refresh: Effect.interrupt,
               streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(
+                PubSub.unbounded<ServerProvider>(),
+                PubSub.subscribe,
+              ),
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1042,6 +1085,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(
+                PubSub.unbounded<ServerProvider>(),
+                PubSub.subscribe,
+              ),
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1190,35 +1237,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            let providers = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* Effect.yieldNow;
-              providers = yield* registry.getProviders;
-            }
-            const codexPersonal = providers.find(
-              (provider) => provider.instanceId === "codex_personal",
-            );
-            assert.notStrictEqual(
-              codexPersonal,
-              undefined,
-              `Expected the aggregator to know about codex_personal; instead saw: ${providers
-                .map((provider) => provider.instanceId)
-                .join(", ")}`,
+            const codexPersonal = yield* waitForProviderSnapshot(
+              registry,
+              ProviderInstanceId.make("codex_personal"),
+              (provider) => provider.status === "error",
             );
             assert.strictEqual(
-              codexPersonal?.status,
+              codexPersonal.status,
               "error",
               "Real Codex probe against a missing binary should surface as 'error' in the aggregator",
             );
-            assert.strictEqual(codexPersonal?.installed, false);
+            assert.strictEqual(codexPersonal.installed, false);
             assert.strictEqual(
-              codexPersonal?.message,
+              codexPersonal.message,
               "Codex CLI (`codex`) is not installed or not on PATH.",
             );
           }).pipe(Effect.provide(runtimeServices));
@@ -1280,24 +1311,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             // the two probe runs is `checkedAt` — each probe stamps a
             // fresh DateTime, so we capture it and assert it advances
             // after the settings mutation.
-            let initialProviders = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              initialProviders.find((provider) => provider.instanceId === "codex")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              initialProviders = yield* registry.getProviders;
-            }
-            const initialCodex = initialProviders.find(
-              (provider) => provider.instanceId === "codex",
+            const initialCodex = yield* waitForProviderSnapshot(
+              registry,
+              ProviderInstanceId.make("codex"),
+              (provider) => provider.status === "error",
             );
-            assert.strictEqual(initialCodex?.status, "error");
-            assert.strictEqual(initialCodex?.installed, false);
-            const initialCheckedAt = initialCodex?.checkedAt;
+            assert.strictEqual(initialCodex.status, "error");
+            assert.strictEqual(initialCodex.installed, false);
+            const initialCheckedAt = initialCodex.checkedAt;
             assert.notStrictEqual(initialCheckedAt, undefined);
 
             // Let the settings watcher fiber subscribe before publishing the
@@ -1320,33 +1341,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               },
             });
 
-            // Poll with TestClock until `checkedAt` advances or we hit a
-            // generous virtual 3-second ceiling.
-            const refreshed = yield* Effect.gen(function* () {
-              for (let attempts = 0; attempts < 60; attempts += 1) {
-                const providers = yield* registry.getProviders;
-                const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (
-                  codex !== undefined &&
-                  codex.status === "error" &&
-                  codex.checkedAt !== initialCheckedAt
-                ) {
-                  return providers;
-                }
-                yield* TestClock.adjust("50 millis");
-                yield* Effect.yieldNow;
-              }
-              return yield* registry.getProviders;
-            });
-
-            const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
+            const reprobedCodex = yield* waitForProviderSnapshot(
+              registry,
+              ProviderInstanceId.make("codex"),
+              (provider) => provider.status === "error" && provider.checkedAt !== initialCheckedAt,
+            );
             assert.notStrictEqual(
-              reprobedCodex?.checkedAt,
+              reprobedCodex.checkedAt,
               initialCheckedAt,
               "Expected a fresh probe after settings change, got the stale snapshot",
             );
-            assert.strictEqual(reprobedCodex?.status, "error");
-            assert.strictEqual(reprobedCodex?.installed, false);
+            assert.strictEqual(reprobedCodex.status, "error");
+            assert.strictEqual(reprobedCodex.installed, false);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

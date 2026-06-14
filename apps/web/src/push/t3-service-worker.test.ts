@@ -43,6 +43,9 @@ interface ServiceWorkerTestHarness {
   readonly getBadgeSetCalls: () => number[];
   readonly getBadgeClearCallCount: () => number;
   readonly getDisplayedNotificationCount: () => number;
+  readonly closeAllDisplayedNotificationsWithoutEvent: () => void;
+  readonly dispatchActivate: () => Promise<void>;
+  readonly dispatchMessage: (payload: unknown) => Promise<void>;
   readonly dispatchPush: (payload: unknown) => Promise<void>;
   readonly dispatchNotificationClick: (index?: number) => Promise<void>;
   readonly dispatchNotificationClose: (index?: number) => Promise<void>;
@@ -285,6 +288,38 @@ this.__t3ServiceWorkerTestExports = {
     getBadgeClearCallCount: () => badgeClearCallCount,
     getDisplayedNotificationCount: () =>
       displayedNotifications.filter((notification) => notification.__closed !== true).length,
+    closeAllDisplayedNotificationsWithoutEvent: () => {
+      for (const notification of displayedNotifications) {
+        if (notification.__closed !== true) {
+          notification.close();
+        }
+      }
+    },
+    dispatchActivate: async () => {
+      const waitUntilPromises: Array<Promise<unknown>> = [];
+      const event = {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(Promise.resolve(promise));
+        },
+      };
+      for (const listener of eventListeners.activate ?? []) {
+        listener(event);
+      }
+      await Promise.all(waitUntilPromises);
+    },
+    dispatchMessage: async (payload) => {
+      const waitUntilPromises: Array<Promise<unknown>> = [];
+      const event = {
+        data: payload,
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(Promise.resolve(promise));
+        },
+      };
+      for (const listener of eventListeners.message ?? []) {
+        listener(event);
+      }
+      await Promise.all(waitUntilPromises);
+    },
     dispatchPush: async (payload) => {
       const waitUntilPromises: Array<Promise<unknown>> = [];
       const event = {
@@ -446,7 +481,7 @@ describe("t3-service-worker app badge", () => {
     expect(harness.getBadgeSetCalls()).toEqual([1]);
   });
 
-  it("skips push badge writes while a visible same-origin page owns the badge", async () => {
+  it("syncs push badge writes even while a visible same-origin page is open", async () => {
     harness.addClient({
       url: HOME_URL,
       focused: true,
@@ -459,7 +494,7 @@ describe("t3-service-worker app badge", () => {
     });
 
     expect(harness.getDisplayedNotificationCount()).toBe(1);
-    expect(harness.getBadgeSetCalls()).toEqual([]);
+    expect(harness.getBadgeSetCalls()).toEqual([1]);
     expect(harness.getBadgeClearCallCount()).toBe(0);
   });
 
@@ -503,7 +538,7 @@ describe("t3-service-worker app badge", () => {
     expect(harness.getBadgeClearCallCount()).toBe(0);
   });
 
-  it("skips dismissal resync while a visible same-origin page owns the badge", async () => {
+  it("resyncs dismissal while a visible same-origin page is open", async () => {
     await harness.dispatchPush({
       tag: "thread:thread-1:turn:turn-1",
       url: TARGET_URL,
@@ -517,7 +552,7 @@ describe("t3-service-worker app badge", () => {
     await harness.dispatchNotificationClose(0);
 
     expect(harness.getBadgeSetCalls()).toEqual([1]);
-    expect(harness.getBadgeClearCallCount()).toBe(0);
+    expect(harness.getBadgeClearCallCount()).toBe(1);
   });
 
   it("does nothing when app badge support is unavailable", async () => {
@@ -531,6 +566,44 @@ describe("t3-service-worker app badge", () => {
     expect(harness.getDisplayedNotificationCount()).toBe(1);
     expect(harness.getBadgeSetCalls()).toEqual([]);
     expect(harness.getBadgeClearCallCount()).toBe(0);
+  });
+
+  it("clears completed-turn notifications when the page requests alert clearing", async () => {
+    await harness.dispatchPush({
+      tag: "thread:thread-1:turn:turn-1",
+      url: TARGET_URL,
+    });
+    await harness.dispatchPush({
+      tag: "thread:thread-2:turn:turn-1",
+      url: `${ORIGIN}/env-1/thread-2`,
+    });
+
+    await harness.dispatchMessage({ type: "t3.clear-turn-completion-notifications" });
+
+    expect(harness.getDisplayedNotificationCount()).toBe(0);
+    expect(harness.getBadgeSetCalls()).toEqual([1, 2]);
+    expect(harness.getBadgeClearCallCount()).toBe(1);
+  });
+
+  it("clears a stale badge when the page requests a badge sync after notifications disappeared", async () => {
+    await harness.dispatchPush({
+      tag: "thread:thread-1:turn:turn-1",
+      url: TARGET_URL,
+    });
+    harness.closeAllDisplayedNotificationsWithoutEvent();
+
+    await harness.dispatchMessage({ type: "t3.sync-displayed-notification-badge" });
+
+    expect(harness.getDisplayedNotificationCount()).toBe(0);
+    expect(harness.getBadgeSetCalls()).toEqual([1]);
+    expect(harness.getBadgeClearCallCount()).toBe(1);
+  });
+
+  it("syncs the displayed-notification badge on activation", async () => {
+    await harness.dispatchActivate();
+
+    expect(harness.getBadgeSetCalls()).toEqual([]);
+    expect(harness.getBadgeClearCallCount()).toBe(1);
   });
 });
 

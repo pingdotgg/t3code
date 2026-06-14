@@ -1,4 +1,8 @@
 import { selectSidebarThreadsAcrossEnvironments, useStore, type AppState } from "../store";
+import {
+  clearTurnCompletionAlerts,
+  getDisplayedTurnCompletionThreadCount,
+} from "../push/notifications";
 import { countUnseenCompletedThreads } from "../threadCompletion";
 import { useUiStateStore, type UiState } from "../uiStateStore";
 
@@ -10,6 +14,7 @@ export interface AppBadgeNavigator {
 let badgeSyncInstalled = false;
 let syncScheduled = false;
 let lastRequestedBadgeCount: number | null = null;
+let badgeSyncGeneration = 0;
 let appStoreUnsubscribe: (() => void) | null = null;
 let uiStateStoreUnsubscribe: (() => void) | null = null;
 
@@ -61,21 +66,40 @@ export async function writeAppBadgeCount(
 
 function syncAppBadge(): void {
   syncScheduled = false;
-  const badgeCount = selectCompletedConversationBadgeCount(
-    useStore.getState(),
-    useUiStateStore.getState(),
-  );
+  const generation = ++badgeSyncGeneration;
 
-  if (badgeCount === lastRequestedBadgeCount) {
-    return;
-  }
+  void (async () => {
+    const displayedNotificationCount = await getDisplayedTurnCompletionThreadCount();
+    if (generation !== badgeSyncGeneration) {
+      return;
+    }
 
-  lastRequestedBadgeCount = badgeCount;
-  void writeAppBadgeCount(badgeCount).then((updated) => {
-    if (!updated && lastRequestedBadgeCount === badgeCount) {
+    const badgeCount = displayedNotificationCount ?? 0;
+    if (badgeCount === lastRequestedBadgeCount) {
+      return;
+    }
+
+    lastRequestedBadgeCount = badgeCount;
+    const updated = await writeAppBadgeCount(badgeCount);
+    if (!updated && generation === badgeSyncGeneration && lastRequestedBadgeCount === badgeCount) {
       lastRequestedBadgeCount = null;
     }
-  });
+  })();
+}
+
+function clearCompletedTurnAlertsAndBadge(): void {
+  const generation = ++badgeSyncGeneration;
+  void (async () => {
+    await clearTurnCompletionAlerts();
+    if (generation !== badgeSyncGeneration) {
+      return;
+    }
+    lastRequestedBadgeCount = 0;
+    const updated = await writeAppBadgeCount(0);
+    if (!updated && generation === badgeSyncGeneration && lastRequestedBadgeCount === 0) {
+      lastRequestedBadgeCount = null;
+    }
+  })();
 }
 
 function scheduleAppBadgeSync(): void {
@@ -92,12 +116,12 @@ export function resyncAppBadge(): void {
 }
 
 function handleWindowFocus(): void {
-  resyncAppBadge();
+  clearCompletedTurnAlertsAndBadge();
 }
 
 function handleDocumentVisibilityChange(): void {
   if (typeof document !== "undefined" && document.visibilityState === "visible") {
-    resyncAppBadge();
+    clearCompletedTurnAlertsAndBadge();
   }
 }
 
@@ -115,7 +139,7 @@ export function installPwaAppBadgeSync(): void {
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   }
-  scheduleAppBadgeSync();
+  clearCompletedTurnAlertsAndBadge();
 }
 
 export function __resetPwaAppBadgeSyncForTests(): void {
@@ -132,4 +156,5 @@ export function __resetPwaAppBadgeSyncForTests(): void {
   badgeSyncInstalled = false;
   syncScheduled = false;
   lastRequestedBadgeCount = null;
+  badgeSyncGeneration += 1;
 }
