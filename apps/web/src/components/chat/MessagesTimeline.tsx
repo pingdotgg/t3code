@@ -597,21 +597,23 @@ function timelineRowAnchorId(row: MessagesTimelineRow): string | undefined {
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
-function timelineRowBottomPaddingClass(row: TimelineRow): string {
+function timelineRowPaddingClass(row: TimelineRow): string {
   if (row.kind === "message") {
-    return row.message.role === "assistant" && !row.showAssistantMeta ? "pb-1" : "pb-1.5";
+    return row.message.role === "assistant" && !row.showAssistantMeta
+      ? "pt-0.5 pb-1"
+      : "pt-0.5 pb-1.5";
   }
   if (row.kind === "work") {
-    return "pb-1";
+    return "pt-0.5 pb-1";
   }
-  return "pb-2";
+  return "pt-0.5 pb-2";
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
     <div
       className={cn(
-        timelineRowBottomPaddingClass(row),
+        timelineRowPaddingClass(row),
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -947,7 +949,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           {groupLabel}
         </p>
       )}
-      <div className="space-y-px">
+      <div className="space-y-0.5">
         {visibleEntries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={`work-row:${workEntry.stableId ?? workEntry.id}`}

@@ -828,6 +828,14 @@ const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
 /** Hosts whose favicon request already failed this session. */
 const failedFaviconHosts = new Set<string>();
+const loadedFaviconHosts = new Set<string>();
+
+function markdownFaviconStatus(host: string): "loading" | "loaded" | "error" {
+  if (failedFaviconHosts.has(host)) {
+    return "error";
+  }
+  return loadedFaviconHosts.has(host) ? "loaded" : "loading";
+}
 
 function resolveExternalLinkHost(href: string | undefined): string | null {
   if (!href) return null;
@@ -907,24 +915,38 @@ function resolveMarkdownImagePreview(input: {
 }
 
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
-  const [failedHost, setFailedHost] = useState<string | null>(null);
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
+    markdownFaviconStatus(host),
+  );
+  useEffect(() => {
+    setStatus(markdownFaviconStatus(host));
+  }, [host]);
+
+  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
+
   return (
     <span className="chat-markdown-link-favicon" aria-hidden>
-      {failedHost === host || failedFaviconHosts.has(host) ? (
-        <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      ) : (
+      {status !== "loaded" ? <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} /> : null}
+      {status !== "error" ? (
         <img
-          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
+          src={src}
           alt=""
-          loading="lazy"
           draggable={false}
-          className={cn(MARKDOWN_LINK_FAVICON_CLASS_NAME, "rounded-sm")}
+          className={cn(
+            MARKDOWN_LINK_FAVICON_CLASS_NAME,
+            status !== "loaded" && "hidden",
+            "rounded-sm",
+          )}
+          onLoad={() => {
+            loadedFaviconHosts.add(host);
+            setStatus("loaded");
+          }}
           onError={() => {
             failedFaviconHosts.add(host);
-            setFailedHost(host);
+            setStatus("error");
           }}
         />
-      )}
+      ) : null}
     </span>
   );
 });

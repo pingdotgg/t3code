@@ -4,6 +4,7 @@ import { FileIcon, FolderIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
 const failedIconUrls = new Set<string>();
+const loadedIconUrls = new Set<string>();
 
 export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   pathValue: string;
@@ -17,25 +18,36 @@ export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
     [props.kind, props.pathValue, props.theme],
   );
   const failed = failedIconUrls.has(iconUrl);
+  const loaded = loadedIconUrls.has(iconUrl);
 
-  if (failed) {
-    return props.kind === "directory" ? (
-      <FolderIcon className={cn("size-4 text-muted-foreground/80", props.className)} />
+  const fallback =
+    props.kind === "directory" ? (
+      <FolderIcon className={cn("size-4 shrink-0 text-muted-foreground/80", props.className)} />
     ) : (
-      <FileIcon className={cn("size-4 text-muted-foreground/80", props.className)} />
+      <FileIcon className={cn("size-4 shrink-0 text-muted-foreground/80", props.className)} />
     );
-  }
+
+  if (failed) return fallback;
 
   return (
-    <img
-      src={iconUrl}
-      alt=""
-      aria-hidden="true"
-      className={cn("size-4 shrink-0", props.className)}
-      onError={() => {
-        failedIconUrls.add(iconUrl);
-        forceRender();
-      }}
-    />
+    <>
+      {loaded ? null : fallback}
+      <img
+        src={iconUrl}
+        alt=""
+        aria-hidden="true"
+        className={cn("size-4 shrink-0", !loaded && "hidden", props.className)}
+        onLoad={() => {
+          if (!loadedIconUrls.has(iconUrl)) {
+            loadedIconUrls.add(iconUrl);
+            forceRender();
+          }
+        }}
+        onError={() => {
+          failedIconUrls.add(iconUrl);
+          forceRender();
+        }}
+      />
+    </>
   );
 });
