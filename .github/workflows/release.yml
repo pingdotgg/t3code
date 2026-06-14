@@ -437,6 +437,7 @@ jobs:
       - name: Trust macOS signing certificate
         if: matrix.platform == 'mac'
         shell: bash
+        timeout-minutes: 2
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -464,11 +465,11 @@ jobs:
             -clcerts \
             -out "$cert_pem"
 
-          security add-trusted-cert \
+          sudo security add-trusted-cert \
             -d \
             -r trustRoot \
             -p codeSign \
-            -k "$HOME/Library/Keychains/login.keychain-db" \
+            -k /Library/Keychains/System.keychain \
             "$cert_pem"
 
           echo "macOS signing certificate trusted for code signing."
