@@ -2230,6 +2230,172 @@ describe("ProviderRuntimeIngestion", () => {
     expect(secondMessage?.text).toBe("second turn response");
   });
 
+  it("ignores cursor assistant item replay without a turn id while a new turn is active", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+    const replayedItemId = asItemId("assistant:cursor-session:segment:0");
+    const secondItemId = asItemId("assistant:cursor-session:segment:1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-cursor-replay-turn-1-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-1"),
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-cursor-replay-turn-1-delta"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-1"),
+      itemId: replayedItemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "first turn response",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-cursor-replay-turn-1-complete"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-1"),
+      itemId: replayedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-cursor-replay-turn-1-turn-complete"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-1"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) => message.text === "first turn response",
+        ),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-cursor-replay-turn-2-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-2"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId === "turn-cursor-replay-2",
+    );
+
+    // Cursor can replay the previous assistant segment after an ACP session
+    // resume without attaching a turn id, then report that same item completed
+    // under the active turn. Neither event belongs to the new turn.
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-cursor-replay-stale-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: replayedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-cursor-replay-stale-delta"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: replayedItemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "first turn response",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-cursor-replay-stale-complete"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-2"),
+      itemId: replayedItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-cursor-replay-turn-2-delta"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-2"),
+      itemId: secondItemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "second turn response",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-cursor-replay-turn-2-complete"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-cursor-replay-2"),
+      itemId: secondItemId,
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === turnScopedAssistantMessageId("turn-cursor-replay-2", String(secondItemId)),
+      ),
+    );
+    expect(thread.messages.map((message: ProviderRuntimeTestMessage) => message.text)).toEqual([
+      "first turn response",
+      "second turn response",
+    ]);
+    expect(
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === `assistant:${replayedItemId}`,
+      ),
+    ).toBe(false);
+    expect(
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id ===
+          turnScopedAssistantMessageId("turn-cursor-replay-2", String(replayedItemId)),
+      ),
+    ).toBe(false);
+  });
+
   it("streams assistant deltas when thread.turn.start requests streaming mode", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const now = "2026-01-01T00:00:00.000Z";

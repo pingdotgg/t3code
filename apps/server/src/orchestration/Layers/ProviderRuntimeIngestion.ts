@@ -53,6 +53,8 @@ type GoalActivityState = Pick<OrchestrationThreadGoal, "objective" | "status">;
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
+const STALE_REPLAY_ITEM_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
+const STALE_REPLAY_ITEM_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
@@ -257,6 +259,34 @@ function runtimeAssistantMessageIdFromEvent(
   turnId?: TurnId,
 ): MessageId {
   return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(event, turnId), 0);
+}
+
+function isTurnOutputRuntimeEvent(event: ProviderRuntimeEvent): boolean {
+  switch (event.type) {
+    case "content.delta":
+    case "item.started":
+    case "item.updated":
+    case "item.completed":
+    case "request.opened":
+    case "request.resolved":
+    case "runtime.warning":
+    case "task.started":
+    case "task.progress":
+    case "task.completed":
+    case "thread.state.changed":
+    case "thread.token-usage.updated":
+    case "tool.denied":
+    case "turn.completed":
+    case "turn.diff.updated":
+    case "turn.plan.updated":
+    case "turn.proposed.completed":
+    case "turn.proposed.delta":
+    case "user-input.requested":
+    case "user-input.resolved":
+      return true;
+    default:
+      return false;
+  }
 }
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
@@ -761,6 +791,12 @@ const make = Effect.gen(function* () {
       ),
   });
 
+  const staleReplayItemIdsByTurnKey = yield* Cache.make<string, Set<string>>({
+    capacity: STALE_REPLAY_ITEM_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: STALE_REPLAY_ITEM_IDS_BY_TURN_TTL,
+    lookup: () => Effect.succeed(new Set<string>()),
+  });
+
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -841,6 +877,37 @@ const make = Effect.gen(function* () {
 
   const clearAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
+
+  const rememberStaleReplayItemForTurn = (threadId: ThreadId, turnId: TurnId, itemId: string) =>
+    Cache.getOption(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.flatMap((existingIds) =>
+        Cache.set(
+          staleReplayItemIdsByTurnKey,
+          providerTurnKey(threadId, turnId),
+          Option.match(existingIds, {
+            onNone: () => new Set([itemId]),
+            onSome: (ids) => {
+              const nextIds = new Set(ids);
+              nextIds.add(itemId);
+              return nextIds;
+            },
+          }),
+        ),
+      ),
+    );
+
+  const hasStaleReplayItemForTurn = (threadId: ThreadId, turnId: TurnId, itemId: string) =>
+    Cache.getOption(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.map((existingIds) =>
+        Option.match(existingIds, {
+          onNone: () => false,
+          onSome: (ids) => ids.has(itemId),
+        }),
+      ),
+    );
+
+  const clearStaleReplayItemsForTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.invalidate(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId));
 
   const getActiveAssistantMessageIdForTurn = (threadId: ThreadId, turnId: TurnId) =>
     getAssistantSegmentStateForTurn(threadId, turnId).pipe(
@@ -1196,6 +1263,7 @@ const make = Effect.gen(function* () {
       const proposedPlanPrefix = `plan:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
+      const staleReplayKeys = Array.from(yield* Cache.keys(staleReplayItemIdsByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       yield* Effect.forEach(
         turnKeys,
@@ -1222,6 +1290,12 @@ const make = Effect.gen(function* () {
           key.startsWith(prefix)
             ? Cache.invalidate(assistantSegmentStateByTurnKey, key)
             : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        staleReplayKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(staleReplayItemIdsByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
       yield* Effect.forEach(
@@ -1465,6 +1539,23 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const eventItemId = event.itemId === undefined ? undefined : String(event.itemId);
+      const staleReplayItemForActiveTurn =
+        activeTurnId !== null && eventItemId !== undefined
+          ? yield* hasStaleReplayItemForTurn(thread.id, activeTurnId, eventItemId)
+          : false;
+      const shouldSkipRuntimeOutput =
+        STRICT_PROVIDER_LIFECYCLE_GUARD &&
+        isTurnOutputRuntimeEvent(event) &&
+        (conflictsWithActiveTurn || missingTurnForActiveTurn || staleReplayItemForActiveTurn);
+
+      if (shouldSkipRuntimeOutput) {
+        if (missingTurnForActiveTurn && activeTurnId !== null && eventItemId !== undefined) {
+          yield* rememberStaleReplayItemForTurn(thread.id, activeTurnId, eventItemId);
+        }
+        return;
+      }
+
       const assistantDelta =
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
@@ -1668,6 +1759,7 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.asVoid);
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          yield* clearStaleReplayItemsForTurn(thread.id, turnId);
 
           yield* finalizeBufferedProposedPlan({
             event,
