@@ -47,7 +47,7 @@ export interface ProviderAdapterRegistryV2Shape {
 export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryV2Shape
->()("t3/orchestration-v2/ProviderAdapterRegistry") {}
+>()("t3/orchestration-v2/ProviderAdapterRegistry/ProviderAdapterRegistryV2") {}
 
 function makeRegistry(
   adapters: ReadonlyArray<ProviderAdapterV2Shape>,

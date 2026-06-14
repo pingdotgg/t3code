@@ -16,7 +16,7 @@ export class RuntimeRequestOpenError extends Schema.TaggedErrorClass<RuntimeRequ
     requestId: RuntimeRequestId,
     nodeId: NodeId,
     kind: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -41,7 +41,7 @@ export class RuntimeRequestRespondError extends Schema.TaggedErrorClass<RuntimeR
   {
     threadId: ThreadId,
     requestId: RuntimeRequestId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -72,4 +72,4 @@ export interface RuntimeRequestServiceV2Shape {
 export class RuntimeRequestServiceV2 extends Context.Service<
   RuntimeRequestServiceV2,
   RuntimeRequestServiceV2Shape
->()("t3/orchestration-v2/RuntimeRequestService") {}
+>()("t3/orchestration-v2/RuntimeRequestService/RuntimeRequestServiceV2") {}

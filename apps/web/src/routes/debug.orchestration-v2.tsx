@@ -1361,7 +1361,11 @@ function ThreadTreeRow(props: {
       >
         <span
           className={`mt-1 size-2 rounded-full ${
-            relationship === "fork" ? "bg-sky-500" : "bg-emerald-500"
+            relationship === "fork"
+              ? "bg-sky-500"
+              : relationship === "subagent"
+                ? "bg-violet-500"
+                : "bg-emerald-500"
           }`}
         />
         <span className="min-w-0">
@@ -2131,6 +2135,12 @@ function OrchestrationV2DebugRoute() {
           <ItemTimelinePanel
             title={PANEL_TITLES.item}
             projection={projection}
+            parentThread={
+              projection?.thread.lineage.parentThreadId === null ||
+              projection?.thread.lineage.parentThreadId === undefined
+                ? null
+                : (shellThreadsById.get(projection.thread.lineage.parentThreadId) ?? null)
+            }
             errorMessage={projectionError}
             rows={itemTimeline}
             activeTurn={activeTurn}
@@ -2521,6 +2531,7 @@ type ItemViewMode = "chat" | "raw";
 function ItemTimelinePanel(props: {
   readonly title: string;
   readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly parentThread: OrchestrationV2ThreadShell | null;
   readonly errorMessage: string | null;
   readonly rows: ReadonlyArray<ItemTimelineRow>;
   readonly activeTurn: ActiveTurn | null;
@@ -2538,6 +2549,7 @@ function ItemTimelinePanel(props: {
   const nowMs = useNow();
   const rowCount = props.rows.length;
   const activeTurnStartMs = props.activeTurn?.startMs ?? null;
+  const parentThread = props.parentThread;
   const scrollRef = usePinnedAutoScroll(
     rowCount,
     `${viewMode}:${activeTurnStartMs ?? "idle"}`,
@@ -2559,6 +2571,23 @@ function ItemTimelinePanel(props: {
           </>
         }
       />
+      {parentThread === null ? null : (
+        <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 sm:px-4">
+          <span className="shrink-0 rounded-full border border-border bg-background px-1.5 py-px text-[10px] font-medium uppercase text-muted-foreground">
+            {props.projection?.thread.lineage.relationshipToParent ?? "child"}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              props.onOpenThread(parentThread.id);
+            }}
+            className="min-w-0 truncate text-left text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            title={`Open parent thread ${parentThread.id}`}
+          >
+            ← {parentThread.title}
+          </button>
+        </div>
+      )}
       {rowCount === 0 && activeTurnStartMs === null && props.errorMessage !== null ? (
         <div className="flex min-h-48 flex-col items-center justify-center gap-2 p-6 text-center">
           <p className="text-sm font-medium text-destructive">Failed to load projection.</p>

@@ -41,7 +41,7 @@ export class ProjectionStoreApplyEventError extends Schema.TaggedErrorClass<Proj
   "ProjectionStoreApplyEventError",
   {
     eventType: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -52,7 +52,7 @@ export class ProjectionStoreApplyEventError extends Schema.TaggedErrorClass<Proj
 export class ProjectionStoreSetupError extends Schema.TaggedErrorClass<ProjectionStoreSetupError>()(
   "ProjectionStoreSetupError",
   {
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -75,7 +75,7 @@ export class ProjectionStoreReadError extends Schema.TaggedErrorClass<Projection
   "ProjectionStoreReadError",
   {
     threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -105,7 +105,7 @@ export interface ProjectionStoreV2Shape {
 }
 
 export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, ProjectionStoreV2Shape>()(
-  "t3/orchestration-v2/ProjectionStore",
+  "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
@@ -1027,7 +1027,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
-            if (event.payload.appThreadId !== null && event.payload.ownerNodeId === null) {
+            if (event.payload.appThreadId !== null) {
               const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_threads
@@ -1505,6 +1505,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                  SELECT node_id
                  FROM orchestration_v2_projection_nodes
                  WHERE thread_id = ${threadId}
+               )
+               OR provider_thread_id IN (
+                 SELECT provider_thread_id
+                 FROM orchestration_v2_projection_subagents
+                 WHERE thread_id = ${threadId}
+                   AND provider_thread_id IS NOT NULL
                )
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,

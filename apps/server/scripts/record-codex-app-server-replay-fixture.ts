@@ -20,6 +20,8 @@ import {
   PROVIDER_THREAD_RESUME_FIRST_PROMPT,
   PROVIDER_THREAD_RESUME_SECOND_PROMPT,
   SIMPLE_PROMPT,
+  SUBAGENT_CONTINUE_PARENT_PROMPT,
+  SUBAGENT_CONTINUE_PROMPT,
   SUBAGENT_PROMPT,
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
@@ -64,6 +66,7 @@ const SCENARIO_NAMES = [
   "tool_call_workspace_never",
   "tool_call_restricted_granular",
   "subagent",
+  "subagent_continue",
   "multi_turn",
   "provider_thread_resume",
   "todo_list",
@@ -408,6 +411,31 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             sandboxPolicy: readOnlyFullAccessSandbox(),
           },
           steps: [{ type: "turn", label: "spawn-two-subagents", prompt: SUBAGENT_PROMPT }],
+        },
+      ],
+    },
+    {
+      name: "subagent_continue",
+      fileName: "subagent_continue.ndjson",
+      description:
+        "A root turn spawns one native Codex subagent, then a later root turn resumes and messages the same child thread.",
+      runs: [
+        {
+          name: "continued-subagent",
+          description:
+            "The second root turn asks Codex to continue the subagent created by the first root turn.",
+          steps: [
+            {
+              type: "turn",
+              label: "spawn-subagent",
+              prompt: SUBAGENT_CONTINUE_PROMPT,
+            },
+            {
+              type: "turn",
+              label: "continue-subagent",
+              prompt: SUBAGENT_CONTINUE_PARENT_PROMPT,
+            },
+          ],
         },
       ],
     },

@@ -1,6 +1,7 @@
 import {
   CommandId,
   type ModelSelection,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
@@ -38,7 +39,7 @@ export class RunExecutionStartError extends Schema.TaggedErrorClass<RunExecution
   {
     commandId: CommandId,
     runId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -50,7 +51,7 @@ export class RunExecutionIngestError extends Schema.TaggedErrorClass<RunExecutio
   "RunExecutionIngestError",
   {
     runId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -69,6 +70,7 @@ export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
  */
 export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
+  readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
   readonly session: ProviderAdapterV2SessionRuntime;
   readonly run: OrchestrationV2Run;
@@ -77,6 +79,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
+  readonly providerTurnOrdinal: number;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -92,7 +95,7 @@ export interface RunExecutionServiceV2Shape {
 export class RunExecutionServiceV2 extends Context.Service<
   RunExecutionServiceV2,
   RunExecutionServiceV2Shape
->()("t3/orchestration-v2/RunExecutionService") {}
+>()("t3/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
 
 /**
  * IMPLEMENTATIONS
@@ -381,9 +384,11 @@ export const layer: Layer.Layer<
 
           yield* input.session
             .startTurn({
+              appThread: input.appThread,
               threadId: input.run.threadId,
               runId: input.run.id,
               runOrdinal: input.run.ordinal,
+              providerTurnOrdinal: input.providerTurnOrdinal,
               attemptId: input.attemptId,
               rootNodeId: input.rootNode.id,
               providerThread: input.providerThread,
