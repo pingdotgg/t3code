@@ -175,7 +175,6 @@ interface CopilotSessionContext {
   readonly assistantItemIdByTurnId: Map<TurnId, string>;
   readonly pendingTaskCompletionTextByTurnId: Map<TurnId, string>;
   readonly turnIdsWithAssistantText: Set<TurnId>;
-  readonly turnIdsWithFileChangeEvidence: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   activeTurnId: TurnId | undefined;
   activeSdkTurnId: string | undefined;
@@ -315,70 +314,12 @@ function appendTurnItem(
   ensureTurnSnapshot(context, turnId).items.push(item);
 }
 
-function isCopilotToolExecutionItem(item: unknown): item is CopilotToolExecutionItem {
-  return (
-    Predicate.hasProperty(item, "type") &&
-    item.type === "tool_execution" &&
-    Predicate.hasProperty(item, "toolCallId") &&
-    Predicate.isString(item.toolCallId) &&
-    Predicate.hasProperty(item, "success") &&
-    typeof item.success === "boolean"
-  );
-}
-
-function isTaskCompletedDetail(detail: string | undefined): boolean {
-  return detail?.trim().startsWith("✓ Task completed:") ?? false;
-}
-
-function toolOnlyCompletionText(
-  context: CopilotSessionContext,
-  turnId: TurnId,
-): string | undefined {
-  if (context.turnIdsWithAssistantText.has(turnId)) {
-    return undefined;
-  }
-
-  const turn = context.turns.find((entry) => entry.id === turnId);
-  const completedTools =
-    turn?.items.filter(
-      (item): item is CopilotToolExecutionItem => isCopilotToolExecutionItem(item) && item.success,
-    ) ?? [];
-  if (completedTools.length === 0) {
-    if (context.turnIdsWithFileChangeEvidence.has(turnId)) {
-      return "Done. I completed the requested file changes.";
-    }
-    return undefined;
-  }
-
-  if (completedTools.some((item) => isTaskCompletedDetail(item.detail))) {
-    return undefined;
-  }
-
-  const itemTypes = new Set(completedTools.map((item) => item.itemType).filter(Boolean));
-  if (itemTypes.has("file_change")) {
-    return "Done. I completed the requested file changes.";
-  }
-  if (
-    itemTypes.size > 0 &&
-    [...itemTypes].every(
-      (itemType) => itemType === "command_execution" || itemType === "collab_agent_tool_call",
-    )
-  ) {
-    return undefined;
-  }
-  return "Done. I completed the requested tool work.";
-}
-
 function assistantItemIdsForContext(context: CopilotSessionContext): Map<TurnId, string> {
   const mutable = context as CopilotSessionContext & {
     assistantItemIdByTurnId?: Map<TurnId, string>;
   };
   mutable.assistantItemIdByTurnId ??= new Map();
   return mutable.assistantItemIdByTurnId;
-}
-
-function markTurnHasFileChangeEvidence(context: CopilotSessionContext, turnId: TurnId): void {
-  context.turnIdsWithFileChangeEvidence.add(turnId);
 }
 
 function processError(
@@ -472,10 +413,6 @@ function toolCallIdFromPermissionRequest(request: SessionPermissionRequest): str
     return undefined;
   }
   return trimOrUndefined(request.toolCallId);
-}
-
-function permissionResultApproves(result: PermissionRequestResult): boolean {
-  return result.kind !== "reject";
 }
 
 function permissionDetail(request: SessionPermissionRequest): string | undefined {
@@ -1322,49 +1259,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.turnIdsWithAssistantText.add(turnId);
   };
 
-  const emitToolOnlyCompletionAsAssistantMessage = async (
-    context: CopilotSessionContext,
-    turnId: TurnId,
-    raw: SessionEvent,
-  ) => {
-    const content = toolOnlyCompletionText(context, turnId);
-    if (!content) {
-      return;
-    }
-
-    const itemId = `copilot-tool-completion-${String(turnId)}`;
-    await emitTextDelta({
-      context,
-      turnId,
-      itemId,
-      itemType: "assistant_message",
-      streamKind: "assistant_text",
-      nextText: content,
-      raw,
-    });
-    await emitAsync({
-      ...createBaseEvent({
-        threadId: context.threadId,
-        turnId,
-        itemId,
-        raw,
-      }),
-      type: "item.completed",
-      payload: {
-        itemType: "assistant_message",
-        status: "completed",
-        detail: content,
-      },
-    });
-    appendTurnItem(context, turnId, {
-      type: "assistant_message",
-      messageId: itemId,
-      content,
-    });
-    assistantItemIdsForContext(context).set(turnId, itemId);
-    context.turnIdsWithAssistantText.add(turnId);
-  };
-
   const emitPermissionRequestOpened = (
     context: CopilotSessionContext,
     pending: PendingPermissionBinding,
@@ -1834,7 +1728,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           const turnId = context.activeTurnId;
           if (!event.data.aborted) {
             await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
-            await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
           }
           await emitTurnCompleted(context, turnId, event.data.aborted ? "cancelled" : "completed", {
             raw: event,
@@ -2127,7 +2020,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
-        await emitToolOnlyCompletionAsAssistantMessage(context, turnId, event);
         await emitTurnCompleted(context, turnId, "completed", {
           raw: event,
           stopReason: null,
@@ -2339,9 +2231,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ...(detail ? { detail } : {}),
         };
         appendTurnItem(context, turnId, toolItem);
-        if (event.data.success && toolMeta?.itemType === "file_change") {
-          markTurnHasFileChangeEvidence(context, turnId);
-        }
         if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
           context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
         }
@@ -2364,13 +2253,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.pendingPermissionBindings.delete(event.data.requestId);
-        if (
-          binding.requestType === "file_change_approval" &&
-          binding.turnId &&
-          permissionResultApproves(event.data.result)
-        ) {
-          markTurnHasFileChangeEvidence(context, binding.turnId);
-        }
         await runWithContext(
           emitPermissionRequestResolved(
             context,
@@ -2592,7 +2474,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         assistantItemIdByTurnId: new Map(),
         pendingTaskCompletionTextByTurnId: new Map(),
         turnIdsWithAssistantText: new Set(),
-        turnIdsWithFileChangeEvidence: new Set(),
         startedItemIds: new Set(),
         activeTurnId: undefined,
         activeSdkTurnId: undefined,
@@ -2815,13 +2696,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               : DENIED_PERMISSION_RESULT;
       yield* emitPermissionRequestResolved(context, binding, decision, result);
       context.pendingPermissionBindings.delete(requestId);
-      if (
-        binding.requestType === "file_change_approval" &&
-        binding.turnId &&
-        permissionResultApproves(result)
-      ) {
-        markTurnHasFileChangeEvidence(context, binding.turnId);
-      }
       yield* Deferred.succeed(binding.deferred, result);
     },
   );
