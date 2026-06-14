@@ -712,10 +712,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }),
   );
 
-  it.effect("renders a fallback assistant message when a tool-only turn completes", () =>
+  it.effect("does not render the file-change completion fallback as assistant text", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
-      const threadId = asThreadId("copilot-tool-only-assistant-fallback");
+      const threadId = asThreadId("copilot-file-change-fallback-filter");
 
       yield* adapter.startSession({
         provider: COPILOT_DRIVER,
@@ -743,12 +743,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const timestamp = yield* nowIso;
 
       emit({
-        id: "evt-copilot-tool-only-turn-start",
+        id: "evt-copilot-file-change-turn-start",
         timestamp,
         parentId: null,
         type: "assistant.turn_start",
         data: {
-          turnId: "sdk-turn-tool-only",
+          turnId: "sdk-turn-file-change",
         },
       } as SessionEvent);
       emit({
@@ -776,66 +776,157 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
-        id: "evt-copilot-tool-only-turn-end",
+        id: "evt-copilot-file-change-turn-end",
         timestamp,
         parentId: null,
         type: "assistant.turn_end",
         data: {
-          turnId: "sdk-turn-tool-only",
+          turnId: "sdk-turn-file-change",
         },
       } as SessionEvent);
 
-      let thread = yield* adapter.readThread(threadId);
       for (
         let attempt = 0;
         attempt < 20 &&
-        !thread.turns.some((entry) =>
-          entry.items.some(
-            (item) =>
-              typeof item === "object" &&
-              item !== null &&
-              "type" in item &&
-              item.type === "assistant_message",
-          ),
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
         );
         attempt += 1
       ) {
         yield* waitForSdkEventQueue();
-        thread = yield* adapter.readThread(threadId);
       }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
+      const thread = yield* adapter.readThread(threadId);
       const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
       assert.ok(turnSnapshot);
-      const assistantItem = turnSnapshot.items.find(
+      const assistantItems = turnSnapshot.items.filter(
         (item) =>
           typeof item === "object" &&
           item !== null &&
           "type" in item &&
           item.type === "assistant_message",
       );
-      assert.deepStrictEqual(assistantItem, {
-        type: "assistant_message",
-        messageId: `copilot-tool-completion-${String(turn.turnId)}`,
-        content: "Done. I completed the requested file changes.",
+      assert.deepStrictEqual(assistantItems, []);
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        ),
+        false,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not render the generic tool completion fallback as assistant text", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-generic-tool-fallback-filter");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
       });
 
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "inspect the README",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
       yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-generic-tool-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-generic-tool",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-generic-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-read-file",
+          toolName: "Read",
+          arguments: {
+            path: "README.md",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-generic-tool-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-read-file",
+          success: true,
+          result: {
+            content: "# Project",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-generic-tool-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-generic-tool",
+        },
+      } as SessionEvent);
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      const fallbackDelta = runtimeEvents.find(
-        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      const thread = yield* adapter.readThread(threadId);
+      const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
+      assert.ok(turnSnapshot);
+      const assistantItems = turnSnapshot.items.filter(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "type" in item &&
+          item.type === "assistant_message",
       );
-      assert.equal(fallbackDelta?.type, "content.delta");
-      if (fallbackDelta?.type === "content.delta") {
-        assert.equal(
-          String(fallbackDelta.itemId),
-          `copilot-tool-completion-${String(turn.turnId)}`,
-        );
-        assert.deepStrictEqual(fallbackDelta.payload, {
-          streamKind: "assistant_text",
-          delta: "Done. I completed the requested file changes.",
-        });
-      }
+      assert.deepStrictEqual(assistantItems, []);
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        ),
+        false,
+      );
 
       yield* adapter.stopSession(threadId);
     }),
