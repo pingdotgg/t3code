@@ -628,6 +628,19 @@ function isTaskCompleteTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "taskcomplete";
 }
 
+function isApplyPatchTool(toolName: string | undefined): boolean {
+  return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "applypatch";
+}
+
+function shouldEmitFileChangeDiffForCompletedTool(toolMeta: ToolMeta | undefined): boolean {
+  return toolMeta?.itemType === "command_execution" || isApplyPatchTool(toolMeta?.toolName);
+}
+
+function fileChangeTurnIdForToolCall(parentTurnId: TurnId, toolCallId: string): TurnId {
+  const normalizedToolCallId = toolCallId.replace(/[^A-Za-z0-9._:-]+/g, "_") || "tool";
+  return TurnId.make(`${String(parentTurnId)}:file-change:${normalizedToolCallId}`);
+}
+
 function copilotBackgroundTasksList(
   session: CopilotSession,
 ): (() => Promise<CopilotTaskList>) | undefined {
@@ -2222,6 +2235,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             }),
           },
         });
+        if (event.data.success && shouldEmitFileChangeDiffForCompletedTool(toolMeta)) {
+          await emitAsync({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId: fileChangeTurnIdForToolCall(turnId, event.data.toolCallId),
+              raw: event,
+            }),
+            type: "turn.diff.updated",
+            payload: {
+              unifiedDiff: detail ?? "",
+            },
+          });
+        }
         const toolItem: CopilotToolExecutionItem = {
           type: "tool_execution",
           toolCallId: event.data.toolCallId,
