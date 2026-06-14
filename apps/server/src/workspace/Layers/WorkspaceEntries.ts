@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as OS from "node:os";
+import * as NodeOS from "node:os";
 import fsPromises from "node:fs/promises";
 import type { Dirent } from "node:fs";
 
@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   insertRankedSearchResult,
@@ -65,10 +66,10 @@ function toPosixPath(input: string): string {
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") {
-    return OS.homedir();
+    return NodeOS.homedir();
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(OS.homedir(), input.slice(2));
+    return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
 }
@@ -155,7 +156,8 @@ const resolveBrowseTarget = (
   pathService: Path.Path,
 ): Effect.Effect<string, WorkspaceEntriesBrowseError> =>
   Effect.gen(function* () {
-    if (process.platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
+    const platform = yield* HostProcessPlatform;
+    if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
       return yield* new WorkspaceEntriesBrowseError({
         cwd: input.cwd,
         partialPath: input.partialPath,

@@ -8,6 +8,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   collectUint8StreamText,
   type CollectedUint8StreamText,
@@ -24,7 +26,6 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
-  readonly shell?: boolean | string | undefined;
   /**
    * On timeout, return a synthetic timedOut result.
    * Partial stdout/stderr are not preserved.
@@ -109,11 +110,14 @@ function hasWindowsCommandNotFoundMessage(output: string): boolean {
   return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(output));
 }
 
-export function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
-  if (process.platform !== "win32") return false;
-  if (code === 9009) return true;
-  return hasWindowsCommandNotFoundMessage(stderr);
-}
+export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsCommandNotFound")(
+  function* (code: number | null, stderr: string) {
+    const platform = yield* HostProcessPlatform;
+    if (platform !== "win32") return false;
+    if (code === 9009) return true;
+    return hasWindowsCommandNotFoundMessage(stderr);
+  },
+);
 
 const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   readonly command: string;
@@ -231,18 +235,24 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
+  const extendEnv = input.env !== undefined;
+  const spawnCommand = yield* resolveSpawnCommand(
+    input.command,
+    input.args,
+    input.env === undefined ? {} : { env: input.env, extendEnv },
+  );
 
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(input.command, [...input.args], {
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
         ...(input.env !== undefined
           ? {
               env: input.env,
-              extendEnv: true,
+              extendEnv,
             }
           : {}),
-        ...(input.shell !== undefined ? { shell: input.shell } : {}),
+        shell: spawnCommand.shell,
       }),
     )
     .pipe(

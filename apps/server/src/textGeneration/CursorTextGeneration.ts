@@ -59,9 +59,10 @@ function isTextGenerationError(error: unknown): error is TextGenerationError {
  */
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const resolvedEnvironment = environment ?? process.env;
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
@@ -84,7 +85,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings,
-        environment,
+        environment: resolvedEnvironment,
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },

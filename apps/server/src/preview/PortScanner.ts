@@ -12,6 +12,7 @@
  * polls forever, but each tick is a no-op when the retain count is zero.
  */
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import { Cause, Context, Duration, Effect, Layer, Ref, Schedule, Scope } from "effect";
@@ -182,6 +183,7 @@ const serversEqual = (
 const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner;
+  const hostPlatform = yield* HostProcessPlatform;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
@@ -221,7 +223,7 @@ const make = Effect.gen(function* PortDiscoveryMake() {
         terminalByProcessId.set(processId, registration.owner);
       }
     }
-    if (process.platform === "win32") {
+    if (hostPlatform === "win32") {
       const command =
         'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
       const listeners = yield* processRunner
@@ -359,11 +361,3 @@ const make = Effect.gen(function* PortDiscoveryMake() {
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);
-
-/** Exposed for tests. */
-export const __testing = {
-  parseLsofOutput,
-  parsePortFromLsofName,
-  parseWindowsListenerOutput,
-  serversEqual,
-};

@@ -154,6 +154,10 @@
     "./preview": {
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
+    },
+    "./hostProcess": {
+      "types": "./src/hostProcess.ts",
+      "import": "./src/hostProcess.ts"
     }
   },
   "scripts": {

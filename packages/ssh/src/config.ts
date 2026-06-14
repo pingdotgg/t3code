@@ -1,7 +1,9 @@
 import type { DesktopDiscoveredSshHost } from "@t3tools/contracts";
 
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
@@ -208,7 +210,15 @@ const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
 export const discoverSshHosts = Effect.fnUntraced(
   function* (input: { readonly homeDir?: string }) {
     const path = yield* Path.Path;
-    const homeDir = input?.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? "";
+    const env = yield* Config.all({
+      home: Config.string("HOME").pipe(Config.option),
+      userProfile: Config.string("USERPROFILE").pipe(Config.option),
+    });
+    const homeDir =
+      input?.homeDir ??
+      Option.getOrUndefined(env.home) ??
+      Option.getOrUndefined(env.userProfile) ??
+      "";
     if (homeDir.trim().length === 0) {
       return [];
     }

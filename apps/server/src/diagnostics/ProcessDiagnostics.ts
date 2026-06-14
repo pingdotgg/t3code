@@ -4,6 +4,7 @@ import type {
   ServerProcessSignal,
   ServerSignalProcessResult,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -277,6 +278,9 @@ const runProcess = Effect.fn("runProcess")(
     readonly errorMessage: string;
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // `ps` and `powershell.exe` are real executables; spawning through cmd.exe
+    // shell mode would re-tokenize the PowerShell `-Command` payload (which
+    // contains pipes) before PowerShell ever sees it.
     const child = yield* spawner.spawn(
       ChildProcess.make(input.command, input.args, {
         cwd: process.cwd(),
@@ -369,8 +373,10 @@ function readWindowsProcessRows(): Effect.Effect<
   );
 }
 
-export const readProcessRows = (platform = process.platform) =>
-  platform === "win32" ? readWindowsProcessRows() : readPosixProcessRows();
+export const readProcessRows = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  return yield* platform === "win32" ? readWindowsProcessRows() : readPosixProcessRows();
+});
 
 export function aggregateProcessDiagnostics(input: {
   readonly serverPid: number;
@@ -387,7 +393,7 @@ function assertDescendantPid(
     return Effect.fail(toProcessDiagnosticsError("Refusing to signal the T3 server process."));
   }
 
-  return readProcessRows().pipe(
+  return readProcessRows.pipe(
     Effect.flatMap((rows) => {
       const filteredRows = rows.filter((row) => !isDiagnosticsQueryProcess(row, process.pid));
       const descendant = buildDescendantEntries(filteredRows, process.pid).some(
@@ -407,7 +413,7 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
 
   const read: ProcessDiagnosticsShape["read"] = Effect.gen(function* () {
     const readAt = yield* DateTime.now;
-    const rows = yield* readProcessRows().pipe(
+    const rows = yield* readProcessRows.pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     return makeResult({ serverPid: process.pid, rows, readAt });

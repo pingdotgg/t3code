@@ -810,6 +810,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(bufferutil@4.1.0)(effect@4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=883249d8efbb462e928e21fefef96027b66aec50751178cafdce45f08eee3754)

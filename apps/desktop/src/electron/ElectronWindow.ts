@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 export class ElectronWindowCreateError extends Data.TaggedError("ElectronWindowCreateError")<{
   readonly cause: unknown;
@@ -37,6 +38,7 @@ export class ElectronWindow extends Context.Service<ElectronWindow, ElectronWind
 ) {}
 
 const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
 
   const liveMain = Ref.get(mainWindowRef).pipe(
@@ -98,7 +100,7 @@ const make = Effect.gen(function* () {
           window.show();
         }
 
-        if (process.platform === "darwin") {
+        if (platform === "darwin") {
           Electron.app.focus({ steal: true });
         }
 

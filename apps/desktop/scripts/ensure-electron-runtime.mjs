@@ -1,13 +1,17 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { arch, platform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
+const hostPlatform = platform();
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
+const hostArch = arch();
 
 function getPlatformPath() {
-  switch (process.platform) {
+  switch (hostPlatform) {
     case "darwin":
       return "Electron.app/Contents/MacOS/Electron";
     case "freebsd":
@@ -17,12 +21,12 @@ function getPlatformPath() {
     case "win32":
       return "electron.exe";
     default:
-      throw new Error(`Electron builds are not available on platform: ${process.platform}`);
+      throw new Error(`Electron builds are not available on platform: ${hostPlatform}`);
   }
 }
 
 function ensureExecutable(filePath) {
-  if (process.platform !== "win32") {
+  if (hostPlatform !== "win32") {
     chmodSync(filePath, 0o755);
   }
 }
@@ -39,7 +43,7 @@ function repairPathFile(electronDir, platformPath) {
 function getRequiredRuntimePaths(electronDir, platformPath) {
   const paths = [join(electronDir, "dist", platformPath)];
 
-  if (process.platform === "darwin") {
+  if (hostPlatform === "darwin") {
     paths.push(
       join(electronDir, "dist", "Electron.app", "Contents", "Info.plist"),
       join(
@@ -58,7 +62,7 @@ function getRequiredRuntimePaths(electronDir, platformPath) {
 }
 
 function isMachO(filePath) {
-  if (process.platform !== "darwin") {
+  if (hostPlatform !== "darwin") {
     return true;
   }
 
@@ -76,7 +80,7 @@ function missingRuntimePaths(electronDir, platformPath) {
 }
 
 function invalidRuntimePaths(electronDir, platformPath) {
-  if (process.platform !== "darwin") {
+  if (hostPlatform !== "darwin") {
     return [];
   }
 
@@ -111,16 +115,16 @@ function runChecked(command, args) {
 
 function installElectronRuntime(electronDir, version) {
   const tempDir = mkdtempSync(join(tmpdir(), "t3-electron-"));
-  const zipPath = join(tempDir, `electron-v${version}-${process.platform}-${process.arch}.zip`);
+  const zipPath = join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
 
   try {
     runChecked("curl", [
       "-fsSL",
-      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${process.platform}-${process.arch}.zip`,
+      `https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${hostPlatform}-${hostArch}.zip`,
       "-o",
       zipPath,
     ]);
-    if (process.platform === "darwin") {
+    if (hostPlatform === "darwin") {
       runChecked("ditto", ["-x", "-k", zipPath, join(electronDir, "dist")]);
     } else {
       runChecked("python3", [

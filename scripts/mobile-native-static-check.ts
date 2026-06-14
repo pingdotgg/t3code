@@ -2,6 +2,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -58,23 +59,7 @@ const commandOutputOptions = {
 } as const;
 
 const commandExists = Effect.fn("commandExists")(function* (command: string) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const lookupCommand =
-    process.platform === "win32"
-      ? ChildProcess.make("where", [command], {
-          stdout: "ignore",
-          stderr: "ignore",
-        })
-      : ChildProcess.make("/bin/sh", ["-c", `command -v ${command}`], {
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-
-  return yield* spawner.spawn(lookupCommand).pipe(
-    Effect.flatMap((child) => child.exitCode),
-    Effect.map((exitCode) => exitCode === 0),
-    Effect.orElseSucceed(() => false),
-  );
+  return yield* isCommandAvailable(command);
 });
 
 const warnMissingTool = (tool: NativeStaticTool, checkName: string) =>
@@ -89,11 +74,12 @@ const runCommand = Effect.fn("runCommand")(function* (
 ) {
   yield* Console.log(`$ ${[command, ...args].join(" ")}`);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawnCommand = yield* resolveSpawnCommand(command, args);
   const child = yield* spawner.spawn(
-    ChildProcess.make(command, [...args], {
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       cwd,
       ...commandOutputOptions,
-      shell: process.platform === "win32",
+      shell: spawnCommand.shell,
     }),
   );
   const exitCode = Number(yield* child.exitCode);

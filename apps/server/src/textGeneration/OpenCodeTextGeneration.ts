@@ -99,10 +99,11 @@ interface SharedOpenCodeTextGenerationServerState {
 
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const serverConfig = yield* ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime;
+  const resolvedEnvironment = environment ?? process.env;
   const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -208,7 +209,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 openCodeRuntime
                   .startOpenCodeServerProcess({
                     binaryPath: input.binaryPath,
-                    environment,
+                    environment: resolvedEnvironment,
                   })
                   .pipe(
                     Effect.provideService(Scope.Scope, serverScope),

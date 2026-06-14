@@ -1,47 +1,58 @@
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Effect from "effect/Effect";
-import { assert, it } from "@effect/vitest";
-
-import { ensureNodePtySpawnHelperExecutable } from "./NodePTY.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { vi } from "vite-plus/test";
 
-it.layer(NodeServices.layer)("ensureNodePtySpawnHelperExecutable", (it) => {
-  it.effect("adds executable bits when helper exists but is not executable", () =>
-    Effect.gen(function* () {
-      if (process.platform === "win32") return;
+import { PtyAdapter } from "../Services/PTY.ts";
+import { layer } from "./NodePTY.ts";
 
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
+const spawn = vi.fn(() => ({
+  pid: 42,
+  write: vi.fn(),
+  resize: vi.fn(),
+  kill: vi.fn(),
+  onData: vi.fn(() => ({ dispose: vi.fn() })),
+  onExit: vi.fn(() => ({ dispose: vi.fn() })),
+}));
 
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pty-helper-test-" });
-      const helperPath = path.join(dir, "spawn-helper");
-      yield* fs.writeFileString(helperPath, "#!/bin/sh\nexit 0\n");
-      yield* fs.chmod(helperPath, 0o644);
+vi.mock("node-pty", () => ({ spawn }));
 
-      yield* ensureNodePtySpawnHelperExecutable(helperPath);
+const testLayer = layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(HostProcessPlatform, "win32"),
+      Layer.succeed(HostProcessArchitecture, "x64"),
+    ),
+  ),
+);
 
-      const mode = (yield* fs.stat(helperPath)).mode & 0o777;
-      assert.equal(mode & 0o111, 0o111);
-    }),
-  );
+it.effect("spawns through the public adapter with the provided host references", () =>
+  Effect.gen(function* () {
+    const adapter = yield* PtyAdapter;
+    const process = yield* adapter.spawn({
+      shell: "powershell.exe",
+      args: ["-NoLogo"],
+      cwd: "C:\\workspace",
+      cols: 120,
+      rows: 40,
+      env: {},
+    });
 
-  it.effect("keeps executable helper as executable", () =>
-    Effect.gen(function* () {
-      if (process.platform === "win32") return;
-
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pty-helper-test-" });
-      const helperPath = path.join(dir, "spawn-helper");
-      yield* fs.writeFileString(helperPath, "#!/bin/sh\nexit 0\n");
-      yield* fs.chmod(helperPath, 0o755);
-
-      yield* ensureNodePtySpawnHelperExecutable(helperPath);
-
-      const mode = (yield* fs.stat(helperPath)).mode & 0o777;
-      assert.equal(mode & 0o111, 0o111);
-    }),
-  );
-});
+    assert.equal(process.pid, 42);
+    assert.equal(spawn.mock.calls.length, 1);
+    assert.deepEqual(spawn.mock.calls[0], [
+      "powershell.exe",
+      ["-NoLogo"],
+      {
+        cwd: "C:\\workspace",
+        cols: 120,
+        rows: 40,
+        env: {},
+        name: "xterm-color",
+      },
+    ]);
+  }).pipe(Effect.provide(testLayer)),
+);

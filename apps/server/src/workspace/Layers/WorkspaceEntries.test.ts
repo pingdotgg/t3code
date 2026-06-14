@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../../config.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
@@ -75,9 +76,11 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
   });
 
 const appendSeparator = (input: string) =>
-  input.endsWith("/") || input.endsWith("\\")
-    ? input
-    : `${input}${process.platform === "win32" ? "\\" : "/"}`;
+  Effect.map(HostProcessPlatform, (platform) =>
+    input.endsWith("/") || input.endsWith("\\")
+      ? input
+      : `${input}${platform === "win32" ? "\\" : "/"}`,
+  );
 
 it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
   afterEach(() => {
@@ -344,12 +347,13 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-hidden-" });
         yield* writeTextFile(cwd, ".config/settings.json", "{}");
         yield* writeTextFile(cwd, "config/settings.json", "{}");
+        const cwdWithSeparator = yield* appendSeparator(cwd);
 
         const directoryResult = yield* workspaceEntries.browse({
-          partialPath: appendSeparator(cwd),
+          partialPath: cwdWithSeparator,
         });
         const hiddenPrefixResult = yield* workspaceEntries.browse({
-          partialPath: `${appendSeparator(cwd)}.c`,
+          partialPath: `${cwdWithSeparator}.c`,
         });
 
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
@@ -402,7 +406,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         vi.spyOn(fsPromises, "readdir").mockRejectedValueOnce(denied);
 
         const result = yield* workspaceEntries.browse({
-          partialPath: appendSeparator(cwd),
+          partialPath: yield* appendSeparator(cwd),
         });
         expect(result).toEqual({ parentPath: cwd, entries: [] });
       }),

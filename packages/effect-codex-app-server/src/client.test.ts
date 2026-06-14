@@ -17,13 +17,14 @@ const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
 const mockPeerArgs = (path: string) => [path];
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
-  const makeHandle = () =>
+  const makeHandle = (env?: Record<string, string>) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
       const peerCwd = path.join(import.meta.dirname, "..");
       const command = ChildProcess.make(process.execPath, mockPeerArgs(yield* mockPeerPath), {
         cwd: peerCwd,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
       });
       return yield* spawner.spawn(command);
     });
@@ -122,49 +123,13 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       ]);
     }),
   );
-
-  it.effect("initializes a command-backed app-server client", () =>
+  it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerCommand({
-        command: "node",
-        args: mockPeerArgs(yield* mockPeerPath),
-        cwd: path.join(import.meta.dirname, ".."),
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),
       });
-      const context = yield* Layer.buildWithScope(clientLayer, scope);
-
-      const initialized = yield* Effect.gen(function* () {
-        const client = yield* CodexClient.CodexAppServerClient;
-        return yield* client.request("initialize", {
-          clientInfo: {
-            name: "effect-codex-app-server-test",
-            title: "Effect Codex App Server Test",
-            version: "0.0.0",
-          },
-          capabilities: {
-            experimentalApi: true,
-            optOutNotificationMethods: null,
-          },
-        });
-      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
-
-      assert.equal(initialized.userAgent, "mock-codex-app-server");
-    }),
-  );
-
-  it.effect("drains command stderr so large diagnostics cannot block protocol responses", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
       const scope = yield* Scope.make();
-      const clientLayer = CodexClient.layerCommand({
-        command: "node",
-        args: mockPeerArgs(yield* mockPeerPath),
-        cwd: path.join(import.meta.dirname, ".."),
-        env: {
-          CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),
-        },
-      });
+      const clientLayer = CodexClient.layerChildProcess(handle);
       const context = yield* Layer.buildWithScope(clientLayer, scope);
 
       const initialized = yield* Effect.gen(function* () {
