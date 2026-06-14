@@ -1,11 +1,15 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
@@ -977,11 +981,7 @@ function sessionizeForkReplayRecords(input: {
 function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
   const clientRequestMethodById = new Map<string, string>();
   const serverRequestMethodById = new Map<string, string>();
-
-  return CodexClient.layerCommand({
-    command: process.env.T3_CODEX_BIN ?? process.env.CODEX_BIN ?? "codex",
-    args: ["app-server"],
-    cwd: process.cwd(),
+  const clientOptions: CodexClient.CodexAppServerClientOptions = {
     logIncoming: true,
     logOutgoing: true,
     logger: (event) => {
@@ -1036,7 +1036,28 @@ function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
         yield* recorder.writeRecord(record);
       }).pipe(Effect.ignore);
     },
-  });
+  };
+
+  return Layer.effect(
+    CodexClient.CodexAppServerClient,
+    Effect.gen(function* () {
+      const environment = yield* HostProcessEnvironment;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const commandName = environment.T3_CODEX_BIN ?? environment.CODEX_BIN ?? "codex";
+      const spawnCommand = yield* resolveSpawnCommand(commandName, ["app-server"], {
+        env: environment,
+      });
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: process.cwd(),
+          env: environment,
+          shell: spawnCommand.shell,
+        }),
+      );
+      const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions));
+      return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context));
+    }),
+  );
 }
 
 function installReplayHandlers({
