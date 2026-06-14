@@ -166,7 +166,7 @@ export const ChatHeader = memo(function ChatHeader({
                   variant="outline"
                   className="ml-0.5 shrink-0 px-1 py-0 text-[10px] text-amber-700"
                 >
-                  No Git
+                  Git not present
                 </Badge>
               )}
             </div>

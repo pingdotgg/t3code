@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vitest";
 import {
   deriveProviderInstanceEntries,
+  normalizeProviderAccentColor,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -41,6 +42,17 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+});
+
+describe("normalizeProviderAccentColor", () => {
+  it("normalizes valid hex colors to lowercase", () => {
+    expect(normalizeProviderAccentColor("  #AABBCC  ")).toBe("#aabbcc");
+  });
+
+  it("rejects non-hex colors", () => {
+    expect(normalizeProviderAccentColor("red")).toBeUndefined();
+    expect(normalizeProviderAccentColor("#abc")).toBeUndefined();
   });
 });
 

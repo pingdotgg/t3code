@@ -20,6 +20,7 @@ function PopoverPopup({
   children,
   className,
   positionerClassName,
+  viewportClassName,
   side = "bottom",
   align = "center",
   sideOffset = 4,
@@ -28,6 +29,7 @@ function PopoverPopup({
   anchor,
   ...props
 }: PopoverPrimitive.Popup.Props & {
+  viewportClassName?: string;
   side?: PopoverPrimitive.Positioner.Props["side"];
   align?: PopoverPrimitive.Positioner.Props["align"];
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
@@ -67,6 +69,7 @@ function PopoverPopup({
               tooltipStyle
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
                 : "not-data-transitioning:overflow-y-auto",
+              viewportClassName,
             )}
             data-slot="popover-viewport"
           >
