@@ -1447,6 +1447,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     sections,
     ungroupedRenderedThreads,
     orderedRenderedThreadKeys,
+    orderedAllThreadKeys,
     hasOverflowingThreads,
     hiddenThreadStatus,
     showEmptyThreadState,
@@ -1508,10 +1509,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       (thread) => !renderedKeySet.has(threadKeyOf(thread)),
     );
 
+    // Full layout-ordered key list for THIS project (folder members in folder
+    // order, then ungrouped in sort order), including rows that are off-screen
+    // in collapsed folders or past the preview cap. Used to order multi-drag
+    // moves so a dragged selection keeps its in-folder order.
+    const orderedAllThreadKeys = [
+      ...layout.sections.flatMap((section) => section.threads.map(threadKeyOf)),
+      ...layout.ungroupedThreads.map(threadKeyOf),
+    ];
+
     return {
       sections: layout.sections,
       ungroupedRenderedThreads,
       orderedRenderedThreadKeys,
+      orderedAllThreadKeys,
       hasOverflowingThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
         hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
@@ -2454,15 +2465,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return [activeKey];
       }
       // Move every selected thread in THIS project (including ones scrolled out
-      // of view in collapsed folders / overflow), ordered by the project's full
-      // thread order. Scoping to this project keeps it consistent with the
-      // "Move to folder" menu and avoids dangling memberships from other
-      // projects' threads pointing at this project's folder.
-      return visibleProjectThreads
-        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-        .filter((key) => selected.has(key));
+      // of view in collapsed folders / overflow), ordered by the folder-aware
+      // layout order (folder members keep their in-folder order; ungrouped follow
+      // sort order). Scoping to this project keeps it consistent with the "Move
+      // to folder" menu and avoids dangling memberships from other projects'
+      // threads pointing at this project's folder.
+      return orderedAllThreadKeys.filter((key) => selected.has(key));
     },
-    [visibleProjectThreads],
+    [orderedAllThreadKeys],
   );
 
   const handleThreadDragStart = useCallback(
