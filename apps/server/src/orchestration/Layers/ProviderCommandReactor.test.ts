@@ -885,6 +885,65 @@ describe("ProviderCommandReactor", () => {
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
+  it("generates a worktree branch name for the first Copilot turn using Copilot text generation", async () => {
+    const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
+    const harness = await createHarness({
+      threadModelSelection: copilotSelection,
+      textGenerationModelSelection: copilotSelection,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-branch-copilot"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/c0ffee42",
+        worktreePath: "/tmp/provider-copilot-worktree",
+      }),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.branch === "t3code/c0ffee42" &&
+        thread.worktreePath === "/tmp/provider-copilot-worktree"
+      );
+    });
+
+    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "copilot-provider" }));
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-copilot-branch-model"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-copilot-branch-model"),
+          role: "user",
+          text: "Add Copilot branch naming.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/tmp/provider-copilot-worktree",
+      message: "Add Copilot branch naming.",
+      modelSelection: copilotSelection,
+    });
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/tmp/provider-copilot-worktree",
+      oldBranch: "t3code/c0ffee42",
+      newBranch: "t3code/copilot-provider",
+    });
+  });
+
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -2199,7 +2258,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2232,7 +2291,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),
