@@ -1341,99 +1341,112 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
   );
 
   it.effect(
-    "does not emit a file-change diff turn when a Copilot command tool returns plain output",
+    "does not emit a file-change diff turn when a Copilot command tool returns control output",
     () =>
       Effect.gen(function* () {
         const adapter = yield* CopilotAdapter;
         const threadId = asThreadId("copilot-command-turn-diff");
+        const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-        yield* adapter.startSession({
-          provider: COPILOT_DRIVER,
-          threadId,
-          cwd: process.cwd(),
-          runtimeMode: "approval-required",
-        });
+        try {
+          yield* adapter.startSession({
+            provider: COPILOT_DRIVER,
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "approval-required",
+          });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "run a command",
-          attachments: [],
-        });
+          yield* adapter.sendTurn({
+            threadId,
+            input: "run a command",
+            attachments: [],
+          });
 
-        const runtimeEvents: ProviderRuntimeEvent[] = [];
-        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-          Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
-          Effect.forkChild,
-        );
-        yield* waitForSdkEventQueue();
+          const runtimeEvents: ProviderRuntimeEvent[] = [];
+          const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+            Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+            Effect.forkChild,
+          );
+          yield* waitForSdkEventQueue();
 
-        const config = runtimeMock.state.createSessionConfigs.at(-1);
-        assert.ok(config?.onEvent);
-        const emit = (event: SessionEvent) => config.onEvent?.(event);
-        const timestamp = yield* nowIso;
+          const config = runtimeMock.state.createSessionConfigs.at(-1);
+          assert.ok(config?.onEvent);
+          const emit = (event: SessionEvent) => config.onEvent?.(event);
+          const timestamp = yield* nowIso;
 
-        emit({
-          id: "evt-copilot-command-turn-start",
-          timestamp,
-          parentId: null,
-          type: "assistant.turn_start",
-          data: {
-            turnId: "sdk-turn-command",
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-command-start",
-          timestamp,
-          parentId: null,
-          type: "tool.execution_start",
-          data: {
-            toolCallId: "tool-command",
-            toolName: "bash",
-            arguments: {
-              command: "printf done > README.md",
+          emit({
+            id: "evt-copilot-command-turn-start",
+            timestamp,
+            parentId: null,
+            type: "assistant.turn_start",
+            data: {
+              turnId: "sdk-turn-command",
             },
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-command-complete",
-          timestamp,
-          parentId: null,
-          type: "tool.execution_complete",
-          data: {
-            toolCallId: "tool-command",
-            success: true,
-            result: {
-              content: "done",
+          } as SessionEvent);
+          emit({
+            id: "evt-copilot-command-start",
+            timestamp,
+            parentId: null,
+            type: "tool.execution_start",
+            data: {
+              toolCallId: "tool-command",
+              toolName: "bash",
+              arguments: {
+                command: "printf done > README.md",
+              },
             },
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-command-turn-end",
-          timestamp,
-          parentId: null,
-          type: "assistant.turn_end",
-          data: {
-            turnId: "sdk-turn-command",
-          },
-        } as SessionEvent);
+          } as SessionEvent);
+          emit({
+            id: "evt-copilot-command-complete",
+            timestamp,
+            parentId: null,
+            type: "tool.execution_complete",
+            data: {
+              toolCallId: "tool-command",
+              success: true,
+              result: {
+                content: "<shellId: 4 completed with exit code 0>",
+              },
+            },
+          } as SessionEvent);
+          emit({
+            id: "evt-copilot-command-turn-end",
+            timestamp,
+            parentId: null,
+            type: "assistant.turn_end",
+            data: {
+              turnId: "sdk-turn-command",
+            },
+          } as SessionEvent);
 
-        yield* waitForSdkEventQueue();
-        yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+          yield* waitForSdkEventQueue();
+          yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-        assert.equal(
-          runtimeEvents.some((event) => event.type === "turn.diff.updated"),
-          false,
-        );
+          assert.equal(
+            runtimeEvents.some((event) => event.type === "turn.diff.updated"),
+            false,
+          );
 
-        const completedTool = runtimeEvents.find(
-          (event) =>
-            event.type === "item.completed" &&
-            event.payload.itemType === "command_execution" &&
-            String(event.itemId) === "copilot-tool-tool-command",
-        );
-        assert.equal(completedTool?.type, "item.completed");
+          const parserErrorCalls = [
+            ...consoleErrorSpy.mock.calls,
+            ...consoleLogSpy.mock.calls,
+          ].filter((args) => args.some((arg) => String(arg).includes("parseLineType")));
+          assert.deepStrictEqual(parserErrorCalls, []);
 
-        yield* adapter.stopSession(threadId);
+          const completedTool = runtimeEvents.find(
+            (event) =>
+              event.type === "item.completed" &&
+              event.payload.itemType === "command_execution" &&
+              String(event.itemId) === "copilot-tool-tool-command",
+          );
+          assert.equal(completedTool?.type, "item.completed");
+
+          yield* adapter.stopSession(threadId);
+        } finally {
+          consoleErrorSpy.mockRestore();
+          consoleLogSpy.mockRestore();
+        }
       }),
   );
 
