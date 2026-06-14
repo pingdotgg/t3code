@@ -34,6 +34,7 @@ import { classifyProviderToolItemType } from "@t3tools/shared/providerToolClassi
 import { DateTime, Deferred, Effect, Path, Predicate, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   ProviderAdapterProcessError,
@@ -632,8 +633,34 @@ function isApplyPatchTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "applypatch";
 }
 
-function shouldEmitFileChangeDiffForCompletedTool(toolMeta: ToolMeta | undefined): boolean {
-  return toolMeta?.itemType === "command_execution" || isApplyPatchTool(toolMeta?.toolName);
+function hasApplyPatchEdit(detail: string): boolean {
+  const normalized = detail.replace(/\r\n/g, "\n").trim();
+  if (!normalized.startsWith("*** Begin Patch")) {
+    return false;
+  }
+  return (
+    normalized.includes("\n*** Update File: ") ||
+    normalized.includes("\n*** Add File: ") ||
+    normalized.includes("\n*** Delete File: ") ||
+    normalized.includes("\n*** Move to: ")
+  );
+}
+
+function completedToolDiffText(
+  toolMeta: ToolMeta | undefined,
+  detail: string | undefined,
+): string | undefined {
+  const normalized = trimOrUndefined(detail);
+  if (!normalized) {
+    return undefined;
+  }
+  if (isApplyPatchTool(toolMeta?.toolName)) {
+    return hasApplyPatchEdit(normalized) ? normalized : undefined;
+  }
+  if (toolMeta?.itemType !== "command_execution") {
+    return undefined;
+  }
+  return parseTurnDiffFilesFromUnifiedDiff(normalized).length > 0 ? normalized : undefined;
 }
 
 function fileChangeTurnIdForToolCall(parentTurnId: TurnId, toolCallId: string): TurnId {
@@ -2235,7 +2262,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             }),
           },
         });
-        if (event.data.success && shouldEmitFileChangeDiffForCompletedTool(toolMeta)) {
+        const diffText = event.data.success ? completedToolDiffText(toolMeta, detail) : undefined;
+        if (diffText) {
           await emitAsync({
             ...createBaseEvent({
               threadId: context.threadId,
@@ -2244,7 +2272,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             }),
             type: "turn.diff.updated",
             payload: {
-              unifiedDiff: detail ?? "",
+              unifiedDiff: diffText,
             },
           });
         }
