@@ -94,6 +94,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
 }));
 
 vi.mock("~/lib/vcsStatusState", () => ({
+  getVcsStatusDataForTarget: (state: { data: unknown }) => state.data,
   refreshVcsStatus: refreshVcsStatusSpy,
   resetVcsStatusStateForTests: () => undefined,
   useVcsStatus: vi.fn(() => ({

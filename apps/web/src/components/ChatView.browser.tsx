@@ -99,6 +99,7 @@ vi.mock("../lib/vcsStatusState", () => {
   };
 
   return {
+    getVcsStatusDataForTarget: (state: typeof status) => state.data,
     getVcsStatusSnapshot: () => status,
     useVcsStatus: () => status,
     useVcsStatuses: () => new Map(),
