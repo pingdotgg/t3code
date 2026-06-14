@@ -1748,13 +1748,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "session.error": {
         const message = trimOrUndefined(event.data.message) ?? "Copilot session failed.";
+        const activeTurnId = context.activeTurnId;
         updateProviderSession(context, {
           status: "error",
           lastError: message,
           activeTurnId: undefined,
         });
-        if (context.activeTurnId) {
-          await emitTurnCompleted(context, context.activeTurnId, "failed", {
+        if (activeTurnId) {
+          await emitTurnCompleted(context, activeTurnId, "failed", {
             errorMessage: message,
             raw: event,
           });

@@ -2158,6 +2158,75 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("completes the active turn as failed when Copilot reports a session error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-session-error-completes-active-turn");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "trigger a provider session error",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-session-error-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-session-error",
+        },
+      } as SessionEvent);
+      config.onEvent({
+        id: "evt-copilot-session-error",
+        timestamp,
+        parentId: null,
+        type: "session.error",
+        data: {
+          message: "Copilot runtime crashed",
+        },
+      } as SessionEvent);
+
+      let completed: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && completed === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        completed = runtimeEvents.find(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.errorMessage, "Copilot runtime crashed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("emits one canonical turn completion for duplicate Copilot lifecycle events", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
