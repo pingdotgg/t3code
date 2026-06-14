@@ -35,6 +35,8 @@ describe("providerToolClassification", () => {
 
   it("classifies approval requests from the same rules", () => {
     assert.equal(classifyProviderToolRequestType("Read"), "file_read_approval");
+    assert.equal(classifyProviderToolRequestType("read_file"), "file_read_approval");
+    assert.equal(classifyProviderToolRequestType("ReadFile"), "file_read_approval");
     assert.equal(classifyProviderToolRequestType("bash"), "command_execution_approval");
     assert.equal(classifyProviderToolRequestType("edit_file"), "file_change_approval");
     assert.equal(classifyProviderToolRequestType("websearch"), "dynamic_tool_call");
