@@ -49,7 +49,7 @@ export class CodexAppServerReplayJsonParseError extends Schema.TaggedErrorClass<
   {
     scenario: Schema.String,
     line: Schema.String,
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {

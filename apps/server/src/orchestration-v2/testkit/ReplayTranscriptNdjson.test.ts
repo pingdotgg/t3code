@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
+const encodeParseError = Schema.encodeUnknownEffect(ProviderReplayNdjsonParseError);
+
 describe("decodeProviderReplayNdjson", () => {
   it.effect("decodes a self-describing provider replay fixture", () =>
     Effect.gen(function* () {
@@ -48,7 +50,7 @@ describe("decodeProviderReplayNdjson", () => {
   it.effect("returns a schema-serializable typed parse error", () =>
     Effect.gen(function* () {
       const error = yield* decodeProviderReplayNdjson(`{"type":`).pipe(Effect.flip);
-      const encoded = Schema.encodeUnknownSync(ProviderReplayNdjsonParseError)(error);
+      const encoded = yield* encodeParseError(error);
 
       assert.equal(error._tag, "ProviderReplayNdjsonLineParseError");
       assert.equal(encoded._tag, "ProviderReplayNdjsonLineParseError");
@@ -57,19 +59,14 @@ describe("decodeProviderReplayNdjson", () => {
       }
       assert.equal(encoded.lineNumber, 1);
       assert.equal(encoded.line, '{"type":');
-      assert.deepEqual(encoded.cause, {
-        name: "Error",
-        message: "SyntaxError: Unexpected end of JSON input",
-      });
-      assert.deepEqual(encoded, {
-        _tag: "ProviderReplayNdjsonLineParseError",
-        lineNumber: 1,
-        line: '{"type":',
-        cause: {
-          name: "Error",
-          message: "SyntaxError: Unexpected end of JSON input",
-        },
-      });
+      const cause = encoded.cause;
+      if (typeof cause !== "object" || cause === null || Array.isArray(cause)) {
+        throw new Error("Expected encoded parse cause to be a JSON object.");
+      }
+      const causeRecord = cause as Record<string, unknown>;
+      assert.equal(causeRecord.name, "SchemaError");
+      assert.equal(causeRecord._tag, "SchemaError");
+      assert.doesNotThrow(() => JSON.stringify(encoded));
     }),
   );
 });

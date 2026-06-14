@@ -9,13 +9,13 @@ import { ProviderInstanceId, type ProviderReplayEntry } from "@t3tools/contracts
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Random from "effect/Random";
 
 import {
   makeClaudeQueryOptions,
   makeClaudeUserMessage,
   type ClaudeAgentSdkQueryOptions,
 } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { randomUuidV4 } from "../src/orchestration-v2/RandomUuid.ts";
 import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 
 const SCENARIO = "thread_fork_native_fork_local_rollback";
@@ -227,7 +227,7 @@ const pathFragments = [
   [process.env.HOME ?? "", "/home/replay-user"],
 ] as const;
 const sessionId =
-  process.env.T3_CLAUDE_REPLAY_SESSION_ID ?? (await Effect.runPromise(Random.nextUUIDv4));
+  process.env.T3_CLAUDE_REPLAY_SESSION_ID ?? (await Effect.runPromise(randomUuidV4));
 const entries: Array<ProviderReplayEntry> = [];
 const metadata: Record<string, unknown> = {
   prompts: [SOURCE_PROMPT, FORK_FIRST_PROMPT, FORK_SECOND_PROMPT, FORK_AFTER_ROLLBACK_PROMPT],

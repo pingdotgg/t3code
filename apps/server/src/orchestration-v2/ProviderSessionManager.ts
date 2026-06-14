@@ -62,7 +62,7 @@ export class ProviderSessionOpenError extends Schema.TaggedErrorClass<ProviderSe
   {
     provider: ProviderKind,
     providerSessionId: ProviderSessionId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -74,7 +74,7 @@ export class ProviderSessionLookupError extends Schema.TaggedErrorClass<Provider
   "ProviderSessionLookupError",
   {
     providerSessionId: ProviderSessionId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -86,7 +86,7 @@ export class ProviderSessionCloseError extends Schema.TaggedErrorClass<ProviderS
   "ProviderSessionCloseError",
   {
     providerSessionId: ProviderSessionId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -99,7 +99,7 @@ export class ProviderSessionReleaseError extends Schema.TaggedErrorClass<Provide
   {
     providerSessionId: ProviderSessionId,
     reason: ProviderSessionReleaseReason,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -111,7 +111,7 @@ export class ProviderSessionActivityError extends Schema.TaggedErrorClass<Provid
   "ProviderSessionActivityError",
   {
     providerSessionId: ProviderSessionId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -152,7 +152,7 @@ export interface ProviderSessionManagerV2Shape {
 export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2,
   ProviderSessionManagerV2Shape
->()("t3/orchestration-v2/ProviderSessionManager") {}
+>()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;

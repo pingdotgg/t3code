@@ -21,7 +21,7 @@ export class ContextHandoffPrepareError extends Schema.TaggedErrorClass<ContextH
     targetRunId: RunId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -73,7 +73,7 @@ export interface ContextHandoffServiceV2Shape {
 export class ContextHandoffServiceV2 extends Context.Service<
   ContextHandoffServiceV2,
   ContextHandoffServiceV2Shape
->()("t3/orchestration-v2/ContextHandoffService") {}
+>()("t3/orchestration-v2/ContextHandoffService/ContextHandoffServiceV2") {}
 
 function compactText(text: string, maxLength = 240): string {
   const compacted = text.replace(/\s+/g, " ").trim();
