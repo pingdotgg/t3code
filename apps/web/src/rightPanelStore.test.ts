@@ -111,11 +111,16 @@ describe("rightPanelStore", () => {
     expect(useRightPanelStore.getState().byThreadKey).toEqual({});
   });
 
-  it("toggle opens then closes the same kind", () => {
-    useRightPanelStore.getState().toggle(refA, "preview");
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
-    useRightPanelStore.getState().toggle(refA, "preview");
+  it("toggle hides the panel without discarding the active surface", () => {
+    useRightPanelStore.getState().toggle(refA, "diff");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    useRightPanelStore.getState().toggle(refA, "diff");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
   });
 
   it("toggle to a different kind switches active", () => {

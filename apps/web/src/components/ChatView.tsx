@@ -2263,9 +2263,9 @@ export default function ChatView(props: ChatViewProps) {
   //     openness; when both fight, `selectActiveRightPanelKindWithUrl` lets
   //     diff win (URL is truth).
   //   - The two toggles below treat the panels as mutually exclusive: opening
-  //     one always tears down the other in BOTH the URL and the store. Without
-  //     this, e.g. clicking the browser button while diff is URL-pinned would
-  //     just toggle the (overridden) store value and look like a no-op.
+  //     one updates BOTH the URL and the store. Without this, e.g. clicking the
+  //     browser button while diff is URL-pinned would just toggle the
+  //     (overridden) store value and look like a no-op.
   const onTogglePreview = useCallback(() => {
     if (!activeThreadRef) return;
     if (previewPanelOpen) {
@@ -2303,11 +2303,9 @@ export default function ChatView(props: ChatViewProps) {
     const diffPanelOpen = activeRightPanelKind === "diff";
     if (!diffPanelOpen) {
       onDiffPanelOpen?.();
-      if (activeThreadRef) {
-        useRightPanelStore.getState().open(activeThreadRef, "diff");
-      }
-    } else if (activeThreadRef) {
-      useRightPanelStore.getState().closeSurface(activeThreadRef, "diff");
+    }
+    if (activeThreadRef) {
+      useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     }
     void navigate({
       to: "/$environmentId/$threadId",

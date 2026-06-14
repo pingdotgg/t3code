@@ -1545,6 +1545,18 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchConfiguredDiffToggleShortcut(): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "g",
+      shiftKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function releaseModShortcut(key?: string): void {
   window.dispatchEvent(
     new KeyboardEvent("keyup", {
@@ -3377,6 +3389,76 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the configured diff toggle binding without discarding its surface", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-diff-hotkey" as MessageId,
+        targetText: "diff hotkey target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "diff.toggle",
+              shortcut: {
+                key: "g",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: true,
+                modKey: false,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchConfiguredDiffToggleShortcut();
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+        ).toEqual({
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        });
+      });
+
+      dispatchConfiguredDiffToggleShortcut();
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+        ).toEqual({
+          isOpen: false,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        });
+      });
+
+      dispatchConfiguredDiffToggleShortcut();
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+        ).toEqual({
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        });
+      });
     } finally {
       await mounted.cleanup();
     }
