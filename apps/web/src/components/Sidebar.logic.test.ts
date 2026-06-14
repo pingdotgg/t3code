@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 
 import {
   createThreadJumpHintVisibilityController,
@@ -810,6 +811,26 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
+  });
+
+  it("falls back to the first thread in manual order, not raw store order", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-a"), projectId: ProjectId.make("project-1") }),
+      makeThread({ id: ThreadId.make("thread-active"), projectId: ProjectId.make("project-1") }),
+      makeThread({ id: ThreadId.make("thread-c"), projectId: ProjectId.make("project-1") }),
+    ];
+    const keyFor = (id: string) =>
+      scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)));
+
+    const fallbackThreadId = getFallbackThreadIdAfterDelete({
+      threads,
+      deletedThreadId: ThreadId.make("thread-active"),
+      sortOrder: "manual",
+      // Manual order puts thread-c first, ahead of thread-a in store order.
+      manualThreadOrder: [keyFor("thread-c"), keyFor("thread-active"), keyFor("thread-a")],
+    });
+
+    expect(fallbackThreadId).toBe(ThreadId.make("thread-c"));
   });
 });
 describe("sortProjectsForSidebar", () => {

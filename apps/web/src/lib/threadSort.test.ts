@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { Thread } from "../types";
 import { getLatestThreadForProject, sortThreads } from "./threadSort";
 
@@ -237,5 +238,22 @@ describe("sortThreads", () => {
     );
 
     expect(latestThread?.id).toBe(ThreadId.make("thread-3"));
+  });
+
+  it("returns the first thread in manual order when sort is manual", () => {
+    const keyFor = (id: string) =>
+      scopedThreadKey(scopeThreadRef(LOCAL_ENVIRONMENT_ID, ThreadId.make(id)));
+    const latestThread = getLatestThreadForProject(
+      [
+        makeThread({ id: ThreadId.make("thread-1"), archivedAt: null }),
+        makeThread({ id: ThreadId.make("thread-2"), archivedAt: null }),
+        makeThread({ id: ThreadId.make("thread-3"), archivedAt: null }),
+      ],
+      PROJECT_ID,
+      "manual",
+      [keyFor("thread-2"), keyFor("thread-1"), keyFor("thread-3")],
+    );
+
+    expect(latestThread?.id).toBe(ThreadId.make("thread-2"));
   });
 });

@@ -18,6 +18,7 @@ import {
   useStore,
 } from "../store";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -181,6 +182,9 @@ export function useThreadActions() {
         deletedThreadId: threadRef.threadId,
         deletedThreadIds,
         sortOrder: sidebarThreadSortOrder,
+        // Flatten every project's manual order; the per-project filter inside
+        // the helper means only the deleted thread's siblings actually match.
+        manualThreadOrder: Object.values(useUiStateStore.getState().threadOrderByProject).flat(),
       });
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
