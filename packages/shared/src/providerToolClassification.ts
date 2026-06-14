@@ -126,13 +126,14 @@ export function classifyProviderToolItemType(input: {
 }
 
 export function classifyProviderToolRequestType(toolName: string): CanonicalRequestType {
-  if (isReadOnlyProviderToolName(toolName)) {
-    return "file_read_approval";
-  }
   const itemType = classifyProviderToolItemType({ toolName });
   return itemType === "command_execution"
     ? "command_execution_approval"
     : itemType === "file_change"
       ? "file_change_approval"
-      : "dynamic_tool_call";
+      : itemType === "web_search"
+        ? "dynamic_tool_call"
+        : isReadOnlyProviderToolName(toolName)
+          ? "file_read_approval"
+          : "dynamic_tool_call";
 }
