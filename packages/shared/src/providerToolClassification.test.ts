@@ -37,6 +37,8 @@ describe("providerToolClassification", () => {
     assert.equal(classifyProviderToolRequestType("Read"), "file_read_approval");
     assert.equal(classifyProviderToolRequestType("bash"), "command_execution_approval");
     assert.equal(classifyProviderToolRequestType("edit_file"), "file_change_approval");
+    assert.equal(classifyProviderToolRequestType("websearch"), "dynamic_tool_call");
+    assert.equal(classifyProviderToolRequestType("web_search"), "dynamic_tool_call");
     assert.equal(classifyProviderToolRequestType("Task"), "dynamic_tool_call");
   });
 });
