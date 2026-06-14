@@ -7,19 +7,32 @@ import {
   CircleStopIcon,
   Clock3Icon,
   ExternalLinkIcon,
+  GitCompareArrowsIcon,
   ListTodoIcon,
   MessageCircleQuestionIcon,
   PlayIcon,
   ShieldAlertIcon,
   SquareTerminalIcon,
+  Trash2Icon,
+  TrophyIcon,
   XCircleIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { readEnvironmentApi } from "../environmentApi";
+import {
+  bakeoffThreadKeys,
+  buildBakeoffViews,
+  useBakeoffs,
+  type Bakeoff,
+  type BakeoffView,
+} from "../bakeoffs";
+import { usePrimaryEnvironmentId } from "../environments/primary";
+import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { newCommandId } from "../lib/utils";
+import { useServerConfig } from "../rpc/serverState";
 import {
   buildAgentRuns,
   buildTerminalProcessRuns,
@@ -37,6 +50,7 @@ import { useKnownTerminalSessionsAcrossEnvironments } from "../terminalSessionSt
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { BakeoffCreateDialog } from "./BakeoffCreateDialog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -66,6 +80,11 @@ export function RunsView() {
   const navigate = useNavigate();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryServerConfig = useServerConfig();
+  const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((state) => state.byId);
+  const [bakeoffs, setBakeoffs] = useBakeoffs();
+  const [createBakeoffOpen, setCreateBakeoffOpen] = useState(false);
   const environmentIds = useMemo(
     () => [...new Set(threads.map((thread) => thread.environmentId))],
     [threads],
@@ -77,18 +96,38 @@ export function RunsView() {
   const [filter, setFilter] = useState<RunFilter>("all");
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const runs = useMemo(() => buildAgentRuns({ projects, threads }), [projects, threads]);
+  const bakeoffViews = useMemo(() => buildBakeoffViews(bakeoffs, runs), [bakeoffs, runs]);
+  const bakeoffKeys = useMemo(() => bakeoffThreadKeys(bakeoffs), [bakeoffs]);
   const processRuns = useMemo(
     () => buildTerminalProcessRuns({ projects, sessions: terminalSessions, threads }),
     [projects, terminalSessions, threads],
   );
   const activeCount = runs.filter(isAgentRunActive).length + processRuns.length;
   const visibleRuns = runs.filter((run) => {
+    if (bakeoffKeys.has(`${run.thread.environmentId}:${run.thread.id}`)) return false;
     if (filter === "active") return isAgentRunActive(run);
     if (filter === "recent") return !isAgentRunActive(run);
     return true;
   });
+  const visibleBakeoffViews = bakeoffViews.filter((view) => {
+    const hasActiveContestant = view.contestants.some(({ run }) => run && isAgentRunActive(run));
+    if (filter === "active") return hasActiveContestant;
+    if (filter === "recent") return !hasActiveContestant;
+    return true;
+  });
   const visibleProcessRuns = filter === "recent" ? [] : processRuns;
-  const hasVisibleRuns = visibleRuns.length > 0 || visibleProcessRuns.length > 0;
+  const hasVisibleRuns =
+    visibleBakeoffViews.length > 0 || visibleRuns.length > 0 || visibleProcessRuns.length > 0;
+  const configByEnvironmentId = useMemo(() => {
+    const configs = new Map<string, typeof primaryServerConfig>();
+    if (primaryEnvironmentId && primaryServerConfig) {
+      configs.set(primaryEnvironmentId, primaryServerConfig);
+    }
+    for (const [environmentId, runtime] of Object.entries(savedEnvironmentRuntimeById)) {
+      configs.set(environmentId, runtime.serverConfig);
+    }
+    return configs;
+  }, [primaryEnvironmentId, primaryServerConfig, savedEnvironmentRuntimeById]);
 
   const withPending = useCallback(async (key: string, action: () => Promise<void>) => {
     setPendingKeys((current) => new Set(current).add(key));
@@ -125,6 +164,14 @@ export function RunsView() {
       createdAt: new Date().toISOString(),
     });
   }, []);
+  const updateBakeoff = useCallback(
+    (id: string, update: (bakeoff: Bakeoff) => Bakeoff) => {
+      setBakeoffs((current) =>
+        current.map((bakeoff) => (bakeoff.id === id ? update(bakeoff) : bakeoff)),
+      );
+    },
+    [setBakeoffs],
+  );
   const openProcessRun = useCallback(
     (run: TerminalProcessRun): void => {
       const threadRef = scopeThreadRef(
@@ -166,6 +213,15 @@ export function RunsView() {
                 {activeCount} active
               </Badge>
             ) : null}
+            <Button
+              size="xs"
+              className="ml-auto"
+              disabled={projects.length === 0}
+              onClick={() => setCreateBakeoffOpen(true)}
+            >
+              <GitCompareArrowsIcon />
+              New bakeoff
+            </Button>
           </div>
         </header>
 
@@ -213,6 +269,38 @@ export function RunsView() {
               </Empty>
             ) : (
               <div className="flex flex-col gap-6">
+                {visibleBakeoffViews.length > 0 ? (
+                  <section className="grid gap-3">
+                    <h2 className="text-sm font-medium">Multi-agent bakeoffs</h2>
+                    {visibleBakeoffViews.map((view) => (
+                      <BakeoffCard
+                        key={view.bakeoff.id}
+                        view={view}
+                        pendingKeys={pendingKeys}
+                        onOpen={(run) =>
+                          void openRun(scopeThreadRef(run.thread.environmentId, run.thread.id))
+                        }
+                        onInterrupt={(run) =>
+                          void withPending(
+                            `agent:${run.thread.environmentId}:${run.thread.id}`,
+                            () => interruptRun(run),
+                          )
+                        }
+                        onPickWinner={(threadId) =>
+                          updateBakeoff(view.bakeoff.id, (bakeoff) => ({
+                            ...bakeoff,
+                            winnerThreadId: threadId,
+                          }))
+                        }
+                        onRemove={() =>
+                          setBakeoffs((current) =>
+                            current.filter((bakeoff) => bakeoff.id !== view.bakeoff.id),
+                          )
+                        }
+                      />
+                    ))}
+                  </section>
+                ) : null}
                 {visibleProcessRuns.length > 0 ? (
                   <section className="grid gap-3">
                     <h2 className="text-sm font-medium">Running processes</h2>
@@ -232,7 +320,7 @@ export function RunsView() {
                 ) : null}
                 {visibleRuns.length > 0 ? (
                   <section className="grid gap-3">
-                    {visibleProcessRuns.length > 0 ? (
+                    {visibleProcessRuns.length > 0 || visibleBakeoffViews.length > 0 ? (
                       <h2 className="text-sm font-medium">Agent activity</h2>
                     ) : null}
                     {visibleRuns.map((run) => {
@@ -257,7 +345,117 @@ export function RunsView() {
           </div>
         </main>
       </div>
+      <BakeoffCreateDialog
+        open={createBakeoffOpen}
+        onOpenChange={setCreateBakeoffOpen}
+        projects={projects}
+        configByEnvironmentId={configByEnvironmentId}
+        onCreated={(bakeoff) => setBakeoffs((current) => [bakeoff, ...current])}
+      />
     </SidebarInset>
+  );
+}
+
+function BakeoffCard(props: {
+  view: BakeoffView;
+  pendingKeys: ReadonlySet<string>;
+  onOpen: (run: AgentRun) => void;
+  onInterrupt: (run: AgentRun) => void;
+  onPickWinner: (threadId: Bakeoff["winnerThreadId"]) => void;
+  onRemove: () => void;
+}) {
+  const { bakeoff } = props.view;
+  return (
+    <Card className="overflow-hidden rounded-xl">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <GitCompareArrowsIcon className="size-4 shrink-0 text-muted-foreground" />
+            <h3 className="truncate text-sm font-semibold">{bakeoff.title}</h3>
+            <Badge variant="secondary" size="sm">
+              {bakeoff.contestants.length} contestants
+            </Badge>
+          </div>
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{bakeoff.prompt}</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            Base {bakeoff.baseBranch} · {formatRelativeTimeLabel(bakeoff.createdAt)}
+          </p>
+        </div>
+        <Button size="icon-xs" variant="ghost" aria-label="Remove bakeoff" onClick={props.onRemove}>
+          <Trash2Icon />
+        </Button>
+      </div>
+      <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-3">
+        {props.view.contestants.map(({ contestant, run }) => {
+          const isWinner = bakeoff.winnerThreadId === contestant.threadId;
+          const meta = run ? STATUS_META[run.status] : null;
+          const StatusIcon = meta?.icon ?? Clock3Icon;
+          const pendingKey = run
+            ? `agent:${run.thread.environmentId}:${run.thread.id}`
+            : `agent:${bakeoff.environmentId}:${contestant.threadId}`;
+          return (
+            <div key={contestant.threadId} className="flex min-w-0 flex-col gap-3 bg-card p-4">
+              <div className="flex min-w-0 items-start gap-2">
+                <StatusIcon
+                  className={
+                    run?.status === "running" ? "mt-0.5 size-4 animate-pulse" : "mt-0.5 size-4"
+                  }
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-sm font-medium">{contestant.label}</span>
+                    {isWinner ? (
+                      <Badge variant="success" size="sm">
+                        Winner
+                      </Badge>
+                    ) : null}
+                    {meta ? (
+                      <Badge variant={meta.badge} size="sm">
+                        {meta.label}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {run?.thread.branch ??
+                      contestant.launchError ??
+                      "Waiting for the contestant thread to appear…"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-auto flex flex-wrap gap-2">
+                {run?.status === "running" ? (
+                  <Button
+                    size="xs"
+                    variant="destructive-outline"
+                    disabled={props.pendingKeys.has(pendingKey)}
+                    onClick={() => props.onInterrupt(run)}
+                  >
+                    <CircleStopIcon />
+                    Stop
+                  </Button>
+                ) : null}
+                {run ? (
+                  <Button size="xs" variant="outline" onClick={() => props.onOpen(run)}>
+                    <ExternalLinkIcon />
+                    Review
+                  </Button>
+                ) : null}
+                {!isWinner && run && !isAgentRunActive(run) ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => props.onPickWinner(contestant.threadId)}
+                  >
+                    <TrophyIcon />
+                    Pick winner
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 

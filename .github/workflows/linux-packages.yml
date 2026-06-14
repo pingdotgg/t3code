@@ -11,9 +11,17 @@ permissions:
 
 jobs:
   package:
-    name: Build deb and rpm
-    runs-on: ubuntu-24.04
+    name: Build deb and rpm (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,14 +51,31 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v6
         with:
-          name: morecode-headless-linux-${{ runner.arch }}
+          name: morecode-headless-linux-${{ matrix.arch }}
           path: |
             release/*.deb
             release/*.rpm
           if-no-files-found: error
 
+  release:
+    name: Upload to GitHub release
+    needs: package
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download amd64 packages
+        uses: actions/download-artifact@v6
+        with:
+          name: morecode-headless-linux-amd64
+          path: release
+
+      - name: Download arm64 packages
+        uses: actions/download-artifact@v6
+        with:
+          name: morecode-headless-linux-arm64
+          path: release
+
       - name: Upload packages to tagged release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

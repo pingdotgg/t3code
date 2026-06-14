@@ -18,7 +18,7 @@ sudo dnf install ./morecode-headless-VERSION-RELEASE.ARCH.rpm
 
 The package creates a dedicated `morecode` system user and starts `morecode.service`. Its files are:
 
-- configuration: `/etc/morecode/morecode.env`
+- configuration: `/etc/morecode/morecode.env` (preserved across package upgrades)
 - persistent server state: `/var/lib/morecode/state`
 - default coding workspace: `/var/lib/morecode/workspace`
 - application runtime: `/opt/morecode`

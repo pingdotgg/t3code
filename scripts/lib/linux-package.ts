@@ -21,6 +21,27 @@ export interface RpmVersion {
   readonly release: string;
 }
 
+export interface DebVersion {
+  readonly upstream: string;
+  readonly revision: string;
+}
+
+export function toDebVersion(version: string): DebVersion {
+  const [withoutBuild = version, ...buildParts] = version.split("+");
+  const [core = withoutBuild, ...prereleaseParts] = withoutBuild.split("-");
+  const prerelease = prereleaseParts.join("-");
+  const build = buildParts.join("+");
+  const upstreamParts = [
+    core,
+    ...(prerelease.length === 0 ? [] : [`~${prerelease}`]),
+    ...(build.length === 0 ? [] : [`+${build}`]),
+  ];
+  return {
+    upstream: upstreamParts.join(""),
+    revision: "1",
+  };
+}
+
 export function toRpmVersion(version: string): RpmVersion {
   const [withoutBuild = version, ...buildParts] = version.split("+");
   const [core = withoutBuild, ...prereleaseParts] = withoutBuild.split("-");

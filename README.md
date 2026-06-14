@@ -79,3 +79,5 @@ Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 ## Acknowledgements
 
 Thanks to [Noctalia](https://github.com/noctalia-dev/noctalia) for inspiring more Code's colorful theme palettes.
+
+Thanks to [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus) for inspiring side-by-side multi-model comparisons.
