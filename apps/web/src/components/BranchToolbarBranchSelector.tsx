@@ -16,6 +16,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
+import { useSourceControlActionRunning } from "../lib/sourceControlActions";
 import { useVcsStatus } from "../lib/vcsStatusState";
 import { useVcsRefs, vcsRefManager } from "../lib/vcsRefState";
 import { newCommandId } from "../lib/utils";
@@ -32,7 +33,7 @@ import {
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
-import { GitSyncControl } from "./GitSyncControl";
+import { GitSyncControl, SYNC_BUSY_ACTIONS } from "./GitSyncControl";
 import { Button } from "./ui/button";
 import {
   Combobox,
@@ -203,6 +204,10 @@ export function BranchToolbarBranchSelector({
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
   const branchStatusQuery = useVcsStatus({ environmentId, cwd: branchCwd });
+  // Block ref switches/creates while a sync action (fetch/push/pull/sync) is in
+  // flight on the same cwd — checking out mid-operation would race the git op.
+  const syncScope = useMemo(() => ({ environmentId, cwd: branchCwd }), [environmentId, branchCwd]);
+  const isSyncBusy = useSourceControlActionRunning(syncScope, SYNC_BUSY_ACTIONS);
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(
@@ -615,7 +620,7 @@ export function BranchToolbarBranchSelector({
         <ComboboxTrigger
           render={<Button variant="ghost" size="xs" />}
           className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
-          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+          disabled={isInitialBranchesLoadPending || isBranchActionPending || isSyncBusy}
         >
           <GitBranchIcon className="size-3 shrink-0 opacity-70" />
           <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>

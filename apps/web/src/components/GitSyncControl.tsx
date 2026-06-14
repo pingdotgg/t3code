@@ -23,8 +23,9 @@ interface GitSyncControlProps {
 }
 
 // Kept in sync with the action kinds this control can launch so any one of them
-// (including a concurrent stacked action) disables the whole control.
-const SYNC_BUSY_ACTIONS = ["runStackedAction", "pull", "fetch", "push", "sync"] as const;
+// (including a concurrent stacked action) disables the whole control. Exported so
+// the branch picker can disable ref switches while a sync op is in flight.
+export const SYNC_BUSY_ACTIONS = ["runStackedAction", "pull", "fetch", "push", "sync"] as const;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -61,7 +62,9 @@ export function GitSyncControl({ environmentId, cwd, status, className }: GitSyn
     const promise = fetchAction.run();
     void toastManager.promise<Awaited<ReturnType<typeof fetchAction.run>>>(promise, {
       loading: { title: "Fetching..." },
-      success: () => ({ title: "Up to date", description: "Refreshed remote-tracking refs." }),
+      // vcs.fetch only updates remote-tracking refs; the branch may now be ahead
+      // or behind, so don't claim "Up to date" here — the badge reflects the state.
+      success: () => ({ title: "Fetched", description: "Updated remote-tracking refs." }),
       error: (err) => ({ title: "Fetch failed", description: errorMessage(err) }),
     });
     void promise.catch(() => undefined);
