@@ -16,6 +16,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { WebSearchOutput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -3237,9 +3238,10 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   create: Effect.fn("ClaudeAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<ClaudeSettings>) {
       const { instanceId, environment, enabled, config } = input;
+      const hostEnvironment = yield* HostProcessEnvironment;
       const idAllocator = yield* IdAllocatorV2;
       const queryRunner = yield* ClaudeAgentSdkQueryRunner;
-      const baseEnvironment = mergeProviderInstanceEnvironment(environment);
+      const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
       const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
       return makeClaudeAdapterV2({
         instanceId,
@@ -3265,13 +3267,14 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
 };
 
 const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* () {
+  const hostEnvironment = yield* HostProcessEnvironment;
   const idAllocator = yield* IdAllocatorV2;
   const queryRunner = yield* ClaudeAgentSdkQueryRunner;
 
   return makeClaudeAdapterV2({
     instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
     settings: DEFAULT_CLAUDE_SETTINGS,
-    environment: process.env,
+    environment: hostEnvironment,
     idAllocator,
     queryRunner,
   });
