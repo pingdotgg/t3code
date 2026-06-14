@@ -71,6 +71,8 @@ export function isReadOnlyProviderToolName(toolName: string): boolean {
   return (
     normalized === "read" ||
     normalized.includes("read file") ||
+    normalized.includes("read_file") ||
+    normalized.includes("readfile") ||
     normalized.includes("view") ||
     normalized.includes("grep") ||
     normalized.includes("glob") ||
