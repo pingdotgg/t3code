@@ -10,14 +10,74 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { ChildProcess } from "effect/unstable/process";
 
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   makeCodexAppServerProtocolLogger,
+  makeCodexAppServerSpawnCommand,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
+
+describe("CodexAdapterV2 process spawning", () => {
+  it.effect("resolves Windows command shims through the shared spawn policy", () =>
+    Effect.gen(function* () {
+      const command = yield* makeCodexAppServerSpawnCommand({
+        command: "codex",
+        args: ["app-server", "argument with spaces"],
+        cwd: "C:\\workspace",
+        env: { CUSTOM: "1" },
+        extendEnv: true,
+      });
+
+      assert.isTrue(ChildProcess.isStandardCommand(command));
+      if (!ChildProcess.isStandardCommand(command)) {
+        return;
+      }
+      assert.equal(command.command, '^"C:\\npm\\codex.cmd^"');
+      assert.deepEqual(command.args, ['^"app-server^"', '^"argument^ with^ spaces^"']);
+      assert.equal(command.options.shell, true);
+      assert.equal(command.options.cwd, "C:\\workspace");
+      assert.deepEqual(command.options.env, { CUSTOM: "1" });
+      assert.equal(command.options.extendEnv, true);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcessEnvironment, {
+        PATH: "C:\\Windows\\System32",
+        HOST_ONLY: "1",
+      }),
+      Effect.provideService(SpawnExecutableResolution, (_command, _platform, environment) => {
+        assert.equal(environment.HOST_ONLY, "1");
+        assert.equal(environment.CUSTOM, "1");
+        return "C:\\npm\\codex.cmd";
+      }),
+    ),
+  );
+
+  it.effect("uses direct execution for native executables", () =>
+    Effect.gen(function* () {
+      const command = yield* makeCodexAppServerSpawnCommand({
+        command: "codex.exe",
+        args: ["app-server"],
+      });
+
+      assert.isTrue(ChildProcess.isStandardCommand(command));
+      if (!ChildProcess.isStandardCommand(command)) {
+        return;
+      }
+      assert.equal(command.command, "C:\\bin\\codex.exe");
+      assert.deepEqual(command.args, ["app-server"]);
+      assert.equal(command.options.shell, false);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(SpawnExecutableResolution, () => "C:\\bin\\codex.exe"),
+    ),
+  );
+});
 
 describe("CodexAdapterV2 native protocol logging", () => {
   it.effect("writes app-server protocol frames to the native provider log", () =>
