@@ -337,11 +337,15 @@ export function runOrchestratorV2Scenario(
         yield* awaitDispatch(key);
       }
 
+      const shellSnapshot = yield* orchestrator.getShellSnapshot();
+      const projectionThreadIds = new Set(collectProjectionThreadIds(scenario));
+      for (const thread of shellSnapshot.threads) {
+        projectionThreadIds.add(thread.id);
+      }
       const projections = new Map<ThreadId, OrchestrationV2ThreadProjection>();
-      for (const threadId of collectProjectionThreadIds(scenario)) {
+      for (const threadId of projectionThreadIds) {
         projections.set(threadId, yield* orchestrator.getThreadProjection(threadId));
       }
-      const shellSnapshot = yield* orchestrator.getShellSnapshot();
 
       yield* Effect.yieldNow;
 

@@ -15,7 +15,7 @@ export class ProviderAdapterDriverCreateError extends Schema.TaggedErrorClass<Pr
     driver: ProviderDriverKind,
     instanceId: ProviderInstanceId,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

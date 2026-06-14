@@ -41,6 +41,11 @@ export const MESSAGE_STEERING_INITIAL_PROMPT =
   "Respond with exactly: steering fixture initial response";
 export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
+export const SUBAGENT_CONTINUE_PROMPT =
+  "Spawn one subagent and have it reply exactly: initial subagent response";
+export const SUBAGENT_CONTINUE_PARENT_PROMPT =
+  "@hooke have the same subagent reply exactly: continued subagent response";
+export const SUBAGENT_CONTINUE_CHILD_PROMPT = "Reply exactly: continued subagent response";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
@@ -587,9 +592,11 @@ export function projectionFor(
   result: OrchestratorV2ScenarioResult,
   scenario: string,
 ): OrchestrationV2ThreadProjection {
-  const projections = [...result.projections.values()];
+  const projections = [...result.projections.values()].filter(
+    (projection) => projection.thread.lineage.parentThreadId === null,
+  );
 
-  assert.equal(projections.length, 1, `expected one projection for ${scenario}`);
+  assert.equal(projections.length, 1, `expected one root projection for ${scenario}`);
   const projection = projections[0];
   assert.isDefined(projection, `missing projection for ${scenario}`);
   return projection;

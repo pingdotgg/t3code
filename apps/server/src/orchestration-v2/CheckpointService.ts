@@ -30,7 +30,7 @@ export class CheckpointRootScopePrepareError extends Schema.TaggedErrorClass<Che
   {
     threadId: ThreadId,
     runId: RunId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -42,7 +42,7 @@ export class CheckpointScopeEnsureError extends Schema.TaggedErrorClass<Checkpoi
   "CheckpointScopeEnsureError",
   {
     scopeId: CheckpointScopeId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -55,7 +55,7 @@ export class CheckpointBaselineCaptureError extends Schema.TaggedErrorClass<Chec
   {
     scopeId: CheckpointScopeId,
     ordinalWithinScope: Schema.Number,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -68,7 +68,7 @@ export class CheckpointCaptureError extends Schema.TaggedErrorClass<CheckpointCa
   {
     scopeId: CheckpointScopeId,
     parentCheckpointId: Schema.optional(CheckpointId),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -81,7 +81,7 @@ export class CheckpointRestoreError extends Schema.TaggedErrorClass<CheckpointRe
   {
     scopeId: CheckpointScopeId,
     checkpointId: CheckpointId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -94,7 +94,7 @@ export class CheckpointDeleteStaleRefsError extends Schema.TaggedErrorClass<Chec
   {
     scopeId: CheckpointScopeId,
     checkpointIds: Schema.Array(CheckpointId),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -149,7 +149,7 @@ export interface CheckpointServiceV2Shape {
 export class CheckpointServiceV2 extends Context.Service<
   CheckpointServiceV2,
   CheckpointServiceV2Shape
->()("t3/orchestration-v2/CheckpointService") {}
+>()("t3/orchestration-v2/CheckpointService/CheckpointServiceV2") {}
 
 function checkpointRefForScopeOrdinal(input: {
   readonly scopeId: CheckpointScopeId;
@@ -264,7 +264,7 @@ export const layer: Layer.Layer<CheckpointServiceV2, never, CheckpointStore | Id
         Effect.flatMap(getWorkspaceSemaphore(cwd), (semaphore) => semaphore.withPermits(1)(effect));
 
       const isGitCheckpointable = (cwd: string) =>
-        checkpointStore.isGitRepository(cwd).pipe(Effect.catch(() => Effect.succeed(false)));
+        checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
 
       const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 

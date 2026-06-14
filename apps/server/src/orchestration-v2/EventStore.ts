@@ -19,7 +19,7 @@ export class EventStoreAppendEventsError extends Schema.TaggedErrorClass<EventSt
   "EventStoreAppendEventsError",
   {
     eventCount: Schema.Number,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -32,7 +32,7 @@ export class EventStoreReadEventsError extends Schema.TaggedErrorClass<EventStor
   {
     afterSequence: Schema.optional(Schema.Number),
     threadId: Schema.optional(ThreadId),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -70,7 +70,7 @@ export interface EventStoreV2Shape {
 }
 
 export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shape>()(
-  "t3/orchestration-v2/EventStore",
+  "t3/orchestration-v2/EventStore/EventStoreV2",
 ) {}
 
 /**
