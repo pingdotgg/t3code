@@ -12,7 +12,7 @@ export class ThreadForkPlanError extends Schema.TaggedErrorClass<ThreadForkPlanE
   {
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -25,7 +25,7 @@ export class ThreadForkApplyError extends Schema.TaggedErrorClass<ThreadForkAppl
   {
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -55,4 +55,4 @@ export interface ThreadForkServiceV2Shape {
 export class ThreadForkServiceV2 extends Context.Service<
   ThreadForkServiceV2,
   ThreadForkServiceV2Shape
->()("t3/orchestration-v2/ThreadForkService") {}
+>()("t3/orchestration-v2/ThreadForkService/ThreadForkServiceV2") {}

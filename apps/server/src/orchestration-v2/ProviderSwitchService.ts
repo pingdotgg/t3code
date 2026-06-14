@@ -30,7 +30,7 @@ export class ProviderSwitchPlanError extends Schema.TaggedErrorClass<ProviderSwi
     threadId: ThreadId,
     targetRunId: RunId,
     targetProvider: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -44,7 +44,7 @@ export class ProviderSwitchApplyError extends Schema.TaggedErrorClass<ProviderSw
     threadId: ThreadId,
     targetRunId: RunId,
     strategy: ProviderSwitchStrategyV2,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -75,4 +75,4 @@ export interface ProviderSwitchServiceV2Shape {
 export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2,
   ProviderSwitchServiceV2Shape
->()("t3/orchestration-v2/ProviderSwitchService") {}
+>()("t3/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}

@@ -28,18 +28,18 @@ export function assertClaudeSubagentOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
-  assertExecutionNodeKinds(projection, ["root_turn", "subagent", "tool_call"]);
-  assertTurnItemTypes(projection, [
-    "user_message",
-    "subagent",
-    "dynamic_tool",
-    "assistant_message",
-  ]);
+  assertExecutionNodeKinds(projection, ["root_turn", "subagent"]);
+  assertTurnItemTypes(projection, ["user_message", "subagent", "assistant_message"]);
   assertRunProviderTurnCardinality({ projection, rootRunCount: 1 });
   assertNoExtraAppRunsForProviderChildren({ projection, expectedAppRuns: 1 });
   assertUserMessagesInclude(projection, [SUBAGENT_PROMPT]);
   assertAssistantTextIncludes(projection, "claude-read-only-fixture");
   assertAssistantTextIncludes(projection, "ES2022");
+  assert.lengthOf(
+    projection.turnItems.filter((item) => item.type === "dynamic_tool"),
+    0,
+    "subagent tools must not be projected into the parent thread",
+  );
 
   const subagentNodes = projection.nodes.filter((node) => node.kind === "subagent");
   assert.lengthOf(subagentNodes, 2);
@@ -49,12 +49,13 @@ export function assertClaudeSubagentOutput(
   );
 
   assert.lengthOf(projection.subagents, 2);
+  assert.lengthOf(result.shellSnapshot.threads, 3);
   assert.isTrue(
     projection.subagents.some(
       (subagent) =>
         subagent.prompt ===
           "Read the file `package.json` in the current working directory and return its full contents." &&
-        subagent.result === "Read package.json",
+        subagent.result?.includes("claude-read-only-fixture"),
     ),
   );
   assert.isTrue(
@@ -62,7 +63,7 @@ export function assertClaudeSubagentOutput(
       (subagent) =>
         subagent.prompt ===
           "Read the file `tsconfig.json` in the current working directory and return its full contents." &&
-        subagent.result === "Read tsconfig.json",
+        subagent.result?.includes("ES2022"),
     ),
   );
   for (const subagent of projection.subagents) {
@@ -71,17 +72,32 @@ export function assertClaudeSubagentOutput(
     assert.equal(subagent.provider, "claudeAgent");
     assert.equal(subagent.status, "completed");
     assert.isNull(subagent.providerThreadId);
-    assert.isNull(subagent.childThreadId);
+    assert.isNotNull(subagent.childThreadId);
     assert.isNotNull(subagent.nativeTaskRef);
     assert.isNotNull(subagent.completedAt);
-  }
+    if (subagent.childThreadId === null) {
+      throw new Error(`Subagent ${subagent.id} is missing its child thread`);
+    }
 
-  const subagentNodeIds = new Set(subagentNodes.map((node) => node.id));
-  const nestedToolNodes = projection.nodes.filter(
-    (node) =>
-      node.kind === "tool_call" &&
-      node.parentNodeId !== null &&
-      subagentNodeIds.has(node.parentNodeId),
-  );
-  assert.isAtLeast(nestedToolNodes.length, 2);
+    const childProjection = result.projections.get(subagent.childThreadId);
+    assert.isDefined(childProjection);
+    assert.equal(childProjection.thread.lineage.parentThreadId, projection.thread.id);
+    assert.equal(childProjection.thread.lineage.relationshipToParent, "subagent");
+    assert.isNull(childProjection.thread.activeProviderThreadId);
+    assert.lengthOf(childProjection.runs, 0);
+    assert.lengthOf(childProjection.providerThreads, 0);
+    assert.lengthOf(childProjection.providerTurns, 0);
+    assertExecutionNodeKinds(childProjection, ["root_turn", "tool_call"]);
+    assertTurnItemTypes(childProjection, ["user_message", "dynamic_tool", "assistant_message"]);
+    assertUserMessagesInclude(childProjection, [subagent.prompt]);
+    assert.isTrue(
+      childProjection.turnItems.some(
+        (item) =>
+          item.type === "assistant_message" &&
+          subagent.result !== null &&
+          item.text.includes(subagent.result.slice(0, 40)),
+      ),
+      `child thread ${subagent.childThreadId} must contain the subagent response`,
+    );
+  }
 }

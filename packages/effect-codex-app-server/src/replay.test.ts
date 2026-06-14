@@ -10,6 +10,10 @@ import * as CodexClient from "./client.ts";
 import * as CodexError from "./errors.ts";
 import * as CodexReplay from "./replay.ts";
 
+const isCodexAppServerTransportError = Schema.is(CodexError.CodexAppServerTransportError);
+const decodeReplayError = Schema.decodeUnknownEffect(CodexReplay.CodexAppServerReplayError);
+const encodeReplayError = Schema.encodeUnknownEffect(CodexReplay.CodexAppServerReplayError);
+
 const initializeParams = {
   clientInfo: {
     name: "effect-codex-app-server-test",
@@ -120,14 +124,12 @@ it.effect("fails pending client requests with a schema-serializable replay misma
     }).pipe(Effect.provide(context), Effect.flip, Effect.ensuring(Scope.close(scope, Exit.void)));
 
     assert.equal(error._tag, "CodexAppServerTransportError");
-    if (!Schema.is(CodexError.CodexAppServerTransportError)(error)) {
+    if (!isCodexAppServerTransportError(error)) {
       throw new Error("Expected transport error.");
     }
 
-    const replayError = Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayError)(
-      error.cause,
-    );
-    const encoded = Schema.encodeUnknownSync(CodexReplay.CodexAppServerReplayError)(replayError);
+    const replayError = yield* decodeReplayError(error.cause);
+    const encoded = yield* encodeReplayError(replayError);
 
     assert.equal(encoded._tag, "CodexAppServerReplayFrameMismatchError");
     if (encoded._tag !== "CodexAppServerReplayFrameMismatchError") {
