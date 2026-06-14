@@ -2620,12 +2620,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     const turnId = TurnId.make(`copilot-turn-${randomUUID()}`);
     const modelSelection =
       input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-    const reasoningEffort = getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") as
-      | CopilotReasoningEffort
-      | undefined;
-    const contextTier = getModelSelectionStringOptionValue(modelSelection, "contextTier") as
-      | CopilotContextTier
-      | undefined;
+    const rawReasoningEffort = getModelSelectionStringOptionValue(
+      modelSelection,
+      "reasoningEffort",
+    );
+    const reasoningEffort = rawReasoningEffort as CopilotReasoningEffort | undefined;
+    const rawContextTier = getModelSelectionStringOptionValue(modelSelection, "contextTier");
+    const contextTier = rawContextTier as CopilotContextTier | undefined;
     if (modelSelection?.model) {
       yield* copilotSdk.setModel(context, modelSelection.model, reasoningEffort, contextTier);
       updateProviderSession(context, {
