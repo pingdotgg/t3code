@@ -3,11 +3,14 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -219,6 +222,112 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
+const SKILLS_DIR_NAME = ".agents";
+const SKILLS_SUBDIR_NAME = "skills";
+const SKILL_FILE_NAME = "SKILL.md";
+
+function parseSkillFrontmatter(
+  content: string,
+): { name: string; description?: string; displayName?: string } | null {
+  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!frontmatterMatch) {
+    return null;
+  }
+
+  const frontmatter = frontmatterMatch[1]!;
+  const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
+  if (!nameMatch) {
+    return null;
+  }
+
+  const name = nameMatch[1]!.trim();
+  if (name.length === 0) {
+    return null;
+  }
+
+  const descMatch = frontmatter.match(/^description:\s*(?:>\s*\n([\s\S]*?)|(.+))?$/m);
+  let description: string | undefined;
+  if (descMatch) {
+    const raw = descMatch[1] ?? descMatch[2];
+    if (raw) {
+      description = raw
+        .split("\n")
+        .map((line) => line.replace(/^\s*\|?\s*/, ""))
+        .join(" ")
+        .trim();
+    }
+  }
+
+  const displayNameMatch = frontmatter.match(/^displayName:\s*(.+)$/m);
+  const displayName = displayNameMatch ? displayNameMatch[1]!.trim() : undefined;
+
+  const result: { name: string; description?: string; displayName?: string } = { name };
+  if (description !== undefined) {
+    result.description = description;
+  }
+  if (displayName !== undefined) {
+    result.displayName = displayName;
+  }
+  return result;
+}
+
+function loadOpenCodeSkills(
+  cwd: string,
+): Effect.Effect<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    const skillsDir = path.join(cwd, SKILLS_DIR_NAME, SKILLS_SUBDIR_NAME);
+    const entriesExit = yield* Effect.exit(fs.readDirectory(skillsDir, { recursive: false }));
+
+    if (entriesExit._tag !== "Success") {
+      return [];
+    }
+
+    const skills: Array<ServerProviderSkill> = [];
+
+    for (const entryName of entriesExit.value) {
+      const fullPath = path.join(skillsDir, entryName);
+      const statExit = yield* Effect.exit(fs.stat(fullPath));
+
+      if (statExit._tag !== "Success" || statExit.value.type !== "Directory") {
+        continue;
+      }
+
+      const contentExit = yield* Effect.exit(
+        fs.readFileString(path.join(fullPath, SKILL_FILE_NAME)),
+      );
+
+      if (contentExit._tag !== "Success") {
+        continue;
+      }
+
+      const parsed = parseSkillFrontmatter(contentExit.value);
+      if (!parsed) {
+        continue;
+      }
+
+      const shortDescription =
+        parsed.description && parsed.description.length > 200
+          ? parsed.description.slice(0, 200) + "..."
+          : parsed.description;
+
+      const skill: ServerProviderSkill = {
+        name: parsed.name,
+        path: fullPath,
+        enabled: true,
+        ...(parsed.description !== undefined ? { description: parsed.description } : {}),
+        ...(parsed.displayName !== undefined ? { displayName: parsed.displayName } : {}),
+        ...(shortDescription !== undefined ? { shortDescription } : {}),
+      };
+      skills.push(skill);
+    }
+
+    return skills;
+  });
+}
+
 function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
   const models: Array<ServerProviderModel> = [];
@@ -254,7 +363,8 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
-): Effect.Effect<ServerProviderDraft> =>
+  cwd: string,
+): Effect.Effect<ServerProviderDraft, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = providerModelsFromSettings(
@@ -263,6 +373,7 @@ export const makePendingOpenCodeProvider = (
       openCodeSettings.customModels,
       DEFAULT_OPENCODE_MODEL_CAPABILITIES,
     );
+    const skills = yield* loadOpenCodeSkills(cwd);
 
     if (!openCodeSettings.enabled) {
       return buildServerProvider({
@@ -270,6 +381,7 @@ export const makePendingOpenCodeProvider = (
         enabled: false,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: false,
           version: null,
@@ -288,6 +400,7 @@ export const makePendingOpenCodeProvider = (
       enabled: true,
       checkedAt,
       models,
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -302,11 +415,17 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  OpenCodeRuntime | FileSystem.FileSystem | Path.Path
+> {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+
+  const skills = yield* loadOpenCodeSkills(cwd);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
@@ -324,6 +443,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         customModels,
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
+      skills,
       probe: {
         installed: failure.installed,
         version,
@@ -345,6 +465,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         customModels,
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -396,6 +517,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           customModels,
           DEFAULT_OPENCODE_MODEL_CAPABILITIES,
         ),
+        skills,
         probe: {
           installed: true,
           version,
@@ -447,6 +569,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     enabled: true,
     checkedAt,
     models,
+    skills,
     probe: {
       installed: true,
       version,
