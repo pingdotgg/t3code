@@ -14,7 +14,7 @@
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
-import { Cause, Context, Duration, Effect, Layer, Ref, Schedule, Scope } from "effect";
+import { Cause, Context, Duration, Effect, Layer, Option, Ref, Schedule, Scope } from "effect";
 
 import { ProcessRunner } from "../processRunner.ts";
 
@@ -39,13 +39,20 @@ export class PortDiscovery extends Context.Service<PortDiscovery, PortDiscoveryS
   "t3/preview/PortScanner/PortDiscovery",
 ) {}
 
+export const CurrentPlatform = Context.Reference<NodeJS.Platform>(
+  "t3/preview/PortScanner/CurrentPlatform",
+  {
+    defaultValue: () => process.platform,
+  },
+);
+
 export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
 ]);
 
 const POLL_INTERVAL = Duration.seconds(3);
-const LSOF_TIMEOUT_MS = 5_000;
-const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+const LSOF_TIMEOUT = Duration.seconds(5);
+const WINDOWS_LISTENER_TIMEOUT = Duration.seconds(5);
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -182,6 +189,7 @@ const serversEqual = (
 const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner;
+  const platform = yield* CurrentPlatform;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
@@ -221,37 +229,37 @@ const make = Effect.gen(function* PortDiscoveryMake() {
         terminalByProcessId.set(processId, registration.owner);
       }
     }
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       const command =
         'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
       const listeners = yield* processRunner
         .run({
           command: "powershell.exe",
           args: ["-NoProfile", "-NonInteractive", "-Command", command],
-          timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+          timeout: WINDOWS_LISTENER_TIMEOUT,
           maxOutputBytes: 1024 * 1024,
           outputMode: "truncate",
         })
         .pipe(
           Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
-          Effect.catchCause(() => Effect.succeed(null)),
+          Effect.option,
         );
-      if (listeners !== null) return listeners;
+      if (Option.isSome(listeners)) return listeners.value;
       return yield* probeCommonPorts();
     }
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
         args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
-        timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        timeout: LSOF_TIMEOUT,
         maxOutputBytes: 1024 * 1024,
         outputMode: "truncate",
       })
       .pipe(
         Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
-        Effect.catchCause(() => Effect.succeed(null)),
+        Effect.option,
       );
-    if (lsofResult !== null) return lsofResult;
+    if (Option.isSome(lsofResult)) return lsofResult.value;
     return yield* probeCommonPorts();
   });
 
@@ -349,13 +357,13 @@ const make = Effect.gen(function* PortDiscoveryMake() {
     });
   });
 
-  return {
+  return PortDiscovery.of({
     scan: scanOnce,
     subscribe,
     retain,
     registerTerminalProcesses,
     unregisterTerminal,
-  } satisfies PortDiscoveryShape;
+  });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);
