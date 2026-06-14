@@ -6,11 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { ensureEnvironmentApi } from "~/environmentApi";
-import { normalizeElementContextSelection } from "~/lib/elementContext";
-import {
-  appendPreviewAnnotationPrompt,
-  previewAnnotationScreenshotFile,
-} from "~/lib/previewAnnotation";
+import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
@@ -62,10 +58,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   );
   const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
   const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
-  const addElementContext = useComposerDraftStore((store) => store.addElementContext);
+  const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
-  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const setPrompt = useComposerDraftStore((store) => store.setPrompt);
 
   usePreviewSession(threadRef);
 
@@ -421,12 +415,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       try {
         const annotation = await previewBridge.pickElement(tabId);
         if (!annotation) return;
-        for (const target of annotation.elements) {
-          const selection = normalizeElementContextSelection(target.element);
-          if (selection) addElementContext(threadRef, selection);
-        }
-        const currentPrompt = getComposerDraft(threadRef)?.prompt ?? "";
-        setPrompt(threadRef, appendPreviewAnnotationPrompt(currentPrompt, annotation));
+        addPreviewAnnotation(threadRef, annotation);
         const screenshotFile = await previewAnnotationScreenshotFile(annotation);
         if (screenshotFile && annotation.screenshot) {
           addImage(threadRef, {
@@ -462,7 +451,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         }
       }
     })();
-  }, [addElementContext, addImage, getComposerDraft, setPrompt, tabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, tabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle

@@ -49,6 +49,7 @@ import {
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
+  PaintbrushIcon,
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -83,6 +84,10 @@ import {
   extractTrailingElementContexts,
   type ParsedElementContextEntry,
 } from "~/lib/elementContext";
+import {
+  extractTrailingPreviewAnnotation,
+  type ParsedPreviewAnnotation,
+} from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -433,15 +438,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
-  const elementContextState = extractTrailingElementContexts(displayedUserMessage.visibleText);
+  const previewAnnotations: ParsedPreviewAnnotation[] = [];
+  let visibleText = displayedUserMessage.visibleText;
+  while (true) {
+    const extracted = extractTrailingPreviewAnnotation(visibleText);
+    if (!extracted.annotation) break;
+    previewAnnotations.unshift(extracted.annotation);
+    visibleText = extracted.promptText;
+  }
+  const elementContextState = extractTrailingElementContexts(visibleText);
+  const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
+  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
-        {userImages.length > 0 && (
+        {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -452,7 +467,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     className="h-full w-full cursor-zoom-in"
                     aria-label={`Preview ${image.name}`}
                     onClick={() => {
-                      const preview = buildExpandedImagePreview(userImages, image.id);
+                      const preview = buildExpandedImagePreview(regularImages, image.id);
                       if (!preview) return;
                       ctx.onImageExpand(preview);
                     }}
@@ -472,6 +487,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {previewAnnotations.map((annotation, index) => (
+          <UserMessagePreviewAnnotationCard
+            key={annotation.id}
+            annotation={annotation}
+            image={previewImages[index] ?? null}
+          />
+        ))}
         {elementContextState.contexts.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {elementContextState.contexts.map((context) => (
@@ -943,6 +965,58 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
     </Tooltip>
   );
 });
+
+function UserMessagePreviewAnnotationCard(props: {
+  annotation: ParsedPreviewAnnotation;
+  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="mb-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70">
+      {props.image?.previewUrl ? (
+        <button
+          type="button"
+          className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
+          aria-label={`Preview ${props.image.name}`}
+          onClick={() => {
+            if (!props.image) return;
+            const preview = buildExpandedImagePreview([props.image], props.image.id);
+            if (preview) ctx.onImageExpand(preview);
+          }}
+        >
+          <img
+            src={props.image.previewUrl}
+            alt="Annotated preview crop"
+            className="size-full object-cover"
+          />
+        </button>
+      ) : null}
+      <div className="min-w-0 px-2.5 py-2">
+        {props.annotation.comment ? (
+          <div className="max-w-80 truncate text-xs font-medium text-foreground/90">
+            {props.annotation.comment}
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            "flex items-center gap-2 text-[10px] text-muted-foreground",
+            props.annotation.comment && "mt-1",
+          )}
+        >
+          {props.annotation.targetSummary ? (
+            <span className="truncate">{props.annotation.targetSummary}</span>
+          ) : null}
+          {props.annotation.styleChanges.length > 0 ? (
+            <span className="inline-flex shrink-0 items-center gap-1">
+              <PaintbrushIcon className="size-3" />
+              {props.annotation.styleChanges.length}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
 const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;

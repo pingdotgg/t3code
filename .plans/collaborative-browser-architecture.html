@@ -1,0 +1,1981 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Collaborative Browser Architecture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f2eee4;
+        --muted: #aaa99f;
+        --dim: #74766f;
+        --paper: #0b0d0e;
+        --panel: #111416;
+        --panel-2: #171b1d;
+        --line: #303638;
+        --line-bright: #596164;
+        --signal: #ff5e3a;
+        --signal-soft: #ff8d74;
+        --cyan: #69d6d2;
+        --yellow: #e7c75b;
+        --green: #7bcf92;
+        --blue: #78a8e8;
+        --purple: #b19ae8;
+        --danger: #ff6b72;
+        --sidebar: 286px;
+        --radius: 3px;
+        --shadow: 0 18px 70px rgb(0 0 0 / 0.32);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+        background: var(--paper);
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(rgb(255 255 255 / 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(255 255 255 / 0.018) 1px, transparent 1px),
+          radial-gradient(circle at 82% 4%, rgb(105 214 210 / 0.09), transparent 31rem),
+          radial-gradient(circle at 36% 0%, rgb(255 94 58 / 0.08), transparent 27rem),
+          var(--paper);
+        background-size: 32px 32px, 32px 32px, auto, auto, auto;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        line-height: 1.55;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+      }
+
+      .rail {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 20;
+        width: var(--sidebar);
+        overflow: auto;
+        border-right: 1px solid var(--line);
+        background: rgb(11 13 14 / 0.94);
+        backdrop-filter: blur(18px);
+      }
+
+      .rail-brand {
+        padding: 28px 24px 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 0 0 10px;
+        color: var(--signal-soft);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        width: 18px;
+        height: 2px;
+        background: var(--signal);
+        content: "";
+      }
+
+      .rail h1 {
+        max-width: 220px;
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 28px;
+        font-weight: 400;
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+      }
+
+      .rail-meta {
+        margin-top: 16px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .rail-meta strong {
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      .nav {
+        padding: 18px 12px 40px;
+      }
+
+      .nav-group {
+        margin-bottom: 22px;
+      }
+
+      .nav-label {
+        padding: 0 12px 7px;
+        color: var(--dim);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .nav a {
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 7px;
+        align-items: baseline;
+        padding: 7px 12px;
+        border-left: 2px solid transparent;
+        color: var(--muted);
+        font-size: 11px;
+        text-decoration: none;
+        transition: 120ms ease;
+      }
+
+      .nav a:hover,
+      .nav a.active {
+        border-left-color: var(--signal);
+        color: var(--ink);
+        background: rgb(255 255 255 / 0.035);
+      }
+
+      .nav-index {
+        color: var(--dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      main {
+        margin-left: var(--sidebar);
+      }
+
+      .hero {
+        position: relative;
+        min-height: 86vh;
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(340px, 0.75fr);
+        gap: 60px;
+        align-items: end;
+        padding: 86px clamp(34px, 6vw, 96px) 68px;
+        overflow: hidden;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .hero::after {
+        position: absolute;
+        top: 10%;
+        right: -11%;
+        width: 48vw;
+        aspect-ratio: 1;
+        border: 1px solid rgb(105 214 210 / 0.24);
+        border-radius: 50%;
+        box-shadow:
+          0 0 0 72px rgb(105 214 210 / 0.025),
+          0 0 0 144px rgb(105 214 210 / 0.018);
+        content: "";
+        pointer-events: none;
+      }
+
+      .hero-copy {
+        position: relative;
+        z-index: 1;
+      }
+
+      .hero-kicker {
+        margin-bottom: 24px;
+        color: var(--cyan);
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .hero h2 {
+        max-width: 900px;
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(56px, 7.2vw, 116px);
+        font-weight: 400;
+        line-height: 0.88;
+        letter-spacing: -0.065em;
+      }
+
+      .hero h2 em {
+        color: var(--signal);
+        font-weight: inherit;
+      }
+
+      .hero-summary {
+        max-width: 760px;
+        margin: 34px 0 0;
+        color: #cbc8be;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 19px;
+        line-height: 1.55;
+      }
+
+      .hero-side {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        gap: 12px;
+      }
+
+      .status-card {
+        padding: 20px;
+        border: 1px solid var(--line-bright);
+        background: rgb(17 20 22 / 0.8);
+        box-shadow: var(--shadow);
+      }
+
+      .status-card.primary {
+        border-color: var(--signal);
+      }
+
+      .status-label {
+        color: var(--dim);
+        font-size: 9px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .status-value {
+        margin-top: 8px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 24px;
+        line-height: 1.15;
+      }
+
+      .status-detail {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      section {
+        padding: 88px clamp(34px, 6vw, 96px);
+        border-bottom: 1px solid var(--line);
+        scroll-margin-top: 24px;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 22px;
+        margin-bottom: 42px;
+      }
+
+      .section-no {
+        padding-top: 8px;
+        color: var(--signal);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+      }
+
+      .section-title h3 {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(37px, 4vw, 64px);
+        font-weight: 400;
+        line-height: 1;
+        letter-spacing: -0.045em;
+      }
+
+      .section-title p {
+        max-width: 790px;
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .callout {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 16px;
+        padding: 18px 20px;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--cyan);
+        background: var(--panel);
+      }
+
+      .callout.warning {
+        border-left-color: var(--yellow);
+      }
+
+      .callout.signal {
+        border-left-color: var(--signal);
+      }
+
+      .callout-mark {
+        color: var(--cyan);
+        font-size: 18px;
+      }
+
+      .callout.warning .callout-mark {
+        color: var(--yellow);
+      }
+
+      .callout.signal .callout-mark {
+        color: var(--signal);
+      }
+
+      .callout strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink);
+        font-size: 12px;
+      }
+
+      .callout span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .system-map {
+        margin-top: 30px;
+        padding: 26px;
+        border: 1px solid var(--line-bright);
+        background: #0c0f10;
+        box-shadow: var(--shadow);
+      }
+
+      .map-row {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(130px, 1fr));
+        gap: 22px;
+        align-items: stretch;
+      }
+
+      .map-node {
+        position: relative;
+        min-height: 136px;
+        padding: 17px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .map-node:not(:last-child)::after {
+        position: absolute;
+        top: 50%;
+        right: -18px;
+        width: 13px;
+        border-top: 1px solid var(--signal);
+        content: "";
+      }
+
+      .map-node:not(:last-child)::before {
+        position: absolute;
+        top: calc(50% - 3px);
+        right: -19px;
+        width: 6px;
+        height: 6px;
+        border-top: 1px solid var(--signal);
+        border-right: 1px solid var(--signal);
+        transform: rotate(45deg);
+        content: "";
+      }
+
+      .node-tag {
+        color: var(--dim);
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .map-node h4 {
+        margin: 10px 0 7px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 20px;
+        font-weight: 400;
+        line-height: 1.08;
+      }
+
+      .map-node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .map-node[data-tone="signal"] {
+        border-color: var(--signal);
+      }
+
+      .map-node[data-tone="cyan"] {
+        border-color: var(--cyan);
+      }
+
+      .layer-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 15px;
+      }
+
+      .layer-card {
+        position: relative;
+        min-height: 290px;
+        padding: 22px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        transition: 160ms ease;
+      }
+
+      .layer-card::before {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 3px;
+        background: var(--accent, var(--signal));
+        content: "";
+      }
+
+      .layer-card:hover {
+        border-color: var(--line-bright);
+        transform: translateY(-3px);
+        box-shadow: 0 14px 42px rgb(0 0 0 / 0.24);
+      }
+
+      .layer-index {
+        color: var(--accent, var(--signal));
+        font-size: 10px;
+      }
+
+      .layer-card h4 {
+        margin: 30px 0 9px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 25px;
+        font-weight: 400;
+        line-height: 1.05;
+      }
+
+      .layer-card > p {
+        min-height: 54px;
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .compact-list {
+        display: grid;
+        gap: 7px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .compact-list li {
+        position: relative;
+        padding-left: 14px;
+        color: #c8c7be;
+        font-size: 10px;
+      }
+
+      .compact-list li::before {
+        position: absolute;
+        top: 0.65em;
+        left: 0;
+        width: 6px;
+        border-top: 1px solid var(--accent, var(--signal));
+        content: "";
+      }
+
+      .responsibility-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .responsibility {
+        padding: 24px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .responsibility h4 {
+        margin: 0 0 16px;
+        color: var(--accent, var(--signal));
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .responsibility p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .flow {
+        display: grid;
+        gap: 1px;
+        border: 1px solid var(--line);
+        background: var(--line);
+      }
+
+      .flow-step {
+        display: grid;
+        grid-template-columns: 90px minmax(170px, 0.75fr) minmax(0, 1.25fr);
+        gap: 18px;
+        align-items: center;
+        padding: 18px 20px;
+        background: var(--panel);
+      }
+
+      .flow-step:hover {
+        background: var(--panel-2);
+      }
+
+      .flow-seq {
+        color: var(--signal);
+        font-size: 10px;
+        letter-spacing: 0.12em;
+      }
+
+      .flow-name {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 18px;
+      }
+
+      .flow-detail {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .state-machine {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin: 26px 0;
+      }
+
+      .state {
+        position: relative;
+        padding: 20px 16px;
+        border: 1px solid var(--line);
+        text-align: center;
+        background: var(--panel);
+      }
+
+      .state:not(:last-child)::after {
+        position: absolute;
+        top: 50%;
+        right: -11px;
+        width: 8px;
+        border-top: 1px solid var(--line-bright);
+        content: "";
+      }
+
+      .state strong {
+        display: block;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 17px;
+        font-weight: 400;
+      }
+
+      .state span {
+        display: block;
+        margin-top: 6px;
+        color: var(--dim);
+        font-size: 9px;
+      }
+
+      .state[data-active="true"] {
+        border-color: var(--cyan);
+        box-shadow: inset 0 -2px var(--cyan);
+      }
+
+      .code-block {
+        overflow: auto;
+        padding: 20px;
+        border: 1px solid var(--line);
+        color: #d4d0c5;
+        background: #080a0b;
+        font-size: 10px;
+        line-height: 1.75;
+        white-space: pre;
+      }
+
+      .code-block .key {
+        color: var(--cyan);
+      }
+
+      .code-block .type {
+        color: var(--yellow);
+      }
+
+      .code-block .comment {
+        color: var(--dim);
+      }
+
+      .automation-stack {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 20px;
+      }
+
+      .stack-layers {
+        display: grid;
+        gap: 8px;
+      }
+
+      .stack-layer {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 18px;
+        padding: 17px 19px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .stack-layer strong {
+        color: var(--accent, var(--signal));
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .stack-layer span {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .evidence-card {
+        padding: 22px;
+        border: 1px solid var(--yellow);
+        background:
+          linear-gradient(135deg, rgb(231 199 91 / 0.08), transparent 60%),
+          var(--panel);
+      }
+
+      .evidence-card h4 {
+        margin: 0 0 12px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 25px;
+        font-weight: 400;
+      }
+
+      .evidence-card p {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .recording-pipe {
+        display: grid;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .pipe-item {
+        padding: 10px 12px;
+        border-left: 2px solid var(--yellow);
+        background: rgb(255 255 255 / 0.028);
+        color: #d8d4c8;
+        font-size: 9px;
+      }
+
+      .matrix-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+      }
+
+      table {
+        width: 100%;
+        min-width: 920px;
+        border-collapse: collapse;
+        background: var(--panel);
+        font-size: 10px;
+      }
+
+      th,
+      td {
+        padding: 14px 16px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        color: var(--ink);
+        background: #191d1f;
+        font-size: 9px;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      td {
+        color: var(--muted);
+      }
+
+      td:first-child {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 3px 7px;
+        border: 1px solid currentColor;
+        border-radius: 99px;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .badge.green {
+        color: var(--green);
+      }
+
+      .badge.yellow {
+        color: var(--yellow);
+      }
+
+      .badge.blue {
+        color: var(--blue);
+      }
+
+      .badge.red {
+        color: var(--danger);
+      }
+
+      .transport-diagram {
+        display: grid;
+        gap: 18px;
+      }
+
+      .transport-lane {
+        display: grid;
+        grid-template-columns: 150px repeat(4, minmax(120px, 1fr));
+        gap: 12px;
+        align-items: center;
+      }
+
+      .lane-label {
+        color: var(--accent, var(--signal));
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .lane-hop {
+        position: relative;
+        min-height: 84px;
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        border: 1px solid var(--line);
+        color: #d5d2c7;
+        text-align: center;
+        background: var(--panel);
+        font-size: 9px;
+      }
+
+      .lane-hop:not(:last-child)::after {
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        width: 8px;
+        border-top: 1px dashed var(--line-bright);
+        content: "";
+      }
+
+      .ssh-note {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 28px;
+      }
+
+      .decision {
+        padding: 20px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .decision.selected {
+        border-color: var(--green);
+      }
+
+      .decision h4 {
+        margin: 0 0 8px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 20px;
+        font-weight: 400;
+      }
+
+      .decision p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .security-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .security-card {
+        padding: 20px;
+        border-top: 2px solid var(--accent, var(--signal));
+        background: var(--panel);
+      }
+
+      .security-card h4 {
+        margin: 0 0 12px;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .security-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .roadmap {
+        position: relative;
+        display: grid;
+        gap: 14px;
+      }
+
+      .phase {
+        display: grid;
+        grid-template-columns: 110px minmax(200px, 0.7fr) minmax(0, 1.3fr);
+        gap: 20px;
+        padding: 22px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .phase-status {
+        color: var(--dim);
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .phase-status.done {
+        color: var(--green);
+      }
+
+      .phase h4 {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 21px;
+        font-weight: 400;
+      }
+
+      .phase p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .decision-log {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .decision-log article {
+        padding: 18px 20px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .decision-log strong {
+        display: block;
+        color: var(--green);
+        font-size: 9px;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .decision-log h4 {
+        margin: 11px 0 7px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 20px;
+        font-weight: 400;
+      }
+
+      .decision-log p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      footer {
+        padding: 42px clamp(34px, 6vw, 96px) 70px;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .mobile-menu {
+        display: none;
+      }
+
+      .filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 22px;
+      }
+
+      .filter-button {
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .filter-button:hover,
+      .filter-button.active {
+        border-color: var(--signal);
+        color: var(--ink);
+        background: rgb(255 94 58 / 0.08);
+      }
+
+      [data-filtered="true"] {
+        display: none !important;
+      }
+
+      @media (max-width: 1180px) {
+        .map-row,
+        .layer-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .map-node::before,
+        .map-node::after {
+          display: none;
+        }
+
+        .security-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .automation-stack {
+          grid-template-columns: 1fr;
+        }
+
+        .transport-lane {
+          grid-template-columns: 120px repeat(4, minmax(105px, 1fr));
+        }
+      }
+
+      @media (max-width: 860px) {
+        :root {
+          --sidebar: 0px;
+        }
+
+        .rail {
+          display: none;
+        }
+
+        main {
+          margin-left: 0;
+        }
+
+        .mobile-menu {
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          display: flex;
+          justify-content: space-between;
+          padding: 12px 18px;
+          border-bottom: 1px solid var(--line);
+          color: var(--muted);
+          background: rgb(11 13 14 / 0.92);
+          backdrop-filter: blur(14px);
+          font-size: 10px;
+        }
+
+        .hero {
+          min-height: auto;
+          grid-template-columns: 1fr;
+          padding-top: 72px;
+        }
+
+        .hero h2 {
+          font-size: clamp(52px, 15vw, 84px);
+        }
+
+        .section-head {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+
+        .layer-grid,
+        .responsibility-grid,
+        .ssh-note,
+        .decision-log {
+          grid-template-columns: 1fr;
+        }
+
+        .map-row {
+          grid-template-columns: 1fr;
+        }
+
+        .state-machine {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .state::after {
+          display: none;
+        }
+
+        .flow-step,
+        .phase {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+
+        .transport-lane {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .lane-label {
+          grid-column: 1 / -1;
+        }
+
+        .security-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media print {
+        :root {
+          color-scheme: light;
+          --ink: #121416;
+          --muted: #4c5254;
+          --dim: #747a7c;
+          --paper: #fff;
+          --panel: #f5f4ef;
+          --panel-2: #eeece6;
+          --line: #c8c9c4;
+          --line-bright: #8b8f90;
+        }
+
+        body {
+          background: white;
+        }
+
+        .rail,
+        .mobile-menu,
+        .filter-bar {
+          display: none;
+        }
+
+        main {
+          margin-left: 0;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        section {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="rail-brand">
+          <p class="eyebrow">Architecture 01</p>
+          <h1>Collaborative Browser Runtime</h1>
+          <div class="rail-meta">
+            <strong>Status:</strong> Phase 0 decisions pinned<br />
+            <strong>Branch:</strong> codex/browser-preview-port<br />
+            <strong>Updated:</strong> June 12, 2026
+          </div>
+        </div>
+        <nav class="nav" aria-label="Architecture sections">
+          <div class="nav-group">
+            <div class="nav-label">System</div>
+            <a href="#north-star"><span class="nav-index">00</span><span>North star</span></a>
+            <a href="#system-map"><span class="nav-index">01</span><span>System map</span></a>
+            <a href="#layers"><span class="nav-index">02</span><span>Layer model</span></a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-label">Browser</div>
+            <a href="#session-model"><span class="nav-index">03</span><span>Session + tab model</span></a>
+            <a href="#webview-host"><span class="nav-index">04</span><span>Webview host</span></a>
+            <a href="#lifecycle"><span class="nav-index">05</span><span>Lifecycle</span></a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-label">Control</div>
+            <a href="#automation"><span class="nav-index">06</span><span>Automation</span></a>
+            <a href="#evidence"><span class="nav-index">07</span><span>Recording + evidence</span></a>
+            <a href="#collaboration"><span class="nav-index">08</span><span>Human + agent</span></a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-label">Remote</div>
+            <a href="#reachability"><span class="nav-index">09</span><span>Reachability matrix</span></a>
+            <a href="#tunnel"><span class="nav-index">10</span><span>Preview tunnel</span></a>
+            <a href="#ssh-relay"><span class="nav-index">11</span><span>SSH + T3 Connect</span></a>
+          </div>
+          <div class="nav-group">
+            <div class="nav-label">Delivery</div>
+            <a href="#security"><span class="nav-index">12</span><span>Security</span></a>
+            <a href="#roadmap"><span class="nav-index">13</span><span>Roadmap</span></a>
+            <a href="#decisions"><span class="nav-index">14</span><span>Pinned decisions</span></a>
+          </div>
+        </nav>
+      </aside>
+
+      <div class="mobile-menu"><span>T3 / Browser Architecture</span><span>2026.06.12</span></div>
+
+      <main>
+        <header class="hero" id="north-star">
+          <div class="hero-copy">
+            <div class="hero-kicker">One real browser / multiple actors / any environment</div>
+            <h2>A browser that is <em>shared state</em>, not a preview.</h2>
+            <p class="hero-summary">
+              T3 owns a route-durable Chromium page that users and agents manipulate together. The page
+              survives panel changes—not renderer or window death—accepts semantic programmatic control, records evidence, and
+              reaches development services whether they are local, SSH-hosted, private-networked,
+              or connected through T3 Connect.
+            </p>
+          </div>
+          <div class="hero-side">
+            <div class="status-card primary">
+              <div class="status-label">Core invariant</div>
+              <div class="status-value">One session. One page state.</div>
+              <div class="status-detail">
+                Human interaction, agent automation, recording, DevTools, console, and network
+                inspection all target the same guest WebContents.
+              </div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Selected browser host</div>
+              <div class="status-value">Route-durable renderer-hosted &lt;webview&gt;</div>
+              <div class="status-detail">
+                App-level lifetime; desktop-main control; explicit lost state after renderer reload, crash, or window close.
+              </div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Remote model</div>
+              <div class="status-value">Environment stream gateway</div>
+              <div class="status-detail">
+                A stable control endpoint carries authorized streams to arbitrary environment-local
+                ports. Preview ports do not become public endpoints.
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section id="system-map">
+          <div class="section-head">
+            <div class="section-no">01 / SYSTEM</div>
+            <div class="section-title">
+              <h3>End-to-end ownership map</h3>
+              <p>
+                The internal browser API is session-oriented and transport-neutral. MCP, skills,
+                CLI tools, and future adapters are clients of the control service—not alternate
+                browser implementations.
+              </p>
+            </div>
+          </div>
+          <div class="callout signal">
+            <div class="callout-mark">→</div>
+            <div>
+              <strong>Authority flows toward the real page; state flows back through revisions and events.</strong>
+              <span>The renderer may relay transport, but it does not decide whether a browser exists or whether automation is permitted.</span>
+            </div>
+          </div>
+          <div class="system-map" aria-label="End-to-end system map">
+            <div class="map-row">
+              <article class="map-node">
+                <div class="node-tag">Clients</div>
+                <h4>Agent + Human</h4>
+                <p>MCP, skill client, CLI, direct UI input, DevTools, recordings.</p>
+              </article>
+              <article class="map-node" data-tone="signal">
+                <div class="node-tag">Environment server</div>
+                <h4>Browser Control Service</h4>
+                <p>Authorization, sessions, routing, command queues, control leases, target resolution.</p>
+              </article>
+              <article class="map-node">
+                <div class="node-tag">Desktop transport</div>
+                <h4>Typed Relay + IPC</h4>
+                <p>Environment connection enters renderer, then typed IPC reaches desktop main.</p>
+              </article>
+              <article class="map-node" data-tone="cyan">
+                <div class="node-tag">Desktop host</div>
+                <h4>Electron Browser Host</h4>
+                <p>Persistent CDP, webview registry, presentation bounds, recording, guest security.</p>
+              </article>
+              <article class="map-node" data-tone="signal">
+                <div class="node-tag">Shared state</div>
+                <h4>Guest WebContents</h4>
+                <p>The actual Chromium page both human and agent observe and manipulate.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section id="layers">
+          <div class="section-head">
+            <div class="section-no">02 / LAYERS</div>
+            <div class="section-title">
+              <h3>Six boundaries, one browser product</h3>
+              <p>
+                Each layer has a narrow authority. This prevents React visibility, provider quirks,
+                network reachability, and artifact storage from leaking into the browser core.
+              </p>
+            </div>
+          </div>
+          <div class="layer-grid">
+            <article class="layer-card" style="--accent: var(--purple)">
+              <div class="layer-index">L1 / ENTRY</div>
+              <h4>Agent Adapters</h4>
+              <p>Provider-neutral ways to ask for browser work.</p>
+              <ul class="compact-list">
+                <li>MCP toolkit</li>
+                <li>Browser skill + Node helper</li>
+                <li>CLI / agent-browser compatibility</li>
+                <li>Internal TypeScript test client</li>
+              </ul>
+            </article>
+            <article class="layer-card" style="--accent: var(--signal)">
+              <div class="layer-index">L2 / CONTROL</div>
+              <h4>Browser Control Service</h4>
+              <p>The internal API and policy boundary.</p>
+              <ul class="compact-list">
+                <li>Invocation authorization</li>
+                <li>Per-tab command serialization</li>
+                <li>Cancellation + deadlines</li>
+                <li>Control leases + interruption</li>
+              </ul>
+            </article>
+            <article class="layer-card" style="--accent: var(--yellow)">
+              <div class="layer-index">L3 / STATE</div>
+              <h4>Session Registry</h4>
+              <p>Authoritative logical lifecycle and recovery state.</p>
+              <ul class="compact-list">
+                <li>Stable session + tab IDs</li>
+                <li>Host assignment</li>
+                <li>Lifecycle revisions</li>
+                <li>Recording + artifact references</li>
+              </ul>
+            </article>
+            <article class="layer-card" style="--accent: var(--cyan)">
+              <div class="layer-index">L4 / HOST</div>
+              <h4>Electron Browser Host</h4>
+              <p>Owns the relationship between durable DOM webviews and desktop main.</p>
+              <ul class="compact-list">
+                <li>App-level mounted webviews</li>
+                <li>Visible/offscreen/covered parking</li>
+                <li>Guest WebContents validation</li>
+                <li>Persistent debugger connections</li>
+              </ul>
+            </article>
+            <article class="layer-card" style="--accent: var(--green)">
+              <div class="layer-index">L5 / REACH</div>
+              <h4>Target + Tunnel Service</h4>
+              <p>Resolves environment-relative targets into browser-reachable loopback URLs.</p>
+              <ul class="compact-list">
+                <li>Direct URL classification</li>
+                <li>Environment-port grants</li>
+                <li>Raw TCP stream tunnels</li>
+                <li>SSH, relay, LAN, Tailscale transport</li>
+              </ul>
+            </article>
+            <article class="layer-card" style="--accent: var(--blue)">
+              <div class="layer-index">L6 / EVIDENCE</div>
+              <h4>Artifact Service</h4>
+              <p>Stores durable evidence without blocking control/event traffic.</p>
+              <ul class="compact-list">
+                <li>H.264 MP4 recordings</li>
+                <li>Action timeline + screenshots</li>
+                <li>Console, exceptions, network</li>
+                <li>Downloads, HAR, traces</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="session-model">
+          <div class="section-head">
+            <div class="section-no">03 / MODEL</div>
+            <div class="section-title">
+              <h3>Session, tab, view, and controller are separate</h3>
+              <p>
+                The old preview model conflates “panel mounted” with “browser exists.” The new model
+                gives each concern its own state and lifecycle.
+              </p>
+            </div>
+          </div>
+          <div class="responsibility-grid">
+            <article class="responsibility" style="--accent: var(--signal)">
+              <h4>BrowserSession</h4>
+              <p>Logical browser workspace bound to an environment, thread, host, storage partition, and artifact history.</p>
+              <ul class="compact-list">
+                <li>Outlives panel and route mounts</li>
+                <li>Owns active tab selection</li>
+                <li>Tracks recovery + host availability</li>
+                <li>May be visible, hidden, detached, suspended, or closed</li>
+              </ul>
+            </article>
+            <article class="responsibility" style="--accent: var(--cyan)">
+              <h4>BrowserTab</h4>
+              <p>One real Chromium page with origin, control, navigation, revision, and recording state.</p>
+              <ul class="compact-list">
+                <li>Created by human, agent, or system</li>
+                <li>Can be adopted and handed off</li>
+                <li>Has one host and one guest WebContents</li>
+                <li>Element references expire with document revision</li>
+              </ul>
+            </article>
+          </div>
+          <div class="code-block" aria-label="Core contracts"><span class="comment">// contracts remain schema-only</span>
+<span class="key">BrowserSession</span> {
+  id, environmentId, threadId, hostId, activeTabId,
+  lifecycle: <span class="type">creating | ready | suspended | recovering | closed</span>,
+  visibility: <span class="type">visible | hidden | detached</span>,
+  controller: <span class="type">human | agent | none</span>,
+  partitionId, recordingId, revision
+}
+
+<span class="key">BrowserTab</span> {
+  id, sessionId, webContentsId, origin,
+  state: <span class="type">opening | ready | closing | closed</span>,
+  presentation: <span class="type">visible | parked-idle | parked-recording</span>,
+  url, title, documentRevision, controller
+}</div>
+        </section>
+
+        <section id="webview-host">
+          <div class="section-head">
+            <div class="section-no">04 / HOST</div>
+            <div class="section-title">
+              <h3>The tab manager owns durable webviews</h3>
+              <p>
+                Keep the existing real Electron webview, but lift it out of `PreviewPanel` and thread
+                route lifecycle. A window-level host maintains browser elements for every live tab.
+              </p>
+            </div>
+          </div>
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-seq">HOST / 01</div>
+              <div class="flow-name">Create tab</div>
+              <div class="flow-detail">Session registry assigns tab ID and partition. App-level host mounts one webview and waits for `dom-ready`.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">HOST / 02</div>
+              <div class="flow-name">Register guest</div>
+              <div class="flow-detail">Renderer reports `webContentsId`; desktop main verifies type=`webview` and correct host window before accepting it.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">HOST / 03</div>
+              <div class="flow-name">Attach control</div>
+              <div class="flow-detail">Desktop main creates the persistent CDP connection, navigation listeners, console/network buffers, and recording controller.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">HOST / 04</div>
+              <div class="flow-name">Present surface</div>
+              <div class="flow-detail">Panel reports bounds. Host places the same webview at visible bounds or an internal parking surface without recreating the page.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">HOST / 05</div>
+              <div class="flow-name">Explicit close</div>
+              <div class="flow-detail">Only session/tab lifecycle commands close the guest. React unmounts, route changes, and panel closure never imply browser destruction.</div>
+            </div>
+          </div>
+          <div class="ssh-note">
+            <div class="decision selected">
+              <span class="badge green">Selected</span>
+              <h4>Renderer-hosted &lt;webview&gt;</h4>
+              <p>Preserves the existing composited browser surface, overlays, clipping, capture behavior, and user interaction model.</p>
+            </div>
+            <div class="decision">
+              <span class="badge red">Rejected for now</span>
+              <h4>WebContentsView</h4>
+              <p>Playwright-visible and main-owned, but hidden/detached capture failed and native view stacking complicates collaboration UI.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="lifecycle">
+          <div class="section-head">
+            <div class="section-no">05 / LIFE</div>
+            <div class="section-title">
+              <h3>Presentation state is not process state</h3>
+              <p>
+                Tabs remain live while hidden. Resource policy can explicitly suspend inactive tabs,
+                but never silently evicts a controlled or recording session.
+              </p>
+            </div>
+          </div>
+          <div class="state-machine">
+            <div class="state"><strong>Creating</strong><span>webview mounting</span></div>
+            <div class="state" data-active="true"><strong>Ready</strong><span>visible or parked</span></div>
+            <div class="state"><strong>Suspended</strong><span>explicit reload required</span></div>
+            <div class="state"><strong>Recovering</strong><span>host reconnect</span></div>
+            <div class="state"><strong>Closed</strong><span>terminal</span></div>
+          </div>
+          <div class="responsibility-grid">
+            <article class="responsibility" style="--accent: var(--cyan)">
+              <h4>Idle hidden tab</h4>
+              <p>Park offscreen at the preserved viewport size. Timers, network, CDP, and semantic automation continue.</p>
+              <ul class="compact-list">
+                <li>Lowest practical compositor cost</li>
+                <li>No continuous recording frames</li>
+                <li>Snapshot/capture available when surface remains valid</li>
+              </ul>
+            </article>
+            <article class="responsibility" style="--accent: var(--yellow)">
+              <h4>Hidden recording tab</h4>
+              <p>Move to a covered full-size parking surface inside the window. The user sees app chrome, not the browser, while Chromium keeps painting frames.</p>
+              <ul class="compact-list">
+                <li>CDP screencast remains active</li>
+                <li>Recording does not force panel open</li>
+                <li>Same page and viewport are preserved</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="automation">
+          <div class="section-head">
+            <div class="section-no">06 / AUTO</div>
+            <div class="section-title">
+              <h3>Playwright semantics without Playwright ownership</h3>
+              <p>
+                Direct Playwright CDP attachment does not expose an Electron guest target as a
+                `Page`. The selected adapter uses persistent CDP plus a versioned injected utility
+                runtime to provide semantic, agent-friendly browser actions.
+              </p>
+            </div>
+          </div>
+          <div class="automation-stack">
+            <div class="stack-layers">
+              <div class="stack-layer" style="--accent: var(--purple)">
+                <strong>Agent surface</strong>
+                <span>`browser.open`, semantic locate, click, type, drag, wait, assert, record, console, network, tabs.</span>
+              </div>
+              <div class="stack-layer" style="--accent: var(--signal)">
+                <strong>Control service</strong>
+                <span>Capability checks, control lease, command ID, deadline, cancellation, page revision, result evidence.</span>
+              </div>
+              <div class="stack-layer" style="--accent: var(--yellow)">
+                <strong>Semantic adapter</strong>
+                <span>Version-pinned Playwright injected runtime, locator re-resolution, actionability, shadow DOM, and per-frame routing.</span>
+              </div>
+              <div class="stack-layer" style="--accent: var(--cyan)">
+                <strong>Persistent CDP</strong>
+                <span>Accessibility, DOM, Runtime, Input, Page, Network, Log; one serialized connection per tab.</span>
+              </div>
+              <div class="stack-layer" style="--accent: var(--green)">
+                <strong>Guest page</strong>
+                <span>The same live WebContents displayed to the user. No synchronized second browser.</span>
+              </div>
+            </div>
+            <aside class="evidence-card">
+              <span class="badge yellow">Phase 0.5 proof</span>
+              <h4>Playwright's injected runtime works over CDP.</h4>
+              <p>
+                The 307 KB runtime installed in about 6.5–8.5 ms, resolved role/name through shadow DOM,
+                and re-resolved a locator after its element was replaced. OOPIF routing remains T3-owned.
+              </p>
+              <div class="recording-pipe">
+                <div class="pipe-item">locator description → fresh resolution</div>
+                <div class="pipe-item">injected actionability → native dispatch</div>
+                <div class="pipe-item">frame target → isolated runtime</div>
+                <div class="pipe-item">ephemeral node reference → optional fast path</div>
+              </div>
+            </aside>
+          </div>
+          <div class="callout warning" style="margin-top: 22px">
+            <div class="callout-mark">!</div>
+            <div>
+              <strong>Raw CDP is a privileged developer escape hatch.</strong>
+              <span>Do not expose an unauthenticated process-wide Chromium debugging port in production. Normal agents use the Browser Control Service.</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="evidence">
+          <div class="section-head">
+            <div class="section-no">07 / PROOF</div>
+            <div class="section-title">
+              <h3>Record the work, not the browser UX</h3>
+              <p>
+                Video and structured traces are review artifacts. The interactive experience remains
+                the real browser; frames are sampled only for evidence generation.
+              </p>
+            </div>
+          </div>
+          <div class="system-map">
+            <div class="map-row" style="grid-template-columns: repeat(4, minmax(150px, 1fr))">
+              <article class="map-node" data-tone="cyan">
+                <div class="node-tag">Capture</div>
+                <h4>CDP Screencast</h4>
+                <p>Guest-only compositor frames. Sample to a bounded target frame rate.</p>
+              </article>
+              <article class="map-node">
+                <div class="node-tag">Worker surface</div>
+                <h4>Recording Canvas</h4>
+                <p>Isolated renderer draws frames and optional agent/human cursor overlays.</p>
+              </article>
+              <article class="map-node" data-tone="signal">
+                <div class="node-tag">Encode</div>
+                <h4>MediaRecorder</h4>
+                <p>H.264 MP4, initial 12 fps, no external ffmpeg requirement.</p>
+              </article>
+              <article class="map-node">
+                <div class="node-tag">Persist</div>
+                <h4>Artifact Service</h4>
+                <p>Video, timeline, screenshots, logs, network, downloads, traces.</p>
+              </article>
+            </div>
+          </div>
+          <div class="responsibility-grid" style="margin-top: 18px">
+            <article class="responsibility" style="--accent: var(--yellow)">
+              <h4>Structured action timeline</h4>
+              <ul class="compact-list">
+                <li>Actor, action, input summary, status</li>
+                <li>Before/after document revisions</li>
+                <li>Recording timestamp and screenshot refs</li>
+                <li>Failure, interruption, or timeout reason</li>
+              </ul>
+            </article>
+            <article class="responsibility" style="--accent: var(--blue)">
+              <h4>Diagnostic evidence</h4>
+              <ul class="compact-list">
+                <li>Console and uncaught exceptions</li>
+                <li>Failed requests and response summaries</li>
+                <li>Optional HAR / deeper trace mode</li>
+                <li>Secret redaction before persistence</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="collaboration">
+          <div class="section-head">
+            <div class="section-no">08 / SHARE</div>
+            <div class="section-title">
+              <h3>Human interruption is a feature</h3>
+              <p>
+                The browser is collaborative, not locked. Explicit control leases make conflicting
+                input predictable while allowing observation and immediate human takeover.
+              </p>
+            </div>
+          </div>
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-seq">LEASE / READ</div>
+              <div class="flow-name">Observe freely</div>
+              <div class="flow-detail">Snapshots, URL, title, console, network, and action state can continue while another actor controls input.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">LEASE / WRITE</div>
+              <div class="flow-name">Serialize mutations</div>
+              <div class="flow-detail">Clicks, typing, navigation, drag, and uploads run through the per-tab command queue with one active controller.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">LEASE / BREAK</div>
+              <div class="flow-name">Human interrupts</div>
+              <div class="flow-detail">Pointer or keyboard input cancels the conflicting agent operation and returns a typed interruption result.</div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-seq">LEASE / HAND</div>
+              <div class="flow-name">Adopt or hand off</div>
+              <div class="flow-detail">Tabs carry human/agent origin and can be intentionally adopted, finalized, retained, or returned to the user.</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="reachability">
+          <div class="section-head">
+            <div class="section-no">09 / REACH</div>
+            <div class="section-title">
+              <h3>Connection and reachability matrix</h3>
+              <p>
+                The browser should accept environment-relative targets. Resolution decides whether
+                the browser loads directly or through a private loopback tunnel.
+              </p>
+            </div>
+          </div>
+          <div class="filter-bar" aria-label="Reachability filters">
+            <button class="filter-button active" data-filter="all">All scenarios</button>
+            <button class="filter-button" data-filter="direct">Direct reachability</button>
+            <button class="filter-button" data-filter="tunnel">Tunneled reachability</button>
+            <button class="filter-button" data-filter="public">Public sharing</button>
+          </div>
+          <div class="matrix-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Environment</th>
+                  <th>Target example</th>
+                  <th>Browser path</th>
+                  <th>Transport</th>
+                  <th>Product behavior</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-kind="direct">
+                  <td>Same machine</td>
+                  <td>`localhost:5173`</td>
+                  <td>Direct local URL</td>
+                  <td><span class="badge green">Direct</span></td>
+                  <td>No tunnel. Preserve normal localhost browser semantics.</td>
+                </tr>
+                <tr data-kind="direct">
+                  <td>LAN / Tailscale</td>
+                  <td>`mac-mini.local:5173`</td>
+                  <td>Direct private-network URL when policy allows</td>
+                  <td><span class="badge blue">Private network</span></td>
+                  <td>Prefer direct reachability; fall back to environment stream if unavailable.</td>
+                </tr>
+                <tr data-kind="tunnel">
+                  <td>SSH environment</td>
+                  <td>remote `127.0.0.1:5173`</td>
+                  <td>desktop loopback listener → preview stream → SSH-forwarded T3 server</td>
+                  <td><span class="badge yellow">T3 stream over SSH</span></td>
+                  <td>Default path. Native `ssh -L` may be a later optimization.</td>
+                </tr>
+                <tr data-kind="tunnel">
+                  <td>T3 Connect relay</td>
+                  <td>environment `127.0.0.1:3000`</td>
+                  <td>desktop loopback listener → preview stream → existing environment hostname</td>
+                  <td><span class="badge yellow">T3 stream over relay</span></td>
+                  <td>One stable public control endpoint; preview ports remain private logical streams.</td>
+                </tr>
+                <tr data-kind="tunnel">
+                  <td>Docker / WSL / VM</td>
+                  <td>environment-local service</td>
+                  <td>environment-port target → environment stream gateway</td>
+                  <td><span class="badge yellow">T3 stream</span></td>
+                  <td>Agent never guesses host IPs. Environment resolves its own loopback target.</td>
+                </tr>
+                <tr data-kind="public">
+                  <td>Public app sharing</td>
+                  <td>share preview with external person</td>
+                  <td>dedicated published endpoint</td>
+                  <td><span class="badge red">Separate product</span></td>
+                  <td>Not the browser-preview tunnel. Requires explicit publication and separate access policy.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tunnel">
+          <div class="section-head">
+            <div class="section-no">10 / TUNNEL</div>
+            <div class="section-title">
+              <h3>One environment endpoint, many private streams</h3>
+              <p>
+                Do not provision a public Cloudflare route for every dev port. The existing T3 server
+                endpoint carries authorized preview streams to environment-local TCP targets.
+              </p>
+            </div>
+          </div>
+          <div class="transport-diagram">
+            <div class="transport-lane" style="--accent: var(--cyan)">
+              <div class="lane-label">Browser side</div>
+              <div class="lane-hop">Guest webview<br />`127.0.0.1:49101`</div>
+              <div class="lane-hop">Desktop loopback<br />TCP listener</div>
+              <div class="lane-hop">Authenticated<br />preview stream</div>
+              <div class="lane-hop">Environment server<br />stream endpoint</div>
+            </div>
+            <div class="transport-lane" style="--accent: var(--green)">
+              <div class="lane-label">Environment side</div>
+              <div class="lane-hop">Grant validation</div>
+              <div class="lane-hop">Target policy<br />loopback + port</div>
+              <div class="lane-hop">TCP dial<br />`127.0.0.1:5173`</div>
+              <div class="lane-hop">Vite / Next / app<br />HTTP + WebSocket</div>
+            </div>
+          </div>
+          <div class="callout" style="margin-top: 24px">
+            <div class="callout-mark">↔</div>
+            <div>
+              <strong>Raw TCP preserves browser behavior.</strong>
+              <span>Root-relative assets, redirects, cookies, streaming responses, HMR upgrades, and application WebSockets pass without response rewriting.</span>
+            </div>
+          </div>
+          <div class="responsibility-grid" style="margin-top: 18px">
+            <article class="responsibility" style="--accent: var(--signal)">
+              <h4>Initial stream model</h4>
+              <ul class="compact-list">
+                <li>One WebSocket per accepted browser TCP connection</li>
+                <li>Dedicated from RPC/event traffic</li>
+                <li>Backpressure, timeout, cancellation, half-close</li>
+                <li>Easy to implement and diagnose</li>
+              </ul>
+            </article>
+            <article class="responsibility" style="--accent: var(--purple)">
+              <h4>Scale-up model</h4>
+              <ul class="compact-list">
+                <li>Multiplex streams per browser session</li>
+                <li>Per-stream flow-control windows</li>
+                <li>Bounded queues and concurrency</li>
+                <li>Only after profiling real asset-heavy apps</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="ssh-relay">
+          <div class="section-head">
+            <div class="section-no">11 / ROUTES</div>
+            <div class="section-title">
+              <h3>SSH and T3 Connect carry the same preview protocol</h3>
+              <p>
+                Reachability transport changes; browser control does not. This keeps lifecycle,
+                grants, diagnostics, recording, and agent behavior consistent across environments.
+              </p>
+            </div>
+          </div>
+          <div class="transport-diagram">
+            <div class="transport-lane" style="--accent: var(--blue)">
+              <div class="lane-label">SSH</div>
+              <div class="lane-hop">Browser loopback</div>
+              <div class="lane-hop">Preview stream</div>
+              <div class="lane-hop">Existing `ssh -L`<br />to T3 server</div>
+              <div class="lane-hop">Remote target port</div>
+            </div>
+            <div class="transport-lane" style="--accent: var(--yellow)">
+              <div class="lane-label">T3 Connect</div>
+              <div class="lane-hop">Browser loopback</div>
+              <div class="lane-hop">Preview stream</div>
+              <div class="lane-hop">One managed<br />Cloudflare endpoint</div>
+              <div class="lane-hop">Environment target port</div>
+            </div>
+            <div class="transport-lane" style="--accent: var(--green)">
+              <div class="lane-label">LAN / Tailnet</div>
+              <div class="lane-hop">Browser target</div>
+              <div class="lane-hop">Direct URL or stream</div>
+              <div class="lane-hop">Private network</div>
+              <div class="lane-hop">Environment target port</div>
+            </div>
+          </div>
+          <div class="ssh-note">
+            <div class="decision selected">
+              <span class="badge green">Default</span>
+              <h4>Stream through T3 server</h4>
+              <p>One protocol across SSH, relay, and direct environments. Reuses authentication, grants, diagnostics, and lifecycle.</p>
+            </div>
+            <div class="decision">
+              <span class="badge blue">Later optimization</span>
+              <h4>Native SSH port forward</h4>
+              <p>Generalize the existing `ssh -L local:127.0.0.1:remote` manager only if direct forwarding materially improves performance or compatibility.</p>
+            </div>
+          </div>
+          <div class="callout warning" style="margin-top: 22px">
+            <div class="callout-mark">!</div>
+            <div>
+              <strong>Public port publishing is not preview reachability.</strong>
+              <span>“Share port 5173 with the internet” requires explicit publication, separate access control, and possibly additional managed ingress. It should not happen automatically when an agent opens a browser.</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="security">
+          <div class="section-head">
+            <div class="section-no">12 / TRUST</div>
+            <div class="section-title">
+              <h3>Capability, site, target, and artifact boundaries</h3>
+              <p>Browser access is powerful. Authorization should be explicit but not turn every click into a dialog.</p>
+            </div>
+          </div>
+          <div class="security-grid">
+            <article class="security-card" style="--accent: var(--purple)">
+              <h4>Invocation scope</h4>
+              <p>`observe`, `interact`, `navigate`, `evaluate`, `record`, `network-inspect`, and privileged `raw-cdp` capabilities.</p>
+            </article>
+            <article class="security-card" style="--accent: var(--green)">
+              <h4>Browser-attributed tunnel ingress</h4>
+              <p>A loopback port is not authorization. Use a stable authority, identify the requesting guest, and scope the remote grant to one session and target.</p>
+            </article>
+            <article class="security-card" style="--accent: var(--signal)">
+              <h4>Site policy</h4>
+              <p>Origins, external navigation, auth pages, clipboard, uploads, downloads, permissions, evaluation, and raw CDP.</p>
+            </article>
+            <article class="security-card" style="--accent: var(--yellow)">
+              <h4>Artifact policy</h4>
+              <p>Retention, size bounds, redaction of cookies/auth headers, encrypted storage where required, explicit sharing.</p>
+            </article>
+          </div>
+          <div class="callout signal" style="margin-top: 20px">
+            <div class="callout-mark">×</div>
+            <div>
+              <strong>Normal tool input never supplies environment or thread identity.</strong>
+              <span>Identity comes from the authenticated provider/session scope. Browser and tunnel commands cannot cross-control another thread by argument substitution.</span>
+            </div>
+          </div>
+          <div class="callout warning" style="margin-top: 16px">
+            <div class="callout-mark">!</div>
+            <div>
+              <strong>Phase 0.5 proved unrelated browser content can cause loopback requests.</strong>
+              <span>Port secrecy and `Origin` checks are insufficient. Stable origins, browser attribution, bounded multiplexing, and explicit redirect/HTTPS policy gate the remote preview implementation.</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="roadmap">
+          <div class="section-head">
+            <div class="section-no">13 / BUILD</div>
+            <div class="section-title">
+              <h3>Implementation sequence</h3>
+              <p>Build the durable host first; everything else becomes simpler once panel visibility no longer owns browser lifetime.</p>
+            </div>
+          </div>
+          <div class="roadmap">
+            <article class="phase">
+              <div class="phase-status done">Phase 0 / complete</div>
+              <h4>Prove decisions</h4>
+              <p>Semantic CDP, hidden lifecycle, H.264 recording, raw TCP preview streams, routing latency, and host comparison.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status done">Phase 0.5 / complete</div>
+              <h4>Close production risks</h4>
+              <p>Renderer-death blast radius, Playwright injected runtime, 1600×1200 recording endurance at about 11 fps, loopback threat model, origin stability, and input interruption.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status">Phase 1</div>
+              <h4>Durable session core</h4>
+              <p>Session/tab/window contracts, app-level webview host, host-loss UX, annotations, source attribution, discovered servers, guest hardening, and parking states.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status">Phase 2</div>
+              <h4>Browser control service</h4>
+              <p>Persistent CDP, Playwright injected runtime, OOPIF routing, locator re-resolution, console/network buffers, interruption, and tab APIs.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status">Phase 3</div>
+              <h4>Remote reachability</h4>
+              <p>Environment-port targets, stable authorities, browser-attributed ingress, multiplexed TCP streams, redirect/HTTPS policy, SSH, and relay integration.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status">Phase 4</div>
+              <h4>Evidence pipeline</h4>
+              <p>One-recording-per-window MediaRecorder worker, action timeline, artifact upload, thread viewer, retention, redaction, and soak gates.</p>
+            </article>
+            <article class="phase">
+              <div class="phase-status">Phase 5</div>
+              <h4>Collaboration + unattended hosts</h4>
+              <p>Tab adoption/handoff, agent cursor, pause/revoke, optional environment-hosted Chromium for CI as a separate session type.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="decisions">
+          <div class="section-head">
+            <div class="section-no">14 / LOCKED</div>
+            <div class="section-title">
+              <h3>Pinned architecture decisions</h3>
+              <p>These are the working defaults until implementation evidence requires an explicit ADR replacement.</p>
+            </div>
+          </div>
+          <div class="decision-log">
+            <article>
+              <strong>ADR 001 + 006</strong>
+              <h4>Route-durable renderer-hosted webview</h4>
+              <p>Keep the real guest webview in a window-level host. Renderer reload, crash, and window close are explicit live-page loss, not transparent recovery.</p>
+            </article>
+            <article>
+              <strong>ADR 002 + 007</strong>
+              <h4>Playwright-injected semantic adapter</h4>
+              <p>Use persistent CDP plus the version-pinned Playwright injected runtime behind T3 contracts. Locators re-resolve at action time.</p>
+            </article>
+            <article>
+              <strong>ADR 003 + 008</strong>
+              <h4>Provisionally bounded recording</h4>
+              <p>Capture guest frames and encode H.264 MP4 in Chromium. Start with one active recording per window and require soak/concurrency gates.</p>
+            </article>
+            <article>
+              <strong>ADR 004 + 009</strong>
+              <h4>Attributed, stable preview tunnel</h4>
+              <p>Keep raw TCP remotely, but require browser-attributed local ingress, stable authorities, bounded multiplexing, and redirect/HTTPS policy.</p>
+            </article>
+            <article>
+              <strong>ADR 005</strong>
+              <h4>Keep renderer transport relay initially</h4>
+              <p>IPC overhead is negligible. Remove renderer lifecycle authority before adding another desktop-main network connection.</p>
+            </article>
+            <article>
+              <strong>ADR 010</strong>
+              <h4>Native human interruption</h4>
+              <p>CDP keyboard dispatch did not emit `before-input-event` in the spike. Start with native user-input interruption and retain platform regression fixtures.</p>
+            </article>
+          </div>
+          <div class="callout warning" style="margin-top: 22px">
+            <div class="callout-mark">≠</div>
+            <div>
+              <strong>Feasibility proof is not production proof.</strong>
+              <span>Open gates remain: browser-attributed tunnel ingress, OOPIF routing, long-duration and multi-tab recording, platform input behavior, and recovery fidelity after host loss. Explicit non-goals still include browser-process survival, live migration, a synchronized second browser, and image-stream browser UX.</span>
+            </div>
+          </div>
+        </section>
+
+        <footer>
+          Source plans: `collaborative-browser-runtime-next-iteration.md`, `browser-phase-0/*`, and `browser-phase-0-5/*`.
+          This HTML document is the consolidated visual architecture reference.
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      const navLinks = [...document.querySelectorAll(".nav a")];
+      const sections = navLinks
+        .map((link) => document.querySelector(link.getAttribute("href")))
+        .filter(Boolean);
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+          if (!visible) return;
+          navLinks.forEach((link) => {
+            link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`);
+          });
+        },
+        { rootMargin: "-20% 0px -65% 0px", threshold: [0.05, 0.25, 0.5] },
+      );
+      sections.forEach((section) => observer.observe(section));
+
+      const filterButtons = [...document.querySelectorAll(".filter-button")];
+      const reachabilityRows = [...document.querySelectorAll("#reachability tbody tr")];
+      filterButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const filter = button.dataset.filter;
+          filterButtons.forEach((candidate) => candidate.classList.toggle("active", candidate === button));
+          reachabilityRows.forEach((row) => {
+            row.dataset.filtered = String(filter !== "all" && row.dataset.kind !== filter);
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

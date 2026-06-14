@@ -1,7 +1,11 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appendPreviewAnnotationPrompt, buildPreviewAnnotationPrompt } from "./previewAnnotation";
+import {
+  appendPreviewAnnotationPrompt,
+  buildPreviewAnnotationPrompt,
+  extractTrailingPreviewAnnotation,
+} from "./previewAnnotation";
 
 const annotation: PreviewAnnotationPayload = {
   id: "annotation_1",
@@ -53,8 +57,31 @@ describe("preview annotations", () => {
   it("appends to an existing composer prompt", () => {
     expect(
       appendPreviewAnnotationPrompt("Fix this", annotation).startsWith(
-        "Fix this\n\nPreview annotation:",
+        "Fix this\n\n<preview_annotation>",
       ),
     ).toBe(true);
+  });
+
+  it("extracts annotation presentation from a sent prompt", () => {
+    const result = extractTrailingPreviewAnnotation(
+      appendPreviewAnnotationPrompt("Fix this", annotation),
+    );
+    expect(result.promptText).toBe("Fix this");
+    expect(result.annotation).toMatchObject({
+      title: "Example",
+      targetSummary: "1 marked region, 1 drawing.",
+      hasScreenshot: true,
+    });
+  });
+
+  it("extracts multiple trailing annotations one at a time", () => {
+    const first = appendPreviewAnnotationPrompt("Fix this", annotation);
+    const secondAnnotation = { ...annotation, id: "annotation_2", pageTitle: "Details" };
+    const second = appendPreviewAnnotationPrompt(first, secondAnnotation);
+    const extractedSecond = extractTrailingPreviewAnnotation(second);
+    const extractedFirst = extractTrailingPreviewAnnotation(extractedSecond.promptText);
+    expect(extractedSecond.annotation?.id).toBe("annotation_2");
+    expect(extractedFirst.annotation?.id).toBe("annotation_1");
+    expect(extractedFirst.promptText).toBe("Fix this");
   });
 });

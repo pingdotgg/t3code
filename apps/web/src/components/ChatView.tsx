@@ -161,6 +161,7 @@ import {
   type ElementContextDraft,
   formatElementContextLabel,
 } from "../lib/elementContext";
+import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1110,6 +1111,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftElementContexts = useComposerDraftStore(
     (store) => store.setElementContexts,
+  );
+  const setComposerDraftPreviewAnnotations = useComposerDraftStore(
+    (store) => store.setPreviewAnnotations,
   );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
@@ -3555,6 +3559,7 @@ export default function ChatView(props: ChatViewProps) {
       images: composerImages,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
+      previewAnnotations: composerPreviewAnnotations,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -3571,7 +3576,7 @@ export default function ChatView(props: ChatViewProps) {
       prompt: promptForSend,
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
-      elementContextCount: composerElementContexts.length,
+      elementContextCount: composerElementContexts.length + composerPreviewAnnotations.length,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
@@ -3590,7 +3595,8 @@ export default function ChatView(props: ChatViewProps) {
     const standaloneSlashCommand =
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
-      composerElementContexts.length === 0
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -3639,9 +3645,14 @@ export default function ChatView(props: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
-    const messageTextForSend = appendElementContextsToPrompt(
+    const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+    const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
+    );
+    const messageTextForSend = composerPreviewAnnotationsSnapshot.reduce(
+      (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+      messageTextWithContexts,
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -3810,7 +3821,9 @@ export default function ChatView(props: ChatViewProps) {
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0
+        composerElementContextsRef.current.length === 0 &&
+        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
+          .length ?? 0) === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -3829,6 +3842,7 @@ export default function ChatView(props: ChatViewProps) {
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
+        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,

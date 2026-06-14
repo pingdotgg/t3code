@@ -9,6 +9,8 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   ProviderOptionSelection,
+  PreviewAnnotationPayloadSchema,
+  type PreviewAnnotationPayload,
   RuntimeMode,
   type ServerProvider,
   type ScopedProjectRef,
@@ -52,7 +54,7 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 6;
+const COMPOSER_DRAFT_STORAGE_VERSION = 7;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -125,6 +127,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   attachments: Schema.Array(PersistedComposerImageAttachment),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
   elementContexts: Schema.optionalKey(Schema.Array(PersistedElementContextDraft)),
+  previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
   // Keyed by `ProviderInstanceId` (open branded slug) so custom provider
   // instances (e.g. `codex_personal`) round-trip alongside the built-in
   // `codex` / `claudeAgent` / ... entries. Every prior `ProviderDriverKind`
@@ -252,6 +255,7 @@ export interface ComposerThreadDraftState {
    * re-derive the snapshot from on reload.
    */
   elementContexts: ElementContextDraft[];
+  previewAnnotations: PreviewAnnotationPayload[];
   /**
    * Per-instance model selection. Keyed by `ProviderInstanceId` (open
    * branded slug) so a default `codex` instance and a user-authored
@@ -451,6 +455,15 @@ interface ComposerDraftStoreState {
   ) => void;
   removeElementContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearElementContexts: (threadRef: ComposerThreadTarget) => void;
+  addPreviewAnnotation: (
+    threadRef: ComposerThreadTarget,
+    annotation: PreviewAnnotationPayload,
+  ) => void;
+  setPreviewAnnotations: (
+    threadRef: ComposerThreadTarget,
+    annotations: ReadonlyArray<PreviewAnnotationPayload>,
+  ) => void;
+  removePreviewAnnotation: (threadRef: ComposerThreadTarget, annotationId: string) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
     threadRef: ComposerThreadTarget,
@@ -527,10 +540,12 @@ const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
 const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
 const EMPTY_ELEMENT_CONTEXTS: ElementContextDraft[] = [];
+const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
 Object.freeze(EMPTY_ELEMENT_CONTEXTS);
+Object.freeze(EMPTY_PREVIEW_ANNOTATIONS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderDriverKind, ModelSelection>> =
   Object.freeze({});
 const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>({
@@ -545,6 +560,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   terminalContexts: EMPTY_TERMINAL_CONTEXTS,
   elementContexts: EMPTY_ELEMENT_CONTEXTS,
+  previewAnnotations: EMPTY_PREVIEW_ANNOTATIONS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -565,6 +581,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     persistedAttachments: [],
     terminalContexts: [],
     elementContexts: [],
+    previewAnnotations: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -636,6 +653,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.persistedAttachments.length === 0 &&
     draft.terminalContexts.length === 0 &&
     draft.elementContexts.length === 0 &&
+    draft.previewAnnotations.length === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
@@ -1776,6 +1794,7 @@ function partializeComposerDraftStoreState(
       draft.persistedAttachments.length === 0 &&
       draft.terminalContexts.length === 0 &&
       draft.elementContexts.length === 0 &&
+      draft.previewAnnotations.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -1813,6 +1832,13 @@ function partializeComposerDraftStoreState(
               source: context.source,
               styles: context.styles,
             })),
+          }
+        : {}),
+      ...(draft.previewAnnotations.length > 0
+        ? {
+            previewAnnotations: draft.previewAnnotations.map(
+              (annotation) => ({ ...annotation }) as DeepMutable<PreviewAnnotationPayload>,
+            ),
           }
         : {}),
       ...(hasModelData
@@ -2055,6 +2081,8 @@ function toHydratedThreadDraft(
       persistedDraft.elementContexts?.map((context) => ({
         ...context,
       })) ?? [],
+    previewAnnotations:
+      persistedDraft.previewAnnotations?.map((annotation) => ({ ...annotation })) ?? [],
     modelSelectionByProvider,
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
@@ -3057,6 +3085,69 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        addPreviewAnnotation: (threadRef, annotation) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextAnnotations = existing.previewAnnotations.filter(
+              (entry) => entry.id !== annotation.id,
+            );
+            const compactAnnotation: PreviewAnnotationPayload = {
+              ...annotation,
+              screenshot: annotation.screenshot ? { ...annotation.screenshot, dataUrl: "" } : null,
+            };
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  previewAnnotations: [...nextAnnotations, compactAnnotation],
+                },
+              },
+            };
+          });
+        },
+        setPreviewAnnotations: (threadRef, annotations) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: { ...existing, previewAnnotations: [...annotations] },
+              },
+            };
+          });
+        },
+        removePreviewAnnotation: (threadRef, annotationId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey || !annotationId) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            const previewAnnotations = current.previewAnnotations.filter(
+              (entry) => entry.id !== annotationId,
+            );
+            if (previewAnnotations.length === current.previewAnnotations.length) return state;
+            const nextDraft = {
+              ...current,
+              previewAnnotations,
+              images: current.images.filter((image) => image.id !== annotationId),
+              persistedAttachments: current.persistedAttachments.filter(
+                (image) => image.id !== annotationId,
+              ),
+              nonPersistedImageIds: current.nonPersistedImageIds.filter(
+                (imageId) => imageId !== annotationId,
+              ),
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         clearPersistedAttachments: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -3130,6 +3221,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               persistedAttachments: [],
               terminalContexts: [],
               elementContexts: [],
+              previewAnnotations: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
