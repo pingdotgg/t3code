@@ -679,7 +679,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
   });
 
-  it("folds prior active-turn work while keeping the latest assistant message visible", () => {
+  it("does not fold the active in-progress turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -735,19 +735,13 @@ describe("deriveMessagesTimelineRows", () => {
       revertTurnCountByUserMessageId: new Map(),
     });
 
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(rows.map((row) => row.id)).toEqual([
-      "turn-fold:turn-1",
+      "assistant-thought-entry",
+      "work-entry-1",
       "assistant-latest-entry",
       "working-indicator-row",
     ]);
-    expect(rows.find((row) => row.kind === "turn-fold")).toEqual(
-      expect.objectContaining({
-        kind: "turn-fold",
-        turnId: "turn-1",
-        label: "Working",
-        expanded: false,
-      }),
-    );
   });
 
   it("only shows assistant metadata on the terminal assistant message", () => {

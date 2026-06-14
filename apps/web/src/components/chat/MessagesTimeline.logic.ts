@@ -236,6 +236,9 @@ function deriveTurnFolds(input: {
 
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [turnId, group] of groupsByTurnId) {
+    if (turnId === input.unsettledTurnId) {
+      continue;
+    }
     if (group.hasStreamingMessage) {
       continue;
     }
@@ -257,8 +260,6 @@ function deriveTurnFolds(input: {
 
     const isLatestInterruptedTurn =
       input.latestTurn?.turnId === turnId && input.latestTurn.state === "interrupted";
-    const isLatestRunningTurn =
-      input.latestTurn?.turnId === turnId && input.latestTurn.state === "running";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
@@ -276,15 +277,13 @@ function deriveTurnFolds(input: {
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestRunningTurn
-      ? "Working"
-      : isLatestInterruptedTurn
-        ? duration
-          ? `You stopped after ${duration}`
-          : "You stopped this response"
-        : duration
-          ? `Worked for ${duration}`
-          : "Worked";
+    const label = isLatestInterruptedTurn
+      ? duration
+        ? `You stopped after ${duration}`
+        : "You stopped this response"
+      : duration
+        ? `Worked for ${duration}`
+        : "Worked";
 
     foldsByAnchorEntryId.set(firstEntry.id, {
       turnId,
