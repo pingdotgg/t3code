@@ -55,8 +55,7 @@ export function worktreeDisplayName(
   worktreePath: string,
   labelByPath: Readonly<Record<string, string>>,
 ): string {
-  const label = labelByPath[worktreePath.trim()] ?? labelByPath[worktreePath];
-  const trimmedLabel = label?.trim();
+  const trimmedLabel = labelByPath[worktreePath]?.trim();
   if (trimmedLabel && trimmedLabel.length > 0) {
     return trimmedLabel;
   }

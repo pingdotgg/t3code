@@ -291,6 +291,9 @@ export function useThreadActions() {
           force: true,
         },
       });
+      if (removeResult._tag === "Success") {
+        useUiStateStore.getState().setWorktreeLabel(orphanedWorktreePath, "");
+      }
       const refreshResult =
         removeResult._tag === "Success"
           ? await refreshVcsStatus({

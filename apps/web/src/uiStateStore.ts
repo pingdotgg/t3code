@@ -366,6 +366,7 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
 }
 
 export function setWorktreeLabel(state: UiState, worktreePath: string, label: string): UiState {
+  // Paths are exact identifiers, so writers and readers use the verbatim value.
   if (!worktreePath.trim()) {
     return state;
   }

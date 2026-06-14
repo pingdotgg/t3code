@@ -16,9 +16,10 @@ interface WorktreeRenameStore {
 export const useWorktreeRenameStore = create<WorktreeRenameStore>((set) => ({
   targetPath: null,
   openWorktreeRename: (worktreePath) => {
-    const trimmed = worktreePath.trim();
-    if (trimmed.length > 0) {
-      set({ targetPath: trimmed });
+    // Store the path verbatim — it's the exact key labels are written/read
+    // under (see setWorktreeLabel). Ignore a blank path.
+    if (worktreePath.trim().length > 0) {
+      set({ targetPath: worktreePath });
     }
   },
   closeWorktreeRename: () => set({ targetPath: null }),
