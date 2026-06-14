@@ -1,3 +1,6 @@
+import { CodexSettings, defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2ConversationMessage,
@@ -666,8 +669,34 @@ export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactoryShape
 >()("t3/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
 
+export const makeCodexAppServerSpawnCommand = Effect.fn(
+  "CodexAdapterV2.makeCodexAppServerSpawnCommand",
+)(function* (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly extendEnv?: boolean | undefined;
+}) {
+  const spawnCommand = yield* resolveSpawnCommand(input.command, input.args, {
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+  });
+  return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    shell: spawnCommand.shell,
+  });
+});
+
 export const makeCodexAppServerClientFactoryCommandLayer = (
-  options: CodexClient.CodexAppServerCommandLayerOptions,
+  options: CodexClient.CodexAppServerClientOptions & {
+    readonly command: string;
+    readonly args?: ReadonlyArray<string>;
+    readonly cwd?: string;
+    readonly env?: NodeJS.ProcessEnv;
+  },
 ): Layer.Layer<CodexAppServerClientFactory, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Layer.effect(
     CodexAppServerClientFactory,
@@ -677,12 +706,13 @@ export const makeCodexAppServerClientFactoryCommandLayer = (
         open: (input) =>
           Effect.gen(function* () {
             const scope = yield* Scope.Scope;
-            const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
+            const command = yield* makeCodexAppServerSpawnCommand({
+              command: options.command,
+              args: options.args ?? [],
               ...((input.runtimePolicy.cwd ?? options.cwd) === undefined
                 ? {}
                 : { cwd: input.runtimePolicy.cwd ?? options.cwd }),
-              ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
-              shell: process.platform === "win32",
+              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
             });
             const handle = yield* spawner.spawn(command).pipe(
               Effect.provideService(Scope.Scope, scope),
@@ -747,34 +777,15 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
       open: (input) =>
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
-          yield* settingsService.ready.pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapterOpenSessionError({
-                  provider: CODEX_PROVIDER,
-                  providerSessionId: input.providerSessionId,
-                  cause,
-                }),
-            ),
-          );
-          const codexSettings = yield* settingsService.getSettings.pipe(
-            Effect.map((settings) => settings.providers.codex),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapterOpenSessionError({
-                  provider: CODEX_PROVIDER,
-                  providerSessionId: input.providerSessionId,
-                  cause,
-                }),
-            ),
-          );
-          const command = ChildProcess.make(codexSettings.binaryPath || "codex", ["app-server"], {
+          const environment = {
+            ...input.environment,
+            ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
+          };
+          const command = yield* makeCodexAppServerSpawnCommand({
+            command: input.settings.binaryPath || "codex",
+            args: ["app-server"],
             ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
-            env: {
-              ...process.env,
-              ...(codexSettings.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
-            },
-            shell: process.platform === "win32",
+            env: environment,
           });
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
@@ -824,6 +835,7 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
     Effect.gen(function* () {
       const clientFactory = yield* CodexAppServerClientFactory;
       const fileSystem = yield* FileSystem.FileSystem;
+      const hostEnvironment = yield* HostProcessEnvironment;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -849,7 +861,7 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
       return makeCodexAdapterV2({
         instanceId,
         settings,
-        environment: mergeProviderInstanceEnvironment(environment),
+        environment: mergeProviderInstanceEnvironment(environment, hostEnvironment),
         clientFactory,
         fileSystem,
         idAllocator,
@@ -867,13 +879,14 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
     const fileSystem = yield* FileSystem.FileSystem;
+    const hostEnvironment = yield* HostProcessEnvironment;
     const idAllocator = yield* IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
 
     return makeCodexAdapterV2({
       instanceId: CODEX_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CODEX_SETTINGS,
-      environment: process.env,
+      environment: hostEnvironment,
       clientFactory,
       fileSystem,
       idAllocator,
