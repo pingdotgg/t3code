@@ -692,14 +692,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
+    const currentCheckpointRef =
+      currentTurnCount === 0
+        ? checkpointRefForThreadTurn(event.payload.threadId, 0)
+        : thread.checkpoints.find(
+            (checkpoint) => checkpoint.checkpointTurnCount === currentTurnCount,
+          )?.checkpointRef;
 
+    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
@@ -710,6 +710,44 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
         detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    const rollbackFailureDetail: string | null =
+      rolledBackTurns > 0
+        ? yield* providerService
+            .rollbackConversation({
+              threadId: sessionRuntime.value.threadId,
+              numTurns: rolledBackTurns,
+            })
+            .pipe(
+              Effect.as(null),
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  if (!currentCheckpointRef) {
+                    return `Provider rollback failed after filesystem restore: ${error.message}. Current checkpoint ref is unavailable.`;
+                  }
+                  const restoredCurrent = yield* checkpointStore.restoreCheckpoint({
+                    cwd: sessionRuntime.value.cwd,
+                    checkpointRef: currentCheckpointRef,
+                    fallbackToHead: currentTurnCount === 0,
+                  });
+                  if (!restoredCurrent) {
+                    return `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint.`;
+                  }
+                  yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+                  return `Provider rollback failed after filesystem restore: ${error.message}. Filesystem was restored to the current checkpoint.`;
+                }),
+              ),
+            )
+        : null;
+    if (rollbackFailureDetail !== null) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: rollbackFailureDetail,
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
