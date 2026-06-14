@@ -12,7 +12,7 @@ export class ProviderReplayNdjsonLineParseError extends Schema.TaggedErrorClass<
   {
     lineNumber: Schema.Number,
     line: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
