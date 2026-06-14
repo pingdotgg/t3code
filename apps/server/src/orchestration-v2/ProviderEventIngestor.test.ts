@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MessageId,
+  type ModelSelection,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -208,5 +211,76 @@ layer("ProviderEventIngestorV2", (it) => {
 
         assert.deepEqual(normalized, []);
       }),
+  );
+
+  it.effect("routes provider-owned child artifacts to their child app thread", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") {
+        throw new Error("Expected a thread.created fixture event");
+      }
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        provider: "codex",
+        nativeThreadId: "native-subagent-thread",
+      });
+      const childRootNodeId = NodeId.make("node:subagent-root");
+      const childThread: OrchestrationV2AppThread = {
+        ...rootEvent.payload,
+        id: childThreadId,
+        title: "Subagent: inspect package",
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: rootEvent.threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: rootEvent.threadId,
+        },
+        forkedFrom: {
+          type: "node",
+          nodeId: NodeId.make("node:parent-subagent"),
+        },
+      };
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        provider: "codex",
+        threadId: rootEvent.threadId,
+      });
+
+      const threadEvents = yield* ingestor.normalize({
+        providerSessionId,
+        threadId: rootEvent.threadId,
+        event: {
+          type: "app_thread.created",
+          provider: "codex",
+          appThread: childThread,
+        },
+      });
+      const messageEvents = yield* ingestor.normalize({
+        providerSessionId,
+        threadId: rootEvent.threadId,
+        event: {
+          type: "message.updated",
+          provider: "codex",
+          message: {
+            id: MessageId.make("message:subagent-response"),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: childRootNodeId,
+            role: "assistant",
+            text: "Subagent result",
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      });
+
+      assert.equal(threadEvents[0]?.type, "thread.created");
+      assert.equal(threadEvents[0]?.threadId, childThreadId);
+      assert.equal(messageEvents[0]?.type, "message.updated");
+      assert.equal(messageEvents[0]?.threadId, childThreadId);
+    }),
   );
 });

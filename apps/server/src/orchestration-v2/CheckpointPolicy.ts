@@ -19,7 +19,7 @@ export class CheckpointPolicyPrepareRunError extends Schema.TaggedErrorClass<Che
   {
     threadId: ThreadId,
     runId: RunId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -33,7 +33,7 @@ export class CheckpointPolicyFinalizeNodeError extends Schema.TaggedErrorClass<C
     threadId: ThreadId,
     nodeId: NodeId,
     scopeId: Schema.optional(CheckpointScopeId),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -47,7 +47,7 @@ export class CheckpointPolicyRollbackError extends Schema.TaggedErrorClass<Check
     threadId: ThreadId,
     scopeId: CheckpointScopeId,
     checkpointId: CheckpointId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -81,4 +81,4 @@ export interface CheckpointPolicyV2Shape {
 export class CheckpointPolicyV2 extends Context.Service<
   CheckpointPolicyV2,
   CheckpointPolicyV2Shape
->()("t3/orchestration-v2/CheckpointPolicy") {}
+>()("t3/orchestration-v2/CheckpointPolicy/CheckpointPolicyV2") {}

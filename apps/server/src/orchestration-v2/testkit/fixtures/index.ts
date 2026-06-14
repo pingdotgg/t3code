@@ -16,6 +16,8 @@ import { simpleInput } from "./simple/input.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
+import { assertSubagentContinueOutput } from "./subagent_continue/codex_output.ts";
+import { subagentContinueInput } from "./subagent_continue/input.ts";
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
@@ -179,6 +181,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         transcriptFile: new URL("./subagent/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "subagent_continue",
+    buildInput: subagentContinueInput,
+    providers: [
+      {
+        provider: "codex",
+        transcriptFile: new URL("./subagent_continue/codex_transcript.ndjson", import.meta.url),
+        modelSelection: CODEX_MODEL_SELECTION,
+        assertOutput: assertSubagentContinueOutput,
       },
     ],
   },

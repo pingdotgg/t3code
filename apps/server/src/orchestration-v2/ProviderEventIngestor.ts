@@ -24,7 +24,7 @@ export class ProviderEventNormalizeError extends Schema.TaggedErrorClass<Provide
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
     providerEvent: ProviderAdapterV2Event,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -37,7 +37,7 @@ export class ProviderEventPublishError extends Schema.TaggedErrorClass<ProviderE
   {
     providerSessionId: ProviderSessionId,
     eventCount: Schema.Number,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -75,7 +75,7 @@ export interface ProviderEventIngestorV2Shape {
 export class ProviderEventIngestorV2 extends Context.Service<
   ProviderEventIngestorV2,
   ProviderEventIngestorV2Shape
->()("t3/orchestration-v2/ProviderEventIngestor") {}
+>()("t3/orchestration-v2/ProviderEventIngestor/ProviderEventIngestorV2") {}
 
 function compactUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
@@ -101,13 +101,15 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
         payloadInput: {
           readonly type: OrchestrationV2DomainEvent["type"];
           readonly payload: OrchestrationV2DomainEvent["payload"];
+          readonly threadId?: ThreadId;
           readonly runId?: RunId | null;
           readonly nodeId?: NodeId | null;
         },
       ) =>
         Effect.gen(function* () {
+          const threadId = payloadInput.threadId ?? input.threadId;
           const eventId = yield* idAllocator.allocate.event({
-            threadId: input.threadId,
+            threadId,
             providerSessionId: input.providerSessionId,
           });
           const occurredAt = yield* DateTime.now;
@@ -115,7 +117,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
             compactUndefined({
               id: eventId,
               type: payloadInput.type,
-              threadId: input.threadId,
+              threadId,
               runId: payloadInput.runId ?? input.runId,
               nodeId: payloadInput.nodeId ?? input.nodeId,
               provider: input.event.provider,
@@ -129,6 +131,14 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
       const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
         Effect.gen(function* () {
           switch (input.event.type) {
+            case "app_thread.created":
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.created",
+                  threadId: input.event.appThread.id,
+                  payload: input.event.appThread,
+                }),
+              ];
             case "provider_session.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -140,6 +150,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "provider-thread.updated",
+                  threadId: input.event.providerThread.appThreadId ?? input.threadId,
                   payload: input.event.providerThread,
                 }),
               ];
@@ -147,6 +158,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "provider-turn.updated",
+                  ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
                   payload: input.event.providerTurn,
                   nodeId: input.event.providerTurn.nodeId,
                 }),
@@ -155,6 +167,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "node.updated",
+                  threadId: input.event.node.threadId,
                   payload: input.event.node,
                   runId: input.event.node.runId,
                   nodeId: input.event.node.id,
@@ -164,6 +177,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "subagent.updated",
+                  threadId: input.event.subagent.threadId,
                   payload: input.event.subagent,
                   runId: input.event.subagent.runId,
                   nodeId: input.event.subagent.id,
@@ -173,6 +187,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "message.updated",
+                  threadId: input.event.message.threadId,
                   payload: input.event.message,
                   runId: input.event.message.runId,
                   nodeId: input.event.message.nodeId,
@@ -182,6 +197,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
+                  threadId: input.event.turnItem.threadId,
                   payload: input.event.turnItem,
                   runId: input.event.turnItem.runId,
                   nodeId: input.event.turnItem.nodeId,
@@ -191,6 +207,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "runtime-request.updated",
+                  ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
                   payload: input.event.runtimeRequest,
                   nodeId: input.event.runtimeRequest.nodeId,
                 }),
@@ -199,6 +216,7 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               return [
                 yield* makeDomainEvent(input, {
                   type: "plan.updated",
+                  threadId: input.event.plan.threadId,
                   payload: input.event.plan,
                   runId: input.event.plan.runId,
                   nodeId: input.event.plan.nodeId,

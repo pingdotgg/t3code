@@ -22,7 +22,7 @@ export class CodexReplayTranscriptDecodeError extends Schema.TaggedErrorClass<Co
     provider: Schema.optional(Schema.String),
     protocol: Schema.optional(Schema.String),
     scenario: Schema.optional(Schema.String),
-    cause: Schema.Defect,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {

@@ -37,20 +37,19 @@ const SECOND_PROMPT =
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
 
-async function readCodexTranscript(): Promise<CodexReplay.CodexAppServerReplayTranscript> {
+const decodeCodexTranscript = Schema.decodeUnknownEffect(
+  CodexReplay.CodexAppServerReplayTranscript,
+);
+const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* () {
   const file = new URL(
     "./fixtures/provider_thread_resume/codex_transcript.ndjson",
     import.meta.url,
   );
-  const text = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      return yield* fs.readFileString(decodeURIComponent(file.pathname));
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-  const transcript = await Effect.runPromise(decodeProviderReplayNdjson(text));
-  return Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayTranscript)(transcript);
-}
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const transcript = yield* decodeProviderReplayNdjson(text);
+  return yield* decodeCodexTranscript(transcript);
+});
 
 function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput) {
   const splitIndex = materialized.steps.findIndex((step) => step.type === "await_thread_idle");
@@ -69,87 +68,91 @@ function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput)
 }
 
 describe("orchestrator replay recovery", () => {
-  it("resumes a provider-native Codex thread after recreating the orchestrator runtime", async () => {
-    const transcript = await readCodexTranscript();
+  it.effect(
+    "resumes a provider-native Codex thread after recreating the orchestrator runtime",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transcript = yield* readCodexTranscript();
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* Effect.acquireRelease(
+            fs.makeTempDirectory({
+              prefix: "t3-orchestration-v2-recovery-",
+            }),
+            (directory) =>
+              fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+          );
+          yield* fs.makeDirectory(tempDir, { recursive: true });
+          const dbPath = path.join(tempDir, "state.sqlite");
+          const driver = yield* CodexReplay.makeReplayDriver(transcript);
+          const materialized = yield* materializeFixtureInput({
+            scenario: "provider_thread_resume",
+            fixtureInput: {
+              steps: [
+                { type: "message", text: FIRST_PROMPT },
+                { type: "message", text: SECOND_PROMPT },
+              ],
+            },
+            modelSelection: CODEX_MODEL_SELECTION,
+          });
+          const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+            splitAfterFirstIdle(materialized);
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const tempDir = yield* fs.makeTempDirectory({
-          prefix: "t3-orchestration-v2-recovery-",
-        });
-        yield* fs.makeDirectory(tempDir, { recursive: true });
-        const dbPath = path.join(tempDir, "state.sqlite");
-        const driver = yield* CodexReplay.makeReplayDriver(transcript);
-        const materialized = yield* materializeFixtureInput({
-          scenario: "provider_thread_resume",
-          fixtureInput: {
-            steps: [
-              { type: "message", text: FIRST_PROMPT },
-              { type: "message", text: SECOND_PROMPT },
-            ],
-          },
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5.4",
-          },
-        });
-        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
-          splitAfterFirstIdle(materialized);
+          const harness = {
+            ...CodexOrchestratorReplayHarness,
+            makeProviderAdapterRegistryLayer: () =>
+              makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
+          };
+          const options = {
+            databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          };
 
-        const harness = {
-          ...CodexOrchestratorReplayHarness,
-          makeProviderAdapterRegistryLayer: () =>
-            makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver }),
-        };
-        const options = {
-          databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer)),
-        };
+          yield* runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/codex:first-runtime",
+              transcript,
+              commands: phase1Commands,
+              steps: phase1Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+            },
+            harness,
+            options,
+          );
 
-        yield* runOrchestratorV2ProviderReplayScenario(
-          {
-            name: "provider_thread_resume/codex:first-runtime",
+          const result = yield* runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/codex:second-runtime",
+              transcript,
+              commands: phase2Commands,
+              steps: phase2Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+            },
+            harness,
+            options,
+          );
+
+          assertBaseProjection({
+            result,
             transcript,
-            commands: phase1Commands,
-            steps: phase1Steps,
-            projectionThreadIds: materialized.projectionThreadIds,
-          },
-          harness,
-          options,
-        );
-
-        const result = yield* runOrchestratorV2ProviderReplayScenario(
-          {
-            name: "provider_thread_resume/codex:second-runtime",
-            transcript,
-            commands: phase2Commands,
-            steps: phase2Steps,
-            projectionThreadIds: materialized.projectionThreadIds,
-          },
-          harness,
-          options,
-        );
-
-        assertBaseProjection({
-          result,
-          transcript,
-          runCount: 2,
-          runStatuses: ["completed", "completed"],
-        });
-        const projection = projectionFor(result, transcript.scenario);
-        assertSemanticProjectionIntegrity(projection);
-        assertRunOrdinals(projection, [1, 2]);
-        assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
-        assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
-        assertUserMessagesInclude(projection, [FIRST_PROMPT, SECOND_PROMPT]);
-        assertAssistantTextIncludes(projection, FIRST_FINAL);
-        assertAssistantTextIncludes(projection, SECOND_FINAL);
-        assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer)),
-        provideDeterministicTestRuntime,
+            runCount: 2,
+            runStatuses: ["completed", "completed"],
+          });
+          const projection = projectionFor(result, transcript.scenario);
+          assertSemanticProjectionIntegrity(projection);
+          assertRunOrdinals(projection, [1, 2]);
+          assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
+          assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
+          assertUserMessagesInclude(projection, [FIRST_PROMPT, SECOND_PROMPT]);
+          assertAssistantTextIncludes(projection, FIRST_FINAL);
+          assertAssistantTextIncludes(projection, SECOND_FINAL);
+          assert.lengthOf(projection.providerThreads, 1);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+        ),
       ),
-    );
-  });
+  );
 });
