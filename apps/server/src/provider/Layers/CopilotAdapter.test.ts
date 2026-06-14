@@ -1234,6 +1234,214 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("emits a file-change diff turn when a Copilot Apply_patch tool completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-apply-patch-turn-diff");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "edit the docs",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+      const patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
+
+      emit({
+        id: "evt-copilot-apply-patch-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-apply-patch",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-apply-patch-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-apply-patch",
+          toolName: "Apply_patch",
+          arguments: {
+            patch,
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-apply-patch-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-apply-patch",
+          success: true,
+          result: {
+            content: patch,
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-apply-patch-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-apply-patch",
+        },
+      } as SessionEvent);
+
+      let diffEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && diffEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        diffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(diffEvent?.type, "turn.diff.updated");
+      if (diffEvent?.type === "turn.diff.updated") {
+        assert.equal(
+          String(diffEvent.turnId),
+          `${String(turn.turnId)}:file-change:tool-apply-patch`,
+        );
+        assert.deepStrictEqual(diffEvent.payload, {
+          unifiedDiff: patch,
+        });
+      }
+
+      const completedTool = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" &&
+          event.payload.itemType === "file_change" &&
+          String(event.itemId) === "copilot-tool-tool-apply-patch",
+      );
+      assert.equal(completedTool?.type, "item.completed");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits a file-change diff turn when a Copilot command tool completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-command-turn-diff");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run a command",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-command-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-command",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-command",
+          toolName: "bash",
+          arguments: {
+            command: "printf done > README.md",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-command",
+          success: true,
+          result: {
+            content: "done",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-command",
+        },
+      } as SessionEvent);
+
+      let diffEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && diffEvent === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        diffEvent = runtimeEvents.find((event) => event.type === "turn.diff.updated");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(diffEvent?.type, "turn.diff.updated");
+      if (diffEvent?.type === "turn.diff.updated") {
+        assert.equal(String(diffEvent.turnId), `${String(turn.turnId)}:file-change:tool-command`);
+        assert.deepStrictEqual(diffEvent.payload, {
+          unifiedDiff: "done",
+        });
+      }
+
+      const completedTool = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" &&
+          event.payload.itemType === "command_execution" &&
+          String(event.itemId) === "copilot-tool-tool-command",
+      );
+      assert.equal(completedTool?.type, "item.completed");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("does not emit an empty turn diff when a Copilot write permission is approved", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

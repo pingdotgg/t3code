@@ -385,9 +385,15 @@ export function applyThreadDetailEvent(
       // checkpoint, but don't settle a turn its session is still running.
       const diffTurnStillRunning =
         thread.session?.status === "running" &&
+        thread.session.activeTurnId !== null &&
         thread.session.activeTurnId === event.payload.turnId;
+      const anotherTurnStillRunning =
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId !== null &&
+        thread.session.activeTurnId !== event.payload.turnId;
       const latestTurn =
         !diffTurnStillRunning &&
+        !anotherTurnStillRunning &&
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
