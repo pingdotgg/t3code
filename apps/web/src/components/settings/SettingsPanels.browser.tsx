@@ -917,6 +917,59 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
 
+  it("keeps authorized clients within a five-row fading scroll area", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.1.44:3773",
+        advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      },
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: Array.from({ length: 7 }, (_, index) =>
+        makeClientSession({
+          sessionId: `session-client-${index}`,
+          subject: `client-${index}`,
+          scopes: ["orchestration:read"],
+          method: "browser-session-cookie",
+          client: {
+            label: `Client ${index + 1}`,
+            deviceType: "desktop",
+            os: "macOS",
+            browser: "Electron",
+            ipAddress: `192.168.1.${index + 10}`,
+          },
+          issuedAt: "2036-04-07T00:00:00.000Z",
+          expiresAt: "2036-05-07T00:00:00.000Z",
+          connected: index === 0,
+          current: index === 0,
+        }),
+      ),
+    });
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Client 7")).toBeInTheDocument();
+    const scrollArea = document.querySelector<HTMLElement>(
+      '[data-testid="authorized-clients-scroll-area"]',
+    );
+    const viewport = scrollArea?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+
+    expect(scrollArea).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(scrollArea?.clientHeight).toBe(360);
+    expect(viewport?.scrollHeight).toBeGreaterThan(viewport?.clientHeight ?? 0);
+    expect(viewport?.className).toContain("mask-b-from");
+  });
+
   it("revokes all other paired clients from settings", async () => {
     window.desktopBridge = createDesktopBridgeStub({
       serverExposureState: {
