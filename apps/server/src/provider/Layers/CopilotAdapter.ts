@@ -646,6 +646,24 @@ function hasApplyPatchEdit(detail: string): boolean {
   );
 }
 
+const SHELL_COMPLETION_CONTROL_LINE_PATTERN = /^<shellId: [^>]+ completed with exit code \d+>$/;
+
+function stripShellCompletionControlLines(detail: string): string {
+  return detail
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => !SHELL_COMPLETION_CONTROL_LINE_PATTERN.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+function hasUnifiedDiffShape(detail: string): boolean {
+  return (
+    detail.includes("diff --git ") ||
+    /(?:^|\n)--- [^\n]+\n\+\+\+ [^\n]+\n@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/u.test(detail)
+  );
+}
+
 function completedToolDiffText(
   toolMeta: ToolMeta | undefined,
   detail: string | undefined,
@@ -660,7 +678,11 @@ function completedToolDiffText(
   if (toolMeta?.itemType !== "command_execution") {
     return undefined;
   }
-  return parseTurnDiffFilesFromUnifiedDiff(normalized).length > 0 ? normalized : undefined;
+  const diffCandidate = stripShellCompletionControlLines(normalized);
+  if (!hasUnifiedDiffShape(diffCandidate)) {
+    return undefined;
+  }
+  return parseTurnDiffFilesFromUnifiedDiff(diffCandidate).length > 0 ? diffCandidate : undefined;
 }
 
 function fileChangeTurnIdForToolCall(parentTurnId: TurnId, toolCallId: string): TurnId {
