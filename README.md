@@ -4,27 +4,34 @@
 
 # Salchi
 
-Salchi is a minimal web GUI for coding agents (currently OpenAI/Codex, Claude, Cursor, and OpenCode, more coming soon).
+Salchi is a mobile-optimized web GUI for keeping up with coding-agent sessions
+from your phone, tablet, or desktop. It currently supports OpenAI/Codex, Claude,
+Cursor, and OpenCode, with more providers coming soon. Bring the AI
+subscriptions you already use; Salchi connects to your authenticated provider
+CLIs instead of reselling tokens.
 
 ## Why Salchi?
 
-Salchi focuses on two things:
+Salchi focuses on mobile-first agent consumption:
 
-- A mobile-optimized PWA for checking in on coding-agent sessions away from your
-  main machine.
-- A web editor you can run from your own VPS or Mac, then access from desktop or
-  mobile while keeping the agent runtime on the machine with your projects.
+- A mobile-optimized PWA for checking in on coding-agent sessions, reading
+  progress, and responding while away from your main machine.
+- A web agent GUI you can run from your own VPS or Mac, then access from your
+  phone, tablet, or desktop while keeping the agent runtime on the machine with
+  your projects.
 
 That makes Salchi useful when you want:
 
+- Use your existing AI subscriptions for Codex, Claude, Cursor, or OpenCode
+  instead of paying for a separate token bundle.
 - Private remote access through `npx salchi`, the desktop app, or Tailscale Serve
   without exposing your editor to the public internet.
 - One web surface for many providers, including Claude, OpenAI/Codex, Cursor,
   and OpenCode.
 - PWA push notifications for agent activity. On mobile, install Salchi to the
   Home Screen first so notifications can work.
-- Bring-your-own-subscription provider access instead of a resold-token model.
-- Mobile, PWA, provider, and remote-access polish for coding-agent workflows.
+- Mobile-first PWA polish for coding-agent workflows that need to stay useful on
+  small screens.
 
 ## Installation
 
