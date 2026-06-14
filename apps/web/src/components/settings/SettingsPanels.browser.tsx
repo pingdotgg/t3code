@@ -1360,6 +1360,50 @@ describe("SourceControlSettingsPanel discovery states", () => {
     await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
   });
 
+  it("shows unauthenticated API providers as available but not enabled", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [],
+      sourceControlProviders: [
+        {
+          kind: "bitbucket",
+          label: "Bitbucket",
+          status: "available",
+          version: Option.none(),
+          installHint:
+            "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+          detail: Option.none(),
+          auth: {
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("bitbucket.org"),
+            detail: Option.some(
+              "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+            ),
+          },
+        },
+      ],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const bitbucketSwitch = page.getByRole("switch", { name: "Bitbucket availability" });
+
+    await expect.element(page.getByText("Not authenticated")).toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "Available. Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+        ),
+      )
+      .toBeInTheDocument();
+    await expect.element(bitbucketSwitch).toBeDisabled();
+    await expect.element(bitbucketSwitch).not.toBeChecked();
+  });
+
   it("shows Git fetch interval settings inside the Git details dropdown", async () => {
     setSourceControlDiscoveryStub(async () => ({
       versionControlSystems: [
