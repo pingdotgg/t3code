@@ -77,7 +77,6 @@ import {
 } from "../proposedPlan";
 import {
   DEFAULT_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
@@ -1227,7 +1226,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const runtimeMode =
+    composerRuntimeMode ?? activeThread?.runtimeMode ?? settings.defaultRuntimeMode;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
@@ -1567,7 +1567,7 @@ export default function ChatView(props: ChatViewProps) {
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode: settings.defaultRuntimeMode,
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
@@ -1588,6 +1588,7 @@ export default function ChatView(props: ChatViewProps) {
       routeKind,
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
+      settings.defaultRuntimeMode,
     ],
   );
 

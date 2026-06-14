@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import { DEFAULT_RUNTIME_MODE, ModelSelection, RuntimeMode } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -43,6 +43,9 @@ export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  defaultRuntimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
+  ),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -510,6 +513,7 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(
