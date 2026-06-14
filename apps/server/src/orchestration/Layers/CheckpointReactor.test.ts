@@ -251,7 +251,8 @@ describe("CheckpointReactor", () => {
     | OrchestrationEngineService
     | CheckpointReactor
     | CheckpointStore.CheckpointStore
-    | ProjectionSnapshotQuery,
+    | ProjectionSnapshotQuery
+    | WorkspaceEntries.WorkspaceEntries,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -354,6 +355,9 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
+    const workspaceEntries = await runtime.runPromise(
+      Effect.service(WorkspaceEntries.WorkspaceEntries),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -420,6 +424,7 @@ describe("CheckpointReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       checkpointStore,
+      workspaceEntries,
       cwd,
       drain,
     };
@@ -1201,6 +1206,101 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(true);
+  });
+
+  it("refreshes workspace entries when provider rollback and recovery restore fail", async () => {
+    const harness = await createHarness({
+      providerName: ProviderDriverKind.make("copilot"),
+      rollbackConversation: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "copilot",
+            method: "thread.rollback",
+            detail: "Copilot SDK does not expose thread rollback.",
+          }),
+        ),
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const refresh = vi
+      .spyOn(harness.workspaceEntries, "refresh")
+      .mockImplementation(() => Effect.void);
+    const restoreCheckpoint = harness.checkpointStore.restoreCheckpoint;
+    let restoreCalls = 0;
+    vi.spyOn(harness.checkpointStore, "restoreCheckpoint").mockImplementation((input) => {
+      restoreCalls += 1;
+      if (restoreCalls === 2) {
+        return Effect.succeed(false);
+      }
+      return restoreCheckpoint(input);
+    });
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-recovery-restore-fails"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "copilot",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-recovery-restore-fails-diff-1"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-recovery-restore-fails-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-recovery-restore-fails-diff-2"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-recovery-restore-fails-2"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 2,
+        createdAt,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-recovery-restore-fails"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    );
+
+    expect(thread.activities.some((activity) => activity.kind === "checkpoint.revert.failed")).toBe(
+      true,
+    );
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(restoreCalls).toBe(2);
+    expect(refresh).toHaveBeenCalledWith(harness.cwd);
   });
 
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {

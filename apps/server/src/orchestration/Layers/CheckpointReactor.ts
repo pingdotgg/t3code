@@ -726,19 +726,28 @@ const make = Effect.gen(function* () {
               Effect.as(null),
               Effect.catch((error) =>
                 Effect.gen(function* () {
-                  if (!currentCheckpointRef) {
-                    return `Provider rollback failed after filesystem restore: ${error.message}. Current checkpoint ref is unavailable.`;
-                  }
-                  const restoredCurrent = yield* checkpointStore.restoreCheckpoint({
-                    cwd: sessionRuntime.value.cwd,
-                    checkpointRef: currentCheckpointRef,
-                    fallbackToHead: currentTurnCount === 0,
-                  });
-                  if (!restoredCurrent) {
-                    return `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint.`;
-                  }
+                  const detail = currentCheckpointRef
+                    ? yield* checkpointStore
+                        .restoreCheckpoint({
+                          cwd: sessionRuntime.value.cwd,
+                          checkpointRef: currentCheckpointRef,
+                          fallbackToHead: currentTurnCount === 0,
+                        })
+                        .pipe(
+                          Effect.map((restoredCurrent) =>
+                            restoredCurrent
+                              ? `Provider rollback failed after filesystem restore: ${error.message}. Filesystem was restored to the current checkpoint.`
+                              : `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint.`,
+                          ),
+                          Effect.catch((restoreError) =>
+                            Effect.succeed(
+                              `Provider rollback failed after filesystem restore: ${error.message}. Failed to restore filesystem to the current checkpoint: ${restoreError.message}`,
+                            ),
+                          ),
+                        )
+                    : `Provider rollback failed after filesystem restore: ${error.message}. Current checkpoint ref is unavailable.`;
                   yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
-                  return `Provider rollback failed after filesystem restore: ${error.message}. Filesystem was restored to the current checkpoint.`;
+                  return detail;
                 }),
               ),
             )
