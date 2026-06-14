@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronRightIcon, FolderIcon } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 
 import { SidebarMenuSubButton, SidebarMenuSubItem } from "./ui/sidebar";
 import type { ThreadGroup } from "../uiStateStore";
@@ -69,8 +69,13 @@ const SidebarThreadGroupRow = memo(function SidebarThreadGroupRow(
     [group.id, onContextMenu],
   );
 
+  // Guards the input's onBlur from re-committing after Enter/Escape already
+  // resolved the rename (otherwise Escape cancels then blur silently commits).
+  const renameResolvedRef = useRef(false);
+
   const handleRenameRef = useCallback((element: HTMLInputElement | null) => {
     if (element) {
+      renameResolvedRef.current = false;
       element.focus();
       element.select();
     }
@@ -81,14 +86,22 @@ const SidebarThreadGroupRow = memo(function SidebarThreadGroupRow(
       event.stopPropagation();
       if (event.key === "Enter") {
         event.preventDefault();
+        renameResolvedRef.current = true;
         commitRename(group.id);
       } else if (event.key === "Escape") {
         event.preventDefault();
+        renameResolvedRef.current = true;
         cancelRename();
       }
     },
     [cancelRename, commitRename, group.id],
   );
+
+  const handleRenameBlur = useCallback(() => {
+    if (!renameResolvedRef.current) {
+      commitRename(group.id);
+    }
+  }, [commitRename, group.id]);
 
   return (
     <SidebarMenuSubItem
@@ -124,7 +137,7 @@ const SidebarThreadGroupRow = memo(function SidebarThreadGroupRow(
             value={renamingTitle}
             onChange={(event) => setRenamingTitle(event.target.value)}
             onKeyDown={handleRenameKeyDown}
-            onBlur={() => commitRename(group.id)}
+            onBlur={handleRenameBlur}
             onClick={(event) => event.stopPropagation()}
           />
         ) : (
