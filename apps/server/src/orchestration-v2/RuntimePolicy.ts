@@ -16,7 +16,7 @@ export class RuntimePolicyResolveError extends Schema.TaggedErrorClass<RuntimePo
   "RuntimePolicyResolveError",
   {
     provider: ProviderKind,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -46,7 +46,7 @@ export interface RuntimePolicyV2Shape {
 }
 
 export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePolicyV2Shape>()(
-  "t3/orchestration-v2/RuntimePolicy",
+  "t3/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
 /**

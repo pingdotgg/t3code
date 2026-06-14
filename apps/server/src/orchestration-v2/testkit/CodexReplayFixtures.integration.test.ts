@@ -116,6 +116,26 @@ const scenarioExpectations = {
     turnCompletedCount: 3,
     approvalRequestCount: 0,
   },
+  subagent_continue: {
+    outgoing: [
+      "initialize",
+      "initialized",
+      "thread/start",
+      "turn/start/spawn",
+      "turn/start/continue",
+    ],
+    incoming: [
+      "turn/started/root-1",
+      "turn/completed/child-1",
+      "turn/completed/root-1",
+      "turn/started/root-2",
+      "turn/completed/child-2",
+      "turn/completed/root-2",
+    ],
+    turnStartCount: 0,
+    turnCompletedCount: 0,
+    approvalRequestCount: 0,
+  },
   multi_turn: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
     incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],
@@ -235,15 +255,14 @@ const scenarioExpectations = {
   },
 } as const;
 
-async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
-  const text = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      return yield* fs.readFileString(decodeURIComponent(file.pathname));
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-  return await Effect.runPromise(decodeProviderReplayNdjson(text));
-}
+const decodeCodexTranscript = Schema.decodeUnknownEffect(
+  CodexReplay.CodexAppServerReplayTranscript,
+);
+const readTranscript = Effect.fn("readCodexReplayFixture")(function* (file: URL) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  return yield* decodeProviderReplayNdjson(text);
+}, Effect.provide(NodeServices.layer));
 
 function labels(
   transcript: ProviderReplayTranscript,
@@ -585,44 +604,46 @@ function assertSiblingMergeBackSemantics(transcript: ProviderReplayTranscript) {
 }
 
 describe("Codex replay fixtures", () => {
-  it("loads every current Codex fixture as a codex app-server replay transcript", async () => {
-    for (const fixture of CODEX_REPLAY_FIXTURES) {
-      const transcript = await readTranscript(fixture.transcriptFile);
-      const codexTranscript = Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayTranscript)(
-        transcript,
-      );
-      const first = transcript.entries[0];
+  it.effect("loads every current Codex fixture as a codex app-server replay transcript", () =>
+    Effect.gen(function* () {
+      for (const fixture of CODEX_REPLAY_FIXTURES) {
+        const transcript = yield* readTranscript(fixture.transcriptFile);
+        const codexTranscript = yield* decodeCodexTranscript(transcript);
+        const first = transcript.entries[0];
 
-      assert.equal(codexTranscript.provider, "codex");
-      assert.equal(codexTranscript.protocol, "codex.app-server");
-      assert.equal(codexTranscript.scenario, fixture.scenario);
-      assert.deepEqual(codexTranscript.entries.at(-1), {
-        type: "runtime_exit",
-        status: "success",
-      });
-      assert.equal(first?.type, "expect_outbound");
-      if (first?.type !== "expect_outbound") {
-        throw new Error(`Expected ${fixture.scenario} to start with initialize outbound frame.`);
+        assert.equal(codexTranscript.provider, "codex");
+        assert.equal(codexTranscript.protocol, "codex.app-server");
+        assert.equal(codexTranscript.scenario, fixture.scenario);
+        assert.deepEqual(codexTranscript.entries.at(-1), {
+          type: "runtime_exit",
+          status: "success",
+        });
+        assert.equal(first?.type, "expect_outbound");
+        if (first?.type !== "expect_outbound") {
+          throw new Error(`Expected ${fixture.scenario} to start with initialize outbound frame.`);
+        }
+        assert.equal(first.label, "initialize");
+
+        assertScenarioExpectations(transcript);
+        assertProviderThreadResumeSemantics(transcript);
+        assertContinuedForkSemantics(transcript);
+        assertSiblingForkSemantics(transcript);
+        assertMergeBackSemantics(transcript);
+        assertSiblingMergeBackSemantics(transcript);
       }
-      assert.equal(first.label, "initialize");
+    }),
+  );
 
-      assertScenarioExpectations(transcript);
-      assertProviderThreadResumeSemantics(transcript);
-      assertContinuedForkSemantics(transcript);
-      assertSiblingForkSemantics(transcript);
-      assertMergeBackSemantics(transcript);
-      assertSiblingMergeBackSemantics(transcript);
-    }
-  });
+  it.effect("covers the expected replay suite exactly", () =>
+    Effect.gen(function* () {
+      const transcripts = yield* Effect.forEach(CODEX_REPLAY_FIXTURES, (fixture) =>
+        readTranscript(fixture.transcriptFile),
+      );
 
-  it("covers the expected replay suite exactly", async () => {
-    const transcripts = await Promise.all(
-      CODEX_REPLAY_FIXTURES.map((fixture) => readTranscript(fixture.transcriptFile)),
-    );
-
-    assert.deepEqual(
-      transcripts.map((transcript) => transcript.scenario).toSorted(),
-      Object.keys(scenarioExpectations).toSorted(),
-    );
-  });
+      assert.deepEqual(
+        transcripts.map((transcript) => transcript.scenario).toSorted(),
+        Object.keys(scenarioExpectations).toSorted(),
+      );
+    }),
+  );
 });

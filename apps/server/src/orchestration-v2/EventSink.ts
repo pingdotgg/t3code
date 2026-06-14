@@ -23,7 +23,7 @@ export class EventSinkWriteError extends Schema.TaggedErrorClass<EventSinkWriteE
   {
     eventCount: Schema.Number,
     commandId: Schema.optional(CommandId),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -36,7 +36,7 @@ export class EventSinkStreamError extends Schema.TaggedErrorClass<EventSinkStrea
   {
     threadId: Schema.optional(ThreadId),
     afterSequence: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -70,7 +70,7 @@ export interface EventSinkV2Shape {
 }
 
 export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>()(
-  "t3/orchestration-v2/EventSink",
+  "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
 /**
