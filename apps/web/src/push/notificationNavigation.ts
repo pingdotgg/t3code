@@ -16,7 +16,6 @@ export const NOTIFICATION_CLICK_BROADCAST_CHANNEL_NAME = "t3-notification-click"
 
 let lastNotificationNavigationTarget: NotificationNavigationTarget | null = null;
 let lastHandledClick: { readonly url: string; readonly openedAt: number } | null = null;
-let replayInFlight: Promise<void> | null = null;
 
 const PENDING_NOTIFICATION_CLICK_TTL_MS = 2 * 60 * 1000;
 const PENDING_NOTIFICATION_CLICK_RETRY_DELAYS_MS = [250, 500, 1000] as const;
@@ -145,7 +144,6 @@ export function getLastNotificationNavigationTarget(): NotificationNavigationTar
 export function resetNotificationNavigationStateForTests(): void {
   lastNotificationNavigationTarget = null;
   lastHandledClick = null;
-  replayInFlight = null;
 }
 
 export function installServiceWorkerNotificationNavigation(router: AppRouter): () => void {
@@ -155,8 +153,26 @@ export function installServiceWorkerNotificationNavigation(router: AppRouter): (
 
   const serviceWorker = navigator.serviceWorker;
   const cleanupCallbacks: Array<() => void> = [];
+  const replayAbortController = new AbortController();
+  let replayInFlight: Promise<void> | null = null;
   const replayPendingClick = (reason: string) => {
-    void replayPendingNotificationClick(router, reason);
+    if (replayAbortController.signal.aborted || replayInFlight !== null) {
+      return;
+    }
+
+    const replay = consumePendingNotificationClick(router, reason, {
+      retryDelaysMs: hasPendingNotificationClickCache()
+        ? PENDING_NOTIFICATION_CLICK_RETRY_DELAYS_MS
+        : [],
+      signal: replayAbortController.signal,
+    });
+    const replayWithCleanup = replay.finally(() => {
+      if (replayInFlight === replayWithCleanup) {
+        replayInFlight = null;
+      }
+    });
+    replayInFlight = replayWithCleanup;
+    void replayWithCleanup;
   };
   const handleMessage = (event: MessageEvent<unknown>) => {
     if (!isNotificationClickClientMessage(event.data)) {
@@ -264,29 +280,12 @@ export function installServiceWorkerNotificationNavigation(router: AppRouter): (
   replayPendingClick("startup");
 
   return () => {
+    replayAbortController.abort();
+    replayInFlight = null;
     for (const cleanup of cleanupCallbacks) {
       cleanup();
     }
   };
-}
-
-function replayPendingNotificationClick(router: AppRouter, reason: string): Promise<void> {
-  if (replayInFlight !== null) {
-    return replayInFlight;
-  }
-
-  const replay = consumePendingNotificationClick(router, reason, {
-    retryDelaysMs: hasPendingNotificationClickCache()
-      ? PENDING_NOTIFICATION_CLICK_RETRY_DELAYS_MS
-      : [],
-  });
-  const replayWithCleanup = replay.finally(() => {
-    if (replayInFlight === replayWithCleanup) {
-      replayInFlight = null;
-    }
-  });
-  replayInFlight = replayWithCleanup;
-  return replayWithCleanup;
 }
 
 export async function consumePendingNotificationClick(
@@ -294,10 +293,14 @@ export async function consumePendingNotificationClick(
   reason = "manual",
   options: {
     readonly retryDelaysMs?: ReadonlyArray<number>;
+    readonly signal?: AbortSignal;
   } = {},
 ): Promise<void> {
-  const pending = await readPendingNotificationClickWithRetry(options.retryDelaysMs ?? []);
-  if (pending === null) {
+  const pending = await readPendingNotificationClickWithRetry(
+    options.retryDelaysMs ?? [],
+    options.signal,
+  );
+  if (pending === null || isAbortSignalAborted(options.signal)) {
     return;
   }
 
@@ -338,15 +341,29 @@ export async function consumePendingNotificationClick(
 
 async function readPendingNotificationClickWithRetry(
   retryDelaysMs: ReadonlyArray<number>,
+  signal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof readPendingNotificationClick>>> {
+  if (isAbortSignalAborted(signal)) {
+    return null;
+  }
+
   const pending = await readPendingNotificationClick();
+  if (isAbortSignalAborted(signal)) {
+    return null;
+  }
   if (pending !== null) {
     return pending;
   }
 
   for (const delayMs of retryDelaysMs) {
-    await sleep(delayMs);
+    await sleep(delayMs, signal);
+    if (isAbortSignalAborted(signal)) {
+      return null;
+    }
     const retryPending = await readPendingNotificationClick();
+    if (isAbortSignalAborted(signal)) {
+      return null;
+    }
     if (retryPending !== null) {
       return retryPending;
     }
@@ -359,9 +376,25 @@ function hasPendingNotificationClickCache(): boolean {
   return typeof window !== "undefined" && "caches" in window;
 }
 
-async function sleep(ms: number): Promise<void> {
+function isAbortSignalAborted(signal?: AbortSignal): boolean {
+  return signal?.aborted === true;
+}
+
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (isAbortSignalAborted(signal)) {
+    return;
+  }
+
   await new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", handleAbort, { once: true });
   });
 }
 

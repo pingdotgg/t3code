@@ -533,6 +533,49 @@ describe("notificationNavigation", () => {
     cleanup();
   });
 
+  it("does not let cleaned-up startup replays consume later pending clicks", async () => {
+    vi.useFakeTimers();
+    const service = await import("../environments/runtime/service");
+    vi.spyOn(service, "reconcileAfterNotificationClick").mockImplementation(() => undefined);
+    const { cacheStorage } = createCacheStorageMock();
+    stubServiceWorker({ cacheStorage: cacheStorage as unknown as CacheStorage });
+    const staleRouter = makeRouter();
+    const openedAt = Date.now();
+
+    const cleanupStaleRouter = installServiceWorkerNotificationNavigation(staleRouter);
+    await flushMicrotasks();
+    cleanupStaleRouter();
+
+    await writePendingNotificationClick({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+    await drainPendingReplayRetries();
+
+    expect(staleRouter.navigate).not.toHaveBeenCalled();
+    await expect(readPendingNotificationClick()).resolves.toEqual({
+      url: "/env-1/thread-1",
+      openedAt,
+    });
+
+    const activeRouter = makeRouter();
+    const cleanupActiveRouter = installServiceWorkerNotificationNavigation(activeRouter);
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(activeRouter.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: {
+        environmentId: "env-1",
+        threadId: "thread-1",
+      },
+      search: {},
+    });
+    await expect(readPendingNotificationClick()).resolves.toBeNull();
+
+    cleanupActiveRouter();
+  });
+
   it("replays a persisted notification target on focus", async () => {
     vi.useFakeTimers();
     const service = await import("../environments/runtime/service");
