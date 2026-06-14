@@ -71,7 +71,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
+import { getVcsStatusDataForTarget, refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -1058,10 +1058,13 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus, error: gitStatusError } = useVcsStatus({
-    environmentId: activeEnvironmentId,
-    cwd: gitCwd,
-  });
+  const vcsStatusTarget = useMemo(
+    () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
+    [activeEnvironmentId, gitCwd],
+  );
+  const gitStatusQuery = useVcsStatus(vcsStatusTarget);
+  const { error: gitStatusError } = gitStatusQuery;
+  const gitStatus = getVcsStatusDataForTarget(gitStatusQuery, vcsStatusTarget);
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
     [gitStatus?.sourceControlProvider],

@@ -2,7 +2,11 @@ import { EnvironmentId, type VcsStatusResult } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { type VcsStatusClient, createVcsStatusManager } from "./vcsStatusState.ts";
+import {
+  type VcsStatusClient,
+  createVcsStatusManager,
+  getVcsStatusDataForTarget,
+} from "./vcsStatusState.ts";
 
 /* ─── Test helpers ──────────────────────────────────────────────────── */
 
@@ -57,12 +61,24 @@ function createMockClient(): {
   };
 }
 
-const PENDING = { data: null, error: null, cause: null, isPending: true };
-const EMPTY = { data: null, error: null, cause: null, isPending: false };
-
 const TARGET = { environmentId: EnvironmentId.make("env-local"), cwd: "/repo" } as const;
 const FRESH_TARGET = { environmentId: EnvironmentId.make("env-local"), cwd: "/fresh" } as const;
 const OTHER_ENV_TARGET = { environmentId: EnvironmentId.make("env-remote"), cwd: "/repo" } as const;
+const TARGET_KEY = "env-local:/repo";
+const PENDING = {
+  targetKey: TARGET_KEY,
+  data: null,
+  error: null,
+  cause: null,
+  isPending: true,
+};
+const EMPTY = {
+  targetKey: null,
+  data: null,
+  error: null,
+  cause: null,
+  isPending: false,
+};
 
 /* ─── Tests ─────────────────────────────────────────────────────────── */
 
@@ -99,6 +115,7 @@ describe("createVcsStatusManager", () => {
 
       emit(BASE_STATUS);
       expect(manager.getSnapshot(TARGET)).toEqual({
+        targetKey: TARGET_KEY,
         data: BASE_STATUS,
         error: null,
         cause: null,
@@ -130,6 +147,7 @@ describe("createVcsStatusManager", () => {
 
       // Snapshot still reflects stream data, not the refresh response
       expect(manager.getSnapshot(TARGET)).toEqual({
+        targetKey: TARGET_KEY,
         data: BASE_STATUS,
         error: null,
         cause: null,
@@ -158,6 +176,19 @@ describe("createVcsStatusManager", () => {
 
       releaseLocal();
       releaseRemote();
+    });
+
+    it("rejects status data from a previous cwd during target transitions", () => {
+      const staleState = {
+        targetKey: TARGET_KEY,
+        data: BASE_STATUS,
+        error: null,
+        cause: null,
+        isPending: false,
+      };
+
+      expect(getVcsStatusDataForTarget(staleState, FRESH_TARGET)).toBeNull();
+      expect(getVcsStatusDataForTarget(staleState, TARGET)).toBe(BASE_STATUS);
     });
 
     it("returns null from refresh when no client is available", async () => {
@@ -204,6 +235,7 @@ describe("createVcsStatusManager", () => {
 
       mock.emit(BASE_STATUS);
       expect(manager.getSnapshot(TARGET)).toEqual({
+        targetKey: TARGET_KEY,
         data: BASE_STATUS,
         error: null,
         cause: null,
@@ -241,6 +273,7 @@ describe("createVcsStatusManager", () => {
       for (const listener of connectionListeners) listener();
 
       expect(manager.getSnapshot(TARGET)).toEqual({
+        targetKey: TARGET_KEY,
         data: BASE_STATUS,
         error: null,
         cause: null,

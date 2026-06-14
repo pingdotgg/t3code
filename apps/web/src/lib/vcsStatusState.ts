@@ -6,6 +6,7 @@ import {
   EMPTY_VCS_STATUS_ATOM,
   EMPTY_VCS_STATUS_STATE,
   createVcsStatusManager,
+  getVcsStatusDataForTarget,
   getVcsStatusTargetKey,
   vcsStatusStateAtom,
 } from "@t3tools/client-runtime";
@@ -19,6 +20,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 export type { VcsStatusState, VcsStatusTarget };
+export { getVcsStatusDataForTarget };
 
 const manager = createVcsStatusManager({
   getRegistry: () => appAtomRegistry,
