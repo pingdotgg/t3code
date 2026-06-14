@@ -55,7 +55,7 @@ export class CorrelationBindError extends Schema.TaggedErrorClass<CorrelationBin
     scope: CorrelationScopeV2,
     providerRef: OrchestrationV2ProviderRef,
     entity: CorrelationEntityV2,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -69,7 +69,7 @@ export class CorrelationLookupError extends Schema.TaggedErrorClass<CorrelationL
     scope: CorrelationScopeV2,
     providerRef: Schema.optional(OrchestrationV2ProviderRef),
     entity: Schema.optional(CorrelationEntityV2),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -82,7 +82,7 @@ export class CorrelationOrdinalError extends Schema.TaggedErrorClass<Correlation
   {
     scope: CorrelationScopeV2,
     key: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -116,4 +116,4 @@ export interface CorrelationStoreV2Shape {
 export class CorrelationStoreV2 extends Context.Service<
   CorrelationStoreV2,
   CorrelationStoreV2Shape
->()("t3/orchestration-v2/CorrelationStore") {}
+>()("t3/orchestration-v2/CorrelationStore/CorrelationStoreV2") {}

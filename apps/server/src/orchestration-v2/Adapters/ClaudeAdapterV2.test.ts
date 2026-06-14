@@ -2,6 +2,7 @@ import {
   ClaudeSettings,
   MessageId,
   NodeId,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderTurnId,
@@ -31,6 +32,8 @@ import {
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+
+const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
@@ -240,7 +243,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         }> = [];
         const adapter = makeClaudeAdapterV2({
           instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
-          settings: Schema.decodeSync(ClaudeSettings)({}),
+          settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           idAllocator,
           queryRunner: {
@@ -333,9 +336,35 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
 
         yield* runtime.startTurn({
+          appThread: {
+            id: targetThreadId,
+            projectId: ProjectId.make("project-claude-fork-target"),
+            title: "Claude fork target",
+            defaultProvider: ProviderInstanceId.make(CLAUDE_PROVIDER),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+              model: "claude-sonnet-4-6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: forkedProviderThread.id,
+            lineage: {
+              parentThreadId: sourceThreadId,
+              relationshipToParent: "fork",
+              rootThreadId: sourceThreadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            deletedAt: null,
+          },
           threadId: targetThreadId,
           runId: RunId.make("run-claude-fork-target"),
           runOrdinal: 1,
+          providerTurnOrdinal: 1,
           attemptId: RunAttemptId.make("run-attempt-claude-fork-target"),
           rootNodeId: NodeId.make("node-claude-fork-target-root"),
           providerThread: forkedProviderThread,

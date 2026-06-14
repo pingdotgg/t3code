@@ -23,8 +23,9 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
+
+import { randomUuidV4 } from "./RandomUuid.ts";
 
 export const IdAllocatorV2Kind = Schema.Literals([
   "command",
@@ -54,7 +55,7 @@ export class IdAllocatorV2AllocationError extends Schema.TaggedErrorClass<IdAllo
   {
     kind: IdAllocatorV2Kind,
     input: Schema.optional(Schema.Unknown),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -125,6 +126,10 @@ export interface IdAllocatorV2AllocateShape {
 }
 
 export interface IdAllocatorV2DeriveShape {
+  readonly threadFromProviderThread: (input: {
+    readonly provider: ProviderKind;
+    readonly nativeThreadId: string;
+  }) => ThreadId;
   readonly run: (input: { readonly threadId: ThreadId; readonly ordinal: number }) => RunId;
   readonly runAttempt: (input: {
     readonly runId: RunId;
@@ -170,7 +175,7 @@ export interface IdAllocatorV2Shape {
 }
 
 export class IdAllocatorV2 extends Context.Service<IdAllocatorV2, IdAllocatorV2Shape>()(
-  "t3/orchestration-v2/IdAllocator",
+  "t3/orchestration-v2/IdAllocator/IdAllocatorV2",
 ) {}
 
 const encodePart = (part: string | number): string => encodeURIComponent(String(part));
@@ -186,7 +191,7 @@ const randomId =
     readonly make: (value: string) => Id;
   }) =>
   (allocationInput: Input): Effect.Effect<Id, IdAllocatorV2Error> =>
-    Random.nextUUIDv4.pipe(
+    randomUuidV4.pipe(
       Effect.map((uuid) => input.make(joinId(input.prefix, ...input.parts, uuid))),
       Effect.mapError(
         (cause) =>
@@ -203,14 +208,14 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
   IdAllocatorV2.of({
     allocate: {
       command: (input) =>
-        randomId<typeof CommandId.Type, typeof input>({
+        randomId<CommandId, typeof input>({
           kind: "command",
           prefix: "command",
           parts: ["fixture", input.fixtureName, input.commandName],
           make: CommandId.make,
         })(input),
       event: (input) =>
-        randomId<typeof EventId.Type, typeof input>({
+        randomId<EventId, typeof input>({
           kind: "event",
           prefix: "event",
           parts: [
@@ -223,7 +228,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: EventId.make,
         })(input),
       rawEvent: (input) =>
-        randomId<typeof RawEventId.Type, typeof input>({
+        randomId<RawEventId, typeof input>({
           kind: "raw_event",
           prefix: "raw-event",
           parts: [
@@ -234,14 +239,14 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: RawEventId.make,
         })(input),
       project: (input) =>
-        randomId<typeof ProjectId.Type, typeof input>({
+        randomId<ProjectId, typeof input>({
           kind: "project",
           prefix: "project",
           parts: ["fixture", input.fixtureName],
           make: ProjectId.make,
         })(input),
       thread: (input) =>
-        randomId<typeof ThreadId.Type, typeof input>({
+        randomId<ThreadId, typeof input>({
           kind: "thread",
           prefix: "thread",
           parts: [
@@ -251,21 +256,21 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: ThreadId.make,
         })(input),
       message: (input) =>
-        randomId<typeof MessageId.Type, typeof input>({
+        randomId<MessageId, typeof input>({
           kind: "message",
           prefix: "message",
           parts: ["thread", input.threadId, "ordinal", input.ordinal],
           make: MessageId.make,
         })(input),
       providerSession: (input) =>
-        randomId<typeof ProviderSessionId.Type, typeof input>({
+        randomId<ProviderSessionId, typeof input>({
           kind: "provider_session",
           prefix: "provider-session",
           parts: ["provider", input.provider, "thread", input.threadId],
           make: ProviderSessionId.make,
         })(input),
       runtimeRequest: (input) =>
-        randomId<typeof RuntimeRequestId.Type, typeof input>({
+        randomId<RuntimeRequestId, typeof input>({
           kind: "runtime_request",
           prefix: "runtime-request",
           parts: [
@@ -291,7 +296,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           ),
         ),
       contextHandoff: (input) =>
-        randomId<typeof ContextHandoffId.Type, typeof input>({
+        randomId<ContextHandoffId, typeof input>({
           kind: "context_handoff",
           prefix: "context-handoff",
           parts: [
@@ -305,7 +310,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: ContextHandoffId.make,
         })(input),
       contextTransfer: (input) =>
-        randomId<typeof ContextTransferId.Type, typeof input>({
+        randomId<ContextTransferId, typeof input>({
           kind: "context_transfer",
           prefix: "context-transfer",
           parts: [
@@ -319,7 +324,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: ContextTransferId.make,
         })(input),
       plan: (input) =>
-        randomId<typeof PlanId.Type, typeof input>({
+        randomId<PlanId, typeof input>({
           kind: "plan",
           prefix: "plan",
           parts: [
@@ -333,6 +338,10 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
         })(input),
     },
     derive: {
+      threadFromProviderThread: (input) =>
+        ThreadId.make(
+          joinId("thread", "provider", input.provider, "native-thread", input.nativeThreadId),
+        ),
       run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
       runAttempt: (input) =>
         RunAttemptId.make(
