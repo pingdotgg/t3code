@@ -38,21 +38,37 @@ function runGit(
   });
 }
 
+export const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(function* (
+  fixtureName: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cwd = yield* fs.makeTempDirectory({
+    prefix: `t3-orchestrator-v2-${fixtureName}-`,
+  });
+  yield* runGit(cwd, ["init"]);
+  yield* runGit(cwd, ["config", "user.name", "T3 Code Test"]);
+  yield* runGit(cwd, ["config", "user.email", "t3code-test@example.com"]);
+  yield* fs.writeFileString(path.join(cwd, "README.md"), `# ${fixtureName}\n`);
+  yield* runGit(cwd, ["add", "README.md"]);
+  yield* runGit(cwd, ["commit", "-m", "initial"]);
+  return cwd;
+});
+
+export const removeCheckpointWorkspaceEffect = Effect.fn("removeCheckpointWorkspace")(function* (
+  cwd: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(cwd, { recursive: true });
+});
+
+export const checkpointWorkspace = (fixtureName: string) =>
+  Effect.acquireRelease(makeCheckpointWorkspaceEffect(fixtureName), (cwd) =>
+    removeCheckpointWorkspaceEffect(cwd).pipe(Effect.orDie),
+  ).pipe(Effect.provide(NodeServices.layer));
+
 export async function makeCheckpointWorkspace(fixtureName: string): Promise<string> {
   return await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectory({
-        prefix: `t3-orchestrator-v2-${fixtureName}-`,
-      });
-      yield* runGit(cwd, ["init"]);
-      yield* runGit(cwd, ["config", "user.name", "T3 Code Test"]);
-      yield* runGit(cwd, ["config", "user.email", "t3code-test@example.com"]);
-      yield* fs.writeFileString(path.join(cwd, "README.md"), `# ${fixtureName}\n`);
-      yield* runGit(cwd, ["add", "README.md"]);
-      yield* runGit(cwd, ["commit", "-m", "initial"]);
-      return cwd;
-    }).pipe(Effect.provide(NodeServices.layer)),
+    makeCheckpointWorkspaceEffect(fixtureName).pipe(Effect.provide(NodeServices.layer)),
   );
 }

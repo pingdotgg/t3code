@@ -53,7 +53,7 @@ export class OrchestratorDispatchError extends Schema.TaggedErrorClass<Orchestra
   {
     commandId: CommandId,
     commandType: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -65,7 +65,7 @@ export class OrchestratorProjectionError extends Schema.TaggedErrorClass<Orchest
   "OrchestratorProjectionError",
   {
     threadId: ThreadId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -76,7 +76,7 @@ export class OrchestratorProjectionError extends Schema.TaggedErrorClass<Orchest
 export class OrchestratorDomainEventStreamError extends Schema.TaggedErrorClass<OrchestratorDomainEventStreamError>()(
   "OrchestratorDomainEventStreamError",
   {
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -89,7 +89,7 @@ export class OrchestratorProviderAdapterError extends Schema.TaggedErrorClass<Or
   {
     commandId: CommandId,
     provider: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -140,7 +140,7 @@ export interface OrchestratorV2Shape {
 }
 
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
-  "t3/orchestration-v2/Orchestrator",
+  "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
 function nextRunOrdinal(projection: OrchestrationV2ThreadProjection): number {
@@ -170,6 +170,20 @@ function lastSequence(storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>): 
 
 function nextTurnItemOrdinal(projection: OrchestrationV2ThreadProjection): number {
   return Math.max(0, ...projection.turnItems.map((item) => item.ordinal)) + 1;
+}
+
+function nextProviderTurnOrdinal(
+  projection: OrchestrationV2ThreadProjection,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+): number {
+  return (
+    Math.max(
+      0,
+      ...projection.providerTurns
+        .filter((turn) => turn.providerThreadId === providerThreadId)
+        .map((turn) => turn.ordinal),
+    ) + 1
+  );
 }
 
 function isBlockingRun(run: OrchestrationV2Run): boolean {
@@ -626,6 +640,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:system:start-queued:${queuedRun.id}`),
+        appThread: projection.thread,
         providerSessionId,
         session,
         run: runningRun,
@@ -634,6 +649,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThread,
         attempt: runningAttempt,
         attemptId,
+        providerTurnOrdinal: nextProviderTurnOrdinal(projection, providerThread.id),
         shouldFinalizeRun: () =>
           projectionStore.getThreadProjection(threadId).pipe(
             Effect.map((current) => {
@@ -1338,6 +1354,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* runExecution
         .startRootRun({
           commandId: input.command.commandId,
+          appThread: input.projection.thread,
           providerSessionId: providerThread.providerSessionId,
           session,
           run: restartedRun,
@@ -1346,6 +1363,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerThread,
           attempt: nextAttempt,
           attemptId: nextAttemptId,
+          providerTurnOrdinal: nextProviderTurnOrdinal(input.projection, providerThread.id),
           shouldFinalizeRun: () =>
             projectionStore.getThreadProjection(input.command.threadId).pipe(
               Effect.map((current) => {
@@ -2548,6 +2566,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* runExecution
         .startRootRun({
           commandId: command.commandId,
+          appThread: projection.thread,
           providerSessionId,
           session,
           run,
@@ -2556,6 +2575,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerThread,
           attempt,
           attemptId,
+          providerTurnOrdinal: nextProviderTurnOrdinal(projection, providerThread.id),
           shouldFinalizeRun: () =>
             projectionStore.getThreadProjection(command.threadId).pipe(
               Effect.map((current) => {

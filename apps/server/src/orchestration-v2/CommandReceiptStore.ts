@@ -14,7 +14,7 @@ export class CommandReceiptStoreWriteError extends Schema.TaggedErrorClass<Comma
   "CommandReceiptStoreWriteError",
   {
     commandId: CommandId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -26,7 +26,7 @@ export class CommandReceiptStoreReadError extends Schema.TaggedErrorClass<Comman
   "CommandReceiptStoreReadError",
   {
     commandId: CommandId,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -67,7 +67,7 @@ export interface CommandReceiptStoreV2Shape {
 export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2,
   CommandReceiptStoreV2Shape
->()("t3/orchestration-v2/CommandReceiptStore") {}
+>()("t3/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
 /**
  * IMPLEMENTATIONS

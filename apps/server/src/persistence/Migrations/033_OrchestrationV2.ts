@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+// Base schema for the orchestration V2 event log and projections.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
