@@ -2537,11 +2537,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find(
-            (request) => request._tag === WS_METHODS.terminalOpen,
+          const attachRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalAttach,
           );
-          expect(openRequest).toMatchObject({
-            _tag: WS_METHODS.terminalOpen,
+          expect(attachRequest).toMatchObject({
+            _tag: WS_METHODS.terminalAttach,
             threadId: THREAD_ID,
             terminalId: "action-lint",
             cwd: "/repo/project",
@@ -2578,6 +2578,116 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("reuses an existing idle project action terminal", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [THREAD_KEY]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: THREAD_KEY,
+      },
+    });
+    useTerminalUiStateStore.setState({
+      terminalUiStateByThreadKey: {
+        [THREAD_KEY]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["action-lint"],
+          activeTerminalId: "action-lint",
+          terminalGroups: [{ id: "group-action-lint", terminalIds: ["action-lint"] }],
+          activeTerminalGroupId: "group-action-lint",
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "lint",
+          name: "Lint",
+          command: "bun run lint",
+          icon: "lint",
+          runOnWorktreeCreate: false,
+        },
+      ]),
+      configureFixture: (nextFixture) => {
+        nextFixture.terminalMetadataEvents = [
+          {
+            type: "upsert",
+            terminal: {
+              threadId: THREAD_ID,
+              terminalId: "action-lint",
+              cwd: "/repo/project",
+              worktreePath: null,
+              status: "running",
+              pid: 123,
+              exitCode: null,
+              exitSignal: null,
+              hasRunningSubprocess: false,
+              label: "Action: lint",
+              updatedAt: isoAt(1_200),
+            },
+          },
+        ];
+      },
+    });
+
+    try {
+      const runButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.getAttribute("aria-label") === "Run Lint",
+          ) as HTMLButtonElement | null,
+        "Unable to find Run Lint button.",
+      );
+      runButton.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
+          const writeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalWrite,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: THREAD_ID,
+            terminalId: "action-lint",
+          });
+          expect(writeRequest).toMatchObject({
+            _tag: WS_METHODS.terminalWrite,
+            threadId: THREAD_ID,
+            terminalId: "action-lint",
+            data: "bun run lint\r",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === WS_METHODS.terminalAttach && request.terminalId === "action-lint",
+        ),
+      ).toBe(false);
     } finally {
       await mounted.cleanup();
     }
@@ -2629,11 +2739,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find(
-            (request) => request._tag === WS_METHODS.terminalOpen,
+          const attachRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalAttach,
           );
-          expect(openRequest).toMatchObject({
-            _tag: WS_METHODS.terminalOpen,
+          expect(attachRequest).toMatchObject({
+            _tag: WS_METHODS.terminalAttach,
             threadId: THREAD_ID,
             terminalId: "action-test",
             cwd: "/repo/worktrees/feature-draft",

@@ -148,8 +148,8 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import {
+  openTerminalAndWaitForInputReady,
   resolveProjectActionTerminalId,
-  waitForTerminalInputReady,
 } from "~/projectScriptTerminals";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
@@ -2900,6 +2900,16 @@ export default function ChatView(props: ChatViewProps) {
             });
       const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
       const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+      const targetSession =
+        activeThreadKnownSessions.find(
+          (session) => session.target.terminalId === targetTerminalId,
+        ) ?? null;
+      const targetSummary = targetSession?.state.summary ?? null;
+      const canWriteImmediately =
+        targetSummary?.status === "running" &&
+        targetSession?.state.hasRunningSubprocess === false &&
+        targetSummary.cwd === targetCwd &&
+        targetSummary.worktreePath === targetWorktreePath;
       const openTerminalInput: TerminalOpenInput = {
         threadId: activeThreadId,
         terminalId: targetTerminalId,
@@ -2918,8 +2928,11 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       try {
-        await api.terminal.open(openTerminalInput);
-        await waitForTerminalInputReady(api, openTerminalInput);
+        if (canWriteImmediately) {
+          await api.terminal.open(openTerminalInput);
+        } else {
+          await openTerminalAndWaitForInputReady(api, openTerminalInput);
+        }
         await api.terminal.write({
           threadId: activeThreadId,
           terminalId: targetTerminalId,
@@ -2960,6 +2973,7 @@ export default function ChatView(props: ChatViewProps) {
       storeNewTerminal,
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
+      activeThreadKnownSessions,
       environmentId,
       activeKnownTerminalIds,
       activeServerOrderedTerminalIds,

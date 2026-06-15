@@ -7,10 +7,10 @@ import type {
 } from "@t3tools/contracts";
 
 import {
+  openTerminalAndWaitForInputReady,
   projectActionTerminalId,
   resolveProjectActionTerminalId,
   terminalOutputLooksReadyForInput,
-  waitForTerminalInputReady,
 } from "./projectScriptTerminals";
 
 const OPEN_INPUT: TerminalOpenInput = {
@@ -97,13 +97,13 @@ describe("terminalOutputLooksReadyForInput", () => {
   });
 });
 
-describe("waitForTerminalInputReady", () => {
+describe("openTerminalAndWaitForInputReady", () => {
   it("resolves from a prompt already present in the snapshot history", async () => {
     vi.useFakeTimers();
     const unsubscribe = vi.fn();
     const api = createReadyApi("ready\n$ ", unsubscribe);
 
-    await waitForTerminalInputReady(api, OPEN_INPUT);
+    await openTerminalAndWaitForInputReady(api, OPEN_INPUT);
 
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
@@ -139,7 +139,7 @@ describe("waitForTerminalInputReady", () => {
       } as unknown as EnvironmentApi["terminal"],
     };
 
-    const ready = waitForTerminalInputReady(api, OPEN_INPUT);
+    const ready = openTerminalAndWaitForInputReady(api, OPEN_INPUT);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(unsubscribe).not.toHaveBeenCalled();
 
@@ -159,7 +159,7 @@ describe("waitForTerminalInputReady", () => {
     const unsubscribe = vi.fn();
     const api = createReadyApi("", unsubscribe);
 
-    const ready = waitForTerminalInputReady(api, OPEN_INPUT, 1_000);
+    const ready = openTerminalAndWaitForInputReady(api, OPEN_INPUT, 1_000);
     await vi.advanceTimersByTimeAsync(999);
     expect(unsubscribe).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);

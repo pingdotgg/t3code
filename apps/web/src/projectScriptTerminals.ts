@@ -94,7 +94,7 @@ function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
   };
 }
 
-export async function waitForTerminalInputReady(
+export async function openTerminalAndWaitForInputReady(
   api: Pick<EnvironmentApi, "terminal">,
   input: TerminalOpenInput,
   timeoutMs = ACTION_TERMINAL_READY_TIMEOUT_MS,
@@ -154,7 +154,7 @@ export async function waitForTerminalInputReady(
         cleanup();
       }
     } catch {
-      settle();
+      void api.terminal.open(input).finally(settle);
     }
   });
 }
