@@ -9,9 +9,8 @@ import type {
   SessionConfig,
   SessionEvent,
 } from "@github/copilot-sdk";
-import { beforeEach, it } from "@effect/vitest";
+import { beforeEach, it, vi } from "@effect/vitest";
 import { Context, DateTime, Effect, Fiber, Layer, Schema, Stream } from "effect";
-import { vi } from "vitest";
 
 import {
   ApprovalRequestId,
