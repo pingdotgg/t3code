@@ -1,7 +1,7 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -35,6 +35,40 @@ interface RightPanelTabsProps {
   children: ReactNode;
 }
 
+const SURFACE_DISABLED_REASONS = {
+  browser: "Browser previews are only available in the T3 Code desktop app.",
+  files: "Files are only available when a project is open.",
+  diff: "Diff is only available for server threads in Git repositories.",
+} as const;
+
+function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={props.trigger} />
+      <TooltipPopup side="top">{props.reason}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SurfaceMenuItem(props: {
+  available: boolean;
+  disabledReason?: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const item = (
+    <MenuItem
+      className={!props.available ? "data-disabled:pointer-events-auto" : undefined}
+      onClick={props.onClick}
+      disabled={!props.available}
+    >
+      {props.children}
+    </MenuItem>
+  );
+  if (props.available || !props.disabledReason) return item;
+  return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
+}
+
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddTerminal: () => void;
@@ -50,6 +84,7 @@ function RightPanelEmptyState(props: {
       description: "Open a local app or URL.",
       icon: Globe2,
       available: props.browserAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
     },
     {
@@ -57,6 +92,7 @@ function RightPanelEmptyState(props: {
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
       available: true,
+      disabledReason: null,
       onClick: props.onAddTerminal,
     },
     {
@@ -64,6 +100,7 @@ function RightPanelEmptyState(props: {
       description: "Browse and read workspace files.",
       icon: Files,
       available: props.filesAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.files,
       onClick: props.onAddFiles,
     },
     {
@@ -71,6 +108,7 @@ function RightPanelEmptyState(props: {
       description: "Review changes in this thread.",
       icon: FileDiff,
       available: props.diffAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
     },
   ] as const;
@@ -84,23 +122,45 @@ function RightPanelEmptyState(props: {
             Choose what to show in the right panel.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2">
           {actions.map((action) => {
             const Icon = action.icon;
-            return (
-              <button
-                key={action.label}
-                type="button"
-                disabled={!action.available}
-                onClick={action.onClick}
-                className="flex min-h-28 flex-col items-start rounded-lg border border-border/80 bg-card/40 p-4 text-left transition hover:border-border hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-40"
-              >
+            const content = (
+              <>
                 <Icon className="mb-3 size-5" />
                 <span className="text-sm font-medium">{action.label}</span>
                 <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {action.description}
                 </span>
+              </>
+            );
+            if (action.available) {
+              return (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={action.onClick}
+                  className="flex min-h-28 w-full flex-col items-start rounded-lg border border-border/80 bg-card/40 p-4 text-left transition hover:border-border hover:bg-accent/60"
+                >
+                  {content}
+                </button>
+              );
+            }
+            const disabledCard = (
+              <button
+                type="button"
+                className="flex min-h-28 w-full cursor-not-allowed flex-col items-start rounded-lg border border-border/80 bg-card/40 p-4 text-left opacity-40"
+                aria-disabled="true"
+              >
+                {content}
               </button>
+            );
+            return (
+              <DisabledReasonTooltip
+                key={action.label}
+                reason={action.disabledReason}
+                trigger={disabledCard}
+              />
             );
           })}
         </div>
@@ -290,22 +350,34 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <Plus className="size-4" />
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
-                  <MenuItem onClick={props.onAddBrowser} disabled={!props.browserAvailable}>
+                  <SurfaceMenuItem
+                    available={props.browserAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.browser}
+                    onClick={props.onAddBrowser}
+                  >
                     <Globe2 />
                     Browser
-                  </MenuItem>
-                  <MenuItem onClick={props.onAddTerminal}>
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem available onClick={props.onAddTerminal}>
                     <TerminalSquare />
                     Terminal
-                  </MenuItem>
-                  <MenuItem onClick={props.onAddFiles} disabled={!props.filesAvailable}>
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.filesAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.files}
+                    onClick={props.onAddFiles}
+                  >
                     <Files />
                     Files
-                  </MenuItem>
-                  <MenuItem onClick={props.onAddDiff} disabled={!props.diffAvailable}>
+                  </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.diffAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.diff}
+                    onClick={props.onAddDiff}
+                  >
                     <FileDiff />
                     Diff
-                  </MenuItem>
+                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}

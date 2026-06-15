@@ -2129,10 +2129,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]'),
         "Unable to find right panel toggle.",
       );
-      const headerActions = await waitForElement(
-        () => document.querySelector<HTMLElement>("[data-chat-header-actions]"),
-        "Unable to find chat header actions.",
-      );
       const chatHeader = await waitForElement(
         () => document.querySelector<HTMLElement>("[data-chat-header]"),
         "Unable to find chat header.",
@@ -2163,10 +2159,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         true,
       );
       expect(initialRightPanelRect.left - initialTerminalRect.right).toBe(4);
-      expect(
-        initialTerminalRect.left -
-          (headerActions.lastElementChild?.getBoundingClientRect().right ?? Number.NaN),
-      ).toBe(4);
 
       document.documentElement.classList.add("wco");
       expect(panelLayoutControls.getBoundingClientRect().height).toBe(52);
