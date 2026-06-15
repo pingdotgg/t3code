@@ -114,6 +114,28 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("removes persisted file surfaces when their workspace no longer exists", () => {
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().openFile(refA, "README.md");
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+
+    useRightPanelStore.getState().openFile(refB, "conductor.json");
+    useRightPanelStore.getState().reconcileFileSurfaces(refB, false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().close(refA);

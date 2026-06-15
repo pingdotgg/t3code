@@ -58,6 +58,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { useRightPanelStore } from "../rightPanelStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -657,6 +658,7 @@ interface MarkdownFileLinkProps {
   targetPath: string;
   iconPath: string;
   displayPath: string;
+  workspaceRelativePath: string | null;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
@@ -980,13 +982,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   targetPath,
   iconPath,
   displayPath,
+  workspaceRelativePath,
   label,
   copyMarkdown,
   theme,
   threadRef,
   className,
 }: MarkdownFileLinkProps) {
-  const handleOpen = useCallback(() => {
+  const handleOpenInEditor = useCallback(() => {
     const api = readLocalApi();
     if (!api) {
       toastManager.add({
@@ -1006,6 +1009,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
     });
   }, [targetPath]);
+
+  const handleOpenInFilePreview = useCallback(() => {
+    if (!threadRef || !workspaceRelativePath) {
+      handleOpenInEditor();
+      return;
+    }
+    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath);
+  }, [handleOpenInEditor, threadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!threadRef) return;
@@ -1075,7 +1086,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
 
       if (clicked === "open") {
-        handleOpen();
+        handleOpenInEditor();
         return;
       }
       if (clicked === "open-in-browser") {
@@ -1090,7 +1101,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, handleOpenInBrowser, iconPath, targetPath, threadRef],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      iconPath,
+      targetPath,
+      threadRef,
+    ],
   );
 
   return (
@@ -1104,7 +1123,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              handleOpen();
+              if (threadRef && isPreviewSupportedInRuntime() && isBrowserPreviewFile(iconPath)) {
+                handleOpenInBrowser();
+                return;
+              }
+              handleOpenInFilePreview();
             }}
             onContextMenu={handleContextMenu}
           >
@@ -1133,6 +1156,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.displayPath === next.displayPath &&
+    previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
@@ -1257,6 +1281,7 @@ function ChatMarkdown({
             targetPath={fileLinkMeta.targetPath}
             iconPath={fileLinkMeta.filePath}
             displayPath={fileLinkMeta.displayPath}
+            workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
             label={labelParts.join(" · ")}
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
             theme={resolvedTheme}

@@ -79,7 +79,10 @@ export default function FileBrowserPanel({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+    <div
+      className="flex min-h-0 flex-1 flex-col bg-background"
+      data-file-browser-panel={`${environmentId}:${cwd}`}
+    >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium text-foreground">{projectName}</div>

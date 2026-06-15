@@ -1,11 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { File } from "@pierre/diffs/react";
 import { ChevronRight, FolderTree, LoaderCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
+import { ScrollArea } from "~/components/ui/scroll-area";
+import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import FileBrowserPanel from "./FileBrowserPanel";
@@ -16,7 +18,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
-  relativePath: string;
+  relativePath: string | null;
   onOpenFile: (relativePath: string) => void;
 }
 
@@ -40,10 +42,18 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const file = useProjectFileQuery(environmentId, cwd, relativePath);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  const breadcrumbRef = useRef<HTMLDivElement>(null);
   const breadcrumbs = useMemo(
-    () => fileBreadcrumbs(projectName, relativePath),
+    () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
     [projectName, relativePath],
   );
+
+  useEffect(() => {
+    const currentCrumb = breadcrumbRef.current?.querySelector<HTMLElement>(
+      "[data-current-file-crumb='true']",
+    );
+    currentCrumb?.scrollIntoView({ block: "nearest", inline: "end" });
+  }, [relativePath]);
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -57,61 +67,82 @@ export default function FilePreviewPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-y border-border/60 px-3">
-        <div className="flex min-w-0 flex-1 items-center overflow-x-auto text-xs">
-          {breadcrumbs.map((crumb, index) => (
-            <div key={crumb.path || "project"} className="flex shrink-0 items-center">
-              {index > 0 ? (
-                <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-              ) : null}
-              <span
-                className={cn(
-                  "max-w-40 truncate",
-                  crumb.kind === "file" ? "font-medium text-foreground" : "text-muted-foreground",
-                )}
-                title={crumb.path || projectName}
-              >
-                {crumb.label}
-              </span>
+      {relativePath ? (
+        <div className="flex h-11 shrink-0 items-center gap-2 border-y border-border/60 px-3">
+          <ScrollArea
+            ref={breadcrumbRef}
+            hideScrollbars
+            scrollFade
+            className="min-w-0 flex-1 rounded-none"
+            data-file-breadcrumbs
+          >
+            <div className="flex h-full w-max min-w-full items-center text-xs">
+              {breadcrumbs.map((crumb, index) => (
+                <div
+                  key={crumb.path || "project"}
+                  className="flex min-w-0 shrink-0 items-center"
+                  data-current-file-crumb={crumb.kind === "file"}
+                >
+                  {index > 0 ? (
+                    <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+                  ) : null}
+                  <span
+                    className={cn(
+                      "max-w-40 truncate",
+                      crumb.kind === "file"
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                    title={crumb.path || projectName}
+                  >
+                    {crumb.label}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
+          </ScrollArea>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={explorerOpen}
+                  onPressedChange={toggleExplorer}
+                  aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+                  variant="ghost"
+                  size="sm"
+                >
+                  <FolderTree className="size-3.5" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup>
+              {explorerOpen ? "Hide file explorer" : "Show file explorer"}
+            </TooltipPopup>
+          </Tooltip>
         </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className={cn(
-                  "inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-                  explorerOpen && "bg-accent text-foreground",
-                )}
-                aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
-                aria-pressed={explorerOpen}
-                onClick={toggleExplorer}
-              >
-                <FolderTree className="size-4" />
-              </button>
-            }
-          />
-          <TooltipPopup>{explorerOpen ? "Hide file explorer" : "Show file explorer"}</TooltipPopup>
-        </Tooltip>
-      </div>
-      {file.data?.truncated ? (
+      ) : null}
+      {relativePath && file.data?.truncated ? (
         <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/8 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {file.error && file.data === null ? (
+        <div
+          className={cn(
+            "min-w-0 flex-1 flex-col overflow-hidden",
+            relativePath ? "flex" : "hidden",
+          )}
+        >
+          {relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
               {file.error}
             </div>
-          ) : file.data === null ? (
+          ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
             </div>
-          ) : (
+          ) : relativePath && file.data ? (
             <File
               key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
               disableWorkerPool
@@ -128,11 +159,19 @@ export default function FilePreviewPanel({
               }}
               className="min-h-0 flex-1 overflow-auto"
             />
-          )}
+          ) : null}
         </div>
-        {explorerOpen ? (
-          <aside className="flex min-h-0 w-[min(22rem,46%)] min-w-64 shrink-0 border-l border-border/60 bg-background">
+        {explorerOpen || relativePath === null ? (
+          <aside
+            className={cn(
+              "flex min-h-0 shrink-0 bg-background",
+              relativePath
+                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+                : "min-w-0 flex-1",
+            )}
+          >
             <FileBrowserPanel
+              key={`${environmentId}:${cwd}`}
               environmentId={environmentId}
               cwd={cwd}
               projectName={projectName}

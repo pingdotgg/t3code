@@ -2228,6 +2228,185 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("scrolls file tabs and preserves the workspace explorer across file previews", async () => {
+    const workspaceEntries = [
+      { path: "src", kind: "directory" as const },
+      { path: "src/index.ts", kind: "file" as const },
+      { path: "src/router.ts", kind: "file" as const },
+      { path: "src/store.ts", kind: "file" as const },
+      { path: "src/styles.css", kind: "file" as const },
+      { path: "e2e", kind: "directory" as const },
+      { path: "e2e/test-results", kind: "directory" as const },
+      {
+        path: "e2e/test-results/playwright-integration-results",
+        kind: "directory" as const,
+      },
+      {
+        path: "e2e/test-results/playwright-integration-results/chromium-desktop-project",
+        kind: "directory" as const,
+      },
+      {
+        path: "e2e/test-results/playwright-integration-results/chromium-desktop-project/.last-run.json",
+        kind: "file" as const,
+      },
+      { path: "README.md", kind: "file" as const },
+      { path: "AGENTS.md", kind: "file" as const },
+      { path: "package.json", kind: "file" as const },
+      { path: "tsconfig.json", kind: "file" as const },
+    ];
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-file-tabs-and-tree-state" as MessageId,
+        targetText: "keep file tabs readable and preserve tree state",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.projectsListEntries) {
+          return { entries: workspaceEntries, truncated: false };
+        }
+        if (body._tag === WS_METHODS.projectsReadFile) {
+          const relativePath =
+            typeof body.relativePath === "string" ? body.relativePath : "file.ts";
+          const contents = `// ${relativePath}\n`;
+          return {
+            relativePath,
+            contents,
+            byteLength: new TextEncoder().encode(contents).byteLength,
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useRightPanelStore.getState().open(THREAD_REF, "files");
+
+      const explorer = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-file-browser-panel]"),
+        "Unable to find the workspace file explorer.",
+      );
+
+      for (const entry of workspaceEntries) {
+        if (entry.kind === "file") {
+          useRightPanelStore.getState().openFile(THREAD_REF, entry.path);
+        }
+      }
+
+      const tabList = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-right-panel-tab-list]"),
+        "Unable to find the right panel tab list.",
+      );
+      const tabViewport = await waitForElement(
+        () => tabList.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]'),
+        "Unable to find the right panel tab viewport.",
+      );
+
+      await vi.waitFor(() => {
+        const fileTabs = Array.from(tabList.querySelectorAll<HTMLElement>("[data-active-tab]"));
+        expect(fileTabs.length).toBe(
+          workspaceEntries.filter((entry) => entry.kind === "file").length,
+        );
+        expect(tabViewport.scrollWidth).toBeGreaterThan(tabViewport.clientWidth);
+        expect(tabViewport.scrollLeft).toBeGreaterThan(0);
+        expect(tabList.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull();
+        expect(
+          fileTabs.every((tab) => {
+            const width = tab.getBoundingClientRect().width;
+            return width >= 100 && width <= 176;
+          }),
+        ).toBe(true);
+        expect(document.querySelector<HTMLElement>("[data-file-browser-panel]")).toBe(explorer);
+      });
+
+      useRightPanelStore.getState().openFile(THREAD_REF, "src/index.ts");
+      await vi.waitFor(() => {
+        expect(document.querySelector<HTMLElement>("[data-file-browser-panel]")).toBe(explorer);
+      });
+
+      useRightPanelStore
+        .getState()
+        .openFile(
+          THREAD_REF,
+          "e2e/test-results/playwright-integration-results/chromium-desktop-project/.last-run.json",
+        );
+      await mounted.setContainerSize({ width: 800, height: WIDE_FOOTER_VIEWPORT.height });
+      const breadcrumbs = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-file-breadcrumbs]"),
+        "Unable to find the responsive file breadcrumbs.",
+      );
+      const breadcrumbViewport = await waitForElement(
+        () => breadcrumbs.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]'),
+        "Unable to find the file breadcrumb viewport.",
+      );
+      const currentCrumb = await waitForElement(
+        () =>
+          Array.from(
+            breadcrumbs.querySelectorAll<HTMLElement>("[data-current-file-crumb='true']"),
+          ).find((crumb) => crumb.textContent === ".last-run.json") ?? null,
+        "Unable to find the current file breadcrumb.",
+      );
+      const explorerToggle = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Hide file explorer"]'),
+        "Unable to find the file explorer toggle.",
+      );
+
+      await vi.waitFor(() => {
+        const viewportRect = breadcrumbViewport.getBoundingClientRect();
+        const currentCrumbRect = currentCrumb.getBoundingClientRect();
+        expect(breadcrumbViewport.scrollWidth).toBeGreaterThan(breadcrumbViewport.clientWidth);
+        expect(breadcrumbViewport.scrollLeft).toBeGreaterThan(0);
+        expect(breadcrumbs.querySelector('[data-slot="scroll-area-scrollbar"]')).toBeNull();
+        expect(currentCrumbRect.right).toBeLessThanOrEqual(viewportRect.right + 1);
+        expect(viewportRect.right).toBeLessThan(explorerToggle.getBoundingClientRect().left);
+        expect(explorerToggle.getAttribute("aria-pressed")).toBe("true");
+        expect(explorerToggle.getBoundingClientRect().width).toBe(28);
+        expect(explorerToggle.getBoundingClientRect().height).toBe(28);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("removes persisted file tabs when a draft workspace no longer exists", async () => {
+    const orphanedDraftId = DraftId.make("draft-orphaned-file-panel");
+    const orphanedThreadId = "thread-orphaned-file-panel" as ThreadId;
+    const orphanedThreadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, orphanedThreadId);
+    useComposerDraftStore.getState().setProjectDraftThreadId(
+      {
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        projectId: "project-deleted" as ProjectId,
+      },
+      orphanedDraftId,
+      { threadId: orphanedThreadId },
+    );
+    useRightPanelStore.getState().openFile(orphanedThreadRef, "conductor.json");
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-orphaned-file-panel" as MessageId,
+        targetText: "orphaned persisted file panel",
+      }),
+      initialPath: `/draft/${orphanedDraftId}`,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, orphanedThreadRef),
+        ).toEqual({
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        });
+        expect(document.querySelector("[data-right-panel-tabbar]")).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps multiple terminal panel surfaces separate from the bottom drawer", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,

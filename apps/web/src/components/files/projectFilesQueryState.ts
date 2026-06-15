@@ -16,6 +16,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const PROJECT_QUERY_STALE_TIME_MS = 30_000;
 const PROJECT_QUERY_IDLE_TTL_MS = 5 * 60_000;
+const EMPTY_PROJECT_FILE_PATH = "";
 
 class ProjectQueryError extends Data.TaggedError("ProjectQueryError")<{
   readonly message: string;
@@ -62,6 +63,7 @@ const projectFileQueryAtom = Atom.family((key: string) =>
     Effect.tryPromise({
       try: () => {
         const [environmentId, cwd, relativePath] = keyParts(key) as [EnvironmentId, string, string];
+        if (relativePath === EMPTY_PROJECT_FILE_PATH) return Promise.resolve(null);
         return ensureEnvironmentApi(environmentId).projects.readFile({ cwd, relativePath });
       },
       catch: (cause) => queryError("Could not read workspace file.", cause),
@@ -90,9 +92,9 @@ export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: st
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,
-  relativePath: string,
+  relativePath: string | null,
 ) {
-  return projectFileQueryAtom(fileKey(environmentId, cwd, relativePath));
+  return projectFileQueryAtom(fileKey(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH));
 }
 
 function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | null {
@@ -119,7 +121,7 @@ export function useProjectEntriesQuery(
 export function useProjectFileQuery(
   environmentId: EnvironmentId,
   cwd: string,
-  relativePath: string,
+  relativePath: string | null,
 ): ProjectQueryState<ProjectReadFileResult> {
   const atom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
   const result = useAtomValue(atom);

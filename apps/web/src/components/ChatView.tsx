@@ -67,7 +67,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import { selectEnvironmentState, selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -111,7 +111,6 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((mod) => ({ default: mod.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
-const FileBrowserPanel = lazy(() => import("./files/FileBrowserPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -1367,10 +1366,22 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
+  const activeEnvironmentBootstrapComplete = useStore((state) =>
+    activeThread
+      ? selectEnvironmentState(state, activeThread.environmentId).bootstrapComplete
+      : false,
+  );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
     [activeProject?.scripts],
   );
+
+  useEffect(() => {
+    if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
+    useRightPanelStore
+      .getState()
+      .reconcileFileSurfaces(activeThreadRef, activeProject !== undefined);
+  }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
   useEffect(() => {
     if (routeKind !== "server") {
@@ -4826,26 +4837,20 @@ export default function ChatView(props: ChatViewProps) {
                 <DiffPanel mode="embedded" />
               </Suspense>
             </DiffWorkerPoolProvider>
-          ) : activeRightPanelSurface?.kind === "files" && activeProject ? (
-            <DiffWorkerPoolProvider>
-              <Suspense fallback={null}>
-                <FileBrowserPanel
-                  key={`${activeProject.environmentId}:${activeProject.cwd}`}
-                  environmentId={activeProject.environmentId}
-                  cwd={activeProject.cwd}
-                  projectName={activeProject.name}
-                  onOpenFile={openFileSurface}
-                />
-              </Suspense>
-            </DiffWorkerPoolProvider>
-          ) : activeRightPanelSurface?.kind === "file" && activeProject ? (
+          ) : (activeRightPanelSurface?.kind === "files" ||
+              activeRightPanelSurface?.kind === "file") &&
+            activeProject ? (
             <Suspense fallback={null}>
               <FilePreviewPanel
-                key={`${activeProject.environmentId}:${activeProject.cwd}:${activeRightPanelSurface.relativePath}`}
+                key={`${activeProject.environmentId}:${activeProject.cwd}`}
                 environmentId={activeProject.environmentId}
                 cwd={activeProject.cwd}
                 projectName={activeProject.name}
-                relativePath={activeRightPanelSurface.relativePath}
+                relativePath={
+                  activeRightPanelSurface.kind === "file"
+                    ? activeRightPanelSurface.relativePath
+                    : null
+                }
                 onOpenFile={openFileSurface}
               />
             </Suspense>
@@ -4918,26 +4923,20 @@ export default function ChatView(props: ChatViewProps) {
                 mode="embedded"
                 onClose={closePlanSidebar}
               />
-            ) : activeRightPanelSurface?.kind === "files" && activeProject ? (
-              <DiffWorkerPoolProvider>
-                <Suspense fallback={null}>
-                  <FileBrowserPanel
-                    key={`${activeProject.environmentId}:${activeProject.cwd}`}
-                    environmentId={activeProject.environmentId}
-                    cwd={activeProject.cwd}
-                    projectName={activeProject.name}
-                    onOpenFile={openFileSurface}
-                  />
-                </Suspense>
-              </DiffWorkerPoolProvider>
-            ) : activeRightPanelSurface?.kind === "file" && activeProject ? (
+            ) : (activeRightPanelSurface?.kind === "files" ||
+                activeRightPanelSurface?.kind === "file") &&
+              activeProject ? (
               <Suspense fallback={null}>
                 <FilePreviewPanel
-                  key={`${activeProject.environmentId}:${activeProject.cwd}:${activeRightPanelSurface.relativePath}`}
+                  key={`${activeProject.environmentId}:${activeProject.cwd}`}
                   environmentId={activeProject.environmentId}
                   cwd={activeProject.cwd}
                   projectName={activeProject.name}
-                  relativePath={activeRightPanelSurface.relativePath}
+                  relativePath={
+                    activeRightPanelSurface.kind === "file"
+                      ? activeRightPanelSurface.relativePath
+                      : null
+                  }
                   onOpenFile={openFileSurface}
                 />
               </Suspense>
