@@ -344,8 +344,8 @@ describe("Students Schema", () => {
 
         assert.equal(document.version, "1");
         assert.lengthOf(document.students, 2);
-        assert.equal(document.students[0].name, "Alice");
-        assert.equal(document.students[1].name, "Bob");
+        assert.equal(document.students[0]?.name, "Alice");
+        assert.equal(document.students[1]?.name, "Bob");
       }),
     );
 
