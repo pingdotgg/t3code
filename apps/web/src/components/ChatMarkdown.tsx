@@ -33,12 +33,8 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
-import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
-import {
-  getVscodeIconUrlForEntry,
-  hasSpecificVscodeIconForFileName,
-  syntheticFileNameForLanguageId,
-} from "../vscode-icons";
+import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
@@ -62,6 +58,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { useRightPanelStore } from "../rightPanelStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -443,22 +440,17 @@ function MarkdownCodeBlockTitleContent({
   language: string;
   theme: "light" | "dark";
 }) {
-  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
-
   if (fenceTitle) {
     return (
       <>
-        <VscodeEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
+        <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
         <span className="truncate">{fenceTitle}</span>
       </>
     );
   }
 
   const fileName = syntheticFileNameForLanguageId(language);
-  const iconUrl = hasSpecificVscodeIconForFileName(fileName, theme)
-    ? getVscodeIconUrlForEntry(fileName, "file", theme)
-    : null;
-  if (!iconUrl || failedIconUrl === iconUrl) {
+  if (!hasSpecificPierreIconForFileName(fileName)) {
     return <span className="truncate">{language}</span>;
   }
   return (
@@ -468,15 +460,7 @@ function MarkdownCodeBlockTitleContent({
           <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
         }
       >
-        <img
-          src={iconUrl}
-          alt=""
-          aria-hidden
-          className="size-3.5 shrink-0"
-          loading="lazy"
-          draggable={false}
-          onError={() => setFailedIconUrl(iconUrl)}
-        />
+        <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
       </TooltipTrigger>
       <TooltipPopup side="top">{language}</TooltipPopup>
     </Tooltip>
@@ -674,6 +658,7 @@ interface MarkdownFileLinkProps {
   targetPath: string;
   iconPath: string;
   displayPath: string;
+  workspaceRelativePath: string | null;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
@@ -997,13 +982,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   targetPath,
   iconPath,
   displayPath,
+  workspaceRelativePath,
   label,
   copyMarkdown,
   theme,
   threadRef,
   className,
 }: MarkdownFileLinkProps) {
-  const handleOpen = useCallback(() => {
+  const handleOpenInEditor = useCallback(() => {
     const api = readLocalApi();
     if (!api) {
       toastManager.add({
@@ -1023,6 +1009,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
     });
   }, [targetPath]);
+
+  const handleOpenInFilePreview = useCallback(() => {
+    if (!threadRef || !workspaceRelativePath) {
+      handleOpenInEditor();
+      return;
+    }
+    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath);
+  }, [handleOpenInEditor, threadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!threadRef) return;
@@ -1092,7 +1086,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
 
       if (clicked === "open") {
-        handleOpen();
+        handleOpenInEditor();
         return;
       }
       if (clicked === "open-in-browser") {
@@ -1107,7 +1101,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, handleOpenInBrowser, iconPath, targetPath, threadRef],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      iconPath,
+      targetPath,
+      threadRef,
+    ],
   );
 
   return (
@@ -1121,7 +1123,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              handleOpen();
+              if (threadRef && isPreviewSupportedInRuntime() && isBrowserPreviewFile(iconPath)) {
+                handleOpenInBrowser();
+                return;
+              }
+              handleOpenInFilePreview();
             }}
             onContextMenu={handleContextMenu}
           >
@@ -1150,6 +1156,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.displayPath === next.displayPath &&
+    previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
@@ -1274,6 +1281,7 @@ function ChatMarkdown({
             targetPath={fileLinkMeta.targetPath}
             iconPath={fileLinkMeta.filePath}
             displayPath={fileLinkMeta.displayPath}
+            workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
             label={labelParts.join(" · ")}
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
             theme={resolvedTheme}

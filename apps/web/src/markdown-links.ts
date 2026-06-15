@@ -26,6 +26,7 @@ export interface MarkdownFileLinkMeta {
   filePath: string;
   targetPath: string;
   displayPath: string;
+  workspaceRelativePath: string | null;
   basename: string;
   line?: number;
   column?: number;
@@ -174,6 +175,19 @@ function basenameOfPath(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
+function workspaceRelativePath(path: string, workspaceRoot: string | undefined): string | null {
+  if (!workspaceRoot) return null;
+  const normalizedPath = normalizeWindowsDrivePath(path.replaceAll("\\", "/"));
+  const normalizedRoot = normalizeWindowsDrivePath(workspaceRoot.replaceAll("\\", "/")).replace(
+    /\/+$/,
+    "",
+  );
+  const pathForCompare = normalizedPath.toLowerCase();
+  const rootForCompare = normalizedRoot.toLowerCase();
+  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
+  return normalizedPath.slice(normalizedRoot.length + 1);
+}
+
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
@@ -191,6 +205,7 @@ export function resolveMarkdownFileLinkMeta(
     filePath: path,
     targetPath,
     displayPath: formatWorkspaceRelativePath(targetPath, cwd),
+    workspaceRelativePath: workspaceRelativePath(path, cwd),
     basename: basenameOfPath(path),
     ...(lineNumber !== undefined ? { line: lineNumber } : {}),
     ...(columnNumber !== undefined ? { column: columnNumber } : {}),

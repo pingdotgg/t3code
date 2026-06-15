@@ -88,6 +88,54 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("keeps files as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().open(refA, "files");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
+  it("replaces the standalone explorer with peer file surfaces", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "README.md");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:README.md",
+      surfaces: [
+        { id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" },
+        { id: "file:README.md", kind: "file", relativePath: "README.md" },
+      ],
+    });
+  });
+
+  it("removes persisted file surfaces when their workspace no longer exists", () => {
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().openFile(refA, "README.md");
+
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+    });
+
+    useRightPanelStore.getState().openFile(refB, "conductor.json");
+    useRightPanelStore.getState().reconcileFileSurfaces(refB, false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().close(refA);

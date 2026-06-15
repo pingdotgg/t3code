@@ -121,6 +121,7 @@ export default defineConfig(() => {
     optimizeDeps: {
       include: [
         "@pierre/diffs",
+        "@pierre/diffs/editor",
         "@pierre/diffs/react",
         "@pierre/diffs/worker/worker.js",
         "effect/Array",

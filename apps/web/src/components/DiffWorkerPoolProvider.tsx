@@ -47,6 +47,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       highlighterOptions={{
         theme: diffThemeName,
         tokenizeMaxLineLength: 1_000,
+        useTokenTransformer: true,
       }}
     >
       <DiffWorkerThemeSync themeName={diffThemeName} />
