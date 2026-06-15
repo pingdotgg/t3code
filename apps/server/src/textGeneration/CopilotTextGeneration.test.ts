@@ -1,8 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { beforeEach, expect, it, vi } from "@effect/vitest";
+import { beforeEach, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { CopilotSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { vi } from "vite-plus/test";
 
 import { ServerConfig } from "../config.ts";
 import { makeCopilotTextGeneration } from "./CopilotTextGeneration.ts";
