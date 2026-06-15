@@ -218,10 +218,7 @@ const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCli
       return undefined;
     }
 
-    const env = {
-      ...process.env,
-      ...input.env,
-    };
+    const env = input.env ?? process.env;
     return yield* resolveCopilotCommandPath(cliPath, { env, platform: input.platform }).pipe(
       Effect.catchTag("CommandResolutionError", () =>
         Effect.fail(

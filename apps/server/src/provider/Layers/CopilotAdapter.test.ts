@@ -600,6 +600,64 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("returns a session-scoped SDK domain approval for URL acceptForSession", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-url-permission-accept-for-session");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      assert.ok(config.onPermissionRequest);
+
+      const permissionRequest: PermissionRequest = {
+        kind: "url",
+        toolCallId: "tool-url-session-approval",
+        url: "https://docs.github.com/en/copilot",
+        intention: "Fetch Copilot documentation",
+      };
+      const requestId = "permission-url-session-approval";
+      const resultPromise = Promise.resolve(
+        config.onPermissionRequest(permissionRequest, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+
+      config.onEvent({
+        id: "evt-copilot-url-permission-session-approval",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(requestId),
+        "acceptForSession",
+      );
+
+      const result = yield* Effect.promise(() => resultPromise);
+      assert.deepStrictEqual(result, {
+        kind: "approve-for-session",
+        domain: "docs.github.com",
+      });
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect(
     "renders Copilot Task_complete tool output as assistant text when no assistant message arrives",
     () =>
