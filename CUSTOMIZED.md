@@ -170,7 +170,7 @@ Primary reference:
 
 ## Source Control Panel Work
 
-This branch is planning a first-class source-control panel that is not assumed to exist on `main`. Treat the source-control panel plan, existing right-panel surface integration, VS Code-inspired repository workflow, staged/unstaged file review, branch/commit/graph/stash/compare functionality, file-level source-control operations, remote management flows, reusable source-control entity components, VS Code panel display setting, and related tests as part of this branch's customization set during upstream merges once implementation begins.
+This branch includes a first-class source-control panel that is not assumed to exist on `main`. Treat the source-control singleton right-panel surface, VS Code host display setting, live VCS status watcher, Work in Progress and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, and source-control panel RPC/contracts as part of this branch's customization set during upstream merges.
 
 The implementation details are intentionally kept in `SOURCE_CONTROL.md` instead of being duplicated here. Unlike the other sections in this file, `CUSTOMIZED.md` should only preserve the merge-maintenance rule for this area: keep the source-control panel work unless `main` has gained an equivalent agent-aware source-control panel, then reconcile against the detailed source-control note.
 
@@ -203,7 +203,7 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 2. Codex subagent threading work remains preserved as a local customization unless `main` has an equivalent UI-aware subagent architecture; use `SUBAGENTS.md` as the detailed source of truth.
 3. Chat conversation and composer surfaces default to no maximum width across all host types.
 4. VS Code extension work remains preserved as a local customization unless `main` has an equivalent implementation; use `apps/vscode-extension/IMPLEMENTATION.md` as the detailed source of truth.
-5. Source-control panel work remains preserved as a local customization once implementation begins unless `main` has an equivalent agent-aware source-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
+5. Source-control panel work remains preserved as a local customization unless `main` has an equivalent agent-aware source-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
 6. Terminal-backed project actions reuse action terminals where possible and wait for terminal readiness before writing commands.
 7. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
 
