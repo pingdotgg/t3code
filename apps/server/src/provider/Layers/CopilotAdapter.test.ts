@@ -9,9 +9,9 @@ import type {
   SessionConfig,
   SessionEvent,
 } from "@github/copilot-sdk";
-import { it } from "@effect/vitest";
+import { beforeEach, it } from "@effect/vitest";
 import { Context, DateTime, Effect, Fiber, Layer, Schema, Stream } from "effect";
-import { beforeEach, vi } from "vitest";
+import { vi } from "vitest";
 
 import {
   ApprovalRequestId,
@@ -161,7 +161,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     "denies bootstrap permission requests before the session context exists in approval-required mode",
     () =>
       Effect.gen(function* () {
-        runtimeMock.state.createSessionImpl = async (config) => {
+        runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
           assert.ok(config.onPermissionRequest);
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
@@ -189,7 +189,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     "approves bootstrap permission requests before the session context exists in full-access mode",
     () =>
       Effect.gen(function* () {
-        runtimeMock.state.createSessionImpl = async (config) => {
+        runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
           assert.ok(config.onPermissionRequest);
           const result = await config.onPermissionRequest({ kind: "shell" } as PermissionRequest, {
             sessionId: runtimeMock.state.lastSession.sessionId,
@@ -213,11 +213,50 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       }),
   );
 
+  it.effect("only approves bootstrap edit permission requests in auto-accept-edits mode", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
+        assert.ok(config.onPermissionRequest);
+        const shellResult = await config.onPermissionRequest(
+          { kind: "shell" } as PermissionRequest,
+          {
+            sessionId: runtimeMock.state.lastSession.sessionId,
+          },
+        );
+        const writeResult = await config.onPermissionRequest(
+          { kind: "write" } as PermissionRequest,
+          {
+            sessionId: runtimeMock.state.lastSession.sessionId,
+          },
+        );
+        assert.deepStrictEqual(shellResult, { kind: "reject" });
+        assert.deepStrictEqual(writeResult, { kind: "approve-once" });
+        return runtimeMock.state.lastSession as unknown as CopilotSession;
+      };
+
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-bootstrap-auto-accept-edits");
+
+      const session = yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+      });
+
+      assert.equal(session.provider, "copilot");
+      assert.deepStrictEqual(runtimeMock.state.lastSession.rpc.mode.set.mock.calls.at(-1), [
+        { mode: "interactive" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect(
     "returns an empty bootstrap user input response before the session context exists",
     () =>
       Effect.gen(function* () {
-        runtimeMock.state.createSessionImpl = async (config) => {
+        runtimeMock.state.createSessionImpl = async (config: SessionConfig) => {
           assert.ok(config.onUserInputRequest);
           const response = await config.onUserInputRequest(
             {
@@ -382,7 +421,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
   it.effect("starts a fresh session when the persisted Copilot resume cursor is missing", () =>
     Effect.gen(function* () {
-      runtimeMock.state.resumeSessionImpl = async (sessionId) => {
+      runtimeMock.state.resumeSessionImpl = async (sessionId: string) => {
         throw new Error(
           `Request session.resume failed with message: Session not found: ${sessionId}`,
         );
@@ -1431,7 +1470,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           const parserErrorCalls = [
             ...consoleErrorSpy.mock.calls,
             ...consoleLogSpy.mock.calls,
-          ].filter((args) => args.some((arg) => String(arg).includes("parseLineType")));
+          ].filter((args) => args.some((arg: unknown) => String(arg).includes("parseLineType")));
           assert.deepStrictEqual(parserErrorCalls, []);
 
           const completedTool = runtimeEvents.find(
@@ -1671,6 +1710,85 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         false,
       );
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("prompts for shell permissions in auto-accept-edits mode", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-auto-accept-edits-shell-permission");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      assert.ok(config.onPermissionRequest);
+
+      const permissionRequest: PermissionRequest = {
+        kind: "shell",
+        toolCallId: "tool-shell-auto-accept-edits",
+        fullCommandText: "git status",
+        intention: "Check repository status",
+        commands: [{ identifier: "git", readOnly: true }],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: true,
+      };
+      const requestId = "permission-shell-auto-accept-edits";
+      const resultPromise = Promise.resolve(
+        config.onPermissionRequest(permissionRequest, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+
+      config.onEvent({
+        id: "evt-copilot-permission-auto-accept-edits",
+        timestamp,
+        parentId: null,
+        type: "permission.requested",
+        data: {
+          requestId,
+          permissionRequest,
+          promptRequest: {
+            kind: "commands",
+            toolCallId: "tool-shell-auto-accept-edits",
+            fullCommandText: "git status",
+            intention: "Check repository status",
+            commandIdentifiers: ["git"],
+            canOfferSessionApproval: true,
+          },
+        },
+      } as SessionEvent);
+
+      let opened: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && opened === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        opened = runtimeEvents.find(
+          (event) => event.type === "request.opened" && String(event.requestId) === requestId,
+        );
+      }
+      assert.equal(opened?.type, "request.opened");
+
+      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make(requestId), "accept");
+      const result = yield* Effect.promise(() => resultPromise);
+      assert.deepStrictEqual(result, { kind: "approve-once" });
+
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
     }),
   );

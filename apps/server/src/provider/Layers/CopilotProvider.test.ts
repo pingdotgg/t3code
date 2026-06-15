@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 
-import { it } from "@effect/vitest";
+import { beforeEach, describe, it } from "@effect/vitest";
 import { CopilotSettings } from "@t3tools/contracts";
 import { DateTime, Effect, Schema } from "effect";
-import { beforeEach, describe, vi } from "vitest";
+import { vi } from "vitest";
 
 import { checkCopilotProviderStatus } from "./CopilotProvider.ts";
 
