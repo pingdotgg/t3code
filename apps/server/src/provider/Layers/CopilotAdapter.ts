@@ -393,7 +393,21 @@ function requestedCopilotMode(input: {
   if (input.interactionMode === "plan") {
     return "plan";
   }
-  return input.runtimeMode === "approval-required" ? "interactive" : "autopilot";
+  return input.runtimeMode === "full-access" ? "autopilot" : "interactive";
+}
+
+function permissionAutoApprovedByRuntimeMode(
+  runtimeMode: ProviderSession["runtimeMode"],
+  request: PermissionRequest,
+): boolean {
+  switch (runtimeMode) {
+    case "full-access":
+      return true;
+    case "auto-accept-edits":
+      return request.kind === "write";
+    case "approval-required":
+      return false;
+  }
 }
 
 function mapPermissionRequestType(
@@ -1433,10 +1447,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           promptRequest: eventData.promptRequest,
           deferred: handler.deferred,
         });
-        if (
-          context.session.runtimeMode === "approval-required" &&
-          eventData.resolvedByHook !== true
-        ) {
+        if (eventData.resolvedByHook !== true) {
           yield* emitPermissionRequestOpened(
             context,
             context.pendingPermissionBindings.get(requestId)!,
@@ -1530,11 +1541,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     request: PermissionRequest,
   ): Effect.Effect<PermissionRequestResult> =>
     Effect.gen(function* () {
-      if (context.session.runtimeMode !== "approval-required") {
-        return APPROVED_PERMISSION_RESULT;
-      }
       if (context.stopped) {
         return DENIED_PERMISSION_RESULT;
+      }
+      if (permissionAutoApprovedByRuntimeMode(context.session.runtimeMode, request)) {
+        return APPROVED_PERMISSION_RESULT;
       }
 
       const signature = permissionSignature(request);
@@ -2431,9 +2442,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           context
             ? onPermissionRequest(context, _request)
             : Effect.succeed(
-                input.runtimeMode === "approval-required"
-                  ? DENIED_PERMISSION_RESULT
-                  : APPROVED_PERMISSION_RESULT,
+                permissionAutoApprovedByRuntimeMode(input.runtimeMode, _request)
+                  ? APPROVED_PERMISSION_RESULT
+                  : DENIED_PERMISSION_RESULT,
               ),
         );
       };
