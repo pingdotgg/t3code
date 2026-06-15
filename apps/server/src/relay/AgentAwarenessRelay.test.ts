@@ -625,7 +625,11 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies ExecutionEnvironmentDescriptor;
 
         globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
-          const url = new URL(input instanceof Request ? input.url : input.toString());
+          const url = new URL(
+            typeof input === "string" || input instanceof URL
+              ? input
+              : (input as unknown as { readonly url: string }).url,
+          );
           runFork(Deferred.succeed(fetchSeen, url));
           return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
         }) as unknown as typeof fetch;
