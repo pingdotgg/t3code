@@ -6,12 +6,14 @@ import { render } from "vitest-browser-react";
 
 const {
   contextMenuShowMock,
+  openFileInFilePreviewMock,
   openFileInPreviewMock,
   openInPreferredEditorMock,
   openUrlInPreviewMock,
   readLocalApiMock,
 } = vi.hoisted(() => ({
   contextMenuShowMock: vi.fn(),
+  openFileInFilePreviewMock: vi.fn(),
   openFileInPreviewMock: vi.fn(async () => undefined),
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
   openUrlInPreviewMock: vi.fn(async () => undefined),
@@ -47,6 +49,11 @@ vi.mock("../browser/openFileInPreview", async (importOriginal) => ({
   openUrlInPreview: openUrlInPreviewMock,
 }));
 
+vi.mock("../filePreviewActions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../filePreviewActions")>()),
+  openFileInFilePreview: openFileInFilePreviewMock,
+}));
+
 import ChatMarkdown from "./ChatMarkdown";
 import { serializeTableElementToCsv, serializeTableElementToMarkdown } from "../markdown-clipboard";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -59,6 +66,7 @@ const threadRef = {
 describe("ChatMarkdown", () => {
   afterEach(() => {
     openInPreferredEditorMock.mockClear();
+    openFileInFilePreviewMock.mockClear();
     openFileInPreviewMock.mockClear();
     openUrlInPreviewMock.mockClear();
     contextMenuShowMock.mockReset();
@@ -242,6 +250,40 @@ describe("ChatMarkdown", () => {
           { x: 4, y: 8 },
         );
         expect(openFileInPreviewMock).toHaveBeenCalledWith(threadRef, filePath);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens file links in the file preview from the context menu", async () => {
+    contextMenuShowMock.mockResolvedValue("open-in-file-preview");
+    const filePath = "/repo/project/src/App.tsx";
+    const screen = await render(
+      <ChatMarkdown text="[App.tsx](src/App.tsx)" cwd="/repo/project" threadRef={threadRef} />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "App.tsx" }).element();
+      link.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 8 }),
+      );
+
+      await vi.waitFor(() => {
+        expect(contextMenuShowMock).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "open-in-file-preview",
+              label: "Open in file preview",
+            }),
+          ]),
+          { x: 4, y: 8 },
+        );
+        expect(openFileInFilePreviewMock).toHaveBeenCalledWith(
+          threadRef,
+          filePath,
+          "/repo/project",
+        );
       });
     } finally {
       await screen.unmount();

@@ -24,6 +24,7 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
   type VcsRef,
+  type VcsWorkingTreeFileStatus,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -146,6 +147,13 @@ function parsePorcelainPath(line: string): string | null {
     return null;
   }
 
+  if (line.startsWith("2 ")) {
+    const beforeOriginalPath = line.split("\t", 1)[0] ?? "";
+    const parts = beforeOriginalPath.trim().split(/\s+/g);
+    const filePath = parts.at(-1) ?? "";
+    return filePath.length > 0 ? filePath : null;
+  }
+
   const tabIndex = line.indexOf("\t");
   if (tabIndex >= 0) {
     const fromTab = line.slice(tabIndex + 1);
@@ -156,6 +164,36 @@ function parsePorcelainPath(line: string): string | null {
   const parts = line.trim().split(/\s+/g);
   const filePath = parts.at(-1) ?? "";
   return filePath.length > 0 ? filePath : null;
+}
+
+function parsePorcelainStatusCode(code: string): VcsWorkingTreeFileStatus {
+  if (code.includes("R")) return "renamed";
+  if (code.includes("D")) return "deleted";
+  if (code.includes("A")) return "added";
+  return "modified";
+}
+
+function parsePorcelainStatus(
+  line: string,
+): { readonly path: string; readonly status: VcsWorkingTreeFileStatus } | null {
+  if (line.startsWith("? ")) {
+    const path = parsePorcelainPath(line);
+    return path ? { path, status: "untracked" } : null;
+  }
+
+  if (line.startsWith("! ")) {
+    const path = parsePorcelainPath(line);
+    return path ? { path, status: "ignored" } : null;
+  }
+
+  if (!(line.startsWith("1 ") || line.startsWith("2 ") || line.startsWith("u "))) {
+    return null;
+  }
+
+  const parts = line.trim().split(/\s+/g);
+  const code = parts.at(1) ?? "";
+  const path = parsePorcelainPath(line);
+  return path ? { path, status: parsePorcelainStatusCode(code) } : null;
 }
 
 function parseBranchLine(line: string): { name: string; current: boolean } | null {
@@ -1329,7 +1367,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
-    const changedFilesWithoutNumstat = new Set<string>();
+    const changedFileStatuses = new Map<string, VcsWorkingTreeFileStatus>();
 
     for (const line of statusStdout.split(/\r?\n/g)) {
       if (line.startsWith("# branch.head ")) {
@@ -1351,8 +1389,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       if (line.trim().length > 0 && !line.startsWith("#")) {
         hasWorkingTreeChanges = true;
-        const pathValue = parsePorcelainPath(line);
-        if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        const status = parsePorcelainStatus(line);
+        if (status) changedFileStatuses.set(status.path, status.status);
       }
     }
 
@@ -1393,13 +1431,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .map(([filePath, stat]) => {
         insertions += stat.insertions;
         deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+        return {
+          path: filePath,
+          insertions: stat.insertions,
+          deletions: stat.deletions,
+          status: changedFileStatuses.get(filePath) ?? "modified",
+        };
       })
       .toSorted((a, b) => a.path.localeCompare(b.path));
 
-    for (const filePath of changedFilesWithoutNumstat) {
+    for (const [filePath, status] of changedFileStatuses) {
       if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
+      files.push({ path: filePath, insertions: 0, deletions: 0, status });
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
 

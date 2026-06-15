@@ -75,6 +75,12 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
     return yield* workspaceEntries.search(input);
   });
 
+const listWorkspaceEntries = (input: { cwd: string }) =>
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries;
+    return yield* workspaceEntries.listEntries(input);
+  });
+
 const appendSeparator = (input: string) =>
   Effect.map(HostProcessPlatform, (platform) =>
     input.endsWith("/") || input.endsWith("\\")
@@ -312,6 +318,27 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         yield* Fiber.join(search);
 
         expect(peakReads).toBeLessThanOrEqual(32);
+      }),
+    );
+  });
+
+  describe("listEntries", () => {
+    it.effect("includes gitignored paths for the project tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-list-gitignore-", git: true });
+        yield* writeTextFile(cwd, ".gitignore", "ignored.txt\nignored-dir/\n");
+        yield* writeTextFile(cwd, "src/keep.ts", "export {};");
+        yield* writeTextFile(cwd, "ignored.txt", "ignore me");
+        yield* writeTextFile(cwd, "ignored-dir/file.ts", "export {};");
+
+        const result = yield* listWorkspaceEntries({ cwd });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src");
+        expect(paths).toContain("src/keep.ts");
+        expect(paths).toContain("ignored.txt");
+        expect(paths).toContain("ignored-dir");
+        expect(paths).toContain("ignored-dir/file.ts");
       }),
     );
   });

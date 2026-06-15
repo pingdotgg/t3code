@@ -197,6 +197,8 @@ function createClient() {
       subscribePorts: vi.fn(() => () => undefined),
     },
     projects: {
+      listEntries: vi.fn(async () => ({ entries: [], truncated: false })),
+      readFile: vi.fn(async () => ({ relativePath: "README.md", contents: "" })),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),
     },

@@ -132,6 +132,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports working tree file statuses", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "tracked.txt", "tracked\n");
+        yield* git(cwd, ["add", "tracked.txt"]);
+        yield* git(cwd, ["commit", "-m", "tracked file"]);
+
+        yield* writeTextFile(cwd, "added.ts", "export const added = true;\n");
+        yield* git(cwd, ["add", "added.ts"]);
+        yield* git(cwd, ["rm", "README.md"]);
+        yield* git(cwd, ["mv", "tracked.txt", "renamed.txt"]);
+        yield* writeTextFile(cwd, "untracked.ts", "export const untracked = true;\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+        const statusByPath = new Map(
+          status.workingTree.files.map((file) => [file.path, file.status]),
+        );
+
+        assert.equal(statusByPath.get("added.ts"), "added");
+        assert.equal(statusByPath.get("README.md"), "deleted");
+        assert.equal(statusByPath.get("renamed.txt"), "renamed");
+        assert.equal(statusByPath.get("untracked.ts"), "untracked");
+      }),
+    );
+
     it.effect("reports default-branch delta separately from upstream delta", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

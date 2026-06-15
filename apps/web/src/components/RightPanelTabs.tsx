@@ -1,6 +1,6 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import { ClipboardList, FileDiff, FileText, Globe2, Plus, TerminalSquare, X } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { isElectron } from "~/env";
@@ -23,8 +23,10 @@ interface RightPanelTabsProps {
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddFilePreview: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
+  filePreviewAvailable: boolean;
   children: ReactNode;
 }
 
@@ -32,10 +34,19 @@ function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddFilePreview: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
+  filePreviewAvailable: boolean;
 }) {
   const actions = [
+    {
+      label: "Files",
+      description: "Browse and preview workspace files.",
+      icon: FileText,
+      available: props.filePreviewAvailable,
+      onClick: props.onAddFilePreview,
+    },
     {
       label: "Browser",
       description: "Open a local app or URL.",
@@ -68,7 +79,7 @@ function RightPanelEmptyState(props: {
             Choose what to show in the right panel.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {actions.map((action) => {
             const Icon = action.icon;
             return (
@@ -101,6 +112,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "diff":
       return "Diff";
+    case "filePreview":
+      return "Files";
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -152,6 +165,8 @@ function SurfaceIcon({
     }
     case "diff":
       return <FileDiff className="size-3.5 shrink-0" />;
+    case "filePreview":
+      return <FileText className="size-3.5 shrink-0" />;
     case "terminal":
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
@@ -233,6 +248,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               <FileDiff />
               Diff
             </MenuItem>
+            <MenuItem onClick={props.onAddFilePreview} disabled={!props.filePreviewAvailable}>
+              <FileText />
+              Files
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
@@ -242,8 +261,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddBrowser={props.onAddBrowser}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
+            onAddFilePreview={props.onAddFilePreview}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
+            filePreviewAvailable={props.filePreviewAvailable}
           />
         ) : (
           props.children

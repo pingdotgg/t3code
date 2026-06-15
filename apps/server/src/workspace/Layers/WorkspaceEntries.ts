@@ -306,8 +306,12 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
   const buildWorkspaceIndexFromFilesystem = Effect.fn(
     "WorkspaceEntries.buildWorkspaceIndexFromFilesystem",
-  )(function* (cwd: string): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const shouldFilterWithGitIgnore = yield* isInsideVcsWorkTree(cwd);
+  )(function* (
+    cwd: string,
+    options?: { readonly filterGitIgnored?: boolean },
+  ): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
+    const shouldFilterWithGitIgnore =
+      options?.filterGitIgnored === false ? false : yield* isInsideVcsWorkTree(cwd);
 
     let pendingDirectories: string[] = [""];
     const entries: SearchableWorkspaceEntry[] = [];
@@ -413,6 +417,15 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
     },
   );
+  const workspaceListEntriesCache = yield* Cache.makeWith<
+    string,
+    WorkspaceIndex,
+    WorkspaceEntriesError
+  >((cwd) => buildWorkspaceIndexFromFilesystem(cwd, { filterGitIgnored: false }), {
+    capacity: WORKSPACE_CACHE_MAX_KEYS,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) ? Duration.millis(WORKSPACE_CACHE_TTL_MS) : Duration.zero,
+  });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -436,8 +449,10 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
         Effect.orElseSucceed(() => cwd),
       );
       yield* Cache.invalidate(workspaceIndexCache, cwd);
+      yield* Cache.invalidate(workspaceListEntriesCache, cwd);
       if (normalizedCwd !== cwd) {
         yield* Cache.invalidate(workspaceIndexCache, normalizedCwd);
+        yield* Cache.invalidate(workspaceListEntriesCache, normalizedCwd);
       }
     },
   );
@@ -530,9 +545,24 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listEntries: WorkspaceEntriesShape["listEntries"] = Effect.fn(
+    "WorkspaceEntries.listEntries",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    return yield* Cache.get(workspaceListEntriesCache, normalizedCwd).pipe(
+      Effect.map((index) => ({
+        entries: index.entries.map(
+          ({ normalizedName: _normalizedName, normalizedPath: _normalizedPath, ...entry }) => entry,
+        ),
+        truncated: index.truncated,
+      })),
+    );
+  });
+
   return {
     browse,
     invalidate,
+    listEntries,
     search,
   } satisfies WorkspaceEntriesShape;
 });

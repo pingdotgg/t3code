@@ -111,6 +111,7 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((mod) => ({ default: mod.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+const FilePreviewPanel = lazy(() => import("./FilePreviewPanel"));
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -262,6 +263,19 @@ function eventTargetElement(target: EventTarget | null): Element | null {
   return null;
 }
 
+function eventComposedPathElements(event: Event): Element[] {
+  const path = event.composedPath?.() ?? [];
+  const elements: Element[] = [];
+  for (const node of path) {
+    if (node instanceof Element) {
+      elements.push(node);
+    } else if (node instanceof Node && node.parentElement) {
+      elements.push(node.parentElement);
+    }
+  }
+  return elements;
+}
+
 function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
@@ -270,6 +284,10 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   const target = eventTargetElement(event.target);
   if (target?.closest(TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (target?.closest(TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  for (const element of eventComposedPathElements(event)) {
+    if (element.closest(TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
+    if (element.closest(TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  }
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
   return true;
@@ -2257,6 +2275,18 @@ export default function ChatView(props: ChatViewProps) {
     onDiffPanelOpen,
     threadId,
   ]);
+  const addFilePreviewSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    if (diffOpen) {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId },
+        replace: true,
+        search: (previous) => ({ ...stripDiffSearchParams(previous), diff: undefined }),
+      });
+    }
+    useRightPanelStore.getState().openFilePreview(activeThreadRef);
+  }, [activeProject, activeThreadRef, diffOpen, environmentId, navigate, threadId]);
   // Right-panel arbitration:
   //   - The diff panel's openness is mirrored by the `?diff=1` URL search
   //     param so it deep-links cleanly. The store still records preview/plan
@@ -4739,8 +4769,10 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowser={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
+          onAddFilePreview={addFilePreviewSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
+          filePreviewAvailable={Boolean(activeProject)}
         >
           {activeRightPanelSurface?.kind === "preview" ? (
             <Suspense fallback={null}>
@@ -4776,6 +4808,15 @@ export default function ChatView(props: ChatViewProps) {
                 <DiffPanel mode="embedded" />
               </Suspense>
             </DiffWorkerPoolProvider>
+          ) : activeRightPanelSurface?.kind === "filePreview" ? (
+            <Suspense fallback={null}>
+              <FilePreviewPanel
+                mode="embedded"
+                threadRef={activeThreadRef}
+                visible
+                initialFilePath={activeRightPanelSurface.initialFilePath}
+              />
+            </Suspense>
           ) : null}
         </RightPanelTabs>
       ) : null}
@@ -4793,8 +4834,10 @@ export default function ChatView(props: ChatViewProps) {
             onAddBrowser={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
+            onAddFilePreview={addFilePreviewSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
+            filePreviewAvailable={Boolean(activeProject)}
           >
             {activeRightPanelSurface?.kind === "preview" ? (
               <Suspense fallback={null}>
@@ -4830,6 +4873,15 @@ export default function ChatView(props: ChatViewProps) {
                   <DiffPanel mode="embedded" />
                 </Suspense>
               </DiffWorkerPoolProvider>
+            ) : activeRightPanelSurface?.kind === "filePreview" ? (
+              <Suspense fallback={null}>
+                <FilePreviewPanel
+                  mode="embedded"
+                  threadRef={activeThreadRef}
+                  visible
+                  initialFilePath={activeRightPanelSurface.initialFilePath}
+                />
+              </Suspense>
             ) : activeRightPanelSurface?.kind === "plan" ? (
               <PlanSidebar
                 activePlan={activePlan}

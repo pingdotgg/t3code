@@ -53,7 +53,68 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
+const writeDirectorySymlink = Effect.fn("writeDirectorySymlink")(function* (
+  cwd: string,
+  relativePath: string,
+  targetPath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const absolutePath = path.join(cwd, relativePath);
+  yield* fileSystem
+    .makeDirectory(path.dirname(absolutePath), { recursive: true })
+    .pipe(Effect.orDie);
+  yield* fileSystem.symlink(targetPath, absolutePath).pipe(Effect.orDie);
+});
+
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "plans/effect-rpc.md", "# Plan\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "plans/effect-rpc.md",
+        });
+
+        expect(result).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          contents: "# Plan\n",
+        });
+      }),
+    );
+
+    it.effect("rejects symlinked paths that resolve outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const externalDir = `${cwd}-outside`;
+        yield* fileSystem.makeDirectory(externalDir, { recursive: true }).pipe(Effect.orDie);
+        yield* fileSystem
+          .writeFileString(path.join(externalDir, "secret.txt"), "secret\n")
+          .pipe(Effect.orDie);
+        yield* writeDirectorySymlink(cwd, "linked", externalDir);
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "linked/secret.txt",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: linked/secret.txt",
+        );
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {

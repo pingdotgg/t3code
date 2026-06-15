@@ -88,6 +88,22 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("opens file preview with an initial file path", () => {
+    useRightPanelStore.getState().openFilePreview(refA, "src/App.tsx");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file-preview",
+      surfaces: [{ id: "file-preview", kind: "filePreview", initialFilePath: "src/App.tsx" }],
+    });
+
+    useRightPanelStore.getState().openFilePreview(refA);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file-preview",
+      surfaces: [{ id: "file-preview", kind: "filePreview" }],
+    });
+  });
+
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().close(refA);

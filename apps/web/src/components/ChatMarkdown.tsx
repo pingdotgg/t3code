@@ -68,6 +68,7 @@ import {
   openFileInPreview,
   openUrlInPreview,
 } from "../browser/openFileInPreview";
+import { openFileInFilePreview } from "../filePreviewActions";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -678,6 +679,7 @@ interface MarkdownFileLinkProps {
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
+  cwd?: string | undefined;
   className?: string | undefined;
 }
 
@@ -1001,6 +1003,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   copyMarkdown,
   theme,
   threadRef,
+  cwd,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpen = useCallback(() => {
@@ -1036,6 +1039,21 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
     });
   }, [iconPath, threadRef]);
+
+  const handleOpenInFilePreview = useCallback(() => {
+    if (!threadRef || !cwd) return;
+    try {
+      openFileInFilePreview(threadRef, iconPath, cwd);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to preview file",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [cwd, iconPath, threadRef]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -1079,9 +1097,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
       const canOpenInBrowser =
         Boolean(threadRef) && isPreviewSupportedInRuntime() && isBrowserPreviewFile(iconPath);
+      const canOpenInFilePreview = Boolean(threadRef && cwd);
       const clicked = await api.contextMenu.show(
         [
           { id: "open", label: "Open in editor" },
+          ...(canOpenInFilePreview
+            ? ([{ id: "open-in-file-preview", label: "Open in file preview" }] as const)
+            : []),
           ...(canOpenInBrowser
             ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
             : []),
@@ -1099,6 +1121,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleOpenInBrowser();
         return;
       }
+      if (clicked === "open-in-file-preview") {
+        handleOpenInFilePreview();
+        return;
+      }
       if (clicked === "copy-relative") {
         handleCopy(displayPath, "Relative path");
         return;
@@ -1107,7 +1133,17 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, handleOpenInBrowser, iconPath, targetPath, threadRef],
+    [
+      cwd,
+      displayPath,
+      handleCopy,
+      handleOpen,
+      handleOpenInBrowser,
+      handleOpenInFilePreview,
+      iconPath,
+      targetPath,
+      threadRef,
+    ],
   );
 
   return (
@@ -1155,6 +1191,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.theme === next.theme &&
     previous.threadRef?.environmentId === next.threadRef?.environmentId &&
     previous.threadRef?.threadId === next.threadRef?.threadId &&
+    previous.cwd === next.cwd &&
     previous.className === next.className
   );
 }
@@ -1278,6 +1315,7 @@ function ChatMarkdown({
             copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
             theme={resolvedTheme}
             threadRef={threadRef}
+            cwd={cwd}
             className={props.className}
           />
         );

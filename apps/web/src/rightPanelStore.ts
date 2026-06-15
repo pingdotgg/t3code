@@ -14,7 +14,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = ["plan", "diff", "preview", "terminal"] as const;
+export const RIGHT_PANEL_KINDS = ["plan", "diff", "filePreview", "preview", "terminal"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -28,6 +28,7 @@ export type RightPanelSurface =
       activeTerminalId: string;
       splitDirection?: "horizontal" | "vertical";
     }
+  | { id: "file-preview"; kind: "filePreview"; initialFilePath?: string }
   | { id: "diff"; kind: "diff" }
   | { id: "plan"; kind: "plan" };
 
@@ -43,6 +44,7 @@ export interface ThreadRightPanelState {
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "terminal">) => void;
+  openFilePreview: (ref: ScopedThreadRef, initialFilePath?: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -75,6 +77,8 @@ const singletonSurface = (
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
+    case "filePreview":
+      return { id: "file-preview", kind };
     case "plan":
       return { id: "plan", kind };
   }
@@ -91,6 +95,12 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+const filePreviewSurface = (initialFilePath?: string): RightPanelSurface => ({
+  id: "file-preview",
+  kind: "filePreview",
+  ...(initialFilePath ? { initialFilePath } : {}),
 });
 
 const upsertSurface = (
@@ -200,8 +210,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
+            if (kind === "filePreview") {
+              return upsertSurface(current, filePreviewSurface());
+            }
             return upsertSurface(current, singletonSurface(kind));
           }),
+        })),
+      openFilePreview: (ref, initialFilePath) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(
+              {
+                ...current,
+                surfaces: current.surfaces.filter((surface) => surface.id !== "file-preview"),
+              },
+              filePreviewSurface(initialFilePath),
+            ),
+          ),
         })),
       openBrowser: (ref, tabId) =>
         set((state) => ({
