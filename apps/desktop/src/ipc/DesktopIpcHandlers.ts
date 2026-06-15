@@ -9,6 +9,7 @@ import {
   setCloudAuthToken,
 } from "./methods/cloudAuth.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
+import { getStudents, setStudents } from "./methods/students.ts";
 import {
   getSavedEnvironmentRegistry,
   getSavedEnvironmentSecret,
@@ -59,6 +60,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
+  yield* ipc.handle(getStudents);
+  yield* ipc.handle(setStudents);
   yield* ipc.handle(getSavedEnvironmentRegistry);
   yield* ipc.handle(setSavedEnvironmentRegistry);
   yield* ipc.handle(getSavedEnvironmentSecret);
