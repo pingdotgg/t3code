@@ -24,6 +24,7 @@ import {
   GitCommit,
   GitCompare,
   GitMerge,
+  GitPullRequestArrow,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -336,7 +337,7 @@ function BranchSyncLabels({
   return (
     <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] tabular-nums">
       {aheadCount > 0 ? <span className="text-success-foreground">↑{aheadCount}</span> : null}
-      {behindCount > 0 ? <span className="text-destructive-foreground">↓{behindCount}</span> : null}
+      {behindCount > 0 ? <span className="text-warning-foreground">↓{behindCount}</span> : null}
     </span>
   );
 }
@@ -421,7 +422,7 @@ function AttentionIcon({ kind }: { readonly kind: AttentionKind }) {
     case "diverged":
       return <AlertTriangle className="size-3.5 shrink-0 text-destructive-foreground" />;
     case "behind":
-      return <Download className="size-3.5 shrink-0 text-destructive-foreground" />;
+      return <Download className="size-3.5 shrink-0 text-warning-foreground" />;
     case "unpushed":
       return <Upload className="size-3.5 shrink-0 text-success-foreground" />;
     case "dirty":
@@ -1470,7 +1471,7 @@ export function SourceControlPanel({
     return (
       <div
         key={file.path}
-        className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+        className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
       >
         <Checkbox
           checked={selected}
@@ -1488,7 +1489,7 @@ export function SourceControlPanel({
         </span>
         <span className="min-w-0 flex-1 truncate">{file.path}</span>
         <StatLabels insertions={file.insertions} deletions={file.deletions} />
-        <div className="flex shrink-0 items-center gap-0.5">
+        <RowActions>
           <IconButton
             label="Discard changes"
             destructive
@@ -1513,7 +1514,7 @@ export function SourceControlPanel({
           <IconButton label="Open file" onClick={() => void openFile(file.path)}>
             <ExternalLink className="size-3.5" />
           </IconButton>
-        </div>
+        </RowActions>
       </div>
     );
   };
@@ -1664,7 +1665,7 @@ export function SourceControlPanel({
             id: "behind",
             title: `${details.behindCommits.length} Behind`,
             count: null,
-            icon: <Download className="size-3.5 shrink-0 text-destructive-foreground" />,
+            icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
             children: details.behindCommits.map(renderCommit),
           })
         : null}
@@ -1734,8 +1735,8 @@ export function SourceControlPanel({
           <span className="min-w-0 flex-1 truncate text-sm">{branch.name}</span>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
             {hasUpstream && aheadCount === 0 && behindCount === 0 ? (
-              <span className="inline-flex size-4 shrink-0 items-center justify-center text-success-foreground">
-                <SyncedIcon className="text-success-foreground" />
+              <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+                <SyncedIcon />
               </span>
             ) : null}
             {!hasUpstream ? <CompactBadge>local</CompactBadge> : null}
@@ -1793,7 +1794,7 @@ export function SourceControlPanel({
                   disabled={isActionRunning(rebaseKey)}
                   onClick={() => rebaseCurrentOnto(branch.name)}
                 >
-                  <Upload className="size-3.5" />
+                  <GitPullRequestArrow className="size-3.5" />
                 </IconButton>
               </>
             ) : null}
@@ -1844,8 +1845,8 @@ export function SourceControlPanel({
           <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
             {hasLocalBranch && hasUpstream && aheadCount === 0 && behindCount === 0 ? (
-              <span className="inline-flex size-4 shrink-0 items-center justify-center text-success-foreground">
-                <SyncedIcon className="text-success-foreground" />
+              <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+                <SyncedIcon />
               </span>
             ) : null}
             {hasLocalBranch && !hasUpstream ? <CompactBadge>local</CompactBadge> : null}
@@ -1918,7 +1919,7 @@ export function SourceControlPanel({
                   disabled={isActionRunning(rebaseKey)}
                   onClick={() => rebaseCurrentOnto(branch.name)}
                 >
-                  <Upload className="size-3.5" />
+                  <GitPullRequestArrow className="size-3.5" />
                 </IconButton>
               </>
             ) : null}
@@ -2213,12 +2214,16 @@ export function SourceControlPanel({
       ? "dirty"
       : "stale";
   const workItems: WorkItem[] = [
-    {
-      kind: "working-tree" as const,
-      key: "working-tree",
-      attention: workingTreeAttention,
-      activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
-    },
+    ...(changedFiles.length > 0
+      ? [
+          {
+            kind: "working-tree" as const,
+            key: "working-tree",
+            attention: workingTreeAttention,
+            activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
+          },
+        ]
+      : []),
     ...snapshot.localBranches
       .filter((branch) => {
         if (branch.current) return false;
@@ -2240,6 +2245,8 @@ export function SourceControlPanel({
       activity: stashActivityTimestamp(stash),
     })),
   ].toSorted((left, right) => {
+    if (left.kind === "working-tree" && right.kind !== "working-tree") return -1;
+    if (right.kind === "working-tree" && left.kind !== "working-tree") return 1;
     const attention = ATTENTION_RANK[left.attention] - ATTENTION_RANK[right.attention];
     if (attention !== 0) return attention;
     return right.activity - left.activity;
