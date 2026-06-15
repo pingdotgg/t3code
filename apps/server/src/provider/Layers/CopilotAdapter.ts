@@ -31,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { classifyProviderToolItemType } from "@t3tools/shared/providerToolClassification";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { DateTime, Deferred, Effect, Path, Predicate, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -2456,22 +2457,23 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         );
       };
 
-      const client = yield* Effect.try({
-        try: () =>
-          createCopilotClient({
-            settings,
-            cwd,
-            ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
-            ...(options?.environment ? { env: options.environment } : {}),
-            logLevel: "error",
-          }),
-        catch: (cause) =>
+      const platform = yield* HostProcessPlatform;
+      const client = yield* createCopilotClient({
+        settings,
+        cwd,
+        ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
+        ...(options?.environment ? { env: options.environment } : {}),
+        platform,
+        logLevel: "error",
+      }).pipe(
+        Effect.mapError((cause) =>
           processError(
             input.threadId,
             detailFromCause(cause, "Failed to configure Copilot client."),
             cause,
           ),
-      });
+        ),
+      );
 
       const baseSessionConfig = {
         clientName: "t3-code",

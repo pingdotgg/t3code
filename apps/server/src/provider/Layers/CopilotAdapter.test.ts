@@ -99,29 +99,26 @@ vi.mock("../copilotRuntime.ts", async () => {
 
   return {
     ...actual,
-    createCopilotClient: vi.fn(
-      () =>
-        ({
-          start: vi.fn(async () => {
-            runtimeMock.state.startCalls += 1;
-          }),
-          stop: vi.fn(async () => {
-            runtimeMock.state.stopCalls += 1;
-          }),
-          createSession: vi.fn(async (config: SessionConfig) => {
-            runtimeMock.state.createSessionConfigs.push(config);
-            return (runtimeMock.state.createSessionImpl ?? (async () => undefined as never))(
-              config,
-            );
-          }),
-          resumeSession: vi.fn(async (sessionId: string, config: SessionConfig) => {
-            runtimeMock.state.resumeSessionCalls.push({ sessionId, config });
-            return (runtimeMock.state.resumeSessionImpl ?? (async () => undefined as never))(
-              sessionId,
-              config,
-            );
-          }),
-        }) as unknown as CopilotClient,
+    createCopilotClient: vi.fn(() =>
+      Effect.succeed({
+        start: vi.fn(async () => {
+          runtimeMock.state.startCalls += 1;
+        }),
+        stop: vi.fn(async () => {
+          runtimeMock.state.stopCalls += 1;
+        }),
+        createSession: vi.fn(async (config: SessionConfig) => {
+          runtimeMock.state.createSessionConfigs.push(config);
+          return (runtimeMock.state.createSessionImpl ?? (async () => undefined as never))(config);
+        }),
+        resumeSession: vi.fn(async (sessionId: string, config: SessionConfig) => {
+          runtimeMock.state.resumeSessionCalls.push({ sessionId, config });
+          return (runtimeMock.state.resumeSessionImpl ?? (async () => undefined as never))(
+            sessionId,
+            config,
+          );
+        }),
+      } as unknown as CopilotClient),
     ),
   };
 });

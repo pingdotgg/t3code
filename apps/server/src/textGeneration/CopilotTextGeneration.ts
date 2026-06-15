@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -166,6 +167,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
     readonly settings: CopilotSettings;
   }): Effect.Effect<SharedCopilotTextClientLease, TextGenerationError> =>
     Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
       const clientKey = copilotTextClientKey({
         settings: input.settings,
         cwd: input.cwd,
@@ -180,22 +182,22 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             return existing.client;
           }
 
-          const client = yield* Effect.try({
-            try: () =>
-              createCopilotClient({
-                settings: input.settings,
-                cwd: input.cwd,
-                ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
-                env: environment,
-                logLevel: "error",
-              }),
-            catch: (cause) =>
+          const client = yield* createCopilotClient({
+            settings: input.settings,
+            cwd: input.cwd,
+            ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
+            env: environment,
+            platform,
+            logLevel: "error",
+          }).pipe(
+            Effect.mapError((cause) =>
               copilotTextGenerationError(
                 input.operation,
                 detailFromCause(cause, "Failed to configure Copilot client."),
                 cause,
               ),
-          });
+            ),
+          );
           yield* Effect.tryPromise({
             try: () => client.start(),
             catch: (cause) =>
