@@ -1,4 +1,5 @@
 import type {
+  ContextMenuItem,
   EnvironmentId,
   ThreadId,
   VcsPanelBranchDetails,
@@ -88,7 +89,7 @@ type SectionKey = "work" | "remotes";
 const SECTION_ORDER: readonly SectionKey[] = ["work", "remotes"];
 
 const SECTION_TITLES: Record<SectionKey, string> = {
-  work: "Work in Progress",
+  work: "Actionable",
   remotes: "Remotes",
 };
 
@@ -759,6 +760,19 @@ function sumFiles(files: readonly VcsPanelFileChange[]) {
   );
 }
 
+function fileBasename(path: string): string {
+  const parts = path.split(/[\\/]/);
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part) return part;
+  }
+  return path;
+}
+
+function stashBranchName(stash: VcsPanelStash): string | null {
+  return /^(?:WIP\s+)?on\s+([^:]+):/i.exec(stash.message)?.[1]?.trim() ?? null;
+}
+
 function FileChangeSummary({ files }: { readonly files: readonly VcsPanelFileChange[] }) {
   const stats = sumFiles(files);
   return (
@@ -772,9 +786,14 @@ function FileChangeSummary({ files }: { readonly files: readonly VcsPanelFileCha
 function FileChangeList({
   files,
   emptyLabel,
+  onFileContextMenu,
 }: {
   readonly files: readonly VcsPanelFileChange[];
   readonly emptyLabel: string;
+  readonly onFileContextMenu?: (
+    event: ReactMouseEvent<HTMLDivElement>,
+    file: VcsPanelFileChange,
+  ) => void;
 }) {
   if (files.length === 0) {
     return <div className="px-3 py-1 text-xs text-muted-foreground">{emptyLabel}</div>;
@@ -785,6 +804,7 @@ function FileChangeList({
         <div
           key={`${file.path}:${file.status}`}
           className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+          onContextMenu={onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined}
         >
           <span
             className={cn(
@@ -1053,6 +1073,60 @@ export function SourceControlPanel({
     return (await readLocalApi()?.dialogs.confirm(message)) ?? window.confirm(message);
   }, []);
 
+  const copyText = useCallback((value: string, missingMessage = "Nothing to copy.") => {
+    if (!value) {
+      setError(missingMessage);
+      return;
+    }
+    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
+      setError("Clipboard API unavailable.");
+      return;
+    }
+    setError(null);
+    void navigator.clipboard
+      .writeText(value)
+      .catch((nextError) => setError(errorMessage(nextError)));
+  }, []);
+
+  const openContextMenu = useCallback(
+    <T extends string>(
+      event: ReactMouseEvent,
+      items: readonly ContextMenuItem<T>[],
+      handlers: Partial<Record<T, () => Promise<void> | void>>,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void (async () => {
+        const localApi = readLocalApi();
+        if (!localApi) return;
+        const clicked = await localApi.contextMenu.show(items, {
+          x: event.clientX,
+          y: event.clientY,
+        });
+        if (!clicked) return;
+        await handlers[clicked]?.();
+      })();
+    },
+    [],
+  );
+
+  const openFileChangeContextMenu = useCallback(
+    (event: ReactMouseEvent, file: VcsPanelFileChange) => {
+      openContextMenu(
+        event,
+        [
+          { id: "copy-filename", label: "Copy filename", icon: "copy" },
+          { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+        ],
+        {
+          "copy-filename": () => copyText(fileBasename(file.path)),
+          "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
+        },
+      );
+    },
+    [copyText, cwd, openContextMenu],
+  );
+
   const switchRef = useCallback(
     (refName: string) =>
       runAction(`branch-switch:${refName}`, async () => {
@@ -1191,11 +1265,18 @@ export function SourceControlPanel({
     [publishBranch, snapshot],
   );
 
-  const syncBranch = useCallback(
-    (branch: VcsRef, event: ReactMouseEvent<HTMLButtonElement>) => {
+  const runBranchSync = useCallback(
+    (
+      branch: VcsRef,
+      {
+        fetchFirst = false,
+        force = false,
+      }: {
+        readonly fetchFirst?: boolean;
+        readonly force?: boolean;
+      } = {},
+    ) => {
       if (!snapshot) return;
-      const force = isActionForced(event);
-      const fetchFirst = shouldFetchBeforePull(event);
       const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
       const state = branchSyncState(branch, snapshot);
       if (state === "diverged") {
@@ -1248,6 +1329,15 @@ export function SourceControlPanel({
       });
     },
     [api, cwd, publishBranchWithRemoteChoice, runAction, snapshot],
+  );
+
+  const syncBranch = useCallback(
+    (branch: VcsRef, event: ReactMouseEvent<HTMLButtonElement>) =>
+      runBranchSync(branch, {
+        fetchFirst: shouldFetchBeforePull(event),
+        force: isActionForced(event),
+      }),
+    [runBranchSync],
   );
 
   const runDivergedSync = useCallback(
@@ -1610,10 +1700,46 @@ export function SourceControlPanel({
   const renderWorkingFile = (file: PanelChangedFile) => {
     const selected = selectedChangePaths.has(file.path);
     const discardKey = `file-discard:${file.path}`;
+    const discardFile = () =>
+      void (async () => {
+        if (!(await confirm(`Discard changes in ${file.path}?`))) return;
+        await runAction(
+          discardKey,
+          () =>
+            api?.vcs.discardFiles({
+              cwd,
+              paths: [file.path],
+              staged: file.hasStagedChanges,
+            }) ?? Promise.resolve(),
+        );
+      })();
     return (
       <div
         key={file.path}
         className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+        onContextMenu={(event) =>
+          openContextMenu(
+            event,
+            [
+              {
+                id: "discard",
+                label: "Discard changes",
+                destructive: true,
+                disabled: isActionRunning(discardKey),
+                icon: "trash",
+              },
+              { id: "open", label: "Open file" },
+              { id: "copy-filename", label: "Copy filename", icon: "copy" },
+              { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+            ],
+            {
+              discard: discardFile,
+              open: () => openFile(file.path),
+              "copy-filename": () => copyText(fileBasename(file.path)),
+              "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
+            },
+          )
+        }
       >
         <Checkbox
           checked={selected}
@@ -1636,20 +1762,7 @@ export function SourceControlPanel({
             label="Discard changes"
             destructive
             disabled={isActionRunning(discardKey)}
-            onClick={() =>
-              void (async () => {
-                if (!(await confirm(`Discard changes in ${file.path}?`))) return;
-                await runAction(
-                  discardKey,
-                  () =>
-                    api?.vcs.discardFiles({
-                      cwd,
-                      paths: [file.path],
-                      staged: file.hasStagedChanges,
-                    }) ?? Promise.resolve(),
-                );
-              })()
-            }
+            onClick={discardFile}
           >
             <Trash2 className="size-3.5" />
           </IconButton>
@@ -1677,13 +1790,33 @@ export function SourceControlPanel({
                 className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
                 onClick={() => toggleTree(key)}
                 onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      { id: "revert", label: "Revert commit" },
+                      { id: "rebase", label: "Rebase current branch onto commit" },
+                      { id: "checkout", label: "Checkout as detached HEAD" },
+                      { id: "create-branch", label: "Create branch from commit" },
+                      { id: "copy-sha", label: "Copy SHA", icon: "copy" },
+                      { id: "copy-message", label: "Copy message", icon: "copy" },
+                    ],
+                    {
+                      revert: () => revertCommit(commit),
+                      rebase: () => rebaseCurrentOnto(commit.sha),
+                      checkout: () => checkoutCommitDetached(commit),
+                      "create-branch": () => createBranchFromCommit(commit),
+                      "copy-sha": () => copyText(commit.sha),
+                      "copy-message": () => copyText(commit.message),
+                    },
+                  )
+                }
               >
                 {expanded ? (
                   <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 ) : (
                   <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
                 )}
-                <span className="shrink-0 font-mono text-muted-foreground">{commit.shortSha}</span>
                 <AuthorAvatar commit={commit} />
                 <span className="min-w-0 flex-1 truncate">{commit.message}</span>
                 <RefLabels commit={commit} />
@@ -1723,7 +1856,11 @@ export function SourceControlPanel({
         </Tooltip>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">
-            <FileChangeList files={commit.files} emptyLabel="No file changes." />
+            <FileChangeList
+              files={commit.files}
+              emptyLabel="No file changes."
+              onFileContextMenu={openFileChangeContextMenu}
+            />
           </div>
         ) : null}
       </div>
@@ -1793,7 +1930,7 @@ export function SourceControlPanel({
           action: (
             <button
               type="button"
-              className="shrink-0 rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="shrink-0 cursor-pointer rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={(event) => {
                 event.stopPropagation();
                 setCompareBaseDialogBranch(branch);
@@ -1844,7 +1981,13 @@ export function SourceControlPanel({
                 title: "Changes",
                 count: null,
                 action: <FileChangeSummary files={details.compareFiles} />,
-                children: <FileChangeList files={details.compareFiles} emptyLabel="No changes." />,
+                children: (
+                  <FileChangeList
+                    files={details.compareFiles}
+                    emptyLabel="No changes."
+                    onFileContextMenu={openFileChangeContextMenu}
+                  />
+                ),
               })}
             </div>
           ) : (
@@ -1920,6 +2063,9 @@ export function SourceControlPanel({
     const rebaseKey = `rebase-current:${branch.name}`;
     const syncLabel = branchSyncActionLabel(syncState);
     const relativeDate = formatRelativeDate(branch.lastActivityAt);
+    const switchDisabled = current || isActionRunning(switchKey);
+    const syncDisabled = isActionRunning(syncKey) || isActionRunning(`branch-fetch:${branch.name}`);
+    const deleteDisabled = current || isActionRunning(deleteKey);
     return (
       <div key={branch.name} className="space-y-0.5">
         <div
@@ -1928,6 +2074,55 @@ export function SourceControlPanel({
           className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleBranchTree(key, branch)}
           onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                { id: "switch", label: "Switch branch", disabled: switchDisabled },
+                { id: "sync", label: syncLabel, disabled: syncDisabled },
+                {
+                  id: "delete",
+                  label: "Delete branch",
+                  destructive: true,
+                  disabled: deleteDisabled,
+                  icon: "trash",
+                },
+                ...(current && aheadCount > 0
+                  ? [
+                      {
+                        id: "undo-latest",
+                        label: "Undo latest commit",
+                        disabled: isActionRunning(undoKey),
+                      },
+                    ]
+                  : []),
+                ...(!current
+                  ? [
+                      {
+                        id: "merge",
+                        label: "Merge branch into current",
+                        disabled: isActionRunning(mergeKey),
+                      },
+                      {
+                        id: "rebase",
+                        label: "Rebase current branch onto branch",
+                        disabled: isActionRunning(rebaseKey),
+                      },
+                    ]
+                  : []),
+                { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+              ],
+              {
+                switch: () => switchRef(branch.name),
+                sync: () => runBranchSync(branch),
+                delete: () => deleteBranch(branch, false),
+                "undo-latest": () => undoLatestCommit(branch.name),
+                merge: () => mergeBranchIntoCurrent(branch.name),
+                rebase: () => rebaseCurrentOnto(branch.name),
+                "copy-branch-name": () => copyText(branch.name),
+              },
+            )
+          }
         >
           {expanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1954,14 +2149,14 @@ export function SourceControlPanel({
           <RowActions>
             <IconButton
               label="Switch branch"
-              disabled={current || isActionRunning(switchKey)}
+              disabled={switchDisabled}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
             </IconButton>
             <IconButton
               label={syncLabel}
-              disabled={isActionRunning(syncKey) || isActionRunning(`branch-fetch:${branch.name}`)}
+              disabled={syncDisabled}
               onClick={(event) => syncBranch(branch, event)}
             >
               <BranchSyncActionIcon state={syncState} />
@@ -1969,7 +2164,7 @@ export function SourceControlPanel({
             <IconButton
               label="Delete branch. Shift: force."
               destructive
-              disabled={current || isActionRunning(deleteKey)}
+              disabled={deleteDisabled}
               onClick={(event) => deleteBranch(branch, isActionForced(event))}
             >
               <Trash2 className="size-3.5" />
@@ -2030,6 +2225,17 @@ export function SourceControlPanel({
     const undoKey = `branch-undo-latest:${branch.name}`;
     const mergeKey = `branch-merge:${branch.name}`;
     const rebaseKey = `rebase-current:${branch.name}`;
+    const switchDisabled = current || isActionRunning(switchKey);
+    const syncLabel = hasLocalBranch ? branchSyncActionLabel(syncState) : "Fetch branch";
+    const syncDisabled = hasLocalBranch
+      ? isActionRunning(syncKey) || isActionRunning(fetchKey)
+      : isActionRunning(fetchKey);
+    const deleteDisabled = isActionRunning(deleteKey);
+    const fetchRemoteBranch = () =>
+      void runAction(
+        fetchKey,
+        () => api?.vcs.fetchBranch({ cwd, branchName: branch.name }) ?? Promise.resolve(),
+      );
     return (
       <div key={`${branch.remoteName ?? "local"}:${displayName}`} className="space-y-0.5">
         <div
@@ -2038,6 +2244,55 @@ export function SourceControlPanel({
           className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleBranchTree(key, branch)}
           onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                { id: "switch", label: "Switch branch", disabled: switchDisabled },
+                { id: "sync", label: syncLabel, disabled: syncDisabled },
+                {
+                  id: "delete",
+                  label: hasLocalBranch ? "Delete branch" : "Delete remote branch",
+                  destructive: true,
+                  disabled: deleteDisabled,
+                  icon: "trash",
+                },
+                ...(current && aheadCount > 0
+                  ? [
+                      {
+                        id: "undo-latest",
+                        label: "Undo latest commit",
+                        disabled: isActionRunning(undoKey),
+                      },
+                    ]
+                  : []),
+                ...(!current
+                  ? [
+                      {
+                        id: "merge",
+                        label: "Merge branch into current",
+                        disabled: isActionRunning(mergeKey),
+                      },
+                      {
+                        id: "rebase",
+                        label: "Rebase current branch onto branch",
+                        disabled: isActionRunning(rebaseKey),
+                      },
+                    ]
+                  : []),
+                { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+              ],
+              {
+                switch: () => switchRef(branch.name),
+                sync: () => (hasLocalBranch ? runBranchSync(branch) : fetchRemoteBranch()),
+                delete: () => deleteBranch(branch, false),
+                "undo-latest": () => undoLatestCommit(branch.name),
+                merge: () => mergeBranchIntoCurrent(branch.name),
+                rebase: () => rebaseCurrentOnto(branch.name),
+                "copy-branch-name": () => copyText(displayName),
+              },
+            )
+          }
         >
           {expanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -2063,7 +2318,7 @@ export function SourceControlPanel({
           <RowActions>
             <IconButton
               label="Switch branch"
-              disabled={current || isActionRunning(switchKey)}
+              disabled={switchDisabled}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
@@ -2071,30 +2326,20 @@ export function SourceControlPanel({
             {hasLocalBranch ? (
               <IconButton
                 label={branchSyncActionLabel(syncState)}
-                disabled={isActionRunning(syncKey) || isActionRunning(fetchKey)}
+                disabled={syncDisabled}
                 onClick={(event) => syncBranch(branch, event)}
               >
                 <BranchSyncActionIcon state={syncState} />
               </IconButton>
             ) : (
-              <IconButton
-                label="Fetch branch"
-                disabled={isActionRunning(fetchKey)}
-                onClick={() =>
-                  void runAction(
-                    fetchKey,
-                    () =>
-                      api?.vcs.fetchBranch({ cwd, branchName: branch.name }) ?? Promise.resolve(),
-                  )
-                }
-              >
+              <IconButton label="Fetch branch" disabled={syncDisabled} onClick={fetchRemoteBranch}>
                 <RefreshCw className="size-3.5" />
               </IconButton>
             )}
             <IconButton
               label={hasLocalBranch ? "Delete branch. Shift: force." : "Delete remote branch"}
               destructive
-              disabled={isActionRunning(deleteKey)}
+              disabled={deleteDisabled}
               onClick={(event) => deleteBranch(branch, hasLocalBranch && isActionForced(event))}
             >
               <Trash2 className="size-3.5" />
@@ -2143,6 +2388,20 @@ export function SourceControlPanel({
     const expanded = expandedTree.has(key);
     const fetchKey = `remote-fetch:${remote.name}`;
     const removeKey = `remote-remove:${remote.name}`;
+    const fetchRemote = () =>
+      void runAction(
+        fetchKey,
+        () => api?.vcs.fetchRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
+      );
+    const removeRemote = () =>
+      void (async () => {
+        if (!(await confirm(`Remove remote ${remote.name}?`))) return;
+        await runAction(
+          removeKey,
+          () => api?.vcs.removeRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
+        );
+      })();
+    const remoteUrl = remote.fetchUrl ?? remote.pushUrl ?? "";
     return (
       <div key={remote.name} className="space-y-0.5">
         <div
@@ -2151,6 +2410,29 @@ export function SourceControlPanel({
           className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                { id: "fetch", label: "Fetch remote", disabled: isActionRunning(fetchKey) },
+                {
+                  id: "remove",
+                  label: "Remove remote",
+                  destructive: true,
+                  disabled: isActionRunning(removeKey),
+                  icon: "trash",
+                },
+                { id: "copy-name", label: "Copy name", icon: "copy" },
+                { id: "copy-url", label: "Copy url", disabled: !remoteUrl, icon: "copy" },
+              ],
+              {
+                fetch: fetchRemote,
+                remove: removeRemote,
+                "copy-name": () => copyText(remote.name),
+                "copy-url": () => copyText(remoteUrl, "Remote URL unavailable."),
+              },
+            )
+          }
         >
           {expanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -2165,12 +2447,7 @@ export function SourceControlPanel({
             <IconButton
               label="Fetch remote"
               disabled={isActionRunning(fetchKey)}
-              onClick={() =>
-                void runAction(
-                  fetchKey,
-                  () => api?.vcs.fetchRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
-                )
-              }
+              onClick={fetchRemote}
             >
               <RefreshCw className="size-3.5" />
             </IconButton>
@@ -2178,16 +2455,7 @@ export function SourceControlPanel({
               label="Remove remote"
               destructive
               disabled={isActionRunning(removeKey)}
-              onClick={() =>
-                void (async () => {
-                  if (!(await confirm(`Remove remote ${remote.name}?`))) return;
-                  await runAction(
-                    removeKey,
-                    () =>
-                      api?.vcs.removeRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
-                  );
-                })()
-              }
+              onClick={removeRemote}
             >
               <Trash2 className="size-3.5" />
             </IconButton>
@@ -2224,17 +2492,20 @@ export function SourceControlPanel({
           className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
+          onContextMenu={(event) =>
+            openContextMenu(event, [{ id: "copy-name", label: "Copy name", icon: "copy" }], {
+              "copy-name": () => copyText("unpublished"),
+            })
+          }
         >
           {expanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm">local</span>
+          <span className="min-w-0 flex-1 truncate text-sm">unpublished</span>
           <span className="min-w-0 flex-[2] truncate text-muted-foreground">
-            {branches.length === 1
-              ? "1 unpublished branch"
-              : `${branches.length} unpublished branches`}
+            {branches.length === 1 ? "1 branch" : `${branches.length} branches`}
           </span>
         </div>
         {expanded ? (
@@ -2255,6 +2526,25 @@ export function SourceControlPanel({
     const popKey = `stash-pop:${stash.refName}`;
     const dropKey = `stash-drop:${stash.refName}`;
     const relativeDate = formatRelativeDate(stash.createdAt);
+    const branchName = stashBranchName(stash);
+    const applyStash = () =>
+      void runAction(
+        applyKey,
+        () => api?.vcs.applyStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
+      );
+    const popStash = () =>
+      void runAction(
+        popKey,
+        () => api?.vcs.popStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
+      );
+    const dropStash = () =>
+      void (async () => {
+        if (!(await confirm(`Drop ${stash.refName}?`))) return;
+        await runAction(
+          dropKey,
+          () => api?.vcs.dropStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
+        );
+      })();
     return (
       <div key={stash.refName} className="space-y-0.5">
         <div
@@ -2267,6 +2557,36 @@ export function SourceControlPanel({
             event.preventDefault();
             toggleStashTree(key, stash.refName);
           }}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                { id: "apply", label: "Apply stash", disabled: isActionRunning(applyKey) },
+                { id: "pop", label: "Pop stash", disabled: isActionRunning(popKey) },
+                {
+                  id: "drop",
+                  label: "Drop stash",
+                  destructive: true,
+                  disabled: isActionRunning(dropKey),
+                  icon: "trash",
+                },
+                { id: "copy-stash-name", label: "Copy stash name", icon: "copy" },
+                {
+                  id: "copy-branch-name",
+                  label: "Copy branch name",
+                  disabled: !branchName,
+                  icon: "copy",
+                },
+              ],
+              {
+                apply: applyStash,
+                pop: popStash,
+                drop: dropStash,
+                "copy-stash-name": () => copyText(stash.refName),
+                "copy-branch-name": () => copyText(branchName ?? "", "Stash branch unavailable."),
+              },
+            )
+          }
         >
           {expanded ? (
             <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -2283,40 +2603,18 @@ export function SourceControlPanel({
             <IconButton
               label="Apply stash"
               disabled={isActionRunning(applyKey)}
-              onClick={() =>
-                void runAction(
-                  applyKey,
-                  () => api?.vcs.applyStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
-                )
-              }
+              onClick={applyStash}
             >
               <Download className="size-3.5" />
             </IconButton>
-            <IconButton
-              label="Pop stash"
-              disabled={isActionRunning(popKey)}
-              onClick={() =>
-                void runAction(
-                  popKey,
-                  () => api?.vcs.popStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
-                )
-              }
-            >
+            <IconButton label="Pop stash" disabled={isActionRunning(popKey)} onClick={popStash}>
               <Archive className="size-3.5" />
             </IconButton>
             <IconButton
               label="Drop stash"
               destructive
               disabled={isActionRunning(dropKey)}
-              onClick={() =>
-                void (async () => {
-                  if (!(await confirm(`Drop ${stash.refName}?`))) return;
-                  await runAction(
-                    dropKey,
-                    () => api?.vcs.dropStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
-                  );
-                })()
-              }
+              onClick={dropStash}
             >
               <Trash2 className="size-3.5" />
             </IconButton>
@@ -2324,7 +2622,11 @@ export function SourceControlPanel({
         </div>
         {expanded && details ? (
           <div className="ml-2 border-l border-border/60 pl-1">
-            <FileChangeList files={details.files} emptyLabel="No changes." />
+            <FileChangeList
+              files={details.files}
+              emptyLabel="No changes."
+              onFileContextMenu={openFileChangeContextMenu}
+            />
           </div>
         ) : null}
         {expanded && !details && loadingDetails ? (
