@@ -211,8 +211,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         className={cn(
           "px-2 pr-28",
           props.mode === "inline" ? "workspace-topbar" : "flex h-10 shrink-0 items-center",
-          ownsDesktopTitleBar &&
-            "drag-region wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
         )}
         data-right-panel-tabbar
       >
@@ -220,7 +219,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ref={tabListRef}
           hideScrollbars
           scrollFade
-          className="min-w-0 flex-1 rounded-none"
+          className={cn("min-w-0 flex-1 rounded-none", ownsDesktopTitleBar && "drag-region")}
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">

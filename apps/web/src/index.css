@@ -111,6 +111,11 @@
     display: flex;
     height: var(--workspace-topbar-height);
     align-items: center;
+    -webkit-app-region: no-drag;
+  }
+
+  .surface-subheader {
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
 }
 

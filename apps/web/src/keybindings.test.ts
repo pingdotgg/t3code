@@ -621,6 +621,17 @@ describe("resolveShortcutCommand", () => {
       "thread.next",
     );
   });
+
+  it("matches Option-modified letters using the physical key code on macOS", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "∫", code: "KeyB", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "rightPanel.toggle",
+    );
+  });
 });
 
 describe("formatShortcutLabel", () => {

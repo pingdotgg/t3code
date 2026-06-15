@@ -2146,6 +2146,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(panelLayoutControls.getBoundingClientRect().top).toBe(
         chatHeader.getBoundingClientRect().top,
       );
+      expect(
+        window.getComputedStyle(panelLayoutControls).getPropertyValue("-webkit-app-region"),
+      ).toBe("no-drag");
+      expect(chatHeader.classList.contains("drag-region")).toBe(false);
+      expect(chatHeader.contains(panelLayoutControls)).toBe(true);
       const initialTerminalRect = terminalToggle.getBoundingClientRect();
       const initialRightPanelRect = rightPanelToggle.getBoundingClientRect();
       const initialControlRects = [initialTerminalRect, initialRightPanelRect];
@@ -2179,17 +2184,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>("[data-right-panel-tabbar]"),
         "Unable to find right panel tab bar.",
       );
+      const rightPanelTabList = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-right-panel-tab-list]"),
+        "Unable to find right panel tab list.",
+      );
       const maximizeRect = maximizeButton.getBoundingClientRect();
       const rightPanelTabbarRect = rightPanelTabbar.getBoundingClientRect();
+      const openPanelLayoutControls = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-panel-layout-controls]"),
+        "Unable to find open panel layout controls.",
+      );
+      const openTerminalToggle = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal drawer"]'),
+        "Unable to find open panel terminal toggle.",
+      );
+      const openRightPanelToggle = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]'),
+        "Unable to find open panel right panel toggle.",
+      );
       expect(document.querySelector('button[aria-label="Add panel surface"]')).toBeNull();
       expect(rightPanelTabbarRect.height).toBe(52);
       expect(rightPanelTabbarRect.top).toBe(chatHeader.getBoundingClientRect().top);
+      expect(chatHeader.contains(openPanelLayoutControls)).toBe(false);
+      expect(
+        window.getComputedStyle(rightPanelTabbar).getPropertyValue("-webkit-app-region"),
+      ).not.toBe("drag");
+      expect(rightPanelTabList.classList.contains("drag-region")).toBe(false);
+      expect(window.getComputedStyle(maximizeButton).getPropertyValue("-webkit-app-region")).toBe(
+        "no-drag",
+      );
+      expect(
+        window.getComputedStyle(openTerminalToggle).getPropertyValue("-webkit-app-region"),
+      ).toBe("no-drag");
+      expect(
+        window.getComputedStyle(openRightPanelToggle).getPropertyValue("-webkit-app-region"),
+      ).toBe("no-drag");
       expect(maximizeRect.width).toBe(28);
       expect(maximizeRect.height).toBe(28);
       expect(maximizeRect.top).toBe(initialTerminalRect.top);
       expect(initialTerminalRect.left - maximizeRect.right).toBe(4);
-      expect(terminalToggle.getBoundingClientRect().left).toBeCloseTo(initialTerminalRect.left, 1);
-      expect(rightPanelToggle.getBoundingClientRect().left).toBeCloseTo(
+      expect(openTerminalToggle.getBoundingClientRect().left).toBeCloseTo(
+        initialTerminalRect.left,
+        1,
+      );
+      expect(openRightPanelToggle.getBoundingClientRect().left).toBeCloseTo(
         initialRightPanelRect.left,
         1,
       );
@@ -2206,10 +2245,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       document.documentElement.classList.add("wco");
       expect(rightPanelTabbar.getBoundingClientRect().height).toBe(
-        panelLayoutControls.getBoundingClientRect().height,
+        openPanelLayoutControls.getBoundingClientRect().height,
       );
       expect(rightPanelTabbar.getBoundingClientRect().top).toBe(
-        panelLayoutControls.getBoundingClientRect().top,
+        openPanelLayoutControls.getBoundingClientRect().top,
       );
       document.documentElement.classList.remove("wco");
 
@@ -2227,15 +2266,78 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(
           document.querySelector<HTMLButtonElement>('button[aria-label="Restore panel size"]'),
         ).not.toBeNull();
-        expect(terminalToggle.getBoundingClientRect().left).toBeCloseTo(
-          initialTerminalRect.left,
-          1,
-        );
-        expect(rightPanelToggle.getBoundingClientRect().left).toBeCloseTo(
-          initialRightPanelRect.left,
-          1,
-        );
+        expect(
+          document
+            .querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal drawer"]')
+            ?.getBoundingClientRect().left,
+        ).toBeCloseTo(initialTerminalRect.left, 1);
+        expect(
+          document
+            .querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]')
+            ?.getBoundingClientRect().left,
+        ).toBeCloseTo(initialRightPanelRect.left, 1);
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("loads file previews from the active thread worktree", async () => {
+    const worktreePath = "/repo/worktrees/file-preview-thread";
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-worktree-file-preview" as MessageId,
+      targetText: "open the worktree file preview",
+    });
+    const targetThread = snapshot.threads.find((thread) => thread.id === THREAD_ID);
+    if (!targetThread) {
+      throw new Error("Missing target thread fixture.");
+    }
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID ? { ...thread, worktreePath } : thread,
+        ),
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.projectsListEntries) {
+          return { entries: [{ path: "src/index.ts", kind: "file" }], truncated: false };
+        }
+        if (body._tag === WS_METHODS.projectsReadFile) {
+          return {
+            relativePath: "src/index.ts",
+            contents: "export const worktree = true;\n",
+            byteLength: 30,
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useRightPanelStore.getState().open(THREAD_REF, "files");
+      await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-file-browser-panel]"),
+        "Unable to find the worktree file explorer.",
+      );
+
+      useRightPanelStore.getState().openFile(THREAD_REF, "src/index.ts");
+      await waitForElement(
+        () => document.querySelector<HTMLElement>(".file-preview-virtualizer"),
+        "Unable to find the worktree file preview.",
+      );
+
+      const listRequest = wsRequests.find(
+        (request) => request._tag === WS_METHODS.projectsListEntries,
+      );
+      const readRequest = wsRequests.find(
+        (request) => request._tag === WS_METHODS.projectsReadFile,
+      );
+      expect(listRequest).toMatchObject({ cwd: worktreePath });
+      expect(readRequest).toMatchObject({ cwd: worktreePath, relativePath: "src/index.ts" });
     } finally {
       await mounted.cleanup();
     }
@@ -2355,6 +2457,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>("[data-file-breadcrumbs]"),
         "Unable to find the responsive file breadcrumbs.",
       );
+      const fileSubheader = breadcrumbs.closest<HTMLElement>("[data-surface-subheader]");
       const breadcrumbViewport = await waitForElement(
         () => breadcrumbs.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]'),
         "Unable to find the file breadcrumb viewport.",
@@ -2382,6 +2485,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(explorerToggle.getAttribute("aria-pressed")).toBe("true");
         expect(explorerToggle.getBoundingClientRect().width).toBe(28);
         expect(explorerToggle.getBoundingClientRect().height).toBe(28);
+        expect(fileSubheader?.getBoundingClientRect().height).toBe(40);
+        expect(window.getComputedStyle(fileSubheader!).borderTopWidth).toBe("0px");
+        expect(window.getComputedStyle(fileSubheader!).borderBottomWidth).toBe("1px");
       });
 
       const fileSearchButton = await waitForElement(

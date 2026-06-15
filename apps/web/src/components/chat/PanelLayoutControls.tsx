@@ -34,13 +34,16 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleRightPanelMaximized,
 }: PanelLayoutControlsProps) {
   return (
-    <div className={cn("workspace-titlebar-controls z-50 gap-1")} data-panel-layout-controls>
+    <div
+      className={cn("workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]")}
+      data-panel-layout-controls
+    >
       {rightPanelOpen ? (
         <Tooltip>
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 [-webkit-app-region:no-drag]"
                 pressed={rightPanelMaximized}
                 onPressedChange={onToggleRightPanelMaximized}
                 aria-label={rightPanelMaximized ? "Restore panel size" : "Maximize panel"}
@@ -69,7 +72,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipTrigger
           render={
             <Toggle
-              className="shrink-0"
+              className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
               aria-label="Toggle terminal drawer"
@@ -91,7 +94,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipTrigger
           render={
             <Toggle
-              className="shrink-0"
+              className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
               aria-label="Toggle right panel"
