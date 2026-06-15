@@ -2151,6 +2151,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       ).toBe("no-drag");
       expect(chatHeader.classList.contains("drag-region")).toBe(false);
       expect(chatHeader.contains(panelLayoutControls)).toBe(true);
+      expect(window.innerWidth - panelLayoutControls.getBoundingClientRect().right).toBe(12);
       const initialTerminalRect = terminalToggle.getBoundingClientRect();
       const initialRightPanelRect = rightPanelToggle.getBoundingClientRect();
       const initialControlRects = [initialTerminalRect, initialRightPanelRect];
@@ -2172,6 +2173,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(panelLayoutControls.getBoundingClientRect().top).toBe(
         chatHeader.getBoundingClientRect().top,
       );
+      expect(window.innerWidth - panelLayoutControls.getBoundingClientRect().right).toBe(12);
       document.documentElement.classList.remove("wco");
 
       rightPanelToggle.click();
