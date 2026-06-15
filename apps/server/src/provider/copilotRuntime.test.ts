@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
+import type { CopilotClientOptions } from "@github/copilot-sdk";
+import * as Effect from "effect/Effect";
 
 import {
   authSnapshotFromCopilotSdk,
@@ -10,9 +13,7 @@ import {
   resolveBundledCopilotCliPath,
 } from "./copilotRuntime.ts";
 
-function assertStdioConnection(
-  connection: ReturnType<typeof buildCopilotClientOptions>["connection"],
-) {
+function assertStdioConnection(connection: CopilotClientOptions["connection"]) {
   assert.equal(connection?.kind, "stdio");
   return connection;
 }
@@ -138,62 +139,75 @@ describe("buildCopilotClientOptions", () => {
     assert.equal(env.COPILOT_EXP_COPILOT_CLI_SHELL_SPAWN_BACKEND, undefined);
   });
 
-  it("strips inherited COPILOT_CLI_PATH and uses the local Copilot CLI shim by default", () => {
-    const options = buildCopilotClientOptions({
-      settings: {
-        enabled: true,
-        binaryPath: "",
-        serverUrl: "",
-        customModels: [],
-      },
-      cwd: "/tmp/project",
-      baseDirectory: "/tmp/t3-copilot-home",
-      env: {
-        PATH: "/usr/bin",
-        COPILOT_CLI_PATH: "/opt/homebrew/bin/copilot",
-        GITHUB_TOKEN: "github-token",
-      },
-      logLevel: "error",
-    });
+  it.layer(NodeServices.layer)("Copilot CLI command resolution", (it) => {
+    it.effect(
+      "strips inherited COPILOT_CLI_PATH and uses the local Copilot CLI shim by default",
+      () =>
+        Effect.gen(function* () {
+          const options = yield* buildCopilotClientOptions({
+            settings: {
+              enabled: true,
+              binaryPath: "",
+              serverUrl: "",
+              customModels: [],
+            },
+            cwd: "/tmp/project",
+            baseDirectory: "/tmp/t3-copilot-home",
+            env: {
+              PATH: "/usr/bin",
+              COPILOT_CLI_PATH: "/opt/homebrew/bin/copilot",
+              GITHUB_TOKEN: "github-token",
+            },
+            platform: "darwin",
+            logLevel: "error",
+          });
 
-    const connection = assertStdioConnection(options.connection);
-    assert.ok(connection.path?.includes("node_modules/.bin/copilot"));
-    assert.equal(options.workingDirectory, "/tmp/project");
-    assert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
-    assert.equal(options.logLevel, "error");
-    assert.equal(options.mode, "copilot-cli");
-    assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
-    assert.equal(options.env?.GITHUB_TOKEN, "github-token");
-    assert.equal(options.env?.PATH, "/usr/bin");
-  });
+          const connection = assertStdioConnection(options.connection);
+          assert.ok(connection.path?.includes("node_modules/.bin/copilot"));
+          assert.equal(options.workingDirectory, "/tmp/project");
+          assert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
+          assert.equal(options.logLevel, "error");
+          assert.equal(options.mode, "copilot-cli");
+          assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+          assert.equal(options.env?.GITHUB_TOKEN, "github-token");
+          assert.equal(options.env?.PATH, "/usr/bin");
+        }),
+    );
 
-  it("resolves the bundled Copilot CLI shim without relying on PATH", () => {
-    const cliPath = resolveBundledCopilotCliPath({
-      cwd: "/tmp/project",
-      env: { PATH: "/usr/bin" },
-    });
+    it.effect("resolves the bundled Copilot CLI shim without relying on PATH", () =>
+      Effect.gen(function* () {
+        const cliPath = yield* resolveBundledCopilotCliPath({
+          cwd: "/tmp/project",
+          env: { PATH: "/usr/bin" },
+          platform: "darwin",
+        });
 
-    assert.ok(cliPath?.includes("node_modules/.bin/copilot"));
-  });
+        assert.ok(cliPath?.includes("node_modules/.bin/copilot"));
+      }),
+    );
 
-  it("prefers the configured binary path over any inherited CLI path override", () => {
-    const configuredBinaryPath = process.execPath;
+    it.effect("prefers the configured binary path over any inherited CLI path override", () =>
+      Effect.gen(function* () {
+        const configuredBinaryPath = process.execPath;
 
-    const options = buildCopilotClientOptions({
-      settings: {
-        enabled: true,
-        binaryPath: configuredBinaryPath,
-        serverUrl: "",
-        customModels: [],
-      },
-      env: {
-        COPILOT_CLI_PATH: "/opt/homebrew/bin/copilot",
-      },
-    });
+        const options = yield* buildCopilotClientOptions({
+          settings: {
+            enabled: true,
+            binaryPath: configuredBinaryPath,
+            serverUrl: "",
+            customModels: [],
+          },
+          env: {
+            COPILOT_CLI_PATH: "/opt/homebrew/bin/copilot",
+          },
+          platform: "darwin",
+        });
 
-    const connection = assertStdioConnection(options.connection);
-    assert.equal(connection.path, configuredBinaryPath);
-    assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+        const connection = assertStdioConnection(options.connection);
+        assert.equal(connection.path, configuredBinaryPath);
+        assert.equal(options.env?.COPILOT_CLI_PATH, undefined);
+      }),
+    );
   });
 
   it("omits the generic signed-in user prefix from authenticated Copilot labels", () => {

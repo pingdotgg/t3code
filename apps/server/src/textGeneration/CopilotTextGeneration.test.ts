@@ -67,7 +67,7 @@ vi.mock("../provider/copilotRuntime.ts", async () => {
           createSession,
         };
         runtimeMock.state.createdClients.push({ input, client });
-        return client;
+        return Effect.succeed(client);
       },
     ),
   };
