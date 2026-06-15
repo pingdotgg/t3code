@@ -7,6 +7,7 @@ import {
   type GetStatusResponse,
   type ModelInfo,
 } from "@github/copilot-sdk";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +20,11 @@ import type {
   ServerProviderState,
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
 
@@ -59,6 +63,10 @@ export class CopilotProbePromiseError extends Error {
     this.name = "CopilotProbePromiseError";
   }
 }
+
+class CopilotCliPathResolutionError extends Data.TaggedError("CopilotCliPathResolutionError")<{
+  readonly message: string;
+}> {}
 
 export function trimOrUndefined(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -113,16 +121,17 @@ function normalizeAuthLabelPart(value: string | null | undefined): string | unde
   return trimmed ? trimmed.replace(/^@/, "").toLowerCase() : undefined;
 }
 
-export function createCopilotClient(input: {
+export const createCopilotClient = Effect.fn("createCopilotClient")(function* (input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
   readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
+  readonly platform: NodeJS.Platform;
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
-}) {
-  return new CopilotClient(buildCopilotClientOptions(input));
-}
+}): Effect.fn.Return<CopilotClient, CopilotCliPathResolutionError> {
+  return new CopilotClient(yield* buildCopilotClientOptions(input));
+});
 
 function isExecutableFile(path: string): boolean {
   try {
@@ -161,7 +170,7 @@ function appendCommaSeparatedValue(value: string | undefined, entry: string): st
 
 export function normalizeCopilotRuntimeEnvironment(
   input: Record<string, string | undefined>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string | undefined> {
   const env = { ...input };
 
@@ -181,31 +190,49 @@ export function normalizeCopilotRuntimeEnvironment(
   return env;
 }
 
-function validateConfiguredCopilotCliPath(input: {
-  readonly settings: CopilotSettings;
-  readonly env?: Record<string, string | undefined>;
-}): string | undefined {
-  const cliUrl = trimOrUndefined(input.settings.serverUrl);
-  if (cliUrl) {
-    return undefined;
-  }
+const resolveCopilotCommandPath = (
+  command: string,
+  input: {
+    readonly env: Record<string, string | undefined>;
+    readonly platform: NodeJS.Platform;
+  },
+) =>
+  resolveCommandPath(command, { env: input.env }).pipe(
+    Effect.provideService(HostProcessPlatform, input.platform),
+    Effect.provide(NodeServices.layer),
+  );
 
-  const cliPath = trimOrUndefined(input.settings.binaryPath);
-  if (!cliPath) {
-    return undefined;
-  }
+const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCliPath")(
+  function* (input: {
+    readonly settings: CopilotSettings;
+    readonly env?: Record<string, string | undefined>;
+    readonly platform: NodeJS.Platform;
+  }): Effect.fn.Return<string | undefined, CopilotCliPathResolutionError> {
+    const cliUrl = trimOrUndefined(input.settings.serverUrl);
+    if (cliUrl) {
+      return undefined;
+    }
 
-  const env = {
-    ...process.env,
-    ...input.env,
-  };
-  const resolvedCommandPath = resolveCommandPath(cliPath, { env });
-  if (!resolvedCommandPath) {
-    throw new Error(`The configured Copilot binary could not be found: ${cliPath}.`);
-  }
+    const cliPath = trimOrUndefined(input.settings.binaryPath);
+    if (!cliPath) {
+      return undefined;
+    }
 
-  return resolvedCommandPath;
-}
+    const env = {
+      ...process.env,
+      ...input.env,
+    };
+    return yield* resolveCopilotCommandPath(cliPath, { env, platform: input.platform }).pipe(
+      Effect.catchTag("CommandResolutionError", () =>
+        Effect.fail(
+          new CopilotCliPathResolutionError({
+            message: `The configured Copilot binary could not be found: ${cliPath}.`,
+          }),
+        ),
+      ),
+    );
+  },
+);
 
 function candidateDirectoryAncestors(directory: string): ReadonlyArray<string> {
   const directories: string[] = [];
@@ -223,41 +250,48 @@ function candidateDirectoryAncestors(directory: string): ReadonlyArray<string> {
   return directories;
 }
 
-export function resolveBundledCopilotCliPath(input: {
-  readonly cwd?: string;
-  readonly env?: Record<string, string | undefined>;
-}): string | undefined {
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  const candidateRoots = new Set<string>();
+export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliPath")(
+  function* (input: {
+    readonly cwd?: string;
+    readonly env?: Record<string, string | undefined>;
+    readonly platform: NodeJS.Platform;
+  }): Effect.fn.Return<string | undefined> {
+    const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+    const candidateRoots = new Set<string>();
 
-  if (input.cwd) {
-    candidateRoots.add(input.cwd);
-  }
-  candidateRoots.add(process.cwd());
-
-  for (const directory of candidateDirectoryAncestors(moduleDirectory)) {
-    candidateRoots.add(directory);
-  }
-
-  for (const root of candidateRoots) {
-    const candidate = join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
-    const resolved = resolveCommandPath(candidate, input.env ? { env: input.env } : {});
-    if (resolved) {
-      return resolved;
+    if (input.cwd) {
+      candidateRoots.add(input.cwd);
     }
-  }
+    candidateRoots.add(process.cwd());
 
-  return undefined;
-}
+    for (const directory of candidateDirectoryAncestors(moduleDirectory)) {
+      candidateRoots.add(directory);
+    }
 
-export function buildCopilotClientOptions(input: {
+    for (const root of candidateRoots) {
+      const candidate = join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
+      const resolved = yield* resolveCopilotCommandPath(candidate, {
+        env: input.env ?? process.env,
+        platform: input.platform,
+      }).pipe(Effect.catchTag("CommandResolutionError", () => Effect.void));
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    return undefined;
+  },
+);
+
+export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(function* (input: {
   readonly settings: CopilotSettings;
   readonly cwd?: string;
   readonly baseDirectory?: string;
   readonly env?: Record<string, string | undefined>;
+  readonly platform: NodeJS.Platform;
   readonly logLevel?: CopilotClientOptions["logLevel"];
   readonly onListModels?: CopilotClientOptions["onListModels"];
-}): CopilotClientOptions {
+}): Effect.fn.Return<CopilotClientOptions, CopilotCliPathResolutionError> {
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
   let env: Record<string, string | undefined> = { ...process.env };
 
@@ -266,15 +300,20 @@ export function buildCopilotClientOptions(input: {
   }
 
   delete env[COPILOT_CLI_PATH_ENV];
-  env = normalizeCopilotRuntimeEnvironment(env);
+  env = normalizeCopilotRuntimeEnvironment(env, input.platform);
 
-  const configuredCliPath = validateConfiguredCopilotCliPath({
+  const configuredCliPath = yield* validateConfiguredCopilotCliPath({
     settings: input.settings,
     env,
+    platform: input.platform,
   });
   const bundledCliPath =
     !cliUrl && !configuredCliPath
-      ? resolveBundledCopilotCliPath({ ...(input.cwd ? { cwd: input.cwd } : {}), env })
+      ? yield* resolveBundledCopilotCliPath({
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          env,
+          platform: input.platform,
+        })
       : undefined;
   const cliPath = configuredCliPath ?? bundledCliPath;
 
@@ -291,7 +330,7 @@ export function buildCopilotClientOptions(input: {
     ...(input.logLevel ? { logLevel: input.logLevel } : {}),
     ...(input.onListModels ? { onListModels: input.onListModels } : {}),
   };
-}
+});
 
 export function versionFromCopilotStatus(status: GetStatusResponse): string | null {
   return trimOrUndefined(status.version) ?? null;

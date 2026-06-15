@@ -30,9 +30,9 @@ vi.mock("../copilotRuntime.ts", async () => {
     ...actual,
     createCopilotClient: vi.fn(() => {
       if (runtimeMock.state.createClientError) {
-        throw runtimeMock.state.createClientError;
+        return Effect.fail(runtimeMock.state.createClientError);
       }
-      return {
+      return Effect.succeed({
         start: vi.fn(async () => undefined),
         stop: vi.fn(async () => undefined),
         getStatus: vi.fn(async () => ({
@@ -52,7 +52,7 @@ vi.mock("../copilotRuntime.ts", async () => {
           }
           return [];
         }),
-      };
+      });
     }),
   };
 });

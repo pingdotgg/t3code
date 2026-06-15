@@ -1,4 +1,5 @@
 import { ProviderDriverKind, type CopilotSettings } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { DateTime, Effect } from "effect";
 
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
@@ -92,61 +93,62 @@ export function checkCopilotProviderStatus(input: {
     });
   };
 
-  return Effect.acquireUseRelease(
-    Effect.try({
-      try: () =>
-        createCopilotClient({
-          settings: input.settings,
-          cwd: input.cwd,
-          ...(input.baseDirectory ? { baseDirectory: input.baseDirectory } : {}),
-          ...(input.environment ? { env: input.environment } : {}),
-          logLevel: "error",
-        }),
-      catch: toCopilotProbeError,
-    }),
-    (client) =>
-      Effect.tryPromise({
-        try: async () => {
-          const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
-          await client.start();
-          const [status, authStatus, models] = await Promise.all([
-            client.getStatus(),
-            client.getAuthStatus(),
-            client.listModels(),
-          ]);
-          const authSnapshot = authSnapshotFromCopilotSdk(authStatus);
-          const providerModels = modelsFromCopilotSdk({
-            models,
-            customModels: input.settings.customModels,
-          });
-          const hasBuiltInModels = models.length > 0;
+  return Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
 
-          return buildServerProvider({
-            driver: PROVIDER,
-            presentation: COPILOT_PRESENTATION,
-            enabled: true,
-            checkedAt,
-            models: providerModels,
-            probe: {
-              installed: true,
-              version: versionFromCopilotStatus(status),
-              status:
-                authSnapshot.status !== "ready"
-                  ? authSnapshot.status
+    return yield* Effect.acquireUseRelease(
+      createCopilotClient({
+        settings: input.settings,
+        cwd: input.cwd,
+        ...(input.baseDirectory ? { baseDirectory: input.baseDirectory } : {}),
+        ...(input.environment ? { env: input.environment } : {}),
+        platform,
+        logLevel: "error",
+      }).pipe(Effect.mapError(toCopilotProbeError)),
+      (client) =>
+        Effect.tryPromise({
+          try: async () => {
+            const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
+            await client.start();
+            const [status, authStatus, models] = await Promise.all([
+              client.getStatus(),
+              client.getAuthStatus(),
+              client.listModels(),
+            ]);
+            const authSnapshot = authSnapshotFromCopilotSdk(authStatus);
+            const providerModels = modelsFromCopilotSdk({
+              models,
+              customModels: input.settings.customModels,
+            });
+            const hasBuiltInModels = models.length > 0;
+
+            return buildServerProvider({
+              driver: PROVIDER,
+              presentation: COPILOT_PRESENTATION,
+              enabled: true,
+              checkedAt,
+              models: providerModels,
+              probe: {
+                installed: true,
+                version: versionFromCopilotStatus(status),
+                status:
+                  authSnapshot.status !== "ready"
+                    ? authSnapshot.status
+                    : hasBuiltInModels
+                      ? "ready"
+                      : "warning",
+                auth: authSnapshot.auth,
+                ...(authSnapshot.message
+                  ? { message: authSnapshot.message }
                   : hasBuiltInModels
-                    ? "ready"
-                    : "warning",
-              auth: authSnapshot.auth,
-              ...(authSnapshot.message
-                ? { message: authSnapshot.message }
-                : hasBuiltInModels
-                  ? {}
-                  : { message: "Copilot did not report any available models for this account." }),
-            },
-          });
-        },
-        catch: toCopilotProbeError,
-      }).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
-    (client) => Effect.promise(() => client.stop()).pipe(Effect.ignore({ log: true })),
-  ).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause))));
+                    ? {}
+                    : { message: "Copilot did not report any available models for this account." }),
+              },
+            });
+          },
+          catch: toCopilotProbeError,
+        }).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
+      (client) => Effect.promise(() => client.stop()).pipe(Effect.ignore({ log: true })),
+    ).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause))));
+  });
 }
