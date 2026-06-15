@@ -1261,22 +1261,34 @@ export function SourceControlPanel({
     [api, cwd, divergedSyncBranch, runAction],
   );
 
-  const runPanelCommit = useCallback(() => {
-    const commitMessage = dialogCommitMessage.trim();
-    setPanelBusyLabel(
-      commitMessage ? "Committing staged changes..." : "Generating commit message...",
-    );
-    return runAction("changes-commit", async () => {
-      setCommitDialogOpen(false);
-      setDialogCommitMessage("");
-      await gitAction.run({
-        actionId: newCommandId(),
-        action: "commit",
-        ...(commitMessage ? { commitMessage } : {}),
-        filePaths: [...selectedChangePathList],
-      });
-    }).finally(() => setPanelBusyLabel(null));
-  }, [dialogCommitMessage, gitAction, runAction, selectedChangePathList]);
+  const runPanelCommit = useCallback(
+    (message: string) => {
+      const commitMessage = message.trim();
+      setPanelBusyLabel(
+        commitMessage ? "Committing staged changes..." : "Generating commit message...",
+      );
+      return runAction("changes-commit", async () => {
+        setCommitDialogOpen(false);
+        setDialogCommitMessage("");
+        await gitAction.run({
+          actionId: newCommandId(),
+          action: "commit",
+          ...(commitMessage ? { commitMessage } : {}),
+          filePaths: [...selectedChangePathList],
+        });
+      }).finally(() => setPanelBusyLabel(null));
+    },
+    [gitAction, runAction, selectedChangePathList],
+  );
+
+  const runGeneratedPanelCommit = useCallback(() => {
+    return runPanelCommit("");
+  }, [runPanelCommit]);
+
+  const openCommitDialog = useCallback(() => {
+    setDialogCommitMessage("");
+    setCommitDialogOpen(true);
+  }, []);
 
   const createStash = useCallback(
     (paths: readonly string[], message?: string) => {
@@ -1295,6 +1307,10 @@ export function SourceControlPanel({
     },
     [api, cwd, runAction],
   );
+
+  const runGeneratedPanelStash = useCallback(() => {
+    return createStash(selectedChangePathList);
+  }, [createStash, selectedChangePathList]);
 
   const openStashDialog = useCallback((label: string, paths: readonly string[]) => {
     setStashDialogTarget({ label, paths });
@@ -2369,20 +2385,26 @@ export function SourceControlPanel({
                 <X className="size-3.5" />
               </IconButton>
               <IconButton
-                label="Commit selected changes"
+                label="Commit selected changes. Shift: message."
                 disabled={
                   isActionRunning("changes-commit") ||
                   gitAction.isPending ||
                   selectedChangedFiles.length === 0
                 }
-                onClick={() => setCommitDialogOpen(true)}
+                onClick={(event) =>
+                  event.shiftKey ? openCommitDialog() : void runGeneratedPanelCommit()
+                }
               >
                 <GitCommit className="size-3.5" />
               </IconButton>
               <IconButton
-                label="Stash selected changes"
+                label="Stash selected changes. Shift: message."
                 disabled={isActionRunning("changes-stash") || selectedChangedFiles.length === 0}
-                onClick={() => openStashDialog("selected", selectedChangePathList)}
+                onClick={(event) =>
+                  event.shiftKey
+                    ? openStashDialog("selected", selectedChangePathList)
+                    : void runGeneratedPanelStash()
+                }
               >
                 <Archive className="size-3.5" />
               </IconButton>
@@ -2857,7 +2879,7 @@ export function SourceControlPanel({
                 isActionRunning("changes-commit") ||
                 gitAction.isPending
               }
-              onClick={() => void runPanelCommit()}
+              onClick={() => void runPanelCommit(dialogCommitMessage)}
             >
               Commit
             </Button>

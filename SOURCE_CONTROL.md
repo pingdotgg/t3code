@@ -70,7 +70,7 @@ The working-tree header actions are:
 - Commit selected files.
 - Stash selected files.
 
-Commit selected opens the same optional-message dialog used by the existing Git action control: the field is labeled `Commit message (optional)`, its placeholder is `Leave empty to auto-generate`, and a blank message uses the existing commit-message generation flow. Stash selected opens a stash-message dialog; blank stash messages use the same generation flow.
+Commit selected and stash selected generate their messages by default. Holding Shift while pressing either action opens the same optional-message dialog path used by the existing Git action control: the commit field is labeled `Commit message (optional)`, its placeholder is `Leave empty to auto-generate`, and a blank message still uses the generation flow. The stash dialog behaves the same way for stash messages.
 
 File rows are compact. They show a one-letter status indicator such as `A`, `D`, or `M`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Clicking the file row label itself does nothing. The row actions are:
 
