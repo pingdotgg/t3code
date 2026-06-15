@@ -1,19 +1,29 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import {
+  ClipboardList,
+  FileCode2,
+  FileDiff,
+  Files,
+  Globe2,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { isElectron } from "~/env";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
+  maximized?: boolean;
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
@@ -23,8 +33,10 @@ interface RightPanelTabsProps {
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddFiles: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
+  filesAvailable: boolean;
   children: ReactNode;
 }
 
@@ -32,8 +44,10 @@ function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddFiles: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
+  filesAvailable: boolean;
 }) {
   const actions = [
     {
@@ -49,6 +63,13 @@ function RightPanelEmptyState(props: {
       icon: TerminalSquare,
       available: true,
       onClick: props.onAddTerminal,
+    },
+    {
+      label: "Files",
+      description: "Browse and read workspace files.",
+      icon: Files,
+      available: props.filesAvailable,
+      onClick: props.onAddFiles,
     },
     {
       label: "Diff",
@@ -68,7 +89,7 @@ function RightPanelEmptyState(props: {
             Choose what to show in the right panel.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {actions.map((action) => {
             const Icon = action.icon;
             return (
@@ -101,6 +122,10 @@ function surfaceTitle(
   switch (surface.kind) {
     case "diff":
       return "Diff";
+    case "files":
+      return "Files";
+    case "file":
+      return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -152,6 +177,10 @@ function SurfaceIcon({
     }
     case "diff":
       return <FileDiff className="size-3.5 shrink-0" />;
+    case "files":
+      return <Files className="size-3.5 shrink-0" />;
+    case "file":
+      return <FileCode2 className="size-3.5 shrink-0" />;
     case "terminal":
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
@@ -163,14 +192,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
 
   return (
-    <PreviewPanelShell mode={props.mode}>
+    <PreviewPanelShell
+      mode={props.mode}
+      {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
+    >
       <div
         className={cn(
-          "flex shrink-0 items-center px-2",
-          ownsDesktopTitleBar
-            ? "drag-region h-[52px] wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
-            : "h-10",
+          "px-2 pr-28",
+          props.mode === "inline" ? "workspace-topbar" : "flex h-10 shrink-0 items-center",
+          ownsDesktopTitleBar &&
+            "drag-region wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
         )}
+        data-right-panel-tabbar
       >
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {props.surfaces.map((surface) => {
@@ -212,29 +245,35 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               </div>
             );
           })}
+          {props.surfaces.length > 0 ? (
+            <Menu>
+              <MenuTrigger
+                className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="Add panel surface"
+              >
+                <Plus className="size-4" />
+              </MenuTrigger>
+              <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
+                <MenuItem onClick={props.onAddBrowser} disabled={!props.browserAvailable}>
+                  <Globe2 />
+                  Browser
+                </MenuItem>
+                <MenuItem onClick={props.onAddTerminal}>
+                  <TerminalSquare />
+                  Terminal
+                </MenuItem>
+                <MenuItem onClick={props.onAddFiles} disabled={!props.filesAvailable}>
+                  <Files />
+                  Files
+                </MenuItem>
+                <MenuItem onClick={props.onAddDiff} disabled={!props.diffAvailable}>
+                  <FileDiff />
+                  Diff
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          ) : null}
         </div>
-        <Menu>
-          <MenuTrigger
-            className="relative ml-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Add panel surface"
-          >
-            <Plus className="size-4" />
-          </MenuTrigger>
-          <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
-            <MenuItem onClick={props.onAddBrowser} disabled={!props.browserAvailable}>
-              <Globe2 />
-              Browser
-            </MenuItem>
-            <MenuItem onClick={props.onAddTerminal}>
-              <TerminalSquare />
-              Terminal
-            </MenuItem>
-            <MenuItem onClick={props.onAddDiff} disabled={!props.diffAvailable}>
-              <FileDiff />
-              Diff
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         {props.activeSurfaceId === null ? (
@@ -242,8 +281,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddBrowser={props.onAddBrowser}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
+            onAddFiles={props.onAddFiles}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
+            filesAvailable={props.filesAvailable}
           />
         ) : (
           props.children

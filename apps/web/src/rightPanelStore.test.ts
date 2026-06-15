@@ -88,6 +88,32 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("keeps files as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().open(refA, "files");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
+  it("replaces the standalone explorer with peer file surfaces", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "README.md");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:README.md",
+      surfaces: [
+        { id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" },
+        { id: "file:README.md", kind: "file", relativePath: "README.md" },
+      ],
+    });
+  });
+
   it("close hides the panel without clearing its selected surface", () => {
     useRightPanelStore.getState().open(refA, "plan");
     useRightPanelStore.getState().close(refA);

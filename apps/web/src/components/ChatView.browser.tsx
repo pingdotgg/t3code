@@ -53,7 +53,7 @@ import {
   resetSavedEnvironmentRuntimeStoreForTests,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
-} from "../environments/runtime";
+} from "../environments/runtime/catalog";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   removeInlineTerminalContextPlaceholder,
@@ -2097,6 +2097,127 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps panel toggles fixed and can maximize the right panel", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-maximize-right-panel" as MessageId,
+        targetText: "maximize right panel",
+      }),
+    });
+
+    try {
+      const terminalToggle = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal drawer"]'),
+        "Unable to find terminal drawer toggle.",
+      );
+      const rightPanelToggle = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]'),
+        "Unable to find right panel toggle.",
+      );
+      const headerActions = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-header-actions]"),
+        "Unable to find chat header actions.",
+      );
+      const chatHeader = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-header]"),
+        "Unable to find chat header.",
+      );
+      const panelLayoutControls = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-panel-layout-controls]"),
+        "Unable to find panel layout controls.",
+      );
+      expect(chatHeader.getBoundingClientRect().height).toBe(52);
+      expect(panelLayoutControls.getBoundingClientRect().height).toBe(52);
+      expect(panelLayoutControls.getBoundingClientRect().top).toBe(
+        chatHeader.getBoundingClientRect().top,
+      );
+      const initialTerminalRect = terminalToggle.getBoundingClientRect();
+      const initialRightPanelRect = rightPanelToggle.getBoundingClientRect();
+      const initialControlRects = [initialTerminalRect, initialRightPanelRect];
+      expect(document.querySelector('button[aria-label="Maximize panel"]')).toBeNull();
+      expect(initialControlRects.every((rect) => rect.width === 28 && rect.height === 28)).toBe(
+        true,
+      );
+      expect(initialControlRects.every((rect) => rect.top === initialControlRects[0]?.top)).toBe(
+        true,
+      );
+      expect(initialRightPanelRect.left - initialTerminalRect.right).toBe(4);
+      expect(
+        initialTerminalRect.left -
+          (headerActions.lastElementChild?.getBoundingClientRect().right ?? Number.NaN),
+      ).toBe(4);
+
+      document.documentElement.classList.add("wco");
+      expect(panelLayoutControls.getBoundingClientRect().height).toBe(52);
+      expect(panelLayoutControls.getBoundingClientRect().top).toBe(
+        chatHeader.getBoundingClientRect().top,
+      );
+      document.documentElement.classList.remove("wco");
+
+      rightPanelToggle.click();
+
+      const maximizeButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Maximize panel"]'),
+        "Unable to find maximize panel button.",
+      );
+      const rightPanelTabbar = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-right-panel-tabbar]"),
+        "Unable to find right panel tab bar.",
+      );
+      const maximizeRect = maximizeButton.getBoundingClientRect();
+      const rightPanelTabbarRect = rightPanelTabbar.getBoundingClientRect();
+      expect(document.querySelector('button[aria-label="Add panel surface"]')).toBeNull();
+      expect(rightPanelTabbarRect.height).toBe(52);
+      expect(rightPanelTabbarRect.top).toBe(chatHeader.getBoundingClientRect().top);
+      expect(maximizeRect.width).toBe(28);
+      expect(maximizeRect.height).toBe(28);
+      expect(maximizeRect.top).toBe(initialTerminalRect.top);
+      expect(initialTerminalRect.left - maximizeRect.right).toBe(4);
+      expect(terminalToggle.getBoundingClientRect().left).toBeCloseTo(initialTerminalRect.left, 1);
+      expect(rightPanelToggle.getBoundingClientRect().left).toBeCloseTo(
+        initialRightPanelRect.left,
+        1,
+      );
+
+      document.documentElement.classList.add("wco");
+      expect(rightPanelTabbar.getBoundingClientRect().height).toBe(
+        panelLayoutControls.getBoundingClientRect().height,
+      );
+      expect(rightPanelTabbar.getBoundingClientRect().top).toBe(
+        panelLayoutControls.getBoundingClientRect().top,
+      );
+      document.documentElement.classList.remove("wco");
+
+      maximizeButton.click();
+
+      await vi.waitFor(() => {
+        const chatColumn = document.querySelector<HTMLElement>(
+          '[data-chat-column-maximized-away="true"]',
+        );
+        const panel = document.querySelector<HTMLElement>(
+          '[data-preview-panel-mode="inline"][data-preview-panel-maximized="true"]',
+        );
+        expect(chatColumn?.getBoundingClientRect().width).toBe(0);
+        expect(panel?.getBoundingClientRect().width).toBeGreaterThan(1_000);
+        expect(
+          document.querySelector<HTMLButtonElement>('button[aria-label="Restore panel size"]'),
+        ).not.toBeNull();
+        expect(terminalToggle.getBoundingClientRect().left).toBeCloseTo(
+          initialTerminalRect.left,
+          1,
+        );
+        expect(rightPanelToggle.getBoundingClientRect().left).toBeCloseTo(
+          initialRightPanelRect.left,
+          1,
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps multiple terminal panel surfaces separate from the bottom drawer", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
@@ -2113,11 +2234,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       rightPanelToggle.click();
 
-      const addSurface = await waitForElement(
-        () => document.querySelector<HTMLButtonElement>('button[aria-label="Add panel surface"]'),
-        "Unable to find add panel surface button.",
-      );
-      expect(document.body.textContent).toContain("Open a surface");
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("Open a surface");
+      });
+      expect(document.querySelector('button[aria-label="Add panel surface"]')).toBeNull();
       expect(
         selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
       ).toEqual({
@@ -2127,16 +2247,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
       expect(wsRequests.some((request) => request._tag === WS_METHODS.terminalOpen)).toBe(false);
 
-      addSurface.click();
-
-      const terminalItem = await waitForElement(
+      const emptyStateTerminalButton = await waitForElement(
         () =>
-          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-            (item) => item.textContent?.trim() === "Terminal",
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+            button.textContent?.includes("Start a shell in this workspace."),
           ) ?? null,
-        "Unable to find Terminal panel menu item.",
+        "Unable to find the empty-state Terminal button.",
       );
-      terminalItem.click();
+      emptyStateTerminalButton.click();
 
       await vi.waitFor(() => {
         expect(
@@ -2146,6 +2264,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ).toEqual(["term-1"]);
       });
 
+      const addSurface = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Add panel surface"]'),
+        "Unable to find add panel surface button beside the tabs.",
+      );
       addSurface.click();
       const secondTerminalItem = await waitForElement(
         () =>

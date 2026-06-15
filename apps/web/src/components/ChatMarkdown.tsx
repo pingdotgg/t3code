@@ -33,12 +33,8 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
-import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
-import {
-  getVscodeIconUrlForEntry,
-  hasSpecificVscodeIconForFileName,
-  syntheticFileNameForLanguageId,
-} from "../vscode-icons";
+import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
@@ -443,22 +439,17 @@ function MarkdownCodeBlockTitleContent({
   language: string;
   theme: "light" | "dark";
 }) {
-  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
-
   if (fenceTitle) {
     return (
       <>
-        <VscodeEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
+        <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
         <span className="truncate">{fenceTitle}</span>
       </>
     );
   }
 
   const fileName = syntheticFileNameForLanguageId(language);
-  const iconUrl = hasSpecificVscodeIconForFileName(fileName, theme)
-    ? getVscodeIconUrlForEntry(fileName, "file", theme)
-    : null;
-  if (!iconUrl || failedIconUrl === iconUrl) {
+  if (!hasSpecificPierreIconForFileName(fileName)) {
     return <span className="truncate">{language}</span>;
   }
   return (
@@ -468,15 +459,7 @@ function MarkdownCodeBlockTitleContent({
           <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
         }
       >
-        <img
-          src={iconUrl}
-          alt=""
-          aria-hidden
-          className="size-3.5 shrink-0"
-          loading="lazy"
-          draggable={false}
-          onError={() => setFailedIconUrl(iconUrl)}
-        />
+        <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
       </TooltipTrigger>
       <TooltipPopup side="top">{language}</TooltipPopup>
     </Tooltip>

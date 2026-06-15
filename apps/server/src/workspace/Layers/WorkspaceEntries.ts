@@ -528,9 +528,24 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const list: WorkspaceEntriesShape["list"] = Effect.fn("WorkspaceEntries.list")(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
+      Effect.map((index) => ({
+        entries: index.entries.map(({ path: entryPath, kind, parentPath }) => ({
+          path: entryPath,
+          kind,
+          ...(parentPath ? { parentPath } : {}),
+        })),
+        truncated: index.truncated,
+      })),
+    );
+  });
+
   return {
     browse,
     invalidate,
+    list,
     search,
   } satisfies WorkspaceEntriesShape;
 });
