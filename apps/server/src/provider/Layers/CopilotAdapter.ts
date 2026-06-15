@@ -810,7 +810,7 @@ function toolLifecycleData(input: {
     toolCallId: input.toolCallId,
     ...(input.toolMeta?.toolName ? { toolName: input.toolMeta.toolName } : {}),
     ...(input.toolMeta?.command ? { command: input.toolMeta.command } : {}),
-    ...(input.result ? { result: input.result } : {}),
+    ...(input.result !== undefined ? { result: input.result } : {}),
     ...(input.error ? { error: input.error } : {}),
     ...(input.toolTelemetry ? { toolTelemetry: input.toolTelemetry } : {}),
   };
@@ -1853,7 +1853,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           }),
           type: "runtime.warning",
           payload: {
-            message: event.data.message.trim(),
+            message: trimOrUndefined(event.data.message) ?? "",
             detail: event.data,
           },
         });
@@ -2291,7 +2291,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             data: toolLifecycleData({
               toolCallId: event.data.toolCallId,
               toolMeta,
-              ...(event.data.result ? { result: event.data.result } : {}),
+              ...(event.data.result !== undefined ? { result: event.data.result } : {}),
               ...(event.data.error ? { error: event.data.error } : {}),
               ...(event.data.toolTelemetry ? { toolTelemetry: event.data.toolTelemetry } : {}),
             }),
