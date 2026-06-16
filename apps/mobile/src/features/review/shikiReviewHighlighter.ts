@@ -685,6 +685,16 @@ async function highlightLines(
   return highlightedLines;
 }
 
+export async function highlightCodeSnippet(input: {
+  readonly code: string;
+  readonly language?: string | null;
+  readonly theme: ReviewDiffTheme;
+}): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
+  const languageHint = input.language?.trim() || "text";
+  const language = await resolveLanguageFromPath(`snippet.${languageHint}`, languageHint);
+  return highlightLines(input.code, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+}
+
 async function highlightPatchLinesInChunks(input: {
   readonly lines: ReadonlyArray<string>;
   readonly language: string;
