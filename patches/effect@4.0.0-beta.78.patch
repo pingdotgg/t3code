@@ -1,3 +1,34 @@
+diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
+index 4819ff0..f5e0f60 100644
+--- a/dist/unstable/ai/McpServer.js
++++ b/dist/unstable/ai/McpServer.js
+@@ -235,6 +235,26 @@ export const run = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+   const server = yield* McpServer;
+   const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter));
+   const clientSessions = new Map();
++  if (isHttp && options.path !== undefined) {
++    const router = yield* HttpRouter.HttpRouter;
++    yield* router.add("DELETE", options.path, Effect.gen(function* () {
++      const request = yield* HttpServerRequest.HttpServerRequest;
++      const sessionId = request.headers[mcpSessionIdHeader];
++      if (sessionId === undefined) {
++        return HttpServerResponse.empty({
++          status: 400
++        });
++      }
++      if (!clientSessions.delete(sessionId)) {
++        return HttpServerResponse.empty({
++          status: 404
++        });
++      }
++      return HttpServerResponse.empty({
++        status: 204
++      });
++    }));
++  }
+   const handlers = yield* Layer.build(layerHandlers(options, {
+     clientSessions
+   }));
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
 index b0f61df..ead663e 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
