@@ -69,6 +69,26 @@ describe("ChatMarkdown", () => {
     document.body.innerHTML = "";
   });
 
+  it("makes task-list checkboxes interactive when a change handler is provided", async () => {
+    const onTaskListChange = vi.fn();
+    const screen = await render(
+      <ChatMarkdown
+        text={"- [ ] Ship it"}
+        cwd="/repo/project"
+        onTaskListChange={onTaskListChange}
+      />,
+    );
+
+    try {
+      const checkbox = page.getByRole("checkbox", { name: "Toggle task" });
+      await expect.element(checkbox).not.toBeDisabled();
+      await checkbox.click();
+      expect(onTaskListChange).toHaveBeenCalledWith({ markerOffset: 2, checked: true });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("rewrites file uri hrefs into direct paths before rendering", async () => {
     const filePath =
       "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";

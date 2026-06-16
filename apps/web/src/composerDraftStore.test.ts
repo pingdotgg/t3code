@@ -615,6 +615,69 @@ describe("composerDraftStore element contexts", () => {
   });
 });
 
+describe("composerDraftStore review comments", () => {
+  const threadId = ThreadId.make("thread-review-comment");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const comment = {
+    id: "comment-1",
+    sectionId: "file:src/app.ts",
+    sectionTitle: "File comment",
+    filePath: "src/app.ts",
+    startIndex: 1,
+    endIndex: 2,
+    rangeLabel: "L2 to L3",
+    text: "Keep this configurable.",
+    diff: "@@ -2,2 +2,2 @@\n two\n three",
+  } as const;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("upserts and removes review comments by id", () => {
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(threadRef, comment);
+    store.addReviewComment(threadRef, { ...comment, text: "Updated comment." });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([
+      { ...comment, text: "Updated comment." },
+    ]);
+
+    store.removeReviewComment(threadRef, comment.id);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("persists review comments and clears them with composer content", () => {
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(threadRef, comment);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { reviewComments?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.reviewComments?.[0],
+    ).toMatchObject(comment);
+
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("stores review comments against a new-thread draft id", () => {
+    const draftId = DraftId.make("draft-review-comment");
+    useComposerDraftStore.getState().addReviewComment(draftId, comment);
+
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments).toEqual([
+      comment,
+    ]);
+  });
+});
+
 describe("composerDraftStore project draft thread mapping", () => {
   const projectId = ProjectId.make("project-a");
   const otherProjectId = ProjectId.make("project-b");

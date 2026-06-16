@@ -1193,6 +1193,9 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
 });
 
 function buildReviewCommentPatch(comment: ReviewInlineComment): string {
+  if ((comment.fenceLanguage ?? "diff") !== "diff") {
+    return "";
+  }
   const diff = comment.diff.trim();
   if (!diff) {
     return "";

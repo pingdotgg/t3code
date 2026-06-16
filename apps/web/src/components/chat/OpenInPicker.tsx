@@ -154,10 +154,14 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  compact = false,
+  enableShortcut = true,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  compact?: boolean;
+  enableShortcut?: boolean;
 }) {
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
@@ -184,6 +188,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   useEffect(() => {
+    if (!enableShortcut) return;
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readLocalApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
@@ -195,24 +200,39 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [enableShortcut, preferredEditor, keybindings, openInCwd]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <Group aria-label="Open in editor">
       <Button
+        aria-label={compact ? "Open file in preferred editor" : undefined}
         size="xs"
         variant="outline"
         disabled={!preferredEditor || !openInCwd}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+        <span
+          className={
+            compact
+              ? "sr-only"
+              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+          }
+        >
           Open
         </span>
       </Button>
-      <GroupSeparator className="hidden @3xl/header-actions:block" />
+      <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label={compact ? "Choose editor" : "Copy options"}
+              size="icon-xs"
+              variant="outline"
+            />
+          }
+        >
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
