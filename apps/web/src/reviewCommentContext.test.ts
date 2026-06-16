@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  appendReviewCommentsToPrompt,
+  buildFileReviewComment,
   buildReviewCommentRenderablePatch,
   parseReviewCommentMessageSegments,
 } from "./reviewCommentContext";
@@ -72,6 +74,34 @@ describe("review comment context parsing", () => {
         "-old",
         "+new",
       ].join("\n"),
+    );
+  });
+
+  it("formats editable file comments with the mobile review-comment contract", () => {
+    const comment = buildFileReviewComment({
+      id: "comment-1",
+      filePath: "src/app.ts",
+      startLine: 2,
+      endLine: 3,
+      text: "Keep this configurable.",
+      contents: ["one", "two", "three", "four"].join("\n"),
+    });
+    const prompt = appendReviewCommentsToPrompt("Please update this.", [comment]);
+    const segments = parseReviewCommentMessageSegments(prompt);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[1]).toEqual(
+      expect.objectContaining({
+        kind: "review-comment",
+        comment: expect.objectContaining({
+          filePath: "src/app.ts",
+          startIndex: 1,
+          endIndex: 2,
+          rangeLabel: "L2 to L3",
+          text: "Keep this configurable.",
+          diff: "@@ -2,2 +2,2 @@\n two\n three",
+        }),
+      }),
     );
   });
 });

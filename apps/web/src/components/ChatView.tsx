@@ -164,6 +164,7 @@ import {
   formatElementContextLabel,
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
+import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1119,6 +1120,7 @@ function ChatViewContent(props: ChatViewProps) {
   const setComposerDraftPreviewAnnotations = useComposerDraftStore(
     (store) => store.setPreviewAnnotations,
   );
+  const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
@@ -3636,6 +3638,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
       previewAnnotations: composerPreviewAnnotations,
+      reviewComments: composerReviewComments,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -3652,7 +3655,10 @@ function ChatViewContent(props: ChatViewProps) {
       prompt: promptForSend,
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
-      elementContextCount: composerElementContexts.length + composerPreviewAnnotations.length,
+      elementContextCount:
+        composerElementContexts.length +
+        composerPreviewAnnotations.length +
+        composerReviewComments.length,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
@@ -3672,7 +3678,8 @@ function ChatViewContent(props: ChatViewProps) {
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -3722,13 +3729,18 @@ function ChatViewContent(props: ChatViewProps) {
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
-    const messageTextForSend = composerPreviewAnnotationsSnapshot.reduce(
+    const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
       (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
       messageTextWithContexts,
+    );
+    const messageTextForSend = appendReviewCommentsToPrompt(
+      messageTextWithPreviewAnnotations,
+      composerReviewCommentsSnapshot,
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -3899,6 +3911,8 @@ function ChatViewContent(props: ChatViewProps) {
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
+          .length ?? 0) === 0 &&
+        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
           .length ?? 0) === 0
       ) {
         setOptimisticUserMessages((existing) => {
@@ -3919,6 +3933,7 @@ function ChatViewContent(props: ChatViewProps) {
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
+        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -4886,6 +4901,10 @@ function ChatViewContent(props: ChatViewProps) {
                 environmentId={activeProject.environmentId}
                 cwd={activeWorkspaceRoot}
                 projectName={activeProject.name}
+                threadRef={activeThreadRef}
+                composerDraftTarget={composerDraftTarget}
+                keybindings={keybindings}
+                availableEditors={availableEditors}
                 relativePath={
                   activeRightPanelSurface.kind === "file"
                     ? activeRightPanelSurface.relativePath
@@ -4973,6 +4992,10 @@ function ChatViewContent(props: ChatViewProps) {
                   environmentId={activeProject.environmentId}
                   cwd={activeWorkspaceRoot}
                   projectName={activeProject.name}
+                  threadRef={activeThreadRef}
+                  composerDraftTarget={composerDraftTarget}
+                  keybindings={keybindings}
+                  availableEditors={availableEditors}
                   relativePath={
                     activeRightPanelSurface.kind === "file"
                       ? activeRightPanelSurface.relativePath

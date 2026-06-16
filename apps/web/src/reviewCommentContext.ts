@@ -1,3 +1,17 @@
+import * as Schema from "effect/Schema";
+
+export const ReviewCommentContextSchema = Schema.Struct({
+  id: Schema.String,
+  sectionId: Schema.String,
+  sectionTitle: Schema.String,
+  filePath: Schema.String,
+  startIndex: Schema.Number,
+  endIndex: Schema.Number,
+  rangeLabel: Schema.String,
+  text: Schema.String,
+  diff: Schema.String,
+});
+
 export interface ReviewCommentContext {
   readonly id: string;
   readonly sectionId: string;
@@ -24,6 +38,10 @@ export type ReviewCommentMessageSegment =
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b([^>]*)>\s*([\s\S]*?)<\/review_comment>/g;
 const REVIEW_COMMENT_ATTRIBUTE_PATTERN = /([a-zA-Z][a-zA-Z0-9_-]*)="([^"]*)"/g;
 const REVIEW_COMMENT_DIFF_FENCE_PATTERN = /```diff\s*\n([\s\S]*?)\n```/;
+
+function escapeReviewCommentAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
 
 function unescapeReviewCommentAttribute(value: string): string {
   return value
@@ -133,6 +151,66 @@ export function hasReviewCommentMessageSegments(value: string): boolean {
   return parseReviewCommentMessageSegments(value).some(
     (segment) => segment.kind === "review-comment",
   );
+}
+
+export function formatReviewCommentContext(comment: ReviewCommentContext): string {
+  return [
+    [
+      "<review_comment",
+      ` sectionId="${escapeReviewCommentAttribute(comment.sectionId)}"`,
+      ` sectionTitle="${escapeReviewCommentAttribute(comment.sectionTitle)}"`,
+      ` filePath="${escapeReviewCommentAttribute(comment.filePath)}"`,
+      ` startIndex="${comment.startIndex}"`,
+      ` endIndex="${comment.endIndex}"`,
+      ` rangeLabel="${escapeReviewCommentAttribute(comment.rangeLabel)}"`,
+      ">",
+    ].join(""),
+    comment.text.trim(),
+    "```diff",
+    comment.diff.trim(),
+    "```",
+    "</review_comment>",
+  ].join("\n");
+}
+
+export function appendReviewCommentsToPrompt(
+  prompt: string,
+  comments: ReadonlyArray<ReviewCommentContext>,
+): string {
+  const blocks = comments.map(formatReviewCommentContext);
+  if (blocks.length === 0) return prompt;
+  const trimmedPrompt = prompt.trim();
+  return trimmedPrompt.length > 0
+    ? `${trimmedPrompt}\n\n${blocks.join("\n\n")}`
+    : blocks.join("\n\n");
+}
+
+export function buildFileReviewComment(input: {
+  id: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  contents: string;
+}): ReviewCommentContext {
+  const startLine = Math.max(1, Math.min(input.startLine, input.endLine));
+  const endLine = Math.max(startLine, Math.max(input.startLine, input.endLine));
+  const selectedLines = input.contents.split("\n").slice(startLine - 1, endLine);
+  const count = Math.max(1, endLine - startLine + 1);
+  return {
+    id: input.id,
+    sectionId: `file:${input.filePath}`,
+    sectionTitle: "File comment",
+    filePath: input.filePath,
+    startIndex: startLine - 1,
+    endIndex: endLine - 1,
+    rangeLabel: startLine === endLine ? `L${startLine}` : `L${startLine} to L${endLine}`,
+    text: input.text.trim(),
+    diff: [
+      `@@ -${startLine},${count} +${startLine},${count} @@`,
+      ...selectedLines.map((line) => ` ${line}`),
+    ].join("\n"),
+  };
 }
 
 export function buildReviewCommentRenderablePatch(comment: ReviewCommentContext): string {
