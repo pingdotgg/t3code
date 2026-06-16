@@ -4432,7 +4432,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
             {
               path: "path/to/package.json",
               kind: "file",
-              parentPath: "path/to",
             },
           ],
           truncated: false,

@@ -72,7 +72,7 @@ import {
   type TestProviderAdapterHarness,
 } from "./TestProviderAdapter.integration.ts";
 import { deriveServerPaths, ServerConfig } from "../src/config.ts";
-import { WorkspaceEntriesLive } from "../src/workspace/Layers/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "../src/workspace/WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "../src/workspace/Layers/WorkspacePaths.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
@@ -348,7 +348,7 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
       Layer.provideMerge(
-        WorkspaceEntriesLive.pipe(
+        WorkspaceEntries.layer.pipe(
           Layer.provide(WorkspacePathsLive),
           Layer.provideMerge(VcsDriverRegistry.layer),
           Layer.provide(NodeServices.layer),

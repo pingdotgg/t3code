@@ -54,7 +54,7 @@ import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
-import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -247,10 +247,7 @@ const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PortScannerLayerLive),
 );
 
-const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
-  Layer.provide(WorkspacePathsLive),
-  Layer.provideMerge(VcsDriverRegistryLayerLive),
-);
+const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive));
 
 const WorkspaceFileSystemLayerLive = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),

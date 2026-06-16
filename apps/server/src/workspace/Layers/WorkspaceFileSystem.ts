@@ -11,7 +11,7 @@ import {
   WorkspaceFileSystemError,
   type WorkspaceFileSystemShape,
 } from "../Services/WorkspaceFileSystem.ts";
-import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "../WorkspaceEntries.ts";
 import { WorkspacePaths } from "../Services/WorkspacePaths.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
@@ -20,7 +20,7 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths;
-  const workspaceEntries = yield* WorkspaceEntries;
+  const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
 
   const readFile: WorkspaceFileSystemShape["readFile"] = Effect.fn("WorkspaceFileSystem.readFile")(
     function* (input) {
@@ -114,7 +114,7 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
           }),
       ),
     );
-    yield* workspaceEntries.invalidate(input.cwd);
+    yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });
   return { readFile, writeFile } satisfies WorkspaceFileSystemShape;

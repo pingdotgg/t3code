@@ -56,7 +56,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
-import { WorkspaceEntriesLive } from "../../workspace/Layers/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "../../workspace/Layers/WorkspacePaths.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
@@ -330,7 +330,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistry.layer))),
       Layer.provideMerge(
-        WorkspaceEntriesLive.pipe(
+        WorkspaceEntries.layer.pipe(
           Layer.provide(WorkspacePathsLive),
           Layer.provideMerge(VcsDriverRegistry.layer),
         ),
