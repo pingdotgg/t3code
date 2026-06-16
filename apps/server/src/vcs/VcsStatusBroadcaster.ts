@@ -219,20 +219,26 @@ export const layer = Layer.effect(
       "VcsStatusBroadcaster.getStatus",
     )(function* (input) {
       const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
-      const [local, remote] = yield* Effect.all([
-        getOrLoadLocalStatus(cwd),
-        getOrLoadRemoteStatus(cwd),
-      ]);
+      const [local, remote] = yield* Effect.all(
+        [getOrLoadLocalStatus(cwd), getOrLoadRemoteStatus(cwd)],
+        { concurrency: "unbounded" },
+      );
       return mergeGitStatusParts(local, remote);
     });
+
+    const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
+      function* (cwd: string) {
+        yield* workflow.invalidateLocalStatus(cwd);
+        const local = yield* workflow.localStatus({ cwd });
+        return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      },
+    );
 
     const refreshLocalStatus: VcsStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshLocalStatus",
     )(function* (rawCwd) {
       const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      return yield* refreshLocalStatusCore(cwd);
     });
 
     const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
@@ -247,10 +253,10 @@ export const layer = Layer.effect(
       "VcsStatusBroadcaster.refreshStatus",
     )(function* (rawCwd) {
       const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-      const [local, remote] = yield* Effect.all([
-        refreshLocalStatus(cwd),
-        refreshRemoteStatus(cwd),
-      ]);
+      const [local, remote] = yield* Effect.all(
+        [refreshLocalStatusCore(cwd), refreshRemoteStatus(cwd)],
+        { concurrency: "unbounded" },
+      );
       return mergeGitStatusParts(local, remote);
     });
 
