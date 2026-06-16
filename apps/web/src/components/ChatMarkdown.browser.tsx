@@ -4,11 +4,24 @@ import { page } from "vite-plus/test/browser";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
-const { openInPreferredEditorMock, readLocalApiMock } = vi.hoisted(() => ({
+const {
+  contextMenuShowMock,
+  openFileInPreviewMock,
+  openInPreferredEditorMock,
+  openUrlInPreviewMock,
+  readLocalApiMock,
+} = vi.hoisted(() => ({
+  contextMenuShowMock: vi.fn(),
+  openFileInPreviewMock: vi.fn(async () => undefined),
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
+  openUrlInPreviewMock: vi.fn(async () => undefined),
   readLocalApiMock: vi.fn(() => ({
+    contextMenu: { show: contextMenuShowMock },
     server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
-    shell: { openInEditor: vi.fn(async () => undefined) },
+    shell: {
+      openExternal: vi.fn(async () => undefined),
+      openInEditor: vi.fn(async () => undefined),
+    },
   })),
 }));
 
@@ -23,13 +36,35 @@ vi.mock("../localApi", () => ({
   readLocalApi: readLocalApiMock,
 }));
 
+vi.mock("../previewStateStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../previewStateStore")>()),
+  isPreviewSupportedInRuntime: () => true,
+}));
+
+vi.mock("../browser/openFileInPreview", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../browser/openFileInPreview")>()),
+  openFileInPreview: openFileInPreviewMock,
+  openUrlInPreview: openUrlInPreviewMock,
+}));
+
 import ChatMarkdown from "./ChatMarkdown";
 import { serializeTableElementToCsv, serializeTableElementToMarkdown } from "../markdown-clipboard";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+
+const threadRef = {
+  environmentId: EnvironmentId.make("environment-test"),
+  threadId: ThreadId.make("thread-test"),
+};
 
 describe("ChatMarkdown", () => {
   afterEach(() => {
     openInPreferredEditorMock.mockClear();
+    openFileInPreviewMock.mockClear();
+    openUrlInPreviewMock.mockClear();
+    contextMenuShowMock.mockReset();
     readLocalApiMock.mockClear();
+    useRightPanelStore.setState({ byThreadKey: {} });
     localStorage.clear();
     document.body.innerHTML = "";
   });
@@ -150,6 +185,152 @@ describe("ChatMarkdown", () => {
       await link.hover();
       expect(getComputedStyle(link.element()).backgroundImage).not.toBe("none");
       await expect.element(page.getByText("https://openai.com/docs")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens web links in the integrated browser from the context menu", async () => {
+    contextMenuShowMock.mockResolvedValue("open-in-browser");
+    const screen = await render(
+      <ChatMarkdown
+        text="[OpenAI](https://openai.com/docs)"
+        cwd="/repo/project"
+        threadRef={threadRef}
+      />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "OpenAI" }).element();
+      link.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 24,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(contextMenuShowMock).toHaveBeenCalled();
+        expect(openUrlInPreviewMock).toHaveBeenCalledWith(threadRef, "https://openai.com/docs");
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("offers integrated browser opening for HTML file links", async () => {
+    contextMenuShowMock.mockResolvedValue("open-in-browser");
+    const filePath = "/repo/project/report.html";
+    const screen = await render(
+      <ChatMarkdown text="[report.html](report.html)" cwd="/repo/project" threadRef={threadRef} />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "report.html" }).element();
+      link.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 8 }),
+      );
+
+      await vi.waitFor(() => {
+        expect(contextMenuShowMock).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "open-in-browser",
+              label: "Open in integrated browser",
+            }),
+          ]),
+          { x: 4, y: 8 },
+        );
+        expect(openFileInPreviewMock).toHaveBeenCalledWith(threadRef, filePath);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens code file links in the right-panel file preview", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text="[ChatMarkdown.tsx](apps/web/src/components/ChatMarkdown.tsx#L978)"
+        cwd="/repo/project"
+        threadRef={threadRef}
+      />,
+    );
+
+    try {
+      await page.getByRole("link", { name: "ChatMarkdown.tsx · L978" }).click();
+
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+        ).toMatchObject({
+          isOpen: true,
+          activeSurfaceId: "file:apps/web/src/components/ChatMarkdown.tsx",
+        });
+        expect(openInPreferredEditorMock).not.toHaveBeenCalled();
+        expect(openFileInPreviewMock).not.toHaveBeenCalled();
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens HTML and PDF file links in the integrated browser preview", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text="[report.html](report.html) [report.pdf](report.pdf)"
+        cwd="/repo/project"
+        threadRef={threadRef}
+      />,
+    );
+
+    try {
+      await page.getByRole("link", { name: "report.html" }).click();
+      await page.getByRole("link", { name: "report.pdf" }).click();
+
+      await vi.waitFor(() => {
+        expect(openFileInPreviewMock).toHaveBeenNthCalledWith(
+          1,
+          threadRef,
+          "/repo/project/report.html",
+        );
+        expect(openFileInPreviewMock).toHaveBeenNthCalledWith(
+          2,
+          threadRef,
+          "/repo/project/report.pdf",
+        );
+        expect(openInPreferredEditorMock).not.toHaveBeenCalled();
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps opening file links in the editor from the context menu", async () => {
+    contextMenuShowMock.mockResolvedValue("open");
+    const filePath = "/repo/project/src/index.ts";
+    const screen = await render(
+      <ChatMarkdown text="[index.ts](src/index.ts)" cwd="/repo/project" threadRef={threadRef} />,
+    );
+
+    try {
+      page
+        .getByRole("link", { name: "index.ts" })
+        .element()
+        .dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 4,
+            clientY: 8,
+          }),
+        );
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), filePath);
+      });
     } finally {
       await screen.unmount();
     }
@@ -336,7 +517,7 @@ describe("ChatMarkdown", () => {
 
         // Language with a known icon: icon XOR text — never the redundant pair.
         const languageOnly = titles[0]!;
-        const hasIcon = languageOnly.querySelector("img") != null;
+        const hasIcon = languageOnly.querySelector("svg[data-pierre-icon]") != null;
         const hasText = (languageOnly.textContent ?? "").includes("ts");
         expect(hasIcon || hasText).toBe(true);
         expect(hasIcon && hasText).toBe(false);
@@ -353,7 +534,7 @@ describe("ChatMarkdown", () => {
         expect(titles[1]!.textContent).toBe("src/main.ts");
 
         // Unknown language: no icon attempt, text label.
-        expect(titles[2]!.querySelector("img")).toBeNull();
+        expect(titles[2]!.querySelector("svg[data-pierre-icon]")).toBeNull();
         expect(titles[2]!.textContent).toBe("text");
       } finally {
         await screen.unmount();

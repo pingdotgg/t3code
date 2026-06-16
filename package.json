@@ -1,6 +1,39 @@
 {
   "name": "@t3tools/monorepo",
   "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "infra/*",
+      "oxlint-plugin-t3code",
+      "packages/*",
+      "scripts"
+    ],
+    "catalog": {
+      "effect": "4.0.0-beta.78",
+      "@effect/atom-react": "4.0.0-beta.78",
+      "@effect/openapi-generator": "4.0.0-beta.78",
+      "@effect/platform-bun": "4.0.0-beta.78",
+      "@effect/platform-node": "4.0.0-beta.78",
+      "@effect/platform-node-shared": "4.0.0-beta.78",
+      "@effect/sql-pg": "4.0.0-beta.78",
+      "@effect/sql-sqlite-bun": "4.0.0-beta.78",
+      "@effect/vitest": "4.0.0-beta.78",
+      "@effect/tsgo": "0.13.2",
+      "@noble/curves": "1.9.1",
+      "@noble/hashes": "1.8.0",
+      "@pierre/diffs": "1.3.0-beta.4",
+      "@vitest/runner": "4.1.8",
+      "@types/node": "24.12.4",
+      "@typescript/native-preview": "7.0.0-dev.20260604.1",
+      "jose": "6.2.2",
+      "typescript": "~6.0.3",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@0.1.24",
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.1.24",
+      "vite-plus": "0.1.24",
+      "yaml": "^2.9.0"
+    }
+  },
   "type": "module",
   "scripts": {
     "prepare": "effect-tsgo patch",
@@ -35,7 +68,6 @@
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
@@ -46,6 +78,29 @@
     "@typescript/native-preview": "catalog:",
     "vite-plus": "catalog:"
   },
+  "overrides": {
+    "@clerk/clerk-js>@base-org/account": "-",
+    "@clerk/clerk-js>@coinbase/wallet-sdk": "-",
+    "@clerk/clerk-js>@solana/wallet-adapter-base": "-",
+    "@clerk/clerk-js>@solana/wallet-adapter-react": "-",
+    "@clerk/clerk-js>@solana/wallet-standard": "-",
+    "@clerk/clerk-js>@wallet-standard/core": "-",
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/platform-node-shared": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@effect/vitest>@vitest/runner": "-",
+    "@effect/vitest>vitest": "-",
+    "@expo/metro-config": "56.0.13",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "yaml": "catalog:"
+  },
   "engines": {
     "node": "^24.13.1"
   },
@@ -54,5 +109,12 @@
     "workerDirectory": [
       "apps/web/public"
     ]
+  },
+  "patchedDependencies": {
+    "@pierre/diffs@1.3.0-beta.4@1.3.0-beta.4": "patches/@pierre%2Fdiffs@1.3.0-beta.4.patch",
+    "@effect/vitest@4.0.0-beta.78@4.0.0-beta.78": "patches/@effect__vitest@4.0.0-beta.78.patch",
+    "@expo/metro-config@56.0.13@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+    "effect@4.0.0-beta.78@4.0.0-beta.78": "patches/effect@4.0.0-beta.78.patch",
+    "react-native-nitro-modules@0.35.9@0.35.9": "patches/react-native-nitro-modules@0.35.9.patch"
   }
 }

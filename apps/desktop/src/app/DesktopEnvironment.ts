@@ -50,6 +50,7 @@ export interface DesktopEnvironmentShape {
   readonly savedEnvironmentRegistryPath: string;
   readonly serverSettingsPath: string;
   readonly logDir: string;
+  readonly browserArtifactsDir: string;
   readonly rootDir: string;
   readonly appRoot: string;
   readonly backendEntryPath: string;
@@ -184,6 +185,7 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
     serverSettingsPath: path.join(stateDir, "settings.json"),
     logDir: path.join(stateDir, "logs"),
+    browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
     rootDir,
     appRoot,
     backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),

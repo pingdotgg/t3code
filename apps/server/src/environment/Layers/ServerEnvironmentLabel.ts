@@ -1,5 +1,4 @@
-import * as OS from "node:os";
-
+import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -8,8 +7,6 @@ import { ProcessRunner } from "../../processRunner.ts";
 
 interface ResolveServerEnvironmentLabelInput {
   readonly cwdBaseName: string;
-  readonly platform?: NodeJS.Platform;
-  readonly hostname?: string | null;
 }
 
 function normalizeLabel(value: string | null | undefined): string | null {
@@ -69,9 +66,8 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   return normalizeLabel(result.value.stdout);
 });
 
-const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* (
-  platform: NodeJS.Platform,
-) {
+const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* () {
+  const platform = yield* HostProcessPlatform;
   if (platform === "darwin") {
     return yield* runFriendlyLabelCommand("scutil", ["--get", "ComputerName"]);
   }
@@ -94,13 +90,12 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
-  const platform = input.platform ?? process.platform;
-  const friendlyHostLabel = yield* resolveFriendlyHostLabel(platform);
+  const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
   }
 
-  const hostname = normalizeLabel(input.hostname ?? OS.hostname());
+  const hostname = normalizeLabel(yield* HostProcessHostname);
   if (hostname) {
     return hostname;
   }

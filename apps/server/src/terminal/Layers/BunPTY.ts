@@ -2,6 +2,7 @@
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { PtyAdapter } from "../Services/PTY.ts";
 import type { PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY.ts";
 
@@ -95,7 +96,8 @@ class BunPtyProcess implements PtyProcess {
 export const layer = Layer.effect(
   PtyAdapter,
   Effect.gen(function* () {
-    if (process.platform === "win32") {
+    const platform = yield* HostProcessPlatform;
+    if (platform === "win32") {
       return yield* Effect.die(
         "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx t3`) instead.",
       );

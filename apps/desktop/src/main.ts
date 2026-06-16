@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
@@ -44,6 +45,8 @@ import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
+import * as PreviewBrowserSession from "./preview/BrowserSession.ts";
+import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
@@ -51,11 +54,13 @@ const desktopEnvironmentLayer = Layer.unwrap(
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
       Effect.flatMap((app) => app.metadata),
     );
+    const platform = yield* HostProcessPlatform;
+    const processArch = yield* HostProcessArchitecture;
     return DesktopEnvironment.layer({
       dirname: __dirname,
       homeDirectory: NodeOS.homedir(),
-      platform: process.platform,
-      processArch: process.arch,
+      platform,
+      processArch,
       ...metadata,
     });
   }),
@@ -127,7 +132,15 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
-const desktopWindowLayer = DesktopWindow.layer.pipe(Layer.provideMerge(desktopServerExposureLayer));
+const desktopPreviewLayer = PreviewManager.layer.pipe(
+  Layer.provideMerge(PreviewBrowserSession.layer),
+  Layer.provideMerge(desktopFoundationLayer),
+);
+
+const desktopWindowLayer = DesktopWindow.layer.pipe(
+  Layer.provideMerge(desktopServerExposureLayer),
+  Layer.provideMerge(desktopPreviewLayer),
+);
 
 const desktopBackendLayer = DesktopBackendManager.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),

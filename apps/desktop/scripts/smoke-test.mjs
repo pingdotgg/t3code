@@ -1,15 +1,16 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, "..");
-const electronBin = resolve(desktopDir, "node_modules/.bin/electron");
 const mainJs = resolve(desktopDir, "dist-electron/main.cjs");
 
 console.log("\nLaunching Electron smoke test...");
 
-const child = spawn(electronBin, [mainJs], {
+const electronCommand = resolveElectronLaunchCommand([mainJs]);
+const child = spawn(electronCommand.electronPath, electronCommand.args, {
   stdio: ["pipe", "pipe", "pipe"],
   env: {
     ...process.env,

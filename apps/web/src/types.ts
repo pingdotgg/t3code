@@ -31,6 +31,7 @@ export type ProjectScript = ContractProjectScript;
 export interface ThreadTerminalGroup {
   id: string;
   terminalIds: string[];
+  splitDirection?: "horizontal" | "vertical";
 }
 
 export interface ChatImageAttachment {

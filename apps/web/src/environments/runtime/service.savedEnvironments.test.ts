@@ -193,6 +193,9 @@ function createClient() {
       close: vi.fn(async () => undefined),
       onMetadata: vi.fn(() => () => undefined),
     },
+    preview: {
+      subscribePorts: vi.fn(() => () => undefined),
+    },
     projects: {
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),

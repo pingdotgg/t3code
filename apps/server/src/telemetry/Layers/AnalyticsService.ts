@@ -7,10 +7,12 @@
  * @module AnalyticsServiceLive
  */
 
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
@@ -37,6 +39,7 @@ const TelemetryEnvConfig = Config.all({
   maxBufferedEvents: Config.number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
+  wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
 
 const makeAnalyticsService = Effect.gen(function* () {
@@ -46,6 +49,8 @@ const makeAnalyticsService = Effect.gen(function* () {
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostArchitecture = yield* HostProcessArchitecture;
 
   const enqueueBufferedEvent = (event: string, properties?: Readonly<Record<string, unknown>>) =>
     Effect.flatMap(DateTime.now, (now) =>
@@ -87,9 +92,9 @@ const makeAnalyticsService = Effect.gen(function* () {
         properties: {
           ...event.properties,
           $process_person_profile: false,
-          platform: process.platform,
-          wsl: process.env.WSL_DISTRO_NAME,
-          arch: process.arch,
+          platform: hostPlatform,
+          wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
+          arch: hostArchitecture,
           t3CodeVersion: packageJson.version,
           clientType,
         },

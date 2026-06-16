@@ -19,11 +19,16 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       onMetadata: (callback, options) => rpcClient.terminal.onMetadata(callback, options),
     },
     projects: {
+      listEntries: rpcClient.projects.listEntries,
+      readFile: rpcClient.projects.readFile,
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
     },
     filesystem: {
       browse: rpcClient.filesystem.browse,
+    },
+    assets: {
+      createUrl: rpcClient.assets.createUrl,
     },
     sourceControl: {
       lookupRepository: rpcClient.sourceControl.lookupRepository,
@@ -57,6 +62,23 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
         rpcClient.orchestration.subscribeShell(callback, options),
       subscribeThread: (input, callback, options) =>
         rpcClient.orchestration.subscribeThread(input, callback, options),
+    },
+    preview: {
+      open: (input) => rpcClient.preview.open(input as never),
+      navigate: (input) => rpcClient.preview.navigate(input as never),
+      refresh: (input) => rpcClient.preview.refresh(input as never),
+      close: (input) => rpcClient.preview.close(input as never),
+      list: (input) => rpcClient.preview.list(input as never),
+      reportStatus: (input) => rpcClient.preview.reportStatus(input as never),
+      automation: {
+        connect: (input, callback, options) =>
+          rpcClient.preview.automation.connect(input as never, callback, options),
+        respond: (response) => rpcClient.preview.automation.respond(response as never),
+        reportOwner: (owner) => rpcClient.preview.automation.reportOwner(owner as never),
+        clearOwner: (input) => rpcClient.preview.automation.clearOwner(input as never),
+      },
+      onEvent: (callback, options) => rpcClient.preview.onEvent(callback, options),
+      subscribePorts: (callback, options) => rpcClient.preview.subscribePorts(callback, options),
     },
   };
 }

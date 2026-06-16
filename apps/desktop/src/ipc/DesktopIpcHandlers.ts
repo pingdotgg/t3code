@@ -48,9 +48,11 @@ import {
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
+import * as PreviewIpc from "./methods/preview.ts";
 
-export const installDesktopIpcHandlers = Effect.gen(function* () {
+export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getLocalEnvironmentBootstrap);
@@ -92,4 +94,7 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
-}).pipe(Effect.withSpan("desktop.ipc.installHandlers"));
+  for (const previewMethod of PreviewIpc.methods) {
+    yield* ipc.handle(previewMethod);
+  }
+});

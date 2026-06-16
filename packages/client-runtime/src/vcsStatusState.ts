@@ -7,6 +7,7 @@ import type { WsRpcClient } from "./wsRpcClient.ts";
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
 export interface VcsStatusState {
+  readonly targetKey: string | null;
   readonly data: VcsStatusResult | null;
   readonly error: GitManagerServiceError | null;
   readonly cause: Cause.Cause<GitManagerServiceError> | null;
@@ -30,18 +31,22 @@ interface WatchedEntry {
 const NOOP: () => void = () => undefined;
 
 export const EMPTY_VCS_STATUS_STATE = Object.freeze<VcsStatusState>({
+  targetKey: null,
   data: null,
   error: null,
   cause: null,
   isPending: false,
 });
 
-const INITIAL_VCS_STATUS_STATE = Object.freeze<VcsStatusState>({
-  data: null,
-  error: null,
-  cause: null,
-  isPending: true,
-});
+function initialVcsStatusState(targetKey: string): VcsStatusState {
+  return {
+    targetKey,
+    data: null,
+    error: null,
+    cause: null,
+    isPending: true,
+  };
+}
 
 /* ─── Atoms ─────────────────────────────────────────────────────────── */
 
@@ -49,7 +54,7 @@ const knownVcsStatusKeys = new Set<string>();
 
 export const vcsStatusStateAtom = Atom.family((key: string) => {
   knownVcsStatusKeys.add(key);
-  return Atom.make(INITIAL_VCS_STATUS_STATE).pipe(
+  return Atom.make(initialVcsStatusState(key)).pipe(
     Atom.keepAlive,
     Atom.withLabel(`vcs-status:${key}`),
   );
@@ -67,6 +72,14 @@ export function getVcsStatusTargetKey(target: VcsStatusTarget): string | null {
     return null;
   }
   return `${target.environmentId}:${target.cwd}`;
+}
+
+export function getVcsStatusDataForTarget(
+  state: VcsStatusState,
+  target: VcsStatusTarget,
+): VcsStatusResult | null {
+  const targetKey = getVcsStatusTargetKey(target);
+  return targetKey !== null && state.targetKey === targetKey ? state.data : null;
 }
 
 /* ─── Subscription manager ──────────────────────────────────────────── */
@@ -107,7 +120,7 @@ export function createVcsStatusManager(config: VcsStatusManagerConfig) {
     const current = config.getRegistry().get(atom);
     const next: VcsStatusState =
       current.data === null
-        ? INITIAL_VCS_STATUS_STATE
+        ? initialVcsStatusState(targetKey)
         : { ...current, error: null, cause: null, isPending: true };
     if (
       current.data === next.data &&
@@ -122,6 +135,7 @@ export function createVcsStatusManager(config: VcsStatusManagerConfig) {
 
   function setData(targetKey: string, status: VcsStatusResult): void {
     config.getRegistry().set(vcsStatusStateAtom(targetKey), {
+      targetKey,
       data: status,
       error: null,
       cause: null,
@@ -283,7 +297,7 @@ export function createVcsStatusManager(config: VcsStatusManagerConfig) {
     refreshInFlight.clear();
     lastRefreshAt.clear();
     for (const key of knownVcsStatusKeys) {
-      config.getRegistry().set(vcsStatusStateAtom(key), INITIAL_VCS_STATUS_STATE);
+      config.getRegistry().set(vcsStatusStateAtom(key), initialVcsStatusState(key));
     }
     knownVcsStatusKeys.clear();
   }
