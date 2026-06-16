@@ -76,7 +76,7 @@ patchedDependencies:
     hash: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
     path: patches/react-native-nitro-modules@0.35.9.patch
   react-native-uitextview@2.2.0:
-    hash: 54689fb52142271d74b127f2bd789fcb80a1bce4b1bd6a678085203bb714e55a
+    hash: 78f34ef7513c243c89e924fb5c46ec1fdaa67c6e77d7bf19aabb3de06632b19d
     path: patches/react-native-uitextview@2.2.0.patch
 
 importers:
@@ -357,7 +357,7 @@ importers:
         version: 15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       react-native-uitextview:
         specifier: 2.2.0
-        version: 2.2.0(patch_hash=54689fb52142271d74b127f2bd789fcb80a1bce4b1bd6a678085203bb714e55a)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+        version: 2.2.0(patch_hash=78f34ef7513c243c89e924fb5c46ec1fdaa67c6e77d7bf19aabb3de06632b19d)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       react-native-worklets:
         specifier: 0.8.3
         version: 0.8.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
@@ -18279,7 +18279,7 @@ snapshots:
       react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
       warn-once: 0.1.1
 
-  react-native-uitextview@2.2.0(patch_hash=54689fb52142271d74b127f2bd789fcb80a1bce4b1bd6a678085203bb714e55a)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
+  react-native-uitextview@2.2.0(patch_hash=78f34ef7513c243c89e924fb5c46ec1fdaa67c6e77d7bf19aabb3de06632b19d)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
     dependencies:
       react: 19.2.3
       react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
