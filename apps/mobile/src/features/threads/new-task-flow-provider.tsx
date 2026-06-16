@@ -289,9 +289,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     (selectedProject
       ? serverConfigByEnvironmentId[selectedProject.environmentId]
       : null
-    )?.providers.find(
-      (provider) => provider.instanceId === selectedModel?.instanceId,
-    )?.skills ?? [];
+    )?.providers.find((provider) => provider.instanceId === selectedModel?.instanceId)?.skills ??
+    [];
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const setPrompt = useCallback(

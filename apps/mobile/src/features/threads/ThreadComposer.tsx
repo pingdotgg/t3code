@@ -15,13 +15,7 @@ import {
 } from "@t3tools/shared/composerTrigger";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import {
-  Image,
-  Pressable,
-  useColorScheme,
-  View,
-  type ViewStyle,
-} from "react-native";
+import { Image, Pressable, useColorScheme, View, type ViewStyle } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useThemeColor } from "../../lib/useThemeColor";
 
