@@ -26,7 +26,10 @@ import {
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { Headers, HttpTraceContext } from "effect/unstable/http";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
@@ -1173,6 +1176,7 @@ function createPrimaryEnvironmentClient(
 function createSavedEnvironmentClient(
   environmentId: EnvironmentId,
   credentialRef: { current: SavedEnvironmentCredential },
+  relayTraceHeadersRef: { current: Headers.Headers | null },
 ): WsRpcClient {
   useSavedEnvironmentRuntimeStore.getState().ensure(environmentId);
 
@@ -1196,21 +1200,10 @@ function createSavedEnvironmentClient(
         }
         if (credential.method === "dpop") {
           try {
+            const relayTraceHeaders = relayTraceHeadersRef.current;
+            relayTraceHeadersRef.current = null;
             return await webRuntime.runPromise(
-              createManagedRelayDpopProof({
-                method: "POST",
-                url: new URL("/api/auth/websocket-ticket", record.httpBaseUrl).toString(),
-                accessToken: credential.accessToken,
-              }).pipe(
-                Effect.flatMap((proof) =>
-                  resolveRemoteDpopWebSocketConnectionUrl({
-                    wsBaseUrl: record.wsBaseUrl,
-                    httpBaseUrl: record.httpBaseUrl,
-                    accessToken: credential.accessToken,
-                    dpopProof: proof,
-                  }),
-                ),
-              ),
+              resolveManagedRelayWebSocketUrl(record, credential, relayTraceHeaders),
             );
           } catch (error) {
             if (!isEnvironmentAuthInvalidError(error)) {
@@ -1223,19 +1216,10 @@ function createSavedEnvironmentClient(
             const renewedCredential = renewed.credential;
             credentialRef.current = renewedCredential;
             return await webRuntime.runPromise(
-              createManagedRelayDpopProof({
-                method: "POST",
-                url: new URL("/api/auth/websocket-ticket", renewed.record.httpBaseUrl).toString(),
-                accessToken: renewedCredential.accessToken,
-              }).pipe(
-                Effect.flatMap((proof) =>
-                  resolveRemoteDpopWebSocketConnectionUrl({
-                    wsBaseUrl: renewed.record.wsBaseUrl,
-                    httpBaseUrl: renewed.record.httpBaseUrl,
-                    accessToken: renewedCredential.accessToken,
-                    dpopProof: proof,
-                  }),
-                ),
+              resolveManagedRelayWebSocketUrl(
+                renewed.record,
+                renewedCredential,
+                renewed.relayTraceHeaders,
               ),
             );
           }
@@ -1339,9 +1323,44 @@ async function refreshSavedEnvironmentMetadata(
     .rename(record.environmentId, serverConfig.environment.label);
 }
 
+const resolveManagedRelayWebSocketUrl = Effect.fn(
+  "web.environment.resolveManagedRelayWebSocketUrl",
+)(function* (
+  record: SavedEnvironmentRecord,
+  credential: Extract<SavedEnvironmentCredential, { readonly method: "dpop" }>,
+  traceHeaders: Headers.Headers | null,
+) {
+  const request = createManagedRelayDpopProof({
+    method: "POST",
+    url: new URL("/api/auth/websocket-ticket", record.httpBaseUrl).toString(),
+    accessToken: credential.accessToken,
+  }).pipe(
+    Effect.flatMap((proof) =>
+      resolveRemoteDpopWebSocketConnectionUrl({
+        wsBaseUrl: record.wsBaseUrl,
+        httpBaseUrl: record.httpBaseUrl,
+        accessToken: credential.accessToken,
+        dpopProof: proof,
+      }),
+    ),
+  );
+  const parent = traceHeaders ? HttpTraceContext.fromHeaders(traceHeaders) : Option.none();
+  return yield* (
+    Option.isSome(parent)
+      ? request.pipe(Effect.withParentSpan(parent.value))
+      : request.pipe(
+          Effect.withSpan("relay.environment.reconnect", {
+            root: true,
+            attributes: { "relay.environment_id": record.environmentId },
+          }),
+        )
+  ).pipe(withRelayClientTracing);
+});
+
 async function renewManagedRelayCredential(record: SavedEnvironmentRecord): Promise<{
   readonly record: SavedEnvironmentRecord;
   readonly credential: SavedEnvironmentCredential;
+  readonly relayTraceHeaders: Headers.Headers;
 } | null> {
   if (!record.relayManaged) {
     return null;
@@ -1382,7 +1401,7 @@ async function renewManagedRelayCredential(record: SavedEnvironmentRecord): Prom
     throw new Error("Unable to persist refreshed managed environment credentials.");
   }
   useSavedEnvironmentRegistryStore.getState().upsert(nextRecord);
-  return { record: nextRecord, credential };
+  return { record: nextRecord, credential, relayTraceHeaders: connected.relayTraceHeaders };
 }
 
 function registerConnection(connection: EnvironmentConnection): EnvironmentConnection {
@@ -1466,6 +1485,7 @@ async function ensureSavedEnvironmentConnection(
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | null;
     readonly serverConfig?: ServerConfig | null;
     readonly allowManagedRenewal?: boolean;
+    readonly relayTraceHeaders?: Headers.Headers;
   },
 ): Promise<EnvironmentConnection> {
   const existing = environmentConnections.get(record.environmentId);
@@ -1511,9 +1531,14 @@ async function ensureSavedEnvironmentConnection(
       }
 
       const activeCredential = { current: credential };
+      const relayTraceHeaders = { current: options?.relayTraceHeaders ?? null };
       const client =
         options?.client ??
-        createSavedEnvironmentClient(activeRecord.environmentId, activeCredential);
+        createSavedEnvironmentClient(
+          activeRecord.environmentId,
+          activeCredential,
+          relayTraceHeaders,
+        );
       const initialConfigSnapshot = createDeferredPromise<ServerConfig>();
       const knownEnvironment = createKnownEnvironment({
         id: activeRecord.environmentId,
@@ -1589,6 +1614,7 @@ async function ensureSavedEnvironmentConnection(
                   scopes: scopeHint,
                   serverConfig: options?.serverConfig ?? null,
                   allowManagedRenewal: false,
+                  relayTraceHeaders: renewed.relayTraceHeaders,
                 });
               }
             }
@@ -1916,6 +1942,7 @@ export async function addManagedRelayEnvironment(input: {
   readonly wsBaseUrl: string;
   readonly relayUrl: string;
   readonly accessToken: string;
+  readonly relayTraceHeaders: Headers.Headers;
 }): Promise<SavedEnvironmentRecord> {
   const existingRecord = getSavedEnvironmentRecord(input.environmentId);
   const record: SavedEnvironmentRecord = {
@@ -1939,7 +1966,10 @@ export async function addManagedRelayEnvironment(input: {
   }
   useSavedEnvironmentRegistryStore.getState().upsert(record);
   await removeConnection(record.environmentId).catch(() => false);
-  await ensureSavedEnvironmentConnection(record, { credential });
+  await ensureSavedEnvironmentConnection(record, {
+    credential,
+    relayTraceHeaders: input.relayTraceHeaders,
+  });
   return record;
 }
 

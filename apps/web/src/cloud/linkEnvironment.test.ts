@@ -318,6 +318,14 @@ describe("web cloud link environment client", () => {
         method: "POST",
         url: "https://managed.example.test/oauth/token",
       });
+      const traceparents = fetchMock.mock.calls.map(
+        (call) => call[1]?.headers.traceparent as string | undefined,
+      );
+      expect(traceparents.every((traceparent) => typeof traceparent === "string")).toBe(true);
+      expect(new Set(traceparents.map((traceparent) => traceparent?.split("-")[1])).size).toBe(1);
+      expect(connection.relayTraceHeaders.traceparent?.split("-")[1]).toBe(
+        traceparents[0]?.split("-")[1],
+      );
     }),
   );
 

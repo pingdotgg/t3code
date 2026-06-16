@@ -33,6 +33,12 @@ describe("loadRepoEnv", () => {
     expect(env.EXPO_PUBLIC_OTLP_TRACES_URL).toBeUndefined();
     expect(env.EXPO_PUBLIC_OTLP_TRACES_DATASET).toBeUndefined();
     expect(env.EXPO_PUBLIC_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.VITE_RELAY_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.VITE_RELAY_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.VITE_RELAY_OTLP_TRACES_TOKEN).toBeUndefined();
   });
 
   it("applies process, root local, and root precedence in that order", () => {
@@ -91,6 +97,29 @@ describe("loadRepoEnv", () => {
       mobileOtlpTracesUrl: "https://api.axiom.co/v1/traces",
       mobileOtlpTracesDataset: "mobile-traces",
       mobileOtlpTracesToken: "mobile-token",
+      relayClientOtlpTracesUrl: undefined,
+      relayClientOtlpTracesDataset: undefined,
+      relayClientOtlpTracesToken: undefined,
+    });
+  });
+
+  it("projects canonical relay client tracing values to web build aliases", () => {
+    expect(
+      loadRepoEnv({
+        baseEnv: {
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
+          T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
+        },
+        repoRoot: makeTemporaryDirectory(),
+      }),
+    ).toEqual({
+      T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
+      T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
+      VITE_RELAY_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      VITE_RELAY_OTLP_TRACES_DATASET: "relay-client-traces",
+      VITE_RELAY_OTLP_TRACES_TOKEN: "relay-client-token",
     });
   });
 

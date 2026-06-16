@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
 import { makeMobileTracingLayer } from "./mobileTracing";
 
@@ -29,7 +30,7 @@ it.effect("exports spans through the scoped mobile OTLP layer", () => {
     },
   ).pipe(Layer.provide(remoteHttpClientLayer(fetchFn)));
   const tracedApplication = Layer.effectDiscard(
-    Effect.void.pipe(Effect.withSpan("mobile.test.span")),
+    Effect.void.pipe(Effect.withSpan("mobile.test.span"), withRelayClientTracing),
   ).pipe(Layer.provide(tracingLayer));
 
   return Effect.gen(function* () {
