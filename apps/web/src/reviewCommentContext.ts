@@ -47,15 +47,20 @@ export type ReviewCommentMessageSegment =
 
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b([^>]*)>\s*([\s\S]*?)<\/review_comment>/g;
 const REVIEW_COMMENT_ATTRIBUTE_PATTERN = /([a-zA-Z][a-zA-Z0-9_-]*)="([^"]*)"/g;
-const REVIEW_COMMENT_FENCE_PATTERN = /(`{3,})([^\s`]*)[^\n]*\n([\s\S]*?)\n\1/;
+const REVIEW_COMMENT_FENCE_PATTERN = /(`{3,})([^\s`]*)[^\n]*\n([\s\S]*?)\n\1/g;
 
 function escapeReviewCommentAttribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function unescapeReviewCommentAttribute(value: string): string {
   return value
     .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&");
 }
@@ -75,18 +80,16 @@ function readNonNegativeInteger(value: string | undefined): number | null {
   return Number(value);
 }
 
-function extractReviewCommentText(rawBody: string): string {
-  const fenceIndex = rawBody.search(REVIEW_COMMENT_FENCE_PATTERN);
-  const commentBody = fenceIndex >= 0 ? rawBody.slice(0, fenceIndex) : rawBody;
-  return commentBody.trim();
-}
-
-function extractReviewCommentFence(rawBody: string): {
+function extractReviewCommentBody(rawBody: string): {
+  text: string;
   language: string;
   contents: string;
 } {
-  const match = rawBody.match(REVIEW_COMMENT_FENCE_PATTERN);
+  const matches = Array.from(rawBody.matchAll(REVIEW_COMMENT_FENCE_PATTERN));
+  const match = matches.at(-1);
+  const fenceIndex = match?.index;
   return {
+    text: rawBody.slice(0, fenceIndex ?? rawBody.length).trim(),
     language: match?.[2]?.trim() || "diff",
     contents: match?.[3] ?? "",
   };
@@ -105,7 +108,7 @@ function parseReviewCommentContext(
   if (!filePath || !sectionId || startIndex === null || endIndex === null) {
     return null;
   }
-  const fence = extractReviewCommentFence(rawBody);
+  const body = extractReviewCommentBody(rawBody);
 
   return {
     id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
@@ -115,9 +118,9 @@ function parseReviewCommentContext(
     startIndex: Math.min(startIndex, endIndex),
     endIndex: Math.max(startIndex, endIndex),
     rangeLabel: attributes.rangeLabel?.trim() || "line",
-    text: extractReviewCommentText(rawBody),
-    diff: fence.contents,
-    fenceLanguage: fence.language,
+    text: body.text,
+    diff: body.contents,
+    fenceLanguage: body.language,
   };
 }
 
@@ -308,6 +311,40 @@ function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffRev
   }
 
   return rows;
+}
+
+function getDiffReviewSelectionPoint(
+  line: DiffReviewLine,
+): { lineNumber: number; side: SelectionSide } | null {
+  if (line.change === "delete" && line.oldLineNumber !== null) {
+    return { lineNumber: line.oldLineNumber, side: "deletions" };
+  }
+  if (line.newLineNumber !== null) {
+    return { lineNumber: line.newLineNumber, side: "additions" };
+  }
+  if (line.oldLineNumber !== null) {
+    return { lineNumber: line.oldLineNumber, side: "deletions" };
+  }
+  return null;
+}
+
+export function restoreDiffReviewCommentRange(
+  fileDiff: FileDiffMetadata,
+  comment: ReviewCommentContext,
+): SelectedLineRange | null {
+  const lines = buildDiffReviewLines(fileDiff);
+  const startLine = lines[comment.startIndex];
+  const endLine = lines[comment.endIndex];
+  if (!startLine || !endLine) return null;
+  const start = getDiffReviewSelectionPoint(startLine);
+  const end = getDiffReviewSelectionPoint(endLine);
+  if (!start || !end) return null;
+  return {
+    start: start.lineNumber,
+    side: start.side,
+    end: end.lineNumber,
+    endSide: end.side,
+  };
 }
 
 function findDiffReviewLineIndex(

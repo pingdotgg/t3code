@@ -5,11 +5,15 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff, type FileDiffProps } from "@pierre/diffs/react";
-import { useCallback, useState, type ReactNode } from "react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildDiffReviewComment } from "~/reviewCommentContext";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  buildDiffReviewComment,
+  restoreDiffReviewCommentRange,
+  type ReviewCommentContext,
+} from "~/reviewCommentContext";
 
 import { LocalCommentAnnotation } from "../files/LocalCommentAnnotation";
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
@@ -27,6 +31,40 @@ interface DiffCommentAnnotationGroup {
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
+
+function annotationSide(range: SelectedLineRange): AnnotationSide {
+  return (range.endSide ?? range.side) === "deletions" ? "deletions" : "additions";
+}
+
+function appendAnnotationEntry(
+  annotations: ReadonlyArray<DiffCommentLineAnnotation>,
+  range: SelectedLineRange,
+  entry: DiffCommentAnnotationEntry,
+): DiffCommentLineAnnotation[] {
+  const side = annotationSide(range);
+  const annotationIndex = annotations.findIndex(
+    (annotation) => annotation.side === side && annotation.lineNumber === range.end,
+  );
+  if (annotationIndex < 0) {
+    return [
+      ...annotations,
+      {
+        side,
+        lineNumber: range.end,
+        metadata: { entries: [entry] },
+      },
+    ];
+  }
+  return annotations.map((annotation, index) =>
+    index === annotationIndex
+      ? {
+          ...annotation,
+          metadata: { entries: [...annotation.metadata.entries, entry] },
+        }
+      : annotation,
+  );
+}
 
 interface AnnotatableFileDiffProps {
   fileDiff: FileDiffMetadata;
@@ -49,28 +87,57 @@ export function AnnotatableFileDiff({
 }: AnnotatableFileDiffProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
+  const reviewComments = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+  );
   const [selectedRange, setSelectedRange] = useState<SelectedLineRange | null>(null);
-  const [lineAnnotations, setLineAnnotations] = useState<DiffCommentLineAnnotation[]>([]);
+  const [draftAnnotation, setDraftAnnotation] = useState<DiffCommentLineAnnotation | null>(null);
+  const persistedAnnotations = useMemo(
+    () =>
+      reviewComments
+        .filter(
+          (comment) =>
+            comment.sectionId === sectionId &&
+            comment.filePath === filePath &&
+            (comment.fenceLanguage ?? "diff") === "diff",
+        )
+        .reduce<DiffCommentLineAnnotation[]>((annotations, comment) => {
+          const range = restoreDiffReviewCommentRange(fileDiff, comment);
+          if (!range) return annotations;
+          return appendAnnotationEntry(annotations, range, {
+            id: comment.id,
+            kind: "comment",
+            range,
+            rangeLabel: comment.rangeLabel,
+            text: comment.text,
+          });
+        }, []),
+    [fileDiff, filePath, reviewComments, sectionId],
+  );
+  const lineAnnotations = useMemo(
+    () => (draftAnnotation ? [...persistedAnnotations, draftAnnotation] : persistedAnnotations),
+    [draftAnnotation, persistedAnnotations],
+  );
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
       setSelectedRange(null);
+      if (
+        draftAnnotation?.metadata.entries.some(
+          (entry) => entry.id === entryId && entry.kind === "draft",
+        )
+      ) {
+        setDraftAnnotation(null);
+        return;
+      }
       removeReviewComment(composerDraftTarget, entryId);
-      setLineAnnotations((current) =>
-        current.flatMap((annotation) => {
-          const entries = annotation.metadata.entries.filter((entry) => entry.id !== entryId);
-          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-        }),
-      );
     },
-    [composerDraftTarget, removeReviewComment],
+    [composerDraftTarget, draftAnnotation, removeReviewComment],
   );
 
   const submitAnnotationEntry = useCallback(
     (entryId: string, text: string) => {
-      const entry = lineAnnotations
-        .flatMap((annotation) => annotation.metadata.entries)
-        .find((candidate) => candidate.id === entryId);
+      const entry = draftAnnotation?.metadata.entries.find((candidate) => candidate.id === entryId);
       if (!entry) return;
 
       const comment = buildDiffReviewComment({
@@ -86,25 +153,14 @@ export function AnnotatableFileDiff({
         addReviewComment(composerDraftTarget, comment);
       }
       setSelectedRange(null);
-      setLineAnnotations((current) =>
-        current.map((annotation) => ({
-          ...annotation,
-          metadata: {
-            entries: annotation.metadata.entries.map((annotationEntry) =>
-              annotationEntry.id === entryId
-                ? { ...annotationEntry, kind: "comment", text }
-                : annotationEntry,
-            ),
-          },
-        })),
-      );
+      setDraftAnnotation(null);
     },
     [
       addReviewComment,
       composerDraftTarget,
       fileDiff,
       filePath,
-      lineAnnotations,
+      draftAnnotation,
       sectionId,
       sectionTitle,
     ],
@@ -124,8 +180,6 @@ export function AnnotatableFileDiff({
       });
       if (!comment) return;
 
-      const side: AnnotationSide =
-        (range.endSide ?? range.side) === "deletions" ? "deletions" : "additions";
       const draftEntry: DiffCommentAnnotationEntry = {
         id,
         kind: "draft",
@@ -133,40 +187,16 @@ export function AnnotatableFileDiff({
         rangeLabel: comment.rangeLabel,
         text: "",
       };
-      setLineAnnotations((current) => {
-        const withoutDraft = current.flatMap((annotation) => {
-          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-        });
-        const annotationIndex = withoutDraft.findIndex(
-          (annotation) => annotation.side === side && annotation.lineNumber === range.end,
-        );
-        if (annotationIndex < 0) {
-          return [
-            ...withoutDraft,
-            {
-              side,
-              lineNumber: range.end,
-              metadata: { entries: [draftEntry] },
-            },
-          ];
-        }
-        return withoutDraft.map((annotation, index) =>
-          index === annotationIndex
-            ? {
-                ...annotation,
-                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-              }
-            : annotation,
-        );
+      setDraftAnnotation({
+        side: annotationSide(range),
+        lineNumber: range.end,
+        metadata: { entries: [draftEntry] },
       });
     },
     [fileDiff, filePath, sectionId, sectionTitle],
   );
 
-  const hasOpenCommentForm = lineAnnotations.some((annotation) =>
-    annotation.metadata.entries.some((entry) => entry.kind === "draft"),
-  );
+  const hasOpenCommentForm = draftAnnotation !== null;
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);

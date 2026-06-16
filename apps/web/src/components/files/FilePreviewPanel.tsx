@@ -45,6 +45,7 @@ import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
+  getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
@@ -353,8 +354,11 @@ function RenderedMarkdownSurface({
         threadRef={threadRef}
         className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={({ markerOffset, checked }) => {
-          const nextContents = setMarkdownTaskChecked(contents, markerOffset, checked);
-          if (nextContents === contents) return;
+          const currentContents =
+            getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+            contents;
+          const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
+          if (nextContents === currentContents) return;
           setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
           saveCoordinator.change(nextContents);
         }}

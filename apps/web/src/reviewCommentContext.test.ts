@@ -9,6 +9,7 @@ import {
   formatReviewCommentContext,
   inferReviewCommentFenceLanguage,
   parseReviewCommentMessageSegments,
+  restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
 
 describe("review comment context parsing", () => {
@@ -185,5 +186,90 @@ describe("review comment context parsing", () => {
         }),
       }),
     );
+  });
+
+  it("round-trips greater-than signs in attributes", () => {
+    const serialized = formatReviewCommentContext({
+      id: "comment-4",
+      sectionId: "turn:4",
+      sectionTitle: "Changes > 5",
+      filePath: "src/app.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "+1",
+      text: "Check this.",
+      diff: "@@ -0,0 +1,1 @@\n+one",
+      fenceLanguage: "diff",
+    });
+    const [segment] = parseReviewCommentMessageSegments(serialized);
+
+    expect(serialized).toContain('sectionTitle="Changes &gt; 5"');
+    expect(segment).toEqual(
+      expect.objectContaining({
+        kind: "review-comment",
+        comment: expect.objectContaining({ sectionTitle: "Changes > 5" }),
+      }),
+    );
+  });
+
+  it("keeps fenced examples in comment text separate from the final context fence", () => {
+    const text = ["Try this:", "```ts", "const value = 1;", "```", "Then retry."].join("\n");
+    const serialized = formatReviewCommentContext({
+      id: "comment-5",
+      sectionId: "turn:5",
+      sectionTitle: "Turn 5",
+      filePath: "src/app.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "+1",
+      text,
+      diff: "@@ -0,0 +1,1 @@\n+one",
+      fenceLanguage: "diff",
+    });
+    const [segment] = parseReviewCommentMessageSegments(serialized);
+
+    expect(segment).toEqual(
+      expect.objectContaining({
+        kind: "review-comment",
+        comment: expect.objectContaining({
+          text,
+          diff: "@@ -0,0 +1,1 @@\n+one",
+          fenceLanguage: "diff",
+        }),
+      }),
+    );
+  });
+
+  it("restores Pierre line selections from persisted diff comment row indexes", () => {
+    const fileDiff = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,3 +1,3 @@",
+        " one",
+        "-two",
+        "+TWO",
+        " three",
+      ].join("\n"),
+      "restore-review-comment-range",
+    )[0]!.files[0]!;
+    const comment = buildDiffReviewComment({
+      id: "comment-6",
+      sectionId: "turn:6",
+      sectionTitle: "Turn 6",
+      filePath: "src/app.ts",
+      fileDiff,
+      range: { start: 2, side: "deletions", end: 2, endSide: "additions" },
+      text: "Keep both sides.",
+    });
+
+    expect(comment).not.toBeNull();
+    expect(restoreDiffReviewCommentRange(fileDiff, comment!)).toEqual({
+      start: 2,
+      side: "deletions",
+      end: 2,
+      endSide: "additions",
+    });
   });
 });

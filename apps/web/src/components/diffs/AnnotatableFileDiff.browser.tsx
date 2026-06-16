@@ -72,7 +72,7 @@ describe("annotatable Pierre file diff", () => {
   });
 
   it("creates a local annotation from the gutter and attaches it to the composer", async () => {
-    const screen = await render(<TestDiff />);
+    let screen = await render(<TestDiff />);
 
     try {
       const diff = await getRenderedDiff();
@@ -109,6 +109,12 @@ describe("annotatable Pierre file diff", () => {
       expect(document.querySelector("[data-file-comment-annotation]")?.textContent).toContain(
         "Use the compatible value.",
       );
+
+      await screen.unmount();
+      screen = await render(<TestDiff />);
+      await expect
+        .element(page.getByText("Use the compatible value.", { exact: true }))
+        .toBeVisible();
     } finally {
       await screen.unmount();
     }
