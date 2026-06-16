@@ -54,7 +54,7 @@ import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
-import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -74,6 +74,7 @@ import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { connectHttpApiLayer, reconcileDesiredCloudLink } from "./cloud/http.ts";
+import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
@@ -247,10 +248,7 @@ const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PortScannerLayerLive),
 );
 
-const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
-  Layer.provide(WorkspacePathsLive),
-  Layer.provideMerge(VcsDriverRegistryLayerLive),
-);
+const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive));
 
 const WorkspaceFileSystemLayerLive = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),
@@ -480,6 +478,7 @@ export const makeServerLayer = Layer.unwrap(
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
+      Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),

@@ -339,7 +339,7 @@ export function TerminalViewport({
     const fitAddon = new FitAddon();
     const terminal = new Terminal({
       cursorBlink: true,
-      lineHeight: 1.2,
+      lineHeight: 1,
       fontSize: 12,
       scrollback: 5_000,
       fontFamily:

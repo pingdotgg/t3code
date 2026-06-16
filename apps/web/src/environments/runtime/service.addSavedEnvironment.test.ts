@@ -1,7 +1,12 @@
 import { EnvironmentAuthInvalidError, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
+import { Headers } from "effect/unstable/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 
 const decodeEnvironmentAuthInvalidError = Schema.decodeUnknownSync(EnvironmentAuthInvalidError);
 
@@ -12,8 +17,11 @@ const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
 const mockFetchRemoteSessionState = vi.fn();
 const mockFetchRemoteDpopSessionState = vi.fn();
+const mockResolveRemoteDpopWebSocketConnectionUrl = vi.fn();
 const mockResolveRemoteWebSocketConnectionUrl = vi.fn();
+const mockWsTransportConnectors: Array<() => Promise<string>> = [];
 let managedRelayDpopSigner: typeof import("@t3tools/client-runtime").ManagedRelayDpopSigner;
+let mockRelayClientTracer = Option.none<Tracer.Tracer>();
 const mockRemoteHttpRunPromise = vi.fn(<A, E>(effect: Effect.Effect<A, E>) =>
   Effect.runPromise(
     effect.pipe(
@@ -24,6 +32,7 @@ const mockRemoteHttpRunPromise = vi.fn(<A, E>(effect: Effect.Effect<A, E>) =>
           createProof: () => Effect.succeed("dpop-proof"),
         }),
       ),
+      Effect.provideService(RelayClientTracer, mockRelayClientTracer),
     ),
   ),
 );
@@ -164,12 +173,16 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     fetchRemoteEnvironmentDescriptor: mockFetchRemoteEnvironmentDescriptor,
     fetchRemoteSessionState: mockFetchRemoteSessionState,
     fetchRemoteDpopSessionState: mockFetchRemoteDpopSessionState,
+    resolveRemoteDpopWebSocketConnectionUrl: mockResolveRemoteDpopWebSocketConnectionUrl,
     resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
   };
 });
 
 vi.mock("../../rpc/wsTransport", () => ({
-  WsTransport: vi.fn(),
+  WsTransport: vi.fn(function WsTransport(connect: () => Promise<string>) {
+    mockWsTransportConnectors.push(connect);
+    return {};
+  }),
 }));
 
 describe("addSavedEnvironment", () => {
@@ -181,6 +194,8 @@ describe("addSavedEnvironment", () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockSavedRecords = [];
+    mockRelayClientTracer = Option.none();
+    mockWsTransportConnectors.length = 0;
     vi.stubGlobal("window", {
       desktopBridge: {
         ensureSshEnvironment: mockEnsureSshEnvironment,
@@ -236,6 +251,9 @@ describe("addSavedEnvironment", () => {
     );
     mockResolveRemoteWebSocketConnectionUrl.mockReturnValue(
       Effect.succeed("wss://remote.example.com/?wsTicket=remote-token"),
+    );
+    mockResolveRemoteDpopWebSocketConnectionUrl.mockReturnValue(
+      Effect.succeed("wss://remote.example.com/?wsTicket=remote-dpop-token"),
     );
     mockFetchSshEnvironmentDescriptor.mockResolvedValue({
       environmentId: EnvironmentId.make("environment-1"),
@@ -386,6 +404,7 @@ describe("addSavedEnvironment", () => {
       wsBaseUrl: "wss://managed.example.com/",
       relayUrl: "https://relay.example.com",
       accessToken: "managed-access-token",
+      relayTraceHeaders: Headers.empty,
     });
 
     expect(mockWriteSavedEnvironmentCredential).toHaveBeenCalledWith(
@@ -406,6 +425,19 @@ describe("addSavedEnvironment", () => {
 
   it("renews expired managed DPoP credentials through the relay", async () => {
     const environmentId = EnvironmentId.make("environment-1");
+    const productSpans: Array<Tracer.Span> = [];
+    mockRelayClientTracer = Option.some(
+      Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          productSpans.push(span);
+          return span;
+        },
+      }),
+    );
+    const relayTraceHeaders = Headers.fromInput({
+      traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+    });
     mockSavedRecords = [
       {
         environmentId,
@@ -443,6 +475,7 @@ describe("addSavedEnvironment", () => {
         wsBaseUrl: "wss://managed.example.com/",
         relayUrl: "https://relay.example.com",
         accessToken: "renewed-access-token",
+        relayTraceHeaders,
       }),
     );
 
@@ -460,6 +493,16 @@ describe("addSavedEnvironment", () => {
       method: "dpop",
       accessToken: "renewed-access-token",
     });
+    const renewedTransportConnector = mockWsTransportConnectors.at(-1);
+    expect(renewedTransportConnector).toBeDefined();
+    await renewedTransportConnector!();
+    expect(mockResolveRemoteDpopWebSocketConnectionUrl).toHaveBeenCalledWith({
+      wsBaseUrl: "wss://managed.example.com/",
+      httpBaseUrl: "https://managed.example.com/",
+      accessToken: "renewed-access-token",
+      dpopProof: "dpop-proof",
+    });
+    expect(productSpans.some((span) => span.name === "relay.environment.reconnect")).toBe(false);
     await resetEnvironmentServiceForTests();
   });
 

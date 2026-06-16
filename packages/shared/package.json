@@ -143,6 +143,10 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
+    "./composerInlineTokens": {
+      "types": "./src/composerInlineTokens.ts",
+      "import": "./src/composerInlineTokens.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
@@ -158,6 +162,10 @@
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
+    },
+    "./relayTracing": {
+      "types": "./src/relayTracing.ts",
+      "import": "./src/relayTracing.ts"
     }
   },
   "scripts": {

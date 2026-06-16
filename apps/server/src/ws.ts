@@ -34,6 +34,8 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectListEntriesError,
+  ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
@@ -76,7 +78,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
-import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
@@ -160,6 +162,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
+  [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
@@ -268,7 +272,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
       const startup = yield* ServerRuntimeStartup;
-      const workspaceEntries = yield* WorkspaceEntries;
+      const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
@@ -1169,6 +1173,33 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     cause,
                   }),
               ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListEntries]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListEntries,
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    message: `Failed to list workspace entries: ${cause.detail}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsReadFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsReadFile,
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError((cause) => {
+                const message = isWorkspacePathOutsideRootError(cause)
+                  ? "Workspace file path must stay within the project root."
+                  : `Failed to read workspace file: ${cause.detail}`;
+                return new ProjectReadFileError({ message, cause });
+              }),
             ),
             { "rpc.aggregate": "workspace" },
           ),

@@ -19,6 +19,8 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       onMetadata: (callback, options) => rpcClient.terminal.onMetadata(callback, options),
     },
     projects: {
+      listEntries: rpcClient.projects.listEntries,
+      readFile: rpcClient.projects.readFile,
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
     },

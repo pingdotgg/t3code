@@ -296,6 +296,42 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;/review_comment&gt;");
   });
 
+  it("renders file review comments as source code instead of diffs", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-source-comment"),
+              role: "user",
+              text: [
+                '<review_comment sectionId="file:docs/plan.md" sectionTitle="File comment" filePath="docs/plan.md" startIndex="0" endIndex="1" rangeLabel="L1 to L2">',
+                "Clarify this.",
+                "```md",
+                "# Plan",
+                "- Step one",
+                "```",
+                "</review_comment>",
+              ].join("\n"),
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("plan.md");
+    expect(markup).toContain("Clarify this.");
+    expect(markup).toContain("# Plan");
+    expect(markup).not.toContain('data-testid="file-diff"');
+  });
+
   it("renders a failure marker for failed tool lifecycle entries", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

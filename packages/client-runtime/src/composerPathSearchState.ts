@@ -8,7 +8,6 @@ import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 export interface ComposerPathSearchEntry {
   readonly path: string;
   readonly kind: "file" | "directory";
-  readonly parentPath?: string;
 }
 
 export interface ComposerPathSearchState {
@@ -84,11 +83,7 @@ export function getComposerPathSearchTargetKey(target: ComposerPathSearchTarget)
 function toSearchEntries(
   entries: ProjectSearchEntriesResult["entries"],
 ): ReadonlyArray<ComposerPathSearchEntry> {
-  return entries.map((entry) => ({
-    path: entry.path,
-    kind: entry.kind === "directory" ? "directory" : "file",
-    ...(entry.parentPath !== undefined ? { parentPath: entry.parentPath } : {}),
-  }));
+  return entries;
 }
 
 export function createComposerPathSearchManager(config: {

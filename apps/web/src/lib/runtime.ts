@@ -5,6 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import { remoteHttpClientLayer } from "@t3tools/client-runtime";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
+import { makeRelayClientTracingLayer } from "@t3tools/shared/relayTracing";
 import {
   PrimaryEnvironmentHttpClient,
   primaryEnvironmentHttpClientLive,
@@ -13,13 +14,19 @@ import { primaryEnvironmentRequestInit } from "../environments/primary/requestIn
 
 import { browserCryptoLayer } from "../cloud/dpop";
 import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
-import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
 
 function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
 }
 
 const webHttpClientLayer = remoteHttpClientLayer(globalThis.fetch);
+const webRelayTracingLayer = makeRelayClientTracingLayer(resolveRelayTracingConfig(), {
+  serviceName: "t3-web-relay-client",
+  serviceVersion: import.meta.env.APP_VERSION,
+  runtime: "browser",
+  client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
+}).pipe(Layer.provide(webHttpClientLayer));
 
 export const remoteHttpRuntime = ManagedRuntime.make(webHttpClientLayer);
 
@@ -57,6 +64,7 @@ export const webRuntime = ManagedRuntime.make(
     browserCryptoLayer,
     webManagedRelayClientLayer(configuredRelayUrl()).pipe(
       Layer.provide(Layer.mergeAll(webHttpClientLayer, browserCryptoLayer)),
+      Layer.provideMerge(webRelayTracingLayer),
     ),
   ),
 );

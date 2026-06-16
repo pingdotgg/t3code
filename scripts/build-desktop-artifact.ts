@@ -38,11 +38,19 @@ const WorkspaceConfig = Schema.Struct({
 });
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
+const StageWorkspaceConfig = Schema.Struct({
+  supportedArchitectures: Schema.Struct({
+    os: Schema.Array(Schema.String),
+    cpu: Schema.Array(Schema.String),
+  }),
+});
+
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
+const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
 const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -279,6 +287,47 @@ interface StagePackageJson {
   readonly overrides: Record<string, unknown>;
   readonly pnpm?: {
     readonly patchedDependencies?: Record<string, string>;
+  };
+}
+
+export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
+export const DESKTOP_ASAR_UNPACK = ["node_modules/@ff-labs/fff-bin-*/**/*"] as const;
+
+export function resolveFffNativeDependencies(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+  version: string,
+): Record<string, string> {
+  const architectures = arch === "universal" ? (["arm64", "x64"] as const) : [arch];
+
+  if (platform === "mac") {
+    return Object.fromEntries(
+      architectures.map((architecture) => [`@ff-labs/fff-bin-darwin-${architecture}`, version]),
+    );
+  }
+
+  if (platform === "win") {
+    return Object.fromEntries(
+      architectures.map((architecture) => [`@ff-labs/fff-bin-win32-${architecture}`, version]),
+    );
+  }
+
+  return Object.fromEntries(
+    architectures.flatMap((architecture) =>
+      ["gnu", "musl"].map((libc) => [`@ff-labs/fff-bin-linux-${architecture}-${libc}`, version]),
+    ),
+  );
+}
+
+export function createStageWorkspaceConfig(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): typeof StageWorkspaceConfig.Type {
+  return {
+    supportedArchitectures: {
+      os: [platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux"],
+      cpu: arch === "universal" ? ["arm64", "x64"] : [arch],
+    },
   };
 }
 
@@ -702,6 +751,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: "com.t3tools.t3code",
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
+    asarUnpack: [...DESKTOP_ASAR_UNPACK],
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -909,6 +959,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageDependencies = {
     ...resolvedServerDependencies,
     ...resolvedDesktopRuntimeDependencies,
+    ...resolveFffNativeDependencies(
+      options.platform,
+      options.arch,
+      serverPackageJson.dependencies["@ff-labs/fff-node"],
+    ),
   };
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
@@ -939,19 +994,25 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
+  const stageWorkspaceConfig = createStageWorkspaceConfig(options.platform, options.arch);
+  const stageWorkspaceConfigString = yield* encodeStageWorkspaceConfig(stageWorkspaceConfig);
+  yield* fs.writeFileString(
+    path.join(stageAppDir, "pnpm-workspace.yaml"),
+    stageWorkspaceConfigString,
+  );
 
   if (Object.keys(workspacePatchedDependencies).length > 0) {
     yield* fs.copy(path.join(repoRoot, "patches"), path.join(stageAppDir, "patches"));
   }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  const installCommand = yield* resolveSpawnCommand("vp", ["install", "--prod", "--no-optional"]);
+  const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
   yield* runCommand(
     ChildProcess.make(installCommand.command, installCommand.args, {
       cwd: stageAppDir,
       shell: installCommand.shell,
     }),
-    { label: "vp install --prod --no-optional", verbose: options.verbose },
+    { label: "vp install --prod", verbose: options.verbose },
   );
 
   // electron-builder treats several set-but-empty variables (e.g. CSC_LINK="")

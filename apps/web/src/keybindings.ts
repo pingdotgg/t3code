@@ -72,6 +72,10 @@ function normalizeEventKey(key: string): string {
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const keys = new Set([normalizeEventKey(event.key)]);
+  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
+  if (letterCode) {
+    keys.add(letterCode.toLowerCase());
+  }
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
   if (!aliases) return keys;
 

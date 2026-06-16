@@ -7,8 +7,6 @@ import { page } from "vite-plus/test/browser";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
-import { getVscodeIconUrlForEntry } from "../../vscode-icons";
-
 const scrollToEndSpy = vi.fn();
 const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
 
@@ -392,14 +390,12 @@ describe("MessagesTimeline", () => {
       const assistantFileLink = document.querySelector(
         '[data-message-role="assistant"] .chat-markdown-file-link',
       );
-      const icon = assistantFileLink?.querySelector("img");
+      const icon = assistantFileLink?.querySelector("svg[data-pierre-icon]");
 
       expect(assistantFileLink?.textContent).toContain("package.json");
       expect(assistantFileLink?.textContent).toContain("L25");
       expect(assistantFileLink?.getAttribute("href")).toBe("/repo/project/path/to/package.json:25");
-      expect(icon?.getAttribute("src")).toBe(
-        getVscodeIconUrlForEntry("/repo/project/path/to/package.json", "file", "dark"),
-      );
+      expect(icon?.getAttribute("data-pierre-icon")).toBe("t3-file-icon-package-json");
     } finally {
       await screen.unmount();
     }

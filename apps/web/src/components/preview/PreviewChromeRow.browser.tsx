@@ -20,6 +20,16 @@ const defaultProps = {
 };
 
 describe("PreviewChromeRow", () => {
+  it("uses the shared compact surface subheader treatment", async () => {
+    const screen = await render(<PreviewChromeRow {...defaultProps} />);
+    const subheader = screen.container.querySelector<HTMLElement>("[data-surface-subheader]");
+
+    expect(subheader).not.toBeNull();
+    expect(subheader?.getBoundingClientRect().height).toBe(40);
+    expect(window.getComputedStyle(subheader!).borderTopWidth).toBe("0px");
+    expect(window.getComputedStyle(subheader!).borderBottomWidth).toBe("1px");
+  });
+
   it("only focuses the URL input after an explicit focus request", async () => {
     const previouslyFocused = document.createElement("button");
     document.body.append(previouslyFocused);
