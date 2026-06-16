@@ -22,10 +22,15 @@ Use these commands from the repository root when producing local installable art
 
 ### VS Code Extension
 
-Build a local VSIX and install the newest generated package into VS Code:
+Build a local VSIX:
 
 ```sh
 pnpm --filter t3code-vscode package
+```
+
+Install the newest generated package into VS Code:
+
+```sh
 code --install-extension "$(ls -t apps/vscode-extension/*.vsix | head -1)"
 ```
 
@@ -35,16 +40,35 @@ Build a macOS arm64 DMG using the same desktop artifact path used for this branc
 
 ```sh
 pnpm run dist:desktop:dmg:arm64
-dmg="$(ls -t release/T3-Code-*-arm64.dmg | head -1)"
+```
+
+Install the latest generated DMG:
+
+```sh
+dmg="$(ls -t "$PWD"/release/T3-Code-*-arm64.dmg | head -1)"
+installer="$(mktemp /tmp/t3-code-install.XXXXXX.command)"
+
+cat > "$installer" <<'SH'
+#!/bin/zsh
+set -euo pipefail
+
+dmg="$1"
 mount_dir="$(mktemp -d /tmp/t3-code-dmg.XXXXXX)"
 cleanup() { hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true; rmdir "$mount_dir" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+
 osascript -e 'tell application id "com.t3tools.t3code" to quit' >/dev/null 2>&1 || true
+sleep 2
+
 hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mount_dir"
 rm -rf "/Applications/T3 Code (Alpha).app"
 ditto "$mount_dir/T3 Code (Alpha).app" "/Applications/T3 Code (Alpha).app"
-cleanup
-trap - EXIT
+
+open -a "/Applications/T3 Code (Alpha).app"
+SH
+
+chmod +x "$installer"
+osascript -e 'tell application "Terminal" to do script "/bin/zsh '"$installer"' '"$dmg"'"'
 ```
 
 ### Mobile App
