@@ -136,7 +136,6 @@ const EXTERNAL_INTAKE_AGENT_PROMPT = [
   "- For data questions, use production data when available: PlanetScale MCP for SQL-backed data and Convex prod for Convex-backed data. Start read-only; ask before writes or destructive operations.",
   "- PostHog CLI is available as `posthog-cli`.",
   "- If you make code changes, commit them and push the branch before finishing.",
-  "- If substantial code changes have been made and Linear MCP tools are available, ask the requester whether they want a Linear issue created or updated to track the task before finishing. Do not create or update a Linear issue unless the requester explicitly approves it. If they approve, include the task summary, changed code areas, verification performed, current branch name, and commit/PR URLs when available. If the issue is created before the PR, include the Linear issue identifier in the PR title or description so Linear's GitHub integration can correlate the work. If the branch already exists without a Linear issue identifier, do not rename it unless that is clearly safe; instead record the branch and PR URL in the Linear issue and include the issue identifier in the PR title or description when possible.",
   "- As soon as there are code changes, create or update a GitHub pull request targeting `dev`.",
   "- When you first create the pull request, include the PR URL and the relevant Vercel preview deployment URL in that response.",
   "- If you cannot commit, push, create the PR, or find the preview URL, say exactly why in the response where that failure occurs.",
