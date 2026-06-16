@@ -104,13 +104,32 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       onEvent: vi.fn(() => () => undefined),
       onMetadata: vi.fn(() => () => undefined),
     },
+    preview: {
+      open: vi.fn(),
+      navigate: vi.fn(),
+      refresh: vi.fn(),
+      close: vi.fn(),
+      list: vi.fn(),
+      reportStatus: vi.fn(),
+      automation: {
+        connect: vi.fn(() => () => undefined),
+        respond: vi.fn(),
+        reportOwner: vi.fn(),
+        clearOwner: vi.fn(),
+      },
+      onEvent: vi.fn(() => () => undefined),
+      subscribePorts: vi.fn(() => () => undefined),
+    },
     projects: {
+      listEntries: vi.fn(),
+      readFile: vi.fn(),
       searchEntries: vi.fn(),
       writeFile: vi.fn(),
     },
     filesystem: {
       browse: vi.fn(),
     },
+    assets: { createUrl: vi.fn() },
     sourceControl: {
       lookupRepository: vi.fn(),
       cloneRepository: vi.fn(),

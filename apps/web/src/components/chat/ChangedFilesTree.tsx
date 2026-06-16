@@ -9,7 +9,7 @@ import {
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
-import { VscodeEntryIcon } from "./VscodeEntryIcon";
+import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
@@ -177,7 +177,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
         ) : null}
-        <VscodeEntryIcon
+        <PierreEntryIcon
           pathValue={node.path}
           kind="file"
           theme={resolvedTheme}

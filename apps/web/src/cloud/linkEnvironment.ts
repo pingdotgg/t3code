@@ -1,7 +1,7 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpTraceContext, type Headers } from "effect/unstable/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   type EnvironmentCloudLinkStateResult,
@@ -29,6 +29,7 @@ import {
   ManagedRelayDpopSigner,
   type WsRpcClient,
 } from "@t3tools/client-runtime";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
 import { ensureLocalApi } from "../localApi";
 import {
@@ -245,6 +246,7 @@ export interface CloudManagedConnection {
   readonly wsBaseUrl: string;
   readonly relayUrl: string;
   readonly accessToken: string;
+  readonly relayTraceHeaders: Headers.Headers;
 }
 
 export function collectCloudLinkTargets(input: {
@@ -437,8 +439,15 @@ export function connectManagedCloudEnvironment(input: {
       wsBaseUrl: connected.endpoint.wsBaseUrl,
       relayUrl: configuredRelayUrl,
       accessToken: session.access_token,
+      relayTraceHeaders: HttpTraceContext.toHeaders(yield* Effect.currentSpan.pipe(Effect.orDie)),
     };
-  });
+  }).pipe(
+    Effect.withSpan("relay.environment.connect", {
+      root: true,
+      attributes: { "relay.environment_id": input.environment.environmentId },
+    }),
+    withRelayClientTracing,
+  );
 }
 
 export function readPrimaryCloudLinkState(): Effect.Effect<

@@ -1,3 +1,4 @@
+import { WS_METHODS } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -45,6 +46,13 @@ describe("requestLatencyState", () => {
 
   it("ignores long-lived subscribe requests", () => {
     trackRpcRequestSent("1", "subscribeServerConfig");
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
+
+  it("ignores the long-lived preview automation connection", () => {
+    trackRpcRequestSent("1", WS_METHODS.previewAutomationConnect);
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
 
     expect(getSlowRpcAckRequests()).toEqual([]);

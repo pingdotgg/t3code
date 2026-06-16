@@ -252,7 +252,7 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   const sampleOnce = Effect.gen(function* () {
     const sampledAt = yield* DateTime.now;
     const sampledAtMs = DateTime.toEpochMillis(sampledAt);
-    const rows = yield* readProcessRows().pipe(
+    const rows = yield* readProcessRows.pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const samples = collectMonitoredSamples({

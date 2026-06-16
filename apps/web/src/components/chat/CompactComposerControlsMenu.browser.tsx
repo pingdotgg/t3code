@@ -17,7 +17,7 @@ import { createModelCapabilities, createModelSelection } from "@t3tools/shared/m
 
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { TraitsMenuContent } from "./TraitsPicker";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { createEmptyThreadDraft, useComposerDraftStore } from "../../composerDraftStore";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
@@ -60,18 +60,16 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
 
   useComposerDraftStore.setState({
     draftsByThreadKey: {
+      // Compose from the canonical empty-draft factory so adding a new
+      // ComposerThreadDraftState slice (e.g. a future attachment kind) doesn't
+      // silently break this stub via `Property X is missing in type ...`.
       [threadKey]: {
+        ...createEmptyThreadDraft(),
         prompt: props?.prompt ?? "",
-        images: [],
-        nonPersistedImageIds: [],
-        persistedAttachments: [],
-        terminalContexts: [],
         modelSelectionByProvider: {
           [instanceId]: createModelSelection(instanceId, model, props?.modelSelection?.options),
         },
         activeProvider: instanceId,
-        runtimeMode: null,
-        interactionMode: null,
       },
     },
     draftThreadsByThreadKey: {},

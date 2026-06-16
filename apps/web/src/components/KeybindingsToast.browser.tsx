@@ -68,6 +68,7 @@ vi.mock("../lib/vcsStatusState", () => {
   };
 
   return {
+    getVcsStatusDataForTarget: (state: typeof status) => state.data,
     getVcsStatusSnapshot: () => status,
     useVcsStatus: () => status,
     useVcsStatuses: () => new Map(),
@@ -325,8 +326,7 @@ const worker = setupWorker(
     });
   }),
   ...createAuthenticatedSessionHandlers(() => fixture.serverConfig.auth),
-  http.get("*/attachments/:attachmentId", () => new HttpResponse(null, { status: 204 })),
-  http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
+  http.get("*/api/assets/*", () => new HttpResponse(null, { status: 204 })),
 );
 
 function sendServerConfigUpdatedPush(issues: ServerConfig["issues"]) {

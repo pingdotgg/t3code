@@ -1,4 +1,4 @@
-import { networkInterfaces } from "node:os";
+import * as NodeOS from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
 import { ROOT_BASE_PATH, type NormalizedBasePath } from "@t3tools/shared/basePath";
@@ -14,7 +14,7 @@ export interface HeadlessServeAccessInfo {
   readonly pairingUrl: string;
 }
 
-type NetworkInterfacesMap = ReturnType<typeof networkInterfaces>;
+type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
 export const isLoopbackHost = (host: string | undefined): boolean => {
   if (!host || host.length === 0) {
@@ -45,7 +45,7 @@ const isIpv6Family = (family: string | number): boolean => family === "IPv6" || 
 
 export const resolveHeadlessConnectionHost = (
   host: string | undefined,
-  interfaces: NetworkInterfacesMap = networkInterfaces(),
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
 ): string => {
   if (!host) {
     return "localhost";
@@ -73,7 +73,7 @@ export const resolveHeadlessConnectionString = (
   host: string | undefined,
   port: number,
   basePath: NormalizedBasePath = ROOT_BASE_PATH,
-  interfaces: NetworkInterfacesMap = networkInterfaces(),
+  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
 ): string => {
   const connectionHost = resolveHeadlessConnectionHost(host, interfaces);
   return `http://${formatHostForUrl(connectionHost)}:${port}${basePath}`;

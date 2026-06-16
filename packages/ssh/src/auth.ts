@@ -1,7 +1,10 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
@@ -55,7 +58,6 @@ export interface SshChildEnvironmentOptions {
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly askpassDirectory?: string;
   readonly authSecret?: string | null;
-  readonly platform?: NodeJS.Platform;
 }
 
 const SSH_ASKPASS_DIR_NAME = "t3code-ssh-askpass";
@@ -110,9 +112,8 @@ export const buildSshAskpassHelperDescriptor = Effect.fn(
   "ssh/auth.buildSshAskpassHelperDescriptor",
 )(function* (input: {
   readonly directory: string;
-  readonly platform?: NodeJS.Platform;
 }): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
-  const platform = input.platform ?? process.platform;
+  const platform = yield* HostProcessPlatform;
   const path = yield* Path.Path;
   const directory = input.directory;
 
@@ -148,12 +149,11 @@ export const buildSshAskpassHelperDescriptor = Effect.fn(
 export const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(
   function* (input: {
     readonly directory: string;
-    readonly platform?: NodeJS.Platform;
   }): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const descriptor = yield* buildSshAskpassHelperDescriptor(input);
-    const platform = input.platform ?? process.platform;
+    const platform = yield* HostProcessPlatform;
 
     yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
 
@@ -179,21 +179,28 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {
-  const baseEnv = { ...(input.baseEnv ?? process.env) };
+  const baseEnv = { ...input.baseEnv };
   if (!input.interactiveAuth) {
     return baseEnv;
   }
 
-  const platform = input.platform ?? process.platform;
+  const platform = yield* HostProcessPlatform;
+  const hostDisplay = input.baseEnv
+    ? input.baseEnv.DISPLAY
+    : yield* Config.string("DISPLAY").pipe(
+        Config.option,
+        Effect.orElseSucceed(() => Option.none<string>()),
+        Effect.map(Option.getOrUndefined),
+      );
   const directory = input.askpassDirectory ?? (yield* getDefaultSshAskpassDirectory());
-  const sshAskpass = yield* ensureSshAskpassHelpers({ directory, platform });
+  const sshAskpass = yield* ensureSshAskpassHelpers({ directory });
 
   return {
     ...baseEnv,
     SSH_ASKPASS: sshAskpass,
     SSH_ASKPASS_REQUIRE: "force",
     ...(input.authSecret === undefined ? {} : { T3_SSH_AUTH_SECRET: input.authSecret ?? "" }),
-    ...(platform === "win32" || baseEnv.DISPLAY ? {} : { DISPLAY: "t3code" }),
+    ...(platform === "win32" || baseEnv.DISPLAY || hostDisplay ? {} : { DISPLAY: "t3code" }),
   };
 });
 

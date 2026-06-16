@@ -119,6 +119,13 @@ vi.mock("@xterm/xterm", () => ({
 }));
 
 vi.mock("~/environmentApi", () => ({
+  ensureEnvironmentApi: (environmentId: string) => {
+    const api = readEnvironmentApiMock(environmentId);
+    if (!api) {
+      throw new Error(`Environment API not found for ${environmentId}`);
+    }
+    return api;
+  },
   readEnvironmentApi: readEnvironmentApiMock,
 }));
 
