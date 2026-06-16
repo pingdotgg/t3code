@@ -10,6 +10,8 @@ export interface DraftComposerImageAttachment extends UploadChatImageAttachment 
   readonly previewUri: string;
 }
 
+const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
+
 function estimateBase64ByteSize(base64: string): number {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
@@ -213,17 +215,35 @@ function mimeTypeFromUri(uri: string): string {
   }
 }
 
+export function isOwnedPastedImageUri(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== "file:") {
+      return false;
+    }
+    const segments = url.pathname.split("/").filter(Boolean);
+    return (
+      segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY && segments.at(-1)?.endsWith(".png") === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
   readonly existingCount: number;
 }): Promise<ReadonlyArray<DraftComposerImageAttachment>> {
   const { File } = await import("expo-file-system");
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
-  const uris = input.uris.slice(0, Math.max(0, remainingSlots));
   const results: DraftComposerImageAttachment[] = [];
 
-  for (const uri of uris) {
+  for (const [index, uri] of input.uris.entries()) {
+    const ownedTemporaryFile = isOwnedPastedImageUri(uri);
     try {
+      if (index >= Math.max(0, remainingSlots)) {
+        continue;
+      }
       const file = new File(uri);
       const base64 = await file.base64();
       const sizeBytes = estimateBase64ByteSize(base64);
@@ -238,10 +258,21 @@ export async function convertPastedImagesToAttachments(input: {
         mimeType,
         sizeBytes,
         dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: uri,
+        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : uri,
       });
     } catch (error) {
       console.warn("Failed to read pasted image", uri, error);
+    } finally {
+      if (ownedTemporaryFile) {
+        try {
+          const file = new File(uri);
+          if (file.exists) {
+            file.delete();
+          }
+        } catch (error) {
+          console.warn("Failed to remove temporary pasted image", uri, error);
+        }
+      }
     }
   }
 

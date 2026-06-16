@@ -34,12 +34,13 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
+    "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@callstack/liquid-glass": "^0.7.1",
-    "@clerk/expo": "^3.3.0",
+    "@clerk/expo": "^3.4.1",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/ui": "~56.0.8",
@@ -54,6 +55,7 @@
     "@shikijs/themes": "3.23.0",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/mobile-markdown-text": "file:./modules/t3-markdown-text",
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",
@@ -61,6 +63,7 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "expo": "^56.0.0",
+    "expo-asset": "~56.0.15",
     "expo-auth-session": "~56.0.12",
     "expo-build-properties": "~56.0.15",
     "expo-camera": "~56.0.7",
@@ -104,6 +107,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@pierre/trees": "1.0.0-beta.4",
     "@types/react": "~19.2.0",
     "babel-preset-expo": "~56.0.0",
     "tailwindcss": "^4.0.0",

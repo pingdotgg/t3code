@@ -18,7 +18,7 @@
       --color-foreground: #262626;
       --color-foreground-secondary: #525252;
       --color-foreground-muted: #737373;
-      --color-foreground-tertiary: #a3a3a3;
+      --color-foreground-tertiary: #8e8e93;
 
       /* Borders & separators */
       --color-border: rgba(0, 0, 0, 0.08);
@@ -28,6 +28,9 @@
       /* Subtle backgrounds (badges, pills, overlays) */
       --color-subtle: rgba(0, 0, 0, 0.04);
       --color-subtle-strong: rgba(0, 0, 0, 0.08);
+      --color-inline-skill-background: rgba(217, 70, 239, 0.12);
+      --color-inline-skill-border: rgba(217, 70, 239, 0.25);
+      --color-inline-skill-foreground: #a21caf;
 
       /* Primary action */
       --color-primary: #262626;
@@ -58,6 +61,8 @@
       /* Header / glass chrome */
       --color-header: rgba(255, 255, 255, 0.97);
       --color-header-border: rgba(0, 0, 0, 0.06);
+      --color-glass-surface: rgba(255, 255, 255, 0.72);
+      --color-glass-tint: rgba(255, 255, 255, 0.18);
 
       /* StatusBar */
       --color-status-bar: #f2f2f7;
@@ -105,8 +110,8 @@
       /* Text */
       --color-foreground: #f5f5f5;
       --color-foreground-secondary: #a3a3a3;
-      --color-foreground-muted: #737373;
-      --color-foreground-tertiary: #525252;
+      --color-foreground-muted: #8e8e93;
+      --color-foreground-tertiary: #636366;
 
       /* Borders & separators */
       --color-border: rgba(255, 255, 255, 0.06);
@@ -116,6 +121,9 @@
       /* Subtle backgrounds (badges, pills, overlays) */
       --color-subtle: rgba(255, 255, 255, 0.04);
       --color-subtle-strong: rgba(255, 255, 255, 0.08);
+      --color-inline-skill-background: rgba(217, 70, 239, 0.12);
+      --color-inline-skill-border: rgba(217, 70, 239, 0.25);
+      --color-inline-skill-foreground: #f0abfc;
 
       /* Primary action */
       --color-primary: #f5f5f5;
@@ -136,16 +144,18 @@
       /* Inputs */
       --color-input: #141414;
       --color-input-border: rgba(255, 255, 255, 0.08);
-      --color-placeholder: #737373;
+      --color-placeholder: #8e8e93;
 
       /* Icons */
       --color-icon: #f5f5f5;
       --color-icon-muted: #a3a3a3;
-      --color-icon-subtle: #737373;
+      --color-icon-subtle: #8e8e93;
 
       /* Header / glass chrome */
       --color-header: rgba(10, 10, 10, 0.97);
       --color-header-border: rgba(255, 255, 255, 0.06);
+      --color-glass-surface: rgba(23, 23, 23, 0.78);
+      --color-glass-tint: rgba(23, 23, 23, 0.24);
 
       /* StatusBar */
       --color-status-bar: #0a0a0a;

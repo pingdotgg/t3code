@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { pipe } from "effect/Function";
 import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
+import { Pressable, ScrollView, Text as RNText, View } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useVcsStatus } from "../../state/use-vcs-status";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
@@ -91,10 +91,9 @@ export function ThreadRouteScreen() {
     pendingConnectionError ?? routeEnvironmentRuntime?.connectionError ?? aggregateConnectionError;
 
   /* ─── Native header theming ──────────────────────────────────────── */
-  const isDark = useColorScheme() === "dark";
   const iconColor = String(useThemeColor("--color-icon"));
   const foregroundColor = String(useThemeColor("--color-foreground"));
-  const secondaryFg = isDark ? "#a3a3a3" : "#525252";
+  const secondaryFg = String(useThemeColor("--color-foreground-secondary"));
 
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useVcsStatus({

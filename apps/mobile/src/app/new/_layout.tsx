@@ -1,8 +1,8 @@
 import Stack from "expo-router/stack";
-import { useColorScheme } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { NewTaskFlowProvider } from "../../features/threads/new-task-flow-provider";
+import { useThemeColor } from "../../lib/useThemeColor";
 
 export const unstable_settings = {
   anchor: "index",
@@ -10,9 +10,8 @@ export const unstable_settings = {
 
 export default function NewTaskLayout() {
   const sheetStyle = useResolveClassNames("bg-sheet");
-  const isDark = useColorScheme() === "dark";
-  const sheetBg = isDark ? "rgba(14, 14, 14, 0.98)" : "rgba(242, 242, 247, 0.98)";
-  const headerTint = isDark ? "#f5f5f5" : "#262626";
+  const sheetBg = useThemeColor("--color-sheet");
+  const headerTint = useThemeColor("--color-foreground");
 
   return (
     <NewTaskFlowProvider>

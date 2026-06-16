@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ReviewRenderableFile } from "./reviewModel";
-import { highlightReviewFile } from "./shikiReviewHighlighter";
+import { highlightCodeSnippet, highlightReviewFile } from "./shikiReviewHighlighter";
 
 function makeRenderableFile(
   input: Partial<ReviewRenderableFile> & Pick<ReviewRenderableFile, "path">,
@@ -117,5 +117,24 @@ describe("highlightReviewFile", () => {
         fontStyle: null,
       },
     ]);
+  });
+});
+
+describe("highlightCodeSnippet", () => {
+  it("resolves language aliases and returns syntax-colored tokens", async () => {
+    const source = "const answer: number = 42;";
+    const highlighted = await highlightCodeSnippet({
+      code: source,
+      language: "ts",
+      theme: "dark",
+    });
+
+    expect(
+      highlighted
+        .flat()
+        .map((token) => token.content)
+        .join(""),
+    ).toBe(source);
+    expect(highlighted.flat().some((token) => token.color !== null)).toBe(true);
   });
 });

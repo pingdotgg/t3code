@@ -146,8 +146,8 @@ function ProjectGroupLabel(props: {
         bearerToken={props.bearerToken}
       />
       <Text
-        className="flex-1 text-[13px] font-t3-bold uppercase text-foreground-muted"
-        style={{ letterSpacing: 0.6 }}
+        className="flex-1 text-[12px] font-t3-medium uppercase text-foreground-muted"
+        style={{ letterSpacing: 0.5 }}
         numberOfLines={1}
       >
         {props.project.title}
@@ -156,8 +156,8 @@ function ProjectGroupLabel(props: {
       {hiddenCount > 0 ? (
         <Pressable onPress={props.onToggleExpand} hitSlop={8}>
           <Text
-            className="text-[13px] font-t3-bold text-foreground-muted"
-            style={{ letterSpacing: 0.6 }}
+            className="text-[12px] font-t3-medium text-foreground-muted"
+            style={{ letterSpacing: 0.4 }}
           >
             {props.isExpanded ? "Show less" : `${hiddenCount} more`}
           </Text>
@@ -191,6 +191,7 @@ function ThreadRow(props: {
   readonly isLast: boolean;
 }) {
   const separatorColor = useThemeColor("--color-separator");
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const { bg, fg } = statusColors(props.thread);
   const tone = threadStatusTone(props.thread);
   const timestamp = relativeTime(props.thread.updatedAt ?? props.thread.createdAt);
@@ -267,7 +268,7 @@ function ThreadRow(props: {
               <SymbolView
                 name="arrow.triangle.branch"
                 size={10}
-                tintColor="#737373"
+                tintColor={iconSubtleColor}
                 type="monochrome"
               />
               <Text
