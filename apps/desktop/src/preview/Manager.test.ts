@@ -189,6 +189,55 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps element picking active during subframe navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isFocused: () => true,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          once: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        listeners.get("did-start-navigation")?.({}, "about:blank", false, false);
+        yield* Effect.yieldNow;
+        expect(pick.pollUnsafe()).toBeUndefined();
+
+        listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
+        expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
   effectIt.effect("reveals only files inside the configured browser artifact directory", () =>
     withManager((manager) =>
       Effect.gen(function* () {

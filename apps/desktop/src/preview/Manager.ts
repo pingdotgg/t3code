@@ -1344,7 +1344,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         };
         const onDestroyed = () => settle(null);
-        const onNavigated = () => settle(null);
+        const onNavigated = (
+          _event: Electron.Event,
+          _url: string,
+          _isInPlace: boolean,
+          isMainFrame: boolean,
+        ) => {
+          if (isMainFrame) settle(null);
+        };
         const registerPickElement = Effect.fn("PreviewManager.registerPickElement")(function* () {
           yield* attempt("pickElement.register", () => {
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
