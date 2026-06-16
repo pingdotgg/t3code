@@ -89,6 +89,8 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
   const processRunner = yield* ProcessRunner.ProcessRunner;
   let cacheKey = cwd;
 
+  // git is a real executable on every platform — no cmd.exe shell mode, which
+  // would split paths containing spaces during cmd's re-tokenization.
   const topLevelResult = yield* processRunner
     .run({
       command: "git",

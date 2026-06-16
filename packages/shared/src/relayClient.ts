@@ -4,7 +4,6 @@ import type {
   RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
@@ -18,6 +17,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
 export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
@@ -120,10 +120,7 @@ const CloudflaredConfig = Config.all({
 
 export interface CloudflaredRelayClientOptions {
   readonly baseDir: string;
-  readonly platform?: NodeJS.Platform;
-  readonly arch?: string;
   readonly releaseAsset?: CloudflaredReleaseAsset;
-  readonly configProvider?: () => ConfigProvider.ConfigProvider;
 }
 
 export interface RelayClientShape {
@@ -140,22 +137,6 @@ export class RelayClient extends Context.Service<RelayClient, RelayClientShape>(
 
 function executableFileName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "cloudflared.exe" : "cloudflared";
-}
-
-export function resolveManagedCloudflaredPath(input: {
-  readonly baseDir: string;
-  readonly platform: NodeJS.Platform;
-  readonly arch: string;
-}): string {
-  const separator = input.platform === "win32" ? "\\" : "/";
-  return [
-    input.baseDir.replace(/[\\/]+$/u, ""),
-    "tools",
-    "cloudflared",
-    CLOUDFLARED_VERSION,
-    `${input.platform}-${input.arch}`,
-    executableFileName(input.platform),
-  ].join(separator);
 }
 
 function resolveReleaseAsset(
@@ -205,17 +186,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installSemaphore = yield* Semaphore.make(1);
-  const platform = options.platform ?? process.platform;
-  const arch = options.arch ?? process.arch;
+  const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
-  const loadCloudflaredConfig = Effect.suspend(() =>
-    CloudflaredConfig.pipe(
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        options.configProvider?.() ?? ConfigProvider.fromEnv(),
-      ),
-    ),
-  ).pipe(Effect.orDie);
+  const loadCloudflaredConfig = Effect.suspend(() => CloudflaredConfig).pipe(Effect.orDie);
   const managedPath = path.join(
     options.baseDir,
     "tools",

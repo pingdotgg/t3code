@@ -54,6 +54,64 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads UTF-8 files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/index.ts",
+          contents: "export const answer = 42;\n",
+          byteLength: 26,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("rejects reads outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "../escape.md" })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
+      }),
+    );
+
+    it.effect("rejects symlinks that resolve outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
+        yield* fileSystem.symlink(
+          path.join(outsideDir, "secret.txt"),
+          path.join(cwd, "linked-secret.txt"),
+        );
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "linked-secret.txt" })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("resolves outside the project root");
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {

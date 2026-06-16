@@ -28,7 +28,7 @@ catalog:
   "@effect/tsgo": 0.13.2
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.1.20
+  "@pierre/diffs": 1.3.0-beta.4
   "@vitest/runner": 4.1.8
   "@types/node": 24.12.4
   "@typescript/native-preview": 7.0.0-dev.20260604.1
@@ -83,8 +83,10 @@ packageExtensions:
     dependencies:
       vite: "catalog:"
 patchedDependencies:
+  # Keep non-browser consumers off the root entrypoint, which eagerly imports
+  # DOM-dependent renderers. These utility/type subpaths are safe for mobile.
+  "@pierre/diffs@1.3.0-beta.4": patches/@pierre%2Fdiffs@1.3.0-beta.4.patch
   "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
   "@expo/metro-config@56.0.13": patches/@expo%2Fmetro-config@56.0.13.patch
-  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

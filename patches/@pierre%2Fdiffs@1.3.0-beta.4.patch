@@ -1,5 +1,5 @@
 diff --git a/package.json b/package.json
-index c0e762b13b56247b256520754e439cbc16bb797d..d298b87c175ec891d1b50f681c9031f4b1929e67 100644
+index b18c94f3f7b40bdb15084ab7cabcb19dd29c61f7..ab96ac589d368e806ef45480283d6e0fa199117f 100644
 --- a/package.json
 +++ b/package.json
 @@ -51,6 +51,18 @@
@@ -20,4 +20,4 @@ index c0e762b13b56247b256520754e439cbc16bb797d..d298b87c175ec891d1b50f681c9031f4
 +      "import": "./dist/utils/parsePatchFiles.js"
      }
    },
-   "scripts": {
+   "publishConfig": {

@@ -110,10 +110,7 @@ export function PreviewChromeRow({
 
   return (
     <div className="relative">
-      <form
-        onSubmit={submit}
-        className="flex h-10 items-center gap-1 border-b border-border/70 bg-background px-2"
-      >
+      <form onSubmit={submit} className="surface-subheader gap-1 px-2" data-surface-subheader>
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
           <Tooltip>
             <TooltipTrigger

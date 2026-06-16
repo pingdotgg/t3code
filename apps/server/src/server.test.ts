@@ -579,6 +579,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
+          resolveAvailableEditors: () => Effect.succeed([]),
           ...options?.layers?.externalLauncher,
         }),
       ),
@@ -4353,6 +4354,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isAtLeast(response.entries.length, 1);
       assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
       assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.listEntries and projects.readFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-files-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "src", "index.ts"),
+        "export const answer = 42;\n",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            listing: client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir }),
+            file: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "src/index.ts",
+            }),
+          }),
+        ),
+      );
+
+      assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
+      assert.deepEqual(response.file, {
+        relativePath: "src/index.ts",
+        contents: "export const answer = 42;\n",
+        byteLength: 26,
+        truncated: false,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

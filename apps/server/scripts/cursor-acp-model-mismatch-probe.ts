@@ -3,6 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import process from "node:process";
 import readline from "node:readline";
 import * as NodeTimers from "node:timers";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Effect from "effect/Effect";
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -128,9 +130,10 @@ class JsonRpcChild {
   closed = false;
 
   constructor(bin: string, args: string[], cwd: string) {
-    this.child = spawn(bin, args, {
+    const spawnCommand = Effect.runSync(resolveSpawnCommand(bin, args));
+    this.child = spawn(spawnCommand.command, spawnCommand.args, {
       cwd,
-      shell: process.platform === "win32",
+      shell: spawnCommand.shell,
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });

@@ -3,7 +3,7 @@ import * as NFS from "node:fs";
 import * as path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Duration from "effect/Duration";
@@ -11,8 +11,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap.ts";
+import { readBootstrapEnvelope } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
 
 const openSyncInterceptor = vi.hoisted(() => ({ failPath: null as string | null }));
@@ -41,14 +42,6 @@ const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
 it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
-  it.effect("uses platform-specific fd paths", () =>
-    Effect.sync(() => {
-      assert.equal(resolveFdPath(3, "linux"), "/proc/self/fd/3");
-      assert.equal(resolveFdPath(3, "darwin"), "/dev/fd/3");
-      assert.equal(resolveFdPath(3, "win32"), undefined);
-    }),
-  );
-
   it.effect("reads a bootstrap envelope from a provided fd", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -89,7 +82,9 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       openSyncInterceptor.failPath = `/proc/self/fd/${fd}`;
       try {
-        const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
+        const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+          timeoutMs: 100,
+        }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
         assertSome(payload, {
           mode: "desktop",
         });

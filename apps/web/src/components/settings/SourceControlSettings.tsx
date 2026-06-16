@@ -188,7 +188,7 @@ function itemSummary({
     }
 
     if (!item.executable) {
-      return <span>{item.installHint}</span>;
+      return <span>Available. {item.installHint}</span>;
     }
 
     if (auth.status === "unauthenticated") {
@@ -218,8 +218,9 @@ function DiscoveryItemRow({
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
-  const enabled =
-    item.status === "available" && (isProviderDiscoveryItem(item) || item.implemented);
+  const enabled = isProviderDiscoveryItem(item)
+    ? item.status === "available" && item.auth.status === "authenticated"
+    : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;

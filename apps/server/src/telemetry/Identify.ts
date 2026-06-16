@@ -1,10 +1,11 @@
+import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { homedir } from "node:os";
+
 import { ServerConfig } from "../config.ts";
 
 const CodexAuthJsonSchema = Schema.Struct({
@@ -39,7 +40,7 @@ const getCodexAccountId = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const authJsonPath = path.join(homedir(), ".codex", "auth.json");
+  const authJsonPath = path.join(NodeOS.homedir(), ".codex", "auth.json");
   const authJson = yield* Effect.flatMap(
     fileSystem.readFileString(authJsonPath),
     Schema.decodeEffect(Schema.fromJsonString(CodexAuthJsonSchema)),
@@ -52,7 +53,7 @@ const getClaudeUserId = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const claudeJsonPath = path.join(homedir(), ".claude.json");
+  const claudeJsonPath = path.join(NodeOS.homedir(), ".claude.json");
   const claudeJson = yield* Effect.flatMap(
     fileSystem.readFileString(claudeJsonPath),
     Schema.decodeEffect(Schema.fromJsonString(ClaudeJsonSchema)),

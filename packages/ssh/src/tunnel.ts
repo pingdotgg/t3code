@@ -34,9 +34,9 @@ import {
   collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
+  resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
-  SSH_COMMAND,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -1069,7 +1069,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
-  const tunnelCommand = [SSH_COMMAND, ...args];
+  const sshCommand = yield* resolveSshCommand;
+  const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
@@ -1082,8 +1083,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(SSH_COMMAND, args, {
+      ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
+        extendEnv: true,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,
