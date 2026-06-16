@@ -6,8 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
+  createStageWorkspaceConfig,
   createStagePnpmConfig,
+  DESKTOP_ASAR_UNPACK,
   resolveDesktopRuntimeDependencies,
+  resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -15,6 +18,7 @@ import {
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
+  STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -114,17 +118,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       createStagePnpmConfig(
         {
           "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
+          "@ff-labs/fff-node@0.9.4": "patches/@ff-labs__fff-node@0.9.4.patch",
           "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
           "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
           "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
         },
         {
+          "@ff-labs/fff-node": "0.9.4",
           "@pierre/diffs": "1.1.20",
           effect: "4.0.0-beta.73",
         },
       ),
       {
         patchedDependencies: {
+          "@ff-labs/fff-node@0.9.4": "patches/@ff-labs__fff-node@0.9.4.patch",
           "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
           "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
         },
@@ -140,6 +147,49 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
       undefined,
     );
+  });
+
+  it("installs optional native dependencies for the target desktop architecture", () => {
+    assert.deepStrictEqual(STAGE_INSTALL_ARGS, ["install", "--prod"]);
+    assert.deepStrictEqual(createStageWorkspaceConfig("mac", "x64"), {
+      supportedArchitectures: {
+        os: ["darwin"],
+        cpu: ["x64"],
+      },
+    });
+    assert.deepStrictEqual(createStageWorkspaceConfig("win", "arm64"), {
+      supportedArchitectures: {
+        os: ["win32"],
+        cpu: ["arm64"],
+      },
+    });
+    assert.deepStrictEqual(createStageWorkspaceConfig("mac", "universal"), {
+      supportedArchitectures: {
+        os: ["darwin"],
+        cpu: ["arm64", "x64"],
+      },
+    });
+  });
+
+  it("unpacks the fff shared library for filesystem and FFI access", () => {
+    assert.deepStrictEqual(DESKTOP_ASAR_UNPACK, ["node_modules/@ff-labs/fff-bin-*/**/*"]);
+  });
+
+  it("promotes target fff binaries to direct staged dependencies", () => {
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "universal", "0.9.4"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+      "@ff-labs/fff-bin-darwin-x64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.9.4"), {
+      "@ff-labs/fff-bin-win32-x64": "0.9.4",
+    });
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.9.4"), {
+      "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
+      "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
+    });
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {
