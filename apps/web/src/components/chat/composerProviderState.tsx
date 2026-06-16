@@ -17,7 +17,7 @@ import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
-const PROMPT_EFFORT_DESCRIPTOR_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
+const PROMPT_EFFORT_DESCRIPTOR_IDS = new Set(["reasoningEffort", "effort", "reasoning"]);
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
