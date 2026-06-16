@@ -700,11 +700,6 @@ function completedToolDiffText(
   return parseTurnDiffFilesFromUnifiedDiff(diffCandidate).length > 0 ? diffCandidate : undefined;
 }
 
-function fileChangeTurnIdForToolCall(parentTurnId: TurnId, toolCallId: string): TurnId {
-  const normalizedToolCallId = toolCallId.replace(/[^A-Za-z0-9._:-]+/g, "_") || "tool";
-  return TurnId.make(`${String(parentTurnId)}:file-change:${normalizedToolCallId}`);
-}
-
 function copilotBackgroundTasksList(
   session: CopilotSession,
 ): (() => Promise<CopilotTaskList>) | undefined {
@@ -2302,7 +2297,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           await emitAsync({
             ...createBaseEvent({
               threadId: context.threadId,
-              turnId: fileChangeTurnIdForToolCall(turnId, event.data.toolCallId),
+              turnId,
               raw: event,
             }),
             type: "turn.diff.updated",

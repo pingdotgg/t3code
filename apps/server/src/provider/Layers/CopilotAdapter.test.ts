@@ -1328,7 +1328,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits a file-change diff turn when a Copilot Apply_patch tool completes", () =>
+  it.effect("emits an active turn diff when a Copilot Apply_patch tool completes", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-apply-patch-turn-diff");
@@ -1413,10 +1413,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       assert.equal(diffEvent?.type, "turn.diff.updated");
       if (diffEvent?.type === "turn.diff.updated") {
-        assert.equal(
-          String(diffEvent.turnId),
-          `${String(turn.turnId)}:file-change:tool-apply-patch`,
-        );
+        assert.equal(diffEvent.turnId, turn.turnId);
         assert.deepStrictEqual(diffEvent.payload, {
           unifiedDiff: patch,
         });
@@ -1435,7 +1432,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
   );
 
   it.effect(
-    "does not emit a file-change diff turn when a Copilot command tool returns control output",
+    "does not emit an active turn diff when a Copilot command tool returns shell control output",
     () =>
       Effect.gen(function* () {
         const adapter = yield* CopilotAdapter;
@@ -1545,7 +1542,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
   );
 
   it.effect(
-    "emits a file-change diff turn when a Copilot command tool returns a unified diff",
+    "emits an active turn diff when a Copilot command tool returns git unified diff output",
     () =>
       Effect.gen(function* () {
         const adapter = yield* CopilotAdapter;
@@ -1640,10 +1637,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
         assert.equal(diffEvent?.type, "turn.diff.updated");
         if (diffEvent?.type === "turn.diff.updated") {
-          assert.equal(
-            String(diffEvent.turnId),
-            `${String(turn.turnId)}:file-change:tool-command-diff`,
-          );
+          assert.equal(diffEvent.turnId, turn.turnId);
           assert.deepStrictEqual(diffEvent.payload, {
             unifiedDiff: diff.trim(),
           });
