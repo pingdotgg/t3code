@@ -10,6 +10,7 @@ import { useThemeColor } from "../lib/useThemeColor";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
+const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -66,7 +67,7 @@ function fileIconUri(path: string): string {
 
 export function ComposerEditor({
   ref,
-  skills = [],
+  skills = EMPTY_SKILLS,
   selection,
   style,
   textStyle,

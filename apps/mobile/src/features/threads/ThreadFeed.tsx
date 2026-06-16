@@ -12,7 +12,6 @@ import {
   type PartialMarkdownTheme,
 } from "react-native-nitro-markdown";
 import {
-  ActivityIndicator,
   Image,
   Linking,
   type NativeScrollEvent,
@@ -1216,39 +1215,6 @@ function compactFileName(filePath: string): string {
   const normalized = filePath.replaceAll("\\", "/");
   const lastSlashIndex = normalized.lastIndexOf("/");
   return lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
-}
-
-const IOS_NAV_BAR_HEIGHT = 44;
-
-function ThreadFeedPlaceholder(props: {
-  readonly bottomInset: number;
-  readonly detail: string;
-  readonly horizontalPadding: number;
-  readonly loading?: boolean;
-  readonly title: string;
-  readonly topInset: number;
-}) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        flexGrow: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingTop: props.topInset,
-        paddingBottom: props.bottomInset,
-        paddingHorizontal: props.horizontalPadding + 24,
-      }}
-    >
-      <View className="max-w-[320px] items-center gap-2">
-        {props.loading ? <ActivityIndicator style={{ marginBottom: 6 }} /> : null}
-        <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
-        <Text className="text-center text-sm leading-5 text-foreground-secondary">
-          {props.detail}
-        </Text>
-      </View>
-    </View>
-  );
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
