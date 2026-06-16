@@ -108,6 +108,30 @@ function validateInstanceId(id: string, existing: ReadonlySet<string>): string |
   return null;
 }
 
+export type WizardAdvance =
+  | { readonly kind: "advance"; readonly step: number }
+  | { readonly kind: "blocked"; readonly error: string };
+
+/**
+ * Decide what clicking "Next" should do in the add-instance wizard. The
+ * Identity step (index 1) owns the Instance ID, so the wizard must not advance
+ * past it while the id is invalid — otherwise the user reaches the final step
+ * only for "Add instance" to silently no-op. Returns either the next step to
+ * move to, or the error that blocks advancing (mirrors the gate `handleSave`
+ * applies before submit).
+ */
+export function advanceInstanceWizard(
+  currentStep: number,
+  stepCount: number,
+  validation: { readonly instanceIdError: string | null },
+): WizardAdvance {
+  const blockingError = currentStep === 1 ? validation.instanceIdError : null;
+  if (blockingError !== null) {
+    return { kind: "blocked", error: blockingError };
+  }
+  return { kind: "advance", step: Math.min(stepCount - 1, currentStep + 1) };
+}
+
 interface AddProviderInstanceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -453,7 +477,19 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               {wizardStep === 0 ? "Cancel" : "Back"}
             </Button>
             {wizardStep < wizardSteps.length - 1 ? (
-              <Button size="sm" onClick={() => setWizardStep((step) => Math.min(2, step + 1))}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const advance = advanceInstanceWizard(wizardStep, wizardSteps.length, {
+                    instanceIdError,
+                  });
+                  if (advance.kind === "blocked") {
+                    setHasAttemptedSubmit(true);
+                    return;
+                  }
+                  setWizardStep(advance.step);
+                }}
+              >
                 Next
               </Button>
             ) : (
