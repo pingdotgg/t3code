@@ -13,7 +13,7 @@
     "neutral": "#F5F5F5",
     "border": "#E5E5EA",
     "ring": "#A3A3A3",
-    "muted": "#F5F5F5",
+    "muted": "#F2F2F7",
     "shadow": "#000000"
   },
   "darkColors": {
@@ -30,7 +30,7 @@
     "neutral": "#1C1C1C",
     "border": "#2A2A2A",
     "ring": "#525252",
-    "muted": "#1C1C1C",
+    "muted": "#0E0E0E",
     "shadow": "#000000"
   },
   "design": {
