@@ -726,7 +726,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   ): Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError> =>
     Effect.gen(function* () {
       const refName = branch.name;
-      const historyRef = yield* branchCommitRange(cwd, baseRef ?? null, refName, kind ?? "history");
+      const historyRef = yield* branchCommitRange(baseRef ?? null, refName, kind ?? "history");
       if (!historyRef) {
         return {
           commits: [],
@@ -846,17 +846,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     );
   };
 
-  const historyStartRef = (cwd: string, baseRef: string | null, refName: string) => {
-    if (!baseRef) return Effect.succeed(refName);
-    return run("vcs.panel.branchHistoryMergeBase", cwd, ["merge-base", baseRef, refName]).pipe(
-      Effect.map((value) => value.trim()),
-      Effect.map((mergeBase) => (mergeBase.length > 0 ? mergeBase : refName)),
-      Effect.orElseSucceed(() => refName),
-    );
-  };
-
   const branchCommitRange = (
-    cwd: string,
     baseRef: string | null,
     refName: string,
     kind: NonNullable<VcsPanelBranchCommitsInput["kind"]>,
@@ -868,7 +858,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         return Effect.succeed(baseRef ? `${refName}..${baseRef}` : "");
       case "compare-history":
       case "history":
-        return historyStartRef(cwd, baseRef, refName);
+        return Effect.succeed(refName);
     }
   };
 
@@ -912,7 +902,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         createdBaseRef ??
         (!branch.isDefault ? defaultCompareRef : null);
       const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
-      const historyRef = yield* historyStartRef(cwd, baseRef, refName);
+      const historyRef = refName;
       const [
         aheadCommits,
         aheadCommitTotal,
@@ -1048,7 +1038,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const discardFiles: SourceControlPanelServiceShape["discardFiles"] = (input) =>
     Effect.gen(function* () {
       if (input.staged) {
-        yield* run("vcs.panel.discardStagedFiles", input.cwd, [
+        const restoreFromHead = run("vcs.panel.discardStagedFiles", input.cwd, [
           "restore",
           "--staged",
           "--worktree",
@@ -1056,6 +1046,32 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           "--",
           ...input.paths,
         ]).pipe(Effect.asVoid);
+        yield* restoreFromHead.pipe(
+          Effect.catch(() =>
+            Effect.gen(function* () {
+              yield* run("vcs.panel.discardStagedFiles.reset", input.cwd, [
+                "reset",
+                "--",
+                ...input.paths,
+              ]).pipe(Effect.asVoid);
+              yield* run("vcs.panel.discardStagedFiles.restore", input.cwd, [
+                "restore",
+                "--worktree",
+                "--",
+                ...input.paths,
+              ]).pipe(
+                Effect.asVoid,
+                Effect.catch(() => Effect.void),
+              );
+              yield* run("vcs.panel.discardStagedFiles.clean", input.cwd, [
+                "clean",
+                "-fd",
+                "--",
+                ...input.paths,
+              ]).pipe(Effect.asVoid);
+            }),
+          ),
+        );
         return;
       }
 

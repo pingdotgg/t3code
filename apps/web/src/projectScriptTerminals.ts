@@ -144,6 +144,7 @@ function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
     ...(input.cols !== undefined ? { cols: input.cols } : {}),
     ...(input.rows !== undefined ? { rows: input.rows } : {}),
     ...(input.env !== undefined ? { env: input.env } : {}),
+    restartIfNotRunning: true,
   };
 }
 

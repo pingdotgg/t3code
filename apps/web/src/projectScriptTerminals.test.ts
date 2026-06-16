@@ -146,6 +146,14 @@ describe("openTerminalAndWaitForInputReady", () => {
 
     await openTerminalAndWaitForInputReady(api, OPEN_INPUT);
 
+    expect(api.terminal.attach).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restartIfNotRunning: true,
+        terminalId: OPEN_INPUT.terminalId,
+        threadId: OPEN_INPUT.threadId,
+      }),
+      expect.any(Function),
+    );
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 

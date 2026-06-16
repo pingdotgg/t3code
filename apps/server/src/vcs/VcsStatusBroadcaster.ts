@@ -397,7 +397,6 @@ export const layer = Layer.effect(
         Stream.map((event) => watchEventPath(path, cwd, event.path)),
         Stream.filter((relativePath): relativePath is string => relativePath !== null),
         Stream.filter((relativePath) => !shouldIgnoreWatchEventPath(relativePath)),
-        Stream.debounce(Duration.millis(150)),
         Stream.filterEffect((relativePath) =>
           Option.match(vcsProcess, {
             onNone: () => Effect.succeed(true),
@@ -418,6 +417,7 @@ export const layer = Layer.effect(
                 ),
           }),
         ),
+        Stream.debounce(Duration.millis(150)),
         Stream.runForEach(() => refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }))),
         Effect.ignoreCause({ log: true }),
       );

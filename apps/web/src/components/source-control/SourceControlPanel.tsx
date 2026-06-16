@@ -114,7 +114,6 @@ const DEFAULT_SECTION_WEIGHTS: Record<SectionKey, number> = {
 
 const COLLAPSED_SECTION_HEIGHT = 32;
 const MIN_SECTION_WEIGHT = 0.35;
-const ACTION_LOCK_TIMEOUT_MS = 15_000;
 const COMMIT_PAGE_SIZE = 10;
 const commitDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -1133,15 +1132,6 @@ export function SourceControlPanel({
     async (actionKey: string, action: () => Promise<void>) => {
       setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
-      let timeoutId: number | null = window.setTimeout(() => {
-        timeoutId = null;
-        setRunningActions((current) => {
-          const next = new Set(current);
-          next.delete(actionKey);
-          return next;
-        });
-        void refresh();
-      }, ACTION_LOCK_TIMEOUT_MS);
       try {
         await action();
         void invalidateSourceControlState({ environmentId, cwd });
@@ -1149,7 +1139,6 @@ export function SourceControlPanel({
       } catch (nextError) {
         setError(errorMessage(nextError));
       } finally {
-        if (timeoutId !== null) window.clearTimeout(timeoutId);
         setRunningActions((current) => {
           const next = new Set(current);
           next.delete(actionKey);
