@@ -18,6 +18,7 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  ArchiveIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -47,6 +48,7 @@ import {
 } from "../environments/runtime";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { readLocalApi } from "../localApi";
 import {
   getSourceControlDiscoverySnapshot,
@@ -404,6 +406,7 @@ function OpenCommandPaletteDialog() {
   const settings = useSettings();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const { archiveThread } = useThreadActions();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const keybindings = useServerKeybindings();
@@ -1005,6 +1008,31 @@ function OpenCommandPaletteDialog() {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  if (activeThread) {
+    actionItems.push({
+      kind: "action",
+      value: "action:archive-current-thread",
+      searchTerms: ["archive", "current thread", "hide thread"],
+      title: "Archive current thread",
+      description: activeThread.title,
+      icon: <ArchiveIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.archiveCurrent",
+      run: async () => {
+        await archiveThread(scopeThreadRef(activeThread.environmentId, activeThread.id)).catch(
+          (error: unknown) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to archive thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          },
+        );
+      },
     });
   }
 
