@@ -4876,6 +4876,19 @@ function ChatViewContent(props: ChatViewProps) {
             <Suspense fallback={null}>
               <DiffPanel mode="embedded" />
             </Suspense>
+          ) : activeRightPanelSurface?.kind === "plan" ? (
+            <PlanSidebar
+              activePlan={activePlan}
+              activeProposedPlan={sidebarProposedPlan}
+              label={planSidebarLabel}
+              environmentId={environmentId}
+              threadRef={activeThreadRef}
+              markdownCwd={gitCwd ?? undefined}
+              workspaceRoot={activeWorkspaceRoot}
+              timestampFormat={timestampFormat}
+              mode="embedded"
+              onClose={closePlanSidebar}
+            />
           ) : (activeRightPanelSurface?.kind === "files" ||
               activeRightPanelSurface?.kind === "file") &&
             activeProject &&

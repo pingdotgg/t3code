@@ -2276,6 +2276,35 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("renders the plan surface in the inline right panel", async () => {
+    useRightPanelStore.getState().open(THREAD_REF, "plan");
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-inline-plan-panel" as MessageId,
+        targetText: "show the inline plan panel",
+      }),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("p")).find(
+            (element) => element.textContent?.trim() === "No active plan yet.",
+          ) ?? null,
+        "Unable to find inline plan panel content.",
+      );
+
+      expect(
+        document.querySelector<HTMLElement>("[data-right-panel-tabbar]")?.textContent,
+      ).toContain("Plan");
+      expect(document.body.textContent).toContain("Plans will appear here when generated.");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("loads file previews from the active thread worktree", async () => {
     const worktreePath = "/repo/worktrees/file-preview-thread";
     const snapshot = createSnapshotForTargetUser({
