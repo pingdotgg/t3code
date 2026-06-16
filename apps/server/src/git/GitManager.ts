@@ -1361,7 +1361,9 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
   const status: GitManagerShape["status"] = Effect.fn("status")(function* (input) {
-    const [local, remote] = yield* Effect.all([localStatus(input), remoteStatus(input)]);
+    const [local, remote] = yield* Effect.all([localStatus(input), remoteStatus(input)], {
+      concurrency: "unbounded",
+    });
     return mergeGitStatusParts(local, remote);
   });
   const invalidateLocalStatus: GitManagerShape["invalidateLocalStatus"] = Effect.fn(

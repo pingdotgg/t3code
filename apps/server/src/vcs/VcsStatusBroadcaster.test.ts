@@ -17,6 +17,7 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import { GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -147,6 +148,71 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("keeps the cached snapshot unchanged when a refresh branch fails", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      failRemoteStatus: false,
+    };
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.sync(() => {
+              state.localStatusCalls += 1;
+              return state.currentLocalStatus;
+            }),
+          remoteStatus: () =>
+            Effect.suspend(() => {
+              state.remoteStatusCalls += 1;
+              return state.failRemoteStatus
+                ? Effect.fail(
+                    new GitManagerError({
+                      operation: "VcsStatusBroadcaster.test",
+                      detail: "remote status failed",
+                    }),
+                  )
+                : Effect.succeed(state.currentRemoteStatus);
+            }),
+          invalidateLocalStatus: () =>
+            Effect.sync(() => {
+              state.localInvalidationCalls += 1;
+            }),
+          invalidateRemoteStatus: () =>
+            Effect.sync(() => {
+              state.remoteInvalidationCalls += 1;
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        refName: "feature/partial-refresh",
+      };
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        aheadCount: 3,
+      };
+      state.failRemoteStatus = true;
+
+      const refreshExit = yield* broadcaster.refreshStatus("/repo").pipe(Effect.exit);
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.isTrue(Exit.isFailure(refreshExit));
+      assert.deepStrictEqual(cached, baseStatus);
+    }).pipe(Effect.provide(testLayer));
   });
 
   it.effect("refreshes only the cached local snapshot when requested", () => {
