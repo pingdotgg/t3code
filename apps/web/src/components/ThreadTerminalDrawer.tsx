@@ -302,6 +302,7 @@ interface TerminalViewportProps {
 interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
+  readonly runtimeEnv?: Record<string, string>;
 }
 
 export function TerminalViewport({
@@ -879,6 +880,7 @@ interface ThreadTerminalDrawerProps {
   projectId: ProjectId;
   cwd: string;
   worktreePath?: string | null;
+  runtimeEnv?: Record<string, string>;
   visible?: boolean;
   height: number;
   terminalIds: string[];
@@ -940,6 +942,7 @@ export default function ThreadTerminalDrawer({
   projectId,
   cwd,
   worktreePath,
+  runtimeEnv,
   visible = true,
   height,
   terminalIds,
@@ -1114,10 +1117,11 @@ export default function ThreadTerminalDrawer({
         terminalLaunchLocationsById?.get(terminalId) ?? {
           cwd,
           ...(worktreePath !== undefined ? { worktreePath } : {}),
+          ...(runtimeEnv ? { runtimeEnv } : {}),
         }
       );
     },
-    [cwd, terminalLaunchLocationsById, worktreePath],
+    [cwd, runtimeEnv, terminalLaunchLocationsById, worktreePath],
   );
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
@@ -1396,6 +1400,9 @@ export default function ThreadTerminalDrawer({
                           {...(terminalLaunchLocation.worktreePath !== undefined
                             ? { worktreePath: terminalLaunchLocation.worktreePath }
                             : {})}
+                          {...(terminalLaunchLocation.runtimeEnv
+                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                            : {})}
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
@@ -1421,6 +1428,9 @@ export default function ThreadTerminalDrawer({
                   cwd={activeTerminalLaunchLocation.cwd}
                   {...(activeTerminalLaunchLocation.worktreePath !== undefined
                     ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
+                    : {})}
+                  {...(activeTerminalLaunchLocation.runtimeEnv
+                    ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
                     : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
