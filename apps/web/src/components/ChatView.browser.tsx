@@ -2678,6 +2678,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             terminalId: "action-lint",
             data: "bun run lint\r",
           });
+          expect(wsRequests.indexOf(openRequest!)).toBeLessThan(wsRequests.indexOf(writeRequest!));
         },
         { timeout: 8_000, interval: 16 },
       );

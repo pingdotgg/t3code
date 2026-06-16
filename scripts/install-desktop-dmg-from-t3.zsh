@@ -86,7 +86,7 @@ main() {
   fi
 
   local dmg
-  dmg="$(ls -t "$PWD"/release/T3-Code-*-arm64.dmg | head -1)"
+  dmg="$(ls -t "$PWD"/release/T3-Code-*-arm64.dmg 2>/dev/null | head -1)" || true
   if [[ -z "$dmg" || ! -f "$dmg" ]]; then
     print -u2 "No arm64 T3 Code DMG found under $PWD/release"
     return 1

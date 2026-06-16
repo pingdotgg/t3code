@@ -130,15 +130,12 @@ export const layer = Layer.sync(ElectronMenu, () => {
         continue;
       }
 
-      if (
-        item.destructive &&
-        !hasInsertedDestructiveSeparator &&
-        template.length > 0 &&
-        !lastWasSeparator
-      ) {
-        template.push({ type: "separator" });
+      if (item.destructive && !hasInsertedDestructiveSeparator) {
         hasInsertedDestructiveSeparator = true;
-        lastWasSeparator = true;
+        if (template.length > 0 && !lastWasSeparator) {
+          template.push({ type: "separator" });
+          lastWasSeparator = true;
+        }
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
