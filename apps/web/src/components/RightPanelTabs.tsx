@@ -1,11 +1,20 @@
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { isElectron } from "~/env";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -25,6 +34,10 @@ interface RightPanelTabsProps {
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
+  onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
+  onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
+  onCloseAllSurfaces: () => void;
+  onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
@@ -40,6 +53,8 @@ const SURFACE_DISABLED_REASONS = {
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
 } as const;
+
+type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
 
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
@@ -257,6 +272,64 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
 
+  const handleTabContextMenu = useCallback(
+    async (event: ReactMouseEvent, surface: RightPanelSurface) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const api = readLocalApi();
+      if (!api) return;
+
+      const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
+      if (surfaceIndex < 0) return;
+
+      const items: ContextMenuItem<TabContextMenuAction>[] = [];
+      if (surface.kind === "file") {
+        items.push({ id: "copy-path", label: "Copy path" });
+      }
+      items.push(
+        { id: "close", label: "Close" },
+        {
+          id: "close-others",
+          label: "Close others",
+          disabled: props.surfaces.length <= 1,
+        },
+        {
+          id: "close-to-right",
+          label: "Close to the right",
+          disabled: surfaceIndex >= props.surfaces.length - 1,
+        },
+        {
+          id: "close-all",
+          label: "Close all",
+          disabled: props.surfaces.length === 0,
+        },
+      );
+
+      const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
+      switch (action) {
+        case "copy-path":
+          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
+          break;
+        case "close":
+          props.onCloseSurface(surface);
+          break;
+        case "close-others":
+          props.onCloseOtherSurfaces(surface);
+          break;
+        case "close-to-right":
+          props.onCloseSurfacesToRight(surface);
+          break;
+        case "close-all":
+          props.onCloseAllSurfaces();
+          break;
+        case null:
+          break;
+      }
+    },
+    [props],
+  );
+
   useEffect(() => {
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -291,6 +364,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <div
                   key={surface.id}
                   data-active-tab={active}
+                  onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
                     "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
                     active

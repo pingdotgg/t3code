@@ -304,6 +304,47 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("closing other surfaces keeps the selected surface active", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeOtherSurfaces(refA, "file:src/index.ts");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:src/index.ts",
+      surfaces: [{ id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" }],
+    });
+  });
+
+  it("closing surfaces to the right activates the selected surface when active was removed", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().closeSurfacesToRight(refA, "browser:tab-a");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "browser:tab-a",
+      surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
+    });
+  });
+
+  it("closing all surfaces leaves the panel open and empty", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+
+    useRightPanelStore.getState().closeAllSurfaces(refA);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
   it("reconciles browser surfaces without deleting other surface kinds", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().openBrowser(refA, "tab-a");

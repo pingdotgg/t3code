@@ -3100,26 +3100,19 @@ function ChatViewContent(props: ChatViewProps) {
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
   };
-  const closeRightPanelSurface = useCallback(
-    (surface: RightPanelSurface) => {
+  const cleanupRightPanelSurfaces = useCallback(
+    (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
-      if (surface.kind === "preview" && surface.resourceId) {
-        usePreviewStateStore.getState().removeSession(activeThreadRef, surface.resourceId);
-        const api = readEnvironmentApi(activeThreadRef.environmentId);
-        void api?.preview
-          .close({ threadId: activeThreadRef.threadId, tabId: surface.resourceId })
-          .catch(() => undefined);
-      }
-      useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
-      const nextActiveSurface = selectActiveRightPanelSurface(
-        useRightPanelStore.getState().byThreadKey,
-        activeThreadRef,
-      );
-      if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
-        usePreviewStateStore.getState().setActiveTab(activeThreadRef, nextActiveSurface.resourceId);
-      }
-      if (surface.kind === "terminal") {
-        const api = readEnvironmentApi(activeThreadRef.environmentId);
+
+      const api = readEnvironmentApi(activeThreadRef.environmentId);
+      for (const surface of surfaces) {
+        if (surface.kind === "preview" && surface.resourceId) {
+          usePreviewStateStore.getState().removeSession(activeThreadRef, surface.resourceId);
+          void api?.preview
+            .close({ threadId: activeThreadRef.threadId, tabId: surface.resourceId })
+            .catch(() => undefined);
+        }
+        if (surface.kind !== "terminal") continue;
         for (const terminalId of surface.terminalIds) {
           void api?.terminal
             .close({
@@ -3130,7 +3123,8 @@ function ChatViewContent(props: ChatViewProps) {
             .catch(() => undefined);
         }
       }
-      if (surface.kind === "diff" && diffOpen) {
+
+      if (diffOpen && surfaces.some((surface) => surface.kind === "diff")) {
         void navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId },
@@ -3141,6 +3135,93 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, diffOpen, environmentId, navigate, threadId],
   );
+  const syncActivePreviewSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    const nextActiveSurface = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      activeThreadRef,
+    );
+    if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
+      usePreviewStateStore.getState().setActiveTab(activeThreadRef, nextActiveSurface.resourceId);
+    }
+  }, [activeThreadRef]);
+  const closeRightPanelSurface = useCallback(
+    (surface: RightPanelSurface) => {
+      if (!activeThreadRef) return;
+      cleanupRightPanelSurfaces([surface]);
+      useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
+      syncActivePreviewSurface();
+    },
+    [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
+  );
+  const closeOtherRightPanelSurfaces = useCallback(
+    (surface: RightPanelSurface) => {
+      if (!activeThreadRef) return;
+      const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
+      cleanupRightPanelSurfaces(surfaces);
+      useRightPanelStore.getState().closeOtherSurfaces(activeThreadRef, surface.id);
+      syncActivePreviewSurface();
+    },
+    [
+      activeThreadRef,
+      cleanupRightPanelSurfaces,
+      rightPanelState.surfaces,
+      syncActivePreviewSurface,
+    ],
+  );
+  const closeRightPanelSurfacesToRight = useCallback(
+    (surface: RightPanelSurface) => {
+      if (!activeThreadRef) return;
+      const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
+      if (surfaceIndex < 0) return;
+      const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
+      cleanupRightPanelSurfaces(surfaces);
+      useRightPanelStore.getState().closeSurfacesToRight(activeThreadRef, surface.id);
+      syncActivePreviewSurface();
+    },
+    [
+      activeThreadRef,
+      cleanupRightPanelSurfaces,
+      rightPanelState.surfaces,
+      syncActivePreviewSurface,
+    ],
+  );
+  const closeAllRightPanelSurfaces = useCallback(() => {
+    if (!activeThreadRef) return;
+    cleanupRightPanelSurfaces(rightPanelState.surfaces);
+    useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
+  }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
+  const copyRightPanelFilePath = useCallback((relativePath: string) => {
+    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: "Clipboard API unavailable.",
+        }),
+      );
+      return;
+    }
+
+    void navigator.clipboard.writeText(relativePath).then(
+      () => {
+        toastManager.add({
+          type: "success",
+          title: "Path copied",
+          description: relativePath,
+        });
+      },
+      (error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to copy path",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      },
+    );
+  }, []);
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
       threadId: ThreadId;
@@ -4851,6 +4932,10 @@ function ChatViewContent(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurface}
           onCloseSurface={closeRightPanelSurface}
+          onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+          onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+          onCloseAllSurfaces={closeAllRightPanelSurfaces}
+          onCopyFilePath={copyRightPanelFilePath}
           onAddBrowser={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
@@ -4929,6 +5014,10 @@ function ChatViewContent(props: ChatViewProps) {
             terminalLabelsById={activeTerminalLabelsById}
             onActivate={activateRightPanelSurface}
             onCloseSurface={closeRightPanelSurface}
+            onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+            onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+            onCloseAllSurfaces={closeAllRightPanelSurfaces}
+            onCopyFilePath={copyRightPanelFilePath}
             onAddBrowser={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}

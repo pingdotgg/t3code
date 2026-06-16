@@ -58,6 +58,9 @@ interface RightPanelStoreState {
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   activateSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
+  closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
+  closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
+  closeAllSurfaces: (ref: ScopedThreadRef) => void;
   reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
   show: (ref: ScopedThreadRef) => void;
@@ -333,6 +336,43 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
             return { ...current, surfaces, activeSurfaceId: fallback?.id ?? null };
           }),
+        })),
+      closeOtherSurfaces: (ref, surfaceId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = current.surfaces.find((entry) => entry.id === surfaceId);
+            if (!surface || current.surfaces.length === 1) return current;
+            return {
+              ...current,
+              isOpen: true,
+              surfaces: [surface],
+              activeSurfaceId: surface.id,
+            };
+          }),
+        })),
+      closeSurfacesToRight: (ref, surfaceId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (index < 0 || index === current.surfaces.length - 1) return current;
+            const surfaces = current.surfaces.slice(0, index + 1);
+            const activeStillExists = surfaces.some(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            return {
+              ...current,
+              surfaces,
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : surfaceId,
+            };
+          }),
+        })),
+      closeAllSurfaces: (ref) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            current.surfaces.length === 0
+              ? current
+              : { ...current, isOpen: true, surfaces: [], activeSurfaceId: null },
+          ),
         })),
       reconcileBrowserSurfaces: (ref, tabIds) =>
         set((state) => ({
