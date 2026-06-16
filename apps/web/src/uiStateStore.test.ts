@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  reorderThreads,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
@@ -24,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadOrderByProject: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -366,6 +368,98 @@ describe("uiStateStore pure functions", () => {
     });
   });
 
+  it("syncThreads prunes stale thread keys and empty projects from manual order", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const thread3 = ThreadId.make("thread-3");
+    const initialState = makeUiState({
+      threadOrderByProject: {
+        "env-local:proj-a": [thread1, thread2],
+        "env-local:proj-b": [thread3],
+      },
+    });
+
+    const next = syncThreads(initialState, [{ key: thread1 }]);
+
+    expect(next.threadOrderByProject).toEqual({
+      "env-local:proj-a": [thread1],
+    });
+  });
+
+  it("syncThreads leaves manual order untouched when every thread is retained", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      threadOrderByProject: {
+        "env-local:proj-a": [thread1, thread2],
+      },
+    });
+
+    const next = syncThreads(initialState, [{ key: thread1 }, { key: thread2 }]);
+
+    expect(next.threadOrderByProject).toBe(initialState.threadOrderByProject);
+  });
+
+  it("reorderThreads moves a thread down past its target within a project", () => {
+    const initialState = makeUiState();
+
+    const next = reorderThreads(
+      initialState,
+      "env-local:proj-a",
+      ["t-1", "t-2", "t-3"],
+      ["t-1"],
+      "t-3",
+    );
+
+    expect(next.threadOrderByProject["env-local:proj-a"]).toEqual(["t-2", "t-3", "t-1"]);
+  });
+
+  it("reorderThreads moves a thread up before its target within a project", () => {
+    const initialState = makeUiState();
+
+    const next = reorderThreads(
+      initialState,
+      "env-local:proj-a",
+      ["t-1", "t-2", "t-3"],
+      ["t-3"],
+      "t-1",
+    );
+
+    expect(next.threadOrderByProject["env-local:proj-a"]).toEqual(["t-3", "t-1", "t-2"]);
+  });
+
+  it("reorderThreads seeds order from the live list on first drag", () => {
+    const initialState = makeUiState();
+
+    const next = reorderThreads(initialState, "env-local:proj-a", ["t-1", "t-2"], ["t-2"], "t-1");
+
+    expect(next.threadOrderByProject["env-local:proj-a"]).toEqual(["t-2", "t-1"]);
+  });
+
+  it("reorderThreads is a no-op when dragging onto itself", () => {
+    const initialState = makeUiState({
+      threadOrderByProject: { "env-local:proj-a": ["t-1", "t-2"] },
+    });
+
+    const next = reorderThreads(initialState, "env-local:proj-a", ["t-1", "t-2"], ["t-1"], "t-1");
+
+    expect(next).toBe(initialState);
+  });
+
+  it("reorderThreads is a no-op when the target is not in the live list", () => {
+    const initialState = makeUiState();
+
+    const next = reorderThreads(
+      initialState,
+      "env-local:proj-a",
+      ["t-1", "t-2"],
+      ["t-1"],
+      "missing",
+    );
+
+    expect(next).toBe(initialState);
+  });
+
   it("syncThreads seeds visit state for unseen snapshot threads", () => {
     const thread1 = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -566,6 +660,28 @@ describe("uiStateStore persistence round-trip", () => {
     const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
 
     expect(rehydrated.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+  });
+
+  it("persists manual thread order verbatim across restart", () => {
+    // Thread keys are stable, so unlike project order this round-trips with no
+    // id→cwd remapping: what reorderThreads stores is exactly what reloads.
+    const state = reorderThreads(
+      makeUiState(),
+      "env-local:proj-a",
+      ["t-1", "t-2", "t-3"],
+      ["t-3"],
+      "t-1",
+    );
+    expect(state.threadOrderByProject["env-local:proj-a"]).toEqual(["t-3", "t-1", "t-2"]);
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.threadOrderByProject).toEqual({
+      "env-local:proj-a": ["t-3", "t-1", "t-2"],
+    });
   });
 
   it("persists the default advertised endpoint preference", () => {

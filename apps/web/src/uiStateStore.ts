@@ -21,6 +21,10 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  // Manual thread order, keyed by sidebar project (logical) key. Thread keys are
+  // stable (env + threadId), so unlike `projectOrderCwds` this persists directly
+  // without any id→cwd remapping.
+  threadOrderByProject?: Record<string, string[]>;
 }
 
 export interface UiProjectState {
@@ -31,6 +35,8 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  /** Manual thread order per sidebar project (logical) key. */
+  threadOrderByProject: Record<string, string[]>;
 }
 
 export interface UiEndpointState {
@@ -57,6 +63,7 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadOrderByProject: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -103,10 +110,41 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      threadOrderByProject: sanitizePersistedThreadOrderByProject(parsed.threadOrderByProject),
     };
   } catch {
     return initialState;
   }
+}
+
+function sanitizePersistedThreadOrderByProject(
+  value: PersistedUiState["threadOrderByProject"],
+): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const nextState: Record<string, string[]> = {};
+  for (const [projectKey, threadKeys] of Object.entries(value)) {
+    if (!projectKey || !Array.isArray(threadKeys)) {
+      continue;
+    }
+
+    const seen = new Set<string>();
+    const nextThreadKeys: string[] = [];
+    for (const threadKey of threadKeys) {
+      if (typeof threadKey === "string" && threadKey.length > 0 && !seen.has(threadKey)) {
+        seen.add(threadKey);
+        nextThreadKeys.push(threadKey);
+      }
+    }
+
+    if (nextThreadKeys.length > 0) {
+      nextState[projectKey] = nextThreadKeys;
+    }
+  }
+
+  return nextState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -195,6 +233,7 @@ export function persistState(state: UiState): void {
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        threadOrderByProject: state.threadOrderByProject,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -224,10 +263,29 @@ function recordsEqual<T>(left: Record<string, T>, right: Record<string, T>): boo
   return true;
 }
 
+function stringListsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function projectOrdersEqual(left: readonly string[], right: readonly string[]): boolean {
-  return (
-    left.length === right.length && left.every((projectId, index) => projectId === right[index])
-  );
+  return stringListsEqual(left, right);
+}
+
+function threadOrderByProjectEqual(
+  left: Record<string, string[]>,
+  right: Record<string, string[]>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) {
+    return false;
+  }
+  for (const key of leftKeys) {
+    const rightValue = right[key];
+    if (!rightValue || !stringListsEqual(left[key]!, rightValue)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nestedBooleanRecordsEqual(
@@ -427,12 +485,22 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  // Drop manual order entries for threads that no longer exist; a project whose
+  // every thread is gone (or that was removed entirely) collapses to no entry.
+  const nextThreadOrderByProject: Record<string, string[]> = {};
+  for (const [projectKey, threadKeys] of Object.entries(state.threadOrderByProject)) {
+    const retained = threadKeys.filter((threadKey) => retainedThreadIds.has(threadKey));
+    if (retained.length > 0) {
+      nextThreadOrderByProject[projectKey] = retained;
+    }
+  }
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
-    )
+    ) &&
+    threadOrderByProjectEqual(state.threadOrderByProject, nextThreadOrderByProject)
   ) {
     return state;
   }
@@ -440,6 +508,7 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadOrderByProject: nextThreadOrderByProject,
   };
 }
 
@@ -633,6 +702,65 @@ export function reorderProjects(
   };
 }
 
+/**
+ * Reorder threads within a single sidebar project (or group). `orderedThreadKeys`
+ * is the full, currently-displayed order — it seeds the persisted order even when
+ * the user has never dragged this project before. Mirrors `reorderProjects`, but
+ * operates on the live order rather than a pre-existing persisted array so it
+ * works the first time a thread is dragged.
+ */
+export function reorderThreads(
+  state: UiState,
+  projectKey: string,
+  orderedThreadKeys: readonly string[],
+  draggedThreadKeys: readonly string[],
+  targetThreadKey: string,
+): UiState {
+  if (draggedThreadKeys.length === 0) {
+    return state;
+  }
+  const draggedSet = new Set(draggedThreadKeys);
+  if (draggedSet.has(targetThreadKey)) {
+    return state;
+  }
+
+  const nextOrder = [...orderedThreadKeys];
+  const originalTargetIndex = nextOrder.indexOf(targetThreadKey);
+  if (originalTargetIndex < 0) {
+    return state;
+  }
+
+  const removed: string[] = [];
+  let draggedBeforeTarget = 0;
+  for (let i = nextOrder.length - 1; i >= 0; i--) {
+    if (draggedSet.has(nextOrder[i]!)) {
+      removed.unshift(nextOrder.splice(i, 1)[0]!);
+      if (i < originalTargetIndex) {
+        draggedBeforeTarget++;
+      }
+    }
+  }
+  if (removed.length === 0) {
+    return state;
+  }
+
+  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  nextOrder.splice(insertIndex, 0, ...removed);
+
+  const previousOrder = state.threadOrderByProject[projectKey];
+  if (previousOrder && stringListsEqual(previousOrder, nextOrder)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    threadOrderByProject: {
+      ...state.threadOrderByProject,
+      [projectKey]: nextOrder,
+    },
+  };
+}
+
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
@@ -646,6 +774,12 @@ interface UiStateStore extends UiState {
   reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+  ) => void;
+  reorderThreads: (
+    projectKey: string,
+    orderedThreadKeys: readonly string[],
+    draggedThreadKeys: readonly string[],
+    targetThreadKey: string,
   ) => void;
 }
 
@@ -667,6 +801,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
+  reorderThreads: (projectKey, orderedThreadKeys, draggedThreadKeys, targetThreadKey) =>
+    set((state) =>
+      reorderThreads(state, projectKey, orderedThreadKeys, draggedThreadKeys, targetThreadKey),
+    ),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

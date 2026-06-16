@@ -80,6 +80,7 @@ import {
   useStore,
 } from "../store";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   ADDON_ICON_CLASS,
@@ -406,6 +407,14 @@ function OpenCommandPaletteDialog() {
     useHandleNewThread();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const threadOrderByProject = useUiStateStore((state) => state.threadOrderByProject);
+  // Flattened manual thread order so "open project" navigates to the thread
+  // that is first in the sidebar under manual sort; the per-project filter in
+  // getLatestThreadForProject means only the target project's keys match.
+  const manualThreadOrder = useMemo(
+    () => Object.values(threadOrderByProject).flat(),
+    [threadOrderByProject],
+  );
   const keybindings = useServerKeybindings();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
@@ -601,6 +610,7 @@ function OpenCommandPaletteDialog() {
         threads.filter((thread) => thread.environmentId === project.environmentId),
         project.id,
         settings.sidebarThreadSortOrder,
+        manualThreadOrder,
       );
       if (latestThread) {
         await navigate({
@@ -618,6 +628,7 @@ function OpenCommandPaletteDialog() {
     },
     [
       handleNewThread,
+      manualThreadOrder,
       navigate,
       settings.defaultThreadEnvMode,
       settings.sidebarThreadSortOrder,
@@ -1099,6 +1110,7 @@ function OpenCommandPaletteDialog() {
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
           settings.sidebarThreadSortOrder,
+          manualThreadOrder,
         );
         if (latestThread) {
           await navigate({
@@ -1150,6 +1162,7 @@ function OpenCommandPaletteDialog() {
       browseEnvironmentPlatform,
       currentProjectCwdForBrowse,
       handleNewThread,
+      manualThreadOrder,
       navigate,
       projects,
       setOpen,

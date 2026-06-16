@@ -2,11 +2,17 @@ import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
+  orderItemsByPreferredIds,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import type { SidebarThreadSummary, Thread } from "../types";
+
+// Re-exported from lib/threadSort so existing importers keep using this path;
+// it lives in the sort lib to stay reusable without an import cycle.
+export { orderItemsByPreferredIds };
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
@@ -211,34 +217,6 @@ export function resolveSidebarNewThreadSeedContext(input: {
   return {
     envMode: input.defaultEnvMode,
   };
-}
-
-export function orderItemsByPreferredIds<TItem, TId>(input: {
-  items: readonly TItem[];
-  preferredIds: readonly TId[];
-  getId: (item: TItem) => TId;
-}): TItem[] {
-  const { getId, items, preferredIds } = input;
-  if (preferredIds.length === 0) {
-    return [...items];
-  }
-
-  const itemsById = new Map(items.map((item) => [getId(item), item] as const));
-  const preferredIdSet = new Set(preferredIds);
-  const emittedPreferredIds = new Set<TId>();
-  const ordered = preferredIds.flatMap((id) => {
-    if (emittedPreferredIds.has(id)) {
-      return [];
-    }
-    const item = itemsById.get(id);
-    if (!item) {
-      return [];
-    }
-    emittedPreferredIds.add(id);
-    return [item];
-  });
-  const remaining = items.filter((item) => !preferredIdSet.has(getId(item)));
-  return [...ordered, ...remaining];
 }
 
 export function getVisibleSidebarThreadIds<TThreadId>(
@@ -460,30 +438,41 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "environmentId"> &
+    ThreadSortInput,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
   sortOrder: SidebarThreadSortOrder;
   deletedThreadIds?: ReadonlySet<T["id"]>;
+  // Manual order (scoped thread keys) so the fallback matches the thread that
+  // is actually first in the sidebar under manual sort, not raw store order.
+  manualThreadOrder?: readonly string[];
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const { deletedThreadId, deletedThreadIds, manualThreadOrder, sortOrder, threads } = input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
   }
 
-  return (
-    sortThreads(
-      threads.filter(
-        (thread) =>
-          thread.projectId === deletedThread.projectId &&
-          thread.id !== deletedThreadId &&
-          !deletedThreadIds?.has(thread.id),
-      ),
-      sortOrder,
-    )[0]?.id ?? null
+  const candidates = sortThreads(
+    threads.filter(
+      (thread) =>
+        thread.projectId === deletedThread.projectId &&
+        thread.id !== deletedThreadId &&
+        !deletedThreadIds?.has(thread.id),
+    ),
+    sortOrder,
   );
+  const ordered =
+    sortOrder === "manual" && manualThreadOrder && manualThreadOrder.length > 0
+      ? orderItemsByPreferredIds({
+          items: candidates,
+          preferredIds: manualThreadOrder,
+          getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        })
+      : candidates;
+  return ordered[0]?.id ?? null;
 }
 export function getProjectSortTimestamp(
   project: SidebarProject,
