@@ -136,9 +136,12 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.provide(workspaceSearchIndexes.get(normalizedCwd)),
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to refresh workspace search index", {
-            cwd,
-            cause,
+          Effect.gen(function* () {
+            yield* Effect.logWarning("Failed to refresh workspace search index", {
+              cwd,
+              cause,
+            });
+            yield* workspaceSearchIndexes.invalidate(normalizedCwd);
           }),
         ),
       );

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import fsPromises from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -260,6 +261,27 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             expect.objectContaining({ path: "src/components/Composer.tsx" }),
           ]),
         );
+      }),
+    );
+
+    it.effect("rebuilds the cached index after refresh fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-refresh-failure-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const createSpy = vi.spyOn(FileFinder, "create");
+        yield* workspaceEntries.list({ cwd });
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        vi.spyOn(FileFinder.prototype, "scanFiles").mockReturnValueOnce({
+          ok: false,
+          error: "scan failed",
+        });
+        yield* workspaceEntries.refresh(cwd);
+
+        yield* workspaceEntries.list({ cwd });
+        expect(createSpy).toHaveBeenCalledTimes(2);
       }),
     );
   });
