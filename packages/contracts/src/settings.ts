@@ -515,8 +515,8 @@ const CodexSettingsPatch = Schema.Struct({
 
 const CopilotSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
-  serverUrl: Schema.optionalKey(Schema.String),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  serverUrl: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
