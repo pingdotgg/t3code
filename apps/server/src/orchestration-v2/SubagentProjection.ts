@@ -5,6 +5,8 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderRef,
+  OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ProviderThreadId,
@@ -12,7 +14,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -126,4 +128,48 @@ export function makeSubagentConversationArtifacts(input: {
           streaming: false,
         };
   return { message, turnItem };
+}
+
+export function subagentResultForRun(
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+): {
+  readonly text: string;
+  readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
+  readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
+} {
+  const message =
+    projection.messages
+      .filter(
+        (candidate) =>
+          candidate.runId === run.id &&
+          candidate.role === "assistant" &&
+          candidate.text.trim().length > 0,
+      )
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0] ?? null;
+  const turnItem =
+    projection.turnItems
+      .filter(
+        (
+          candidate,
+        ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }> =>
+          candidate.runId === run.id &&
+          candidate.type === "assistant_message" &&
+          candidate.text.trim().length > 0,
+      )
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  const text =
+    message?.text ??
+    turnItem?.text ??
+    (run.status === "completed"
+      ? "Child task completed without an assistant result."
+      : `Child task ended with status ${run.status}.`);
+  return {
+    text,
+    messageId: message?.id ?? turnItem?.messageId ?? null,
+    turnItemId: turnItem?.id ?? null,
+  };
 }

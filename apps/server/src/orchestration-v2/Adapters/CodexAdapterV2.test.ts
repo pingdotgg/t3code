@@ -1,8 +1,10 @@
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -16,14 +18,97 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { ChildProcess } from "effect/unstable/process";
 
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
+  buildCodexTurnStartParams,
+  codexAppServerMcpLaunchConfig,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
+  projectCodexDynamicToolItem,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 
+describe("CodexAdapterV2 runtime policy", () => {
+  it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
+    Effect.gen(function* () {
+      const build = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") =>
+        buildCodexTurnStartParams({
+          nativeThreadId: `native-${runtimeMode}`,
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode,
+            interactionMode: "default",
+            cwd: null,
+          },
+          model: "gpt-5.4",
+        });
+
+      const approvalRequired = yield* build("approval-required");
+      const autoAcceptEdits = yield* build("auto-accept-edits");
+      const fullAccess = yield* build("full-access");
+
+      assert.equal(approvalRequired.approvalPolicy, "untrusted");
+      assert.equal(approvalRequired.sandboxPolicy?.type, "readOnly");
+      assert.equal(autoAcceptEdits.approvalPolicy, "on-request");
+      assert.equal(autoAcceptEdits.sandboxPolicy?.type, "workspaceWrite");
+      assert.equal(fullAccess.approvalPolicy, "never");
+      assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
+    }),
+  );
+
+  it.effect("preserves explicit Codex turn policy overrides", () =>
+    Effect.gen(function* () {
+      const params = yield* buildCodexTurnStartParams({
+        nativeThreadId: "native-override",
+        codexInput: [{ type: "text", text: "test" }],
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+          approvalPolicy: "on-request",
+          sandboxPolicy: {
+            type: "readOnly",
+          },
+        },
+        model: "gpt-5.4",
+      });
+
+      assert.equal(params.approvalPolicy, "on-request");
+      assert.equal(params.sandboxPolicy?.type, "readOnly");
+    }),
+  );
+});
+
 describe("CodexAdapterV2 process spawning", () => {
+  it("injects the thread-scoped MCP endpoint and bearer token", () => {
+    const threadId = ThreadId.make("thread-codex-mcp");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-codex-mcp"),
+      threadId,
+      providerSessionId: "mcp-session-codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-codex-token",
+    });
+
+    try {
+      assert.deepEqual(codexAppServerMcpLaunchConfig(threadId), {
+        args: [
+          "-c",
+          "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp",
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ],
+        environment: {
+          T3_MCP_BEARER_TOKEN: "secret-codex-token",
+        },
+      });
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+  });
+
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
       const command = yield* makeCodexAppServerSpawnCommand({
@@ -77,6 +162,58 @@ describe("CodexAdapterV2 process spawning", () => {
       Effect.provideService(SpawnExecutableResolution, () => "C:\\bin\\codex.exe"),
     ),
   );
+});
+
+describe("CodexAdapterV2 dynamic tool projection", () => {
+  it("preserves MCP arguments and prefers structured output", () => {
+    const projection = projectCodexDynamicToolItem({
+      type: "mcpToolCall",
+      id: "call-create-threads",
+      server: "t3-code",
+      tool: "create_threads",
+      status: "completed",
+      arguments: {
+        threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
+      },
+      result: {
+        content: [{ type: "text", text: '{"threads":[{"threadId":"thread:mcp:fixture:0"}]}' }],
+        structuredContent: {
+          threads: [{ threadId: "thread:mcp:fixture:0" }],
+        },
+      },
+    });
+
+    assert.deepEqual(projection, {
+      toolName: "t3-code.create_threads",
+      input: {
+        threads: [{ title: "Fixture child", prompt: "fixture child prompt" }],
+      },
+      output: {
+        threads: [{ threadId: "thread:mcp:fixture:0" }],
+      },
+      status: "completed",
+    });
+  });
+
+  it("preserves namespaced dynamic tool output", () => {
+    const projection = projectCodexDynamicToolItem({
+      type: "dynamicToolCall",
+      id: "call-dynamic",
+      namespace: "workspace",
+      tool: "inspect",
+      status: "failed",
+      arguments: { path: "package.json" },
+      contentItems: [{ type: "inputText", text: "inspection failed" }],
+      success: false,
+    });
+
+    assert.deepEqual(projection, {
+      toolName: "workspace.inspect",
+      input: { path: "package.json" },
+      output: [{ type: "inputText", text: "inspection failed" }],
+      status: "failed",
+    });
+  });
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {

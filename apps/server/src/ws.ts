@@ -1452,7 +1452,9 @@ const makeWsRpcLayer = (
               "orchestration_v2.thread_id":
                 command.type === "thread.fork" || command.type === "thread.merge_back"
                   ? command.targetThreadId
-                  : command.threadId,
+                  : command.type === "delegated_task.request"
+                    ? command.parentThreadId
+                    : command.threadId,
               ...(command.type === "thread.fork" || command.type === "thread.merge_back"
                 ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
                 : {}),

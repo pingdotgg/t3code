@@ -100,6 +100,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "checkpoint.rollback":
     case "provider.switch":
       return [command.threadId];
+    case "delegated_task.request":
+      return [command.parentThreadId];
     case "thread.fork":
     case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];
