@@ -365,6 +365,17 @@ export const VcsPanelRemote = Schema.Struct({
 });
 export type VcsPanelRemote = typeof VcsPanelRemote.Type;
 
+export const VcsPanelActionableForkBranch = Schema.Struct({
+  localBranchName: TrimmedNonEmptyStringSchema,
+  remoteName: TrimmedNonEmptyStringSchema,
+  remoteBranchName: TrimmedNonEmptyStringSchema,
+  remoteRefName: TrimmedNonEmptyStringSchema,
+  aheadCount: NonNegativeInt,
+  behindCount: NonNegativeInt,
+  lastActivityAt: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type VcsPanelActionableForkBranch = typeof VcsPanelActionableForkBranch.Type;
+
 export const VcsPanelStash = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
   sha: Schema.NullOr(TrimmedNonEmptyStringSchema),
@@ -455,6 +466,7 @@ export const VcsPanelSnapshotResult = Schema.Struct({
   localBranches: Schema.Array(VcsRef),
   branchDetails: Schema.Array(VcsPanelBranchDetails),
   remotes: Schema.Array(VcsPanelRemote),
+  actionableForkBranches: Schema.Array(VcsPanelActionableForkBranch),
   stashes: Schema.Array(VcsPanelStash),
   recentCommits: Schema.Array(VcsPanelCommitSummary),
   defaultCompareRef: Schema.NullOr(TrimmedNonEmptyStringSchema),

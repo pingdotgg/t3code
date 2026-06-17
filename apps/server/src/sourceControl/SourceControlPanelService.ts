@@ -7,6 +7,7 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 import {
   GitCommandError,
   type VcsPanelAddRemoteInput,
+  type VcsPanelActionableForkBranch,
   type VcsPanelBranchActionInput,
   type VcsPanelBranchCommitsInput,
   type VcsPanelBranchCommitsResult,
@@ -410,6 +411,19 @@ function parseBranchTrackCounts(track: string): {
   };
 }
 
+function parseAheadBehindCounts(output: string): {
+  readonly aheadCount: number;
+  readonly behindCount: number;
+} {
+  const [aheadRaw = "0", behindRaw = "0"] = output.trim().split(/\s+/u);
+  const aheadCount = Number.parseInt(aheadRaw, 10);
+  const behindCount = Number.parseInt(behindRaw, 10);
+  return {
+    aheadCount: Number.isFinite(aheadCount) && aheadCount > 0 ? aheadCount : 0,
+    behindCount: Number.isFinite(behindCount) && behindCount > 0 ? behindCount : 0,
+  };
+}
+
 function parseLocalBranches(output: string): VcsRef[] {
   const rows = output
     .split(/\r?\n/u)
@@ -457,7 +471,9 @@ function parseLocalBranches(output: string): VcsRef[] {
     .toSorted(compareBranchActivity);
 }
 
-function branchActivityTime(value: { readonly lastActivityAt?: string | null }): number {
+function branchActivityTime(value: {
+  readonly lastActivityAt?: string | null | undefined;
+}): number {
   if (!value.lastActivityAt) return 0;
   const time = Date.parse(value.lastActivityAt);
   return Number.isFinite(time) ? time : 0;
@@ -801,6 +817,86 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.orElseSucceed(() => 0),
     );
 
+  const countAheadBehindForRefs = (cwd: string, leftRef: string, rightRef: string) =>
+    run("vcs.panel.branchForkAheadBehind", cwd, [
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${leftRef}...${rightRef}`,
+    ]).pipe(
+      Effect.map(parseAheadBehindCounts),
+      Effect.orElseSucceed(() => ({ aheadCount: 0, behindCount: 0 })),
+    );
+
+  const refsShareAncestry = (cwd: string, leftRef: string, rightRef: string) =>
+    run("vcs.panel.branchForkMergeBase", cwd, ["merge-base", leftRef, rightRef], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((output) => output.trim().length > 0),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const actionableForkBranches = (
+    cwd: string,
+    localBranches: readonly VcsRef[],
+    remotes: readonly VcsPanelRemote[],
+  ): Effect.Effect<readonly VcsPanelActionableForkBranch[], never> => {
+    if (remotes.length < 2) return Effect.succeed([]);
+    const candidates = localBranches.flatMap((localBranch) =>
+      remotes.flatMap((remote) =>
+        remote.branches
+          .filter((remoteBranch) => remoteBranch.name === localBranch.name)
+          .filter((remoteBranch) => localBranch.upstreamName !== remoteBranch.fullRefName)
+          .map((remoteBranch) => ({ localBranch, remote, remoteBranch })),
+      ),
+    );
+    return Effect.forEach(
+      candidates,
+      ({ localBranch, remote, remoteBranch }) =>
+        Effect.gen(function* () {
+          const shareAncestry = yield* refsShareAncestry(
+            cwd,
+            localBranch.name,
+            remoteBranch.fullRefName,
+          );
+          if (!shareAncestry) return null;
+          const counts = yield* countAheadBehindForRefs(
+            cwd,
+            localBranch.name,
+            remoteBranch.fullRefName,
+          );
+          if (counts.behindCount <= 0) return null;
+          const fork = {
+            localBranchName: localBranch.name,
+            remoteName: remote.name,
+            remoteBranchName: remoteBranch.name,
+            remoteRefName: remoteBranch.fullRefName,
+            aheadCount: counts.aheadCount,
+            behindCount: counts.behindCount,
+          };
+          return {
+            ...fork,
+            ...(remoteBranch.lastActivityAt ? { lastActivityAt: remoteBranch.lastActivityAt } : {}),
+          } satisfies VcsPanelActionableForkBranch;
+        }),
+      { concurrency: 4 },
+    ).pipe(
+      Effect.map((forks) =>
+        forks
+          .flatMap((fork) => (fork ? [fork] : []))
+          .toSorted((left, right) => {
+            const activity = branchActivityTime(right) - branchActivityTime(left);
+            return activity !== 0
+              ? activity
+              : `${left.remoteName}/${left.remoteBranchName}`.localeCompare(
+                  `${right.remoteName}/${right.remoteBranchName}`,
+                );
+          }),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
+  };
+
   const commitShasForRange = (cwd: string, range: string) =>
     run("vcs.panel.branchCommitShas", cwd, ["rev-list", range]).pipe(
       Effect.map((output) =>
@@ -1142,6 +1238,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         localBranches.find((ref) => ref.isDefault && !ref.current)?.name ??
         localBranches.find((ref) => !ref.current)?.name ??
         null;
+      const forkBranches = yield* actionableForkBranches(
+        input.cwd,
+        localBranches,
+        remotesWithBranches,
+      );
       return {
         status: panelStatusFromLocal(localStatus, porcelain),
         changeGroups: parsePorcelainStatus({
@@ -1152,6 +1253,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         localBranches,
         branchDetails: [],
         remotes: remotesWithBranches,
+        actionableForkBranches: forkBranches,
         stashes: parseStashes(stashes),
         recentCommits: [],
         defaultCompareRef,

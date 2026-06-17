@@ -52,10 +52,15 @@ This keeps externally-created changes visible without requiring a window blur/re
 
 - A dirty `Working tree` row, shown first and omitted when the tree is clean.
 - Local branches that are local-only, ahead, behind, diverged, or otherwise require action.
+- Same-name local branches that are behind likely fork branches on other remotes.
 - Stashes.
 - Other checked-out worktree branch labels when available.
 
 Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a remote branch.
+
+When a repository has multiple remotes, the server checks local branches against same-name branches on other remotes. A same-name remote branch is treated as a likely fork only when the refs share ancestry. The Actionable row is shown only when the local branch is behind that remote branch; a local branch that is only ahead of the other remote branch is omitted because it is rarely meant to push directly to that upstream. These fork rows use the other remote branch as their default `vs. ...` compare base and still show `↑x`/`↓y` counts against that remote branch.
+
+The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every few minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh.
 
 Items are sorted by operational urgency, then recency. An unclean working tree is always first. Branch urgency is based on conflicts/diverged, behind, unpushed, dirty, and stale states. Branch and commit rows include succinct relative dates such as `5 minutes ago`, `yesterday`, `4 days ago`, and `last week`.
 
@@ -75,7 +80,8 @@ Commit selected and stash selected generate their messages by default. Holding S
 
 File rows are compact. They show a one-letter status indicator such as `A`, `D`, or `M`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Expanding a file row opens an inline diff for that file change in working-tree, commit, stash, branch, and compare file lists. The row actions are:
 
-- Open file in the preferred editor or host bridge.
+- Open file in the right-panel File surface.
+- Open in VS Code through the preferred editor or host bridge.
 - Discard changes, with confirmation.
 
 The `Working tree` context menu includes selected-file commit and stash actions plus a separated destructive `Discard selected changes` action.
@@ -109,7 +115,7 @@ Expanding a branch reveals branch details:
 - `History`
 - `Changes`
 
-Every expanded branch shows the `vs. ...` row first. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
+Every expanded branch shows the `vs. ...` row first. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. Actionable same-name fork rows default this base to the other remote branch they are tracking for updates. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
 
 The branch-level `Changes` row summarizes the selected comparison as file count and line stats before expanding to the changed-file list.
 
@@ -166,12 +172,12 @@ Expanding a remote lists actual remote branches; pseudo-ref rows such as the rem
 
 The panel routes all repository mutations through server-side RPC methods and refreshes status after operations. Implemented operation groups include:
 
-- Snapshot and detail loading: panel snapshot, branch details, branch commit pages, stash details, compare data, and file-change details.
+- Snapshot and detail loading: panel snapshot, same-name fork ancestry checks, branch details, branch commit pages, stash details, compare data, and file-change details.
 - Working tree operations: selected-file commit, selected-file stash, discard selected files, discard individual changed files, read/open file data, stage/unstage helpers kept at the service boundary for compatibility.
 - Branch operations: fetch branch, pull, push, publish, switch, delete, undo latest commit, merge branch into current branch, and rebase current branch onto another branch or commit.
 - Commit operations: revert commit, checkout detached HEAD, and create branch from commit.
 - Stash operations: apply, pop, and drop.
-- Remote operations: list, add, remove, fetch one remote, and fetch all remotes.
+- Remote operations: list, add, remove, fetch one remote, fetch one branch ref, periodic Actionable fetch, and fetch all remotes.
 
 Non-current branch fetches are scoped to the selected branch. Operation busy state is keyed per action target so fetching one branch does not disable equivalent actions on other branches or remote entries.
 
