@@ -14,3 +14,5 @@
 20. `20-version-control-phase-2-source-control-provider-foundation.md`
 21. `21-commercial-licensing-readiness.md`
 22. `22-student-workspace.md`
+23. `23-materials-workspace-and-pdf.md`
+24. `24-codex-onboarding-install-and-login.md`
