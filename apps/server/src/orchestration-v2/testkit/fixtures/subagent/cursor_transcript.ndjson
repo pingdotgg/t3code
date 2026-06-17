@@ -1,0 +1,474 @@
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"subagent","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":true,"enableAgentRetries":true}}}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
+{"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Spawn 2 subagents, one to read package.json and one to read tsconfig.json","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","agentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"thinking-delta","text":"Spawning two subagents"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"thinking-delta","text":" to read package.json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"thinking-delta","text":" and tsconfig.json."}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-completed","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"thinking-completed","thinkingDurationMs":130}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Sp"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"awning"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" two"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" sub"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"agents"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" in"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" parallel"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" to"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" read"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"package"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":".json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" and"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ts"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"config"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":".json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`.\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":72}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"partial-tool-call","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"partial-tool-call","callId":"tool_0c313ecc-9783-4a21-b0d5-74150331312","toolCall":{"type":"task","args":{"description":"Read package.json","prompt":"Read the file package.json in the workspace root at /tmp/cursor-replay-subagent/package.json and return its full contents along with a brief summary of what the project is (name, dependencies, scripts, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"414d4889-6f0e-4866-9379-cd8a57673251","mode":"unspecified"}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"tool-call-started","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"tool-call-started","callId":"tool_0c313ecc-9783-4a21-b0d5-74150331312","toolCall":{"type":"task","args":{"description":"Read package.json","prompt":"Read the file package.json in the workspace root at /tmp/cursor-replay-subagent/package.json and return its full contents along with a brief summary of what the project is (name, dependencies, scripts, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"414d4889-6f0e-4866-9379-cd8a57673251","mode":"unspecified"}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":78}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"partial-tool-call","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"partial-tool-call","callId":"tool_1d92aa7d-e115-4918-9cf6-d384c92098a","toolCall":{"type":"task","args":{"description":"Read tsconfig.json","prompt":"Read the file tsconfig.json in the workspace root at /tmp/cursor-replay-subagent/tsconfig.json and return its full contents along with a brief summary of the TypeScript configuration (compiler options, target, module settings, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"4eab0559-c807-4f08-a101-c8d99d895c82","mode":"unspecified"}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"tool-call-started","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"tool-call-started","callId":"tool_1d92aa7d-e115-4918-9cf6-d384c92098a","toolCall":{"type":"task","args":{"description":"Read tsconfig.json","prompt":"Read the file tsconfig.json in the workspace root at /tmp/cursor-replay-subagent/tsconfig.json and return its full contents along with a brief summary of the TypeScript configuration (compiler options, target, module settings, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"4eab0559-c807-4f08-a101-c8d99d895c82","mode":"unspecified"}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"tool-call-completed","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"tool-call-completed","callId":"tool_0c313ecc-9783-4a21-b0d5-74150331312","toolCall":{"type":"task","args":{"description":"Read package.json","prompt":"Read the file package.json in the workspace root at /tmp/cursor-replay-subagent/package.json and return its full contents along with a brief summary of what the project is (name, dependencies, scripts, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"414d4889-6f0e-4866-9379-cd8a57673251","mode":"unspecified"},"result":{"status":"success","value":{"conversationSteps":[{"toolCall":{"readToolCall":{"args":{"path":"/tmp/cursor-replay-subagent/package.json"},"result":{"success":{"content":"{\"name\":\"cursor-read-only-fixture\",\"private\":true,\"scripts\":{\"typecheck\":\"tsc --noEmit\"}}","totalLines":1,"fileSize":89,"path":"/tmp/cursor-replay-subagent/package.json","readRange":{"startLine":1,"endLine":1}}}},"toolCallId":"tool_45b696cd-7ad1-4fb6-bdd5-32452d02ea5"}},{"assistantMessage":{"text":"## Full contents\n\n```json\n{\n  \"name\": \"cursor-read-only-fixture\",\n  \"private\": true,\n  \"scripts\": {\n    \"typecheck\": \"tsc --noEmit\"\n  }\n}\n```\n\n## Summary\n\n| Field | Value |\n|--------|--------|\n| **Name** | `cursor-read-only-fixture` |\n| **Private** | `true` (not intended for npm publish) |\n| **Scripts** | `typecheck` — runs TypeScript compiler in check-only mode (`tsc --noEmit`) |\n| **Dependencies** | None listed |\n| **Dev dependencies** | None listed |\n\nThis is a minimal TypeScript fixture project. It has no runtime or build dependencies in `package.json`; the only script is type-checking via `tsc`. The name suggests it’s a read-only test or demo setup for Cursor/orchestrator tooling rather than a full application."}}],"agentId":"414d4889-6f0e-4866-9379-cd8a57673251","isBackground":false,"durationMs":3570,"backgroundReason":"unspecified"}}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":258}}}
+{"type":"emit_inbound","label":"tool-call-completed","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"tool-call-completed","callId":"tool_1d92aa7d-e115-4918-9cf6-d384c92098a","toolCall":{"type":"task","args":{"description":"Read tsconfig.json","prompt":"Read the file tsconfig.json in the workspace root at /tmp/cursor-replay-subagent/tsconfig.json and return its full contents along with a brief summary of the TypeScript configuration (compiler options, target, module settings, etc.).","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"4eab0559-c807-4f08-a101-c8d99d895c82","mode":"unspecified"},"result":{"status":"success","value":{"conversationSteps":[{"assistantMessage":{"text":"Reading `tsconfig.json` and summarizing its TypeScript settings.\n"}},{"toolCall":{"readToolCall":{"args":{"path":"/tmp/cursor-replay-subagent/tsconfig.json"},"result":{"success":{"content":"{\"compilerOptions\":{\"module\":\"ESNext\",\"strict\":true,\"target\":\"ES2022\"}}","totalLines":1,"fileSize":71,"path":"/tmp/cursor-replay-subagent/tsconfig.json","readRange":{"startLine":1,"endLine":1}}}},"toolCallId":"tool_af98da3d-ddfc-4f07-a9a2-1c1ac8efcd6"}},{"assistantMessage":{"text":"## Full contents\n\n```json\n{\n  \"compilerOptions\": {\n    \"module\": \"ESNext\",\n    \"strict\": true,\n    \"target\": \"ES2022\"\n  }\n}\n```\n\n## Summary\n\nThis is a minimal TypeScript config with three compiler options:\n\n| Option | Value | Meaning |\n|--------|--------|---------|\n| **target** | `ES2022` | Emit JavaScript for ES2022 (modern syntax and runtime features). |\n| **module** | `ESNext` | Use the latest ECMAScript module format for imports/exports. |\n| **strict** | `true` | Enable all strict type-checking options (e.g. `strictNullChecks`, `noImplicitAny`). |\n\n**Not specified (defaults apply):**\n- No `include` / `exclude` — TypeScript will include all `.ts` files in the project directory.\n- No `outDir` / `rootDir` — output location and root are inferred or use defaults.\n- No `moduleResolution`, `esModuleInterop`, `skipLibCheck`, or path aliases — standard defaults are used.\n\nOverall, it targets modern ES modules with strict checking and leaves most other settings at TypeScript defaults."}}],"agentId":"4eab0559-c807-4f08-a101-c8d99d895c82","isBackground":false,"durationMs":3614,"backgroundReason":"unspecified"}}},"modelCallId":"393d6cf5-3363-488b-80aa-ca0498451dca-0-zcvb"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":325}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Both"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" sub"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"agents"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" finished"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"."}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" Here"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"’s"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" what"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" they"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" reported"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":\n\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"##"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" package"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":".json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"```"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"{\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"name"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"cursor"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-read"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-only"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-fix"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\",\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"private"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" true"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":",\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"scripts"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" {\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"   "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"check"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"t"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"sc"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" --"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"no"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Emit"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\"\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" }\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"}\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"```\n\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Name"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"cursor"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-read"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-only"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-fix"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Private"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"true"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" ("}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"not"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" for"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" npm"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" publish"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":")\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Scripts"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"check"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" runs"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"t"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"sc"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" --"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"no"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Emit"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Dependencies"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":3}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" none"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" listed"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"This"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" looks"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" like"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" a"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" minimal"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" Type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Script"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" fixture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" for"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" Cursor"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"/or"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"che"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"strator"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" tooling"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":".\n\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"##"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" ts"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"config"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":".json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"```"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"json"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"{\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"compiler"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Options"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" {\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"   "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"module"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ES"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Next"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\",\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"   "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"strict"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" true"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":",\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"   "}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"target"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\":"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" \""}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ES"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"202"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"2"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\"\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" "}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" }\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"}\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"```\n\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"target"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ES"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"202"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"2"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"module"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ES"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Next"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" **"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"strict"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":":**"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"true"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" ("}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"full"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" strict"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-check"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"ing"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":")\n"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" No"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"include"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"/`"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"exclude"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`,"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" `"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"out"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Dir"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"`,"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" or"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" path"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" aliases"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" —"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" defaults"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" apply"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"\n\n"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Together"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":","}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" this"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" is"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" a"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" small"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" read"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"-only"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" Type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"Script"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" project"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" with"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" strict"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" checking"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" and"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" a"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" single"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" type"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"check"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":" script"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"text-delta","text":"."}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"step-completed","stepId":5,"stepDurationMs":6831}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","update":{"type":"turn-ended","usage":{"inputTokens":21878,"outputTokens":661,"cacheReadTokens":17788,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","requestId":"393d6cf5-3363-488b-80aa-ca0498451dca","status":"finished","result":"Both subagents finished. Here’s what they reported:\n\n## package.json\n\n```json\n{\n  \"name\": \"cursor-read-only-fixture\",\n  \"private\": true,\n  \"scripts\": {\n    \"typecheck\": \"tsc --noEmit\"\n  }\n}\n```\n\n- **Name:** `cursor-read-only-fixture`\n- **Private:** `true` (not for npm publish)\n- **Scripts:** `typecheck` runs `tsc --noEmit`\n- **Dependencies:** none listed\n\nThis looks like a minimal TypeScript fixture for Cursor/orchestrator tooling.\n\n## tsconfig.json\n\n```json\n{\n  \"compilerOptions\": {\n    \"module\": \"ESNext\",\n    \"strict\": true,\n    \"target\": \"ES2022\"\n  }\n}\n```\n\n- **target:** `ES2022`\n- **module:** `ESNext`\n- **strict:** `true` (full strict type-checking)\n- No `include`/`exclude`, `outDir`, or path aliases — defaults apply\n\nTogether, this is a small read-only TypeScript project with strict checking and a single typecheck script.","model":{"id":"composer-2.5"},"durationMs":9585}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
