@@ -110,6 +110,7 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import { StudentId } from "./students.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -894,6 +895,42 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export const RenderMarkdownToPdfInputSchema = Schema.Struct({
+  markdown: Schema.String,
+  outputPath: Schema.String,
+});
+export type RenderMarkdownToPdfInput = typeof RenderMarkdownToPdfInputSchema.Type;
+
+export const RenderMarkdownToPdfResultSchema = Schema.Struct({
+  success: Schema.Boolean,
+  filePath: Schema.NullOr(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+});
+export type RenderMarkdownToPdfResult = typeof RenderMarkdownToPdfResultSchema.Type;
+
+export const OpenPathInputSchema = Schema.Struct({
+  path: Schema.String,
+});
+export type OpenPathInput = typeof OpenPathInputSchema.Type;
+
+export const OpenPathResultSchema = Schema.Struct({
+  success: Schema.Boolean,
+  error: Schema.optionalKey(Schema.String),
+});
+export type OpenPathResult = typeof OpenPathResultSchema.Type;
+
+export const EnsureStudentWorkspaceInputSchema = Schema.Struct({
+  studentId: StudentId,
+});
+export type EnsureStudentWorkspaceInput = typeof EnsureStudentWorkspaceInputSchema.Type;
+
+export const EnsureStudentWorkspaceResultSchema = Schema.Struct({
+  success: Schema.Boolean,
+  workspacePath: Schema.NullOr(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+});
+export type EnsureStudentWorkspaceResult = typeof EnsureStudentWorkspaceResultSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -952,6 +989,9 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  renderMarkdownToPdf: (input: RenderMarkdownToPdfInput) => Promise<RenderMarkdownToPdfResult>;
+  openPath: (input: OpenPathInput) => Promise<OpenPathResult>;
+  ensureStudentWorkspace: (input: EnsureStudentWorkspaceInput) => Promise<EnsureStudentWorkspaceResult>;
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
