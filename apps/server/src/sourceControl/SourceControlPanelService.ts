@@ -1,7 +1,9 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
@@ -234,9 +236,11 @@ function addChange(
 
 function parsePorcelainStatus(input: {
   status: string;
+  stagedFiles?: readonly VcsPanelFileChange[];
   stagedStats: Map<string, { insertions: number; deletions: number }>;
   unstagedStats: Map<string, { insertions: number; deletions: number }>;
   untrackedStats: Map<string, { insertions: number; deletions: number }>;
+  unstagedFiles?: readonly VcsPanelFileChange[];
 }): VcsPanelChangeGroup[] {
   const staged: VcsPanelFileChange[] = [];
   const unstaged: VcsPanelFileChange[] = [];
@@ -245,6 +249,7 @@ function parsePorcelainStatus(input: {
   for (const line of input.status.split(/\r?\n/u)) {
     if (line.length === 0 || line.startsWith("#")) continue;
     if (line.startsWith("? ")) {
+      if (input.unstagedFiles !== undefined) continue;
       const path = line.slice(2);
       addChange(unstaged, {
         path,
@@ -288,6 +293,7 @@ function parsePorcelainStatus(input: {
       continue;
     }
     if (stagedCode !== ".") {
+      if (input.stagedFiles !== undefined) continue;
       addChange(staged, {
         path,
         originalPath,
@@ -296,6 +302,7 @@ function parsePorcelainStatus(input: {
       });
     }
     if (unstagedCode !== ".") {
+      if (input.unstagedFiles !== undefined) continue;
       addChange(unstaged, {
         path,
         originalPath,
@@ -308,8 +315,14 @@ function parsePorcelainStatus(input: {
   const sortFiles = (files: VcsPanelFileChange[]) =>
     files.toSorted((left, right) => left.path.localeCompare(right.path));
   return [
-    { kind: "staged" as const, files: sortFiles(staged) },
-    { kind: "unstaged" as const, files: sortFiles(unstaged) },
+    {
+      kind: "staged" as const,
+      files: sortFiles(input.stagedFiles ? [...input.stagedFiles] : staged),
+    },
+    {
+      kind: "unstaged" as const,
+      files: sortFiles(input.unstagedFiles ? [...input.unstagedFiles] : unstaged),
+    },
     { kind: "conflicts" as const, files: sortFiles(conflicts) },
   ];
 }
@@ -698,7 +711,9 @@ function targetRef(target: VcsPanelCompareInput["left"]): string {
 }
 
 export const make = Effect.fn("makeSourceControlPanelService")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver;
+  const path = yield* Path.Path;
   const workflow = yield* GitWorkflowService;
   const serverSettings = yield* ServerSettingsService;
   const context = yield* Effect.context<never>();
@@ -708,13 +723,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     operation: string,
     cwd: string,
     args: readonly string[],
-    options?: { readonly allowNonZeroExit?: boolean },
+    options?: { readonly allowNonZeroExit?: boolean; readonly env?: NodeJS.ProcessEnv },
   ) =>
     git
       .execute({
         operation,
         cwd,
         args,
+        ...(options?.env !== undefined ? { env: options.env } : {}),
         allowNonZeroExit: options?.allowNonZeroExit ?? false,
         timeoutMs: 30_000,
         maxOutputBytes: 8 * 1024 * 1024,
@@ -1205,6 +1221,64 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       };
     });
 
+  const unstagedFilesWithUntrackedRenames = (cwd: string, porcelain: string) =>
+    Effect.gen(function* () {
+      const untrackedPaths = untrackedPathsFromPorcelain(porcelain);
+      if (untrackedPaths.length === 0) return null;
+
+      const gitIndexPath = (yield* run("vcs.panel.gitIndexPath", cwd, [
+        "rev-parse",
+        "--git-path",
+        "index",
+      ])).trim();
+      if (!gitIndexPath) return null;
+
+      const sourceIndexPath = path.isAbsolute(gitIndexPath)
+        ? gitIndexPath
+        : path.resolve(cwd, gitIndexPath);
+      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
+      return yield* Effect.gen(function* () {
+        const tempIndexPath = path.join(tempDir, "index");
+        const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
+        yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
+          Effect.catch(() =>
+            run("vcs.panel.tempIndexReadTree", cwd, ["read-tree", "HEAD"], { env }).pipe(
+              Effect.asVoid,
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        );
+        yield* run("vcs.panel.tempIndexIntentToAdd", cwd, ["add", "-N", "--", ...untrackedPaths], {
+          env,
+        }).pipe(Effect.asVoid);
+        const [nameStatus, numstat] = yield* Effect.all(
+          [
+            run(
+              "vcs.panel.unstagedNameStatusWithUntracked",
+              cwd,
+              ["diff", "--name-status", "-z", "--find-renames=20%"],
+              { env },
+            ),
+            run(
+              "vcs.panel.unstagedNumstatWithUntracked",
+              cwd,
+              ["diff", "--numstat", "-z", "--find-renames=20%"],
+              { env },
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return parseFileChangesFromNumstat({
+          numstat,
+          statuses: parseNameStatus(nameStatus),
+        });
+      }).pipe(
+        Effect.ensuring(
+          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+      );
+    }).pipe(Effect.orElseSucceed(() => null));
+
   const snapshot: SourceControlPanelServiceShape["snapshot"] = Effect.fn("snapshot")(
     function* (input) {
       const [
@@ -1213,6 +1287,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         porcelain,
         unstagedNumstat,
         stagedNumstat,
+        stagedNameStatus,
         remotesOutput,
         stashes,
       ] = yield* Effect.all(
@@ -1236,14 +1311,21 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             "diff",
             "--numstat",
             "-z",
-            "--find-renames",
+            "--find-renames=20%",
           ]),
           run("vcs.panel.stagedNumstat", input.cwd, [
             "diff",
             "--cached",
             "--numstat",
             "-z",
-            "--find-renames",
+            "--find-renames=20%",
+          ]),
+          run("vcs.panel.stagedNameStatus", input.cwd, [
+            "diff",
+            "--cached",
+            "--name-status",
+            "-z",
+            "--find-renames=20%",
           ]),
           run("vcs.panel.remotes", input.cwd, ["remote", "-v"]),
           run("vcs.panel.stashes", input.cwd, [
@@ -1256,6 +1338,10 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
 
       const localBranches = parseLocalBranches(localBranchesOutput);
+      const stagedFiles = parseFileChangesFromNumstat({
+        numstat: stagedNumstat,
+        statuses: parseNameStatus(stagedNameStatus),
+      });
       const untrackedStats = mergeNumstats(
         yield* Effect.forEach(
           untrackedPathsFromPorcelain(porcelain),
@@ -1272,6 +1358,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           { concurrency: 4 },
         ),
       );
+      const unstagedFiles = yield* unstagedFilesWithUntrackedRenames(input.cwd, porcelain);
       const remotes = parseRemoteVerbose(remotesOutput);
       const remotesWithBranches = yield* Effect.forEach(
         remotes,
@@ -1304,9 +1391,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         status: panelStatusFromLocal(localStatus, porcelain),
         changeGroups: parsePorcelainStatus({
           status: porcelain,
+          stagedFiles,
           stagedStats: parseNumstat(stagedNumstat),
           unstagedStats: parseNumstat(unstagedNumstat),
           untrackedStats,
+          ...(unstagedFiles ? { unstagedFiles } : {}),
         }),
         localBranches,
         branchDetails: [],

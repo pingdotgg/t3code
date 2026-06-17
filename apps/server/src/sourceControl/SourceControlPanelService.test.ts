@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Effect from "effect/Effect";
@@ -45,6 +46,7 @@ function makeTestLayer(
   workflow: Partial<GitWorkflowServiceShape> = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(
+    Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provide(
       Layer.succeed(GitWorkflowService, {
@@ -309,6 +311,8 @@ describe("SourceControlPanelService", () => {
                   );
                 case "vcs.panel.stagedNumstat":
                   return success("3\t1\t\0src/old.ts\0src/new.ts\0");
+                case "vcs.panel.stagedNameStatus":
+                  return success("R100\0src/old.ts\0src/new.ts\0");
                 case "vcs.panel.unstagedNumstat":
                   return success("");
                 default:
@@ -323,7 +327,7 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
-  it.effect("expands untracked directories into file rows with stats", () =>
+  it.effect("detects unstaged renames from untracked destination files", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
@@ -334,24 +338,24 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(unstagedFiles, [
         {
           path: "blast-review/agents/openai.yaml",
-          originalPath: null,
-          status: "untracked",
+          originalPath: "copilot-blast-review/agents/openai.yaml",
+          status: "renamed",
           insertions: 6,
-          deletions: 0,
+          deletions: 1,
+        },
+        {
+          path: "blast-review/scripts/blast-review.ts",
+          originalPath: "copilot-blast-review/scripts/copilot-blast-review.ts",
+          status: "renamed",
+          insertions: 204,
+          deletions: 21,
         },
         {
           path: "blast-review/SKILL.md",
-          originalPath: null,
-          status: "untracked",
-          insertions: 21,
-          deletions: 0,
-        },
-        {
-          path: "copilot-blast-review/SKILL.md",
-          originalPath: null,
-          status: "deleted",
-          insertions: 0,
-          deletions: 20,
+          originalPath: "copilot-blast-review/SKILL.md",
+          status: "renamed",
+          insertions: 2,
+          deletions: 1,
         },
       ]);
     }).pipe(
@@ -378,6 +382,7 @@ describe("SourceControlPanelService", () => {
                       "1 .D N... 100644 100644 000000 abc abc copilot-blast-review/SKILL.md",
                       "? blast-review/SKILL.md",
                       "? blast-review/agents/openai.yaml",
+                      "? blast-review/scripts/blast-review.ts",
                     ].join("\n"),
                   );
                 case "vcs.panel.unstagedNumstat":
@@ -392,6 +397,41 @@ describe("SourceControlPanelService", () => {
                   }
                   return success("");
                 }
+                case "vcs.panel.gitIndexPath":
+                  return success("/tmp/t3-code-test-missing-index");
+                case "vcs.panel.tempIndexReadTree":
+                case "vcs.panel.tempIndexIntentToAdd":
+                  return success("");
+                case "vcs.panel.unstagedNameStatusWithUntracked":
+                  return success(
+                    [
+                      "R043",
+                      "copilot-blast-review/SKILL.md",
+                      "blast-review/SKILL.md",
+                      "R035",
+                      "copilot-blast-review/agents/openai.yaml",
+                      "blast-review/agents/openai.yaml",
+                      "R087",
+                      "copilot-blast-review/scripts/copilot-blast-review.ts",
+                      "blast-review/scripts/blast-review.ts",
+                      "",
+                    ].join("\0"),
+                  );
+                case "vcs.panel.unstagedNumstatWithUntracked":
+                  return success(
+                    [
+                      "2\t1\t",
+                      "copilot-blast-review/SKILL.md",
+                      "blast-review/SKILL.md",
+                      "6\t1\t",
+                      "copilot-blast-review/agents/openai.yaml",
+                      "blast-review/agents/openai.yaml",
+                      "204\t21\t",
+                      "copilot-blast-review/scripts/copilot-blast-review.ts",
+                      "blast-review/scripts/blast-review.ts",
+                      "",
+                    ].join("\0"),
+                  );
                 case "vcs.panel.stagedNumstat":
                   return success("");
                 default:

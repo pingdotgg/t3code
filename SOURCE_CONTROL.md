@@ -86,7 +86,7 @@ File rows are compact. They show a one-letter status indicator such as `A`, `D`,
 - Open in VS Code through the preferred editor or host bridge.
 - Discard changes, with confirmation.
 
-Untracked directories are expanded to file-level rows instead of being shown as a single folder row. Untracked files get `A` rows with line stats computed from a `/dev/null` comparison, so renamed folders show deleted rows for the old paths and added rows for the new file paths rather than an added folder with no meaningful diff.
+Untracked directories are expanded to file-level rows instead of being shown as a single folder row. Untracked files get `A` rows with line stats computed from a `/dev/null` comparison. The server also runs rename detection for unstaged untracked destinations through a temporary Git index, so staged and unstaged renames both collapse matching old/new paths into a single `R` row when Git can match them. If Git cannot match the similarity threshold, entries remain file-level `A` and `D` rows rather than a folder row.
 
 The `Working tree` context menu includes selected-file commit and stash actions plus a separated destructive `Discard selected changes` action.
 
