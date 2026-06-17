@@ -56,7 +56,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
-import { useMessageQueue, type QueuedMessage } from "../messageQueue";
+import { isComposerQueueDraftEmpty, useMessageQueue, type QueuedMessage } from "../messageQueue";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -1784,6 +1784,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const restoreQueuedMessageToComposer = useCallback(
     (queued: QueuedMessage) => {
+      clearComposerDraftContent(composerDraftTarget);
       promptRef.current = queued.prompt;
       setComposerDraftPrompt(composerDraftTarget, queued.prompt);
       setComposerDraftModelSelection(composerDraftTarget, queued.modelSelection);
@@ -1804,6 +1805,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       addComposerDraftFiles,
       addComposerDraftImages,
+      clearComposerDraftContent,
       composerDraftTarget,
       setComposerDraftInteractionMode,
       setComposerDraftModelSelection,
@@ -3966,6 +3968,16 @@ function ChatViewContent(props: ChatViewProps) {
       activePendingProgress ||
       activeEnvironmentUnavailable ||
       autoSendQueuedMessageInFlightRef.current
+    ) {
+      return;
+    }
+    if (
+      !isComposerQueueDraftEmpty({
+        prompt: promptRef.current,
+        images: composerImagesRef.current,
+        files: composerFilesRef.current,
+        terminalContexts: composerTerminalContextsRef.current,
+      })
     ) {
       return;
     }
