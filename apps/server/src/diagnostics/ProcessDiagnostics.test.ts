@@ -18,7 +18,7 @@ function makeNativeSnapshot(
   processes: ResourceMonitorSnapshotEvent["processes"],
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 1,
+    version: 2,
     type: "snapshot",
     sequence: 1,
     sampledAtUnixMs: DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z")),
@@ -42,6 +42,7 @@ function makeTelemetryLayer(
       lastSampleAt: Option.some(DateTime.makeUnsafe(snapshot.sampledAtUnixMs)),
       lastError: Option.none(),
       restartCount: 0,
+      sampleIntervalMs: 1_000,
     }),
   });
   const desktopLayer = desktopSnapshot
@@ -168,6 +169,7 @@ describe("ProcessDiagnostics", () => {
         type: "desktopTelemetry",
         sequence: 1,
         sampledAtUnixMs,
+        electronPid: 4_242,
         power: {
           source: "electron-main",
           idle: "false",

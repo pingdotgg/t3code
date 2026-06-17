@@ -1,6 +1,7 @@
 import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetrySnapshot,
+  type DesktopTelemetryControlMessage,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -18,7 +19,10 @@ import * as Stream from "effect/Stream";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 
-const SAMPLE_INTERVAL = Duration.seconds(1);
+const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
+const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
+const CONSTRAINED_SAMPLE_INTERVAL = Duration.seconds(15);
+const BACKGROUND_HEARTBEAT_INTERVAL = Duration.seconds(30);
 const IDLE_THRESHOLD_SECONDS = 60;
 const encodeMessage = Schema.encodeSync(Schema.fromJsonString(DesktopHostTelemetryMessage));
 const textEncoder = new TextEncoder();
@@ -42,6 +46,7 @@ export interface DesktopTelemetryPublisherShape {
   readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
   readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
   readonly encoded: Stream.Stream<Uint8Array>;
+  readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
 }
 
 export class DesktopTelemetryPublisher extends Context.Service<
@@ -80,6 +85,20 @@ function updatePowerState(state: PowerState, event: PowerEvent): PowerState {
   }
 }
 
+function sampleInterval(power: PowerState, diagnosticsDemand: boolean): Duration.Duration {
+  if (!diagnosticsDemand) return BACKGROUND_HEARTBEAT_INTERVAL;
+  if (
+    power.suspended ||
+    power.locked === "true" ||
+    power.thermalState === "serious" ||
+    power.thermalState === "critical"
+  ) {
+    return CONSTRAINED_SAMPLE_INTERVAL;
+  }
+  if (power.onBattery === "true") return BATTERY_SAMPLE_INTERVAL;
+  return LIVE_SAMPLE_INTERVAL;
+}
+
 export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
@@ -94,6 +113,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   };
   const powerState = yield* Ref.make(initialPowerState);
   const powerEvents = yield* Queue.unbounded<PowerEvent>();
+  const sampleTriggers = yield* Queue.sliding<void>(1);
+  const diagnosticsDemand = yield* Ref.make(false);
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const sequence = yield* Ref.make(0);
@@ -117,19 +138,21 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   yield* Effect.forever(
     Queue.take(powerEvents).pipe(
       Effect.flatMap((event) => Ref.update(powerState, (state) => updatePowerState(state, event))),
+      Effect.andThen(Queue.offer(sampleTriggers, undefined)),
     ),
   ).pipe(Effect.forkScoped);
 
   const sampleOnce = Effect.gen(function* () {
     const sampledAt = yield* DateTime.now;
     const sampledAtUnixMs = DateTime.toEpochMillis(sampledAt);
+    const demand = yield* Ref.get(diagnosticsDemand);
     const [currentPower, idleSeconds, systemIdleState, onBattery, metrics] = yield* Effect.all(
       [
         Ref.get(powerState),
         powerMonitor.getSystemIdleTime,
         powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECONDS),
         powerMonitor.isOnBatteryPower,
-        electronApp.getAppMetrics,
+        demand ? electronApp.getAppMetrics : Effect.succeed([]),
       ],
       { concurrency: "unbounded" },
     );
@@ -140,6 +163,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       type: "desktopTelemetry",
       sequence: nextSequence,
       sampledAtUnixMs,
+      electronPid: process.pid,
       power: {
         source: "electron-main",
         idle: idleState(systemIdleState),
@@ -179,9 +203,33 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     ),
   );
 
-  yield* Effect.forever(sampleOnce.pipe(Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)))).pipe(
-    Effect.forkScoped,
-  );
+  yield* Effect.gen(function* () {
+    yield* sampleOnce;
+    while (true) {
+      const [currentPower, demand] = yield* Effect.all([
+        Ref.get(powerState),
+        Ref.get(diagnosticsDemand),
+      ]);
+      yield* Effect.raceFirst(
+        Queue.take(sampleTriggers),
+        Effect.sleep(sampleInterval(currentPower, demand)),
+      );
+      yield* sampleOnce;
+    }
+  }).pipe(Effect.forkScoped);
+
+  const handleControl: DesktopTelemetryPublisherShape["handleControl"] = (message) => {
+    switch (message.type) {
+      case "setDiagnosticsDemand":
+        return Ref.getAndSet(diagnosticsDemand, message.enabled).pipe(
+          Effect.flatMap((previous) =>
+            previous === message.enabled
+              ? Effect.void
+              : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
+          ),
+        );
+    }
+  };
 
   const snapshots = Stream.concat(
     Stream.unwrap(
@@ -209,6 +257,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
+    handleControl,
   });
 });
 

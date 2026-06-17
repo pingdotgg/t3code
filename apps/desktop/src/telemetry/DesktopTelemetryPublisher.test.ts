@@ -14,7 +14,10 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
 
-function makeElectronAppLayer(metrics: ReadonlyArray<Electron.ProcessMetric>) {
+function makeElectronAppLayer(
+  metrics: ReadonlyArray<Electron.ProcessMetric>,
+  onMetricsRead: () => void = () => undefined,
+) {
   return Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
     name: Effect.succeed("T3 Code"),
@@ -27,7 +30,10 @@ function makeElectronAppLayer(metrics: ReadonlyArray<Electron.ProcessMetric>) {
     setAboutPanelOptions: () => Effect.void,
     setAppUserModelId: () => Effect.void,
     requestSingleInstanceLock: Effect.succeed(true),
-    getAppMetrics: Effect.succeed(metrics),
+    getAppMetrics: Effect.sync(() => {
+      onMetricsRead();
+      return metrics;
+    }),
     isDefaultProtocolClient: () => Effect.succeed(false),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
     setDesktopName: () => Effect.void,
@@ -42,6 +48,7 @@ describe("DesktopTelemetryPublisher", () => {
   it.effect("publishes Electron metrics and event-driven power state over NDJSON", () =>
     Effect.gen(function* () {
       const onBattery = yield* Ref.make(false);
+      let metricsReadCount = 0;
       const simpleListeners = new Map<string, () => void>();
       let thermalListener: ((state: ElectronPowerMonitor.ElectronThermalState) => void) | null =
         null;
@@ -85,7 +92,14 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer(metrics), powerLayer)),
+        Layer.provide(
+          Layer.mergeAll(
+            makeElectronAppLayer(metrics, () => {
+              metricsReadCount += 1;
+            }),
+            powerLayer,
+          ),
+        ),
       );
 
       yield* Effect.gen(function* () {
@@ -97,26 +111,86 @@ describe("DesktopTelemetryPublisher", () => {
         assert.equal(messages[0]?.type, "desktopTelemetryHello");
         assert.equal(messages[0]?.electronPid, process.pid);
         assert.equal(messages[1]?.type, "desktopTelemetry");
-        assert.equal(messages[1]?.electronProcesses[0]?.pid, 4_242);
-        assert.equal(messages[1]?.electronProcesses[0]?.cpuPercent, 12.5);
-        assert.equal(messages[1]?.electronProcesses[0]?.workingSetBytes, 2_048 * 1_024);
+        assert.deepEqual(messages[1]?.electronProcesses, []);
+        assert.equal(messages[1]?.electronPid, process.pid);
+        assert.equal(metricsReadCount, 0);
 
         const nextSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
-        yield* Ref.set(onBattery, true);
-        simpleListeners.get("lock-screen")?.();
-        simpleListeners.get("suspend")?.();
-        thermalListener?.("serious");
-        speedLimitListener?.(65);
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* publisher.handleControl({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        const demandedSnapshot = Option.getOrThrow(yield* Fiber.join(nextSnapshotFiber));
+        assert.equal(demandedSnapshot.electronProcesses[0]?.pid, 4_242);
+        assert.equal(demandedSnapshot.electronProcesses[0]?.cpuPercent, 12.5);
+        assert.equal(demandedSnapshot.electronProcesses[0]?.workingSetBytes, 2_048 * 1_024);
+        assert.equal(metricsReadCount, 1);
 
-        const nextSnapshot = Option.getOrThrow(yield* Fiber.join(nextSnapshotFiber));
-        assert.equal(nextSnapshot.power.locked, "true");
-        assert.equal(nextSnapshot.power.suspended, true);
-        assert.equal(nextSnapshot.power.onBattery, "true");
-        assert.equal(nextSnapshot.power.thermalState, "serious");
-        assert.equal(Option.getOrNull(nextSnapshot.speedLimitPercent), 65);
+        const batterySnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Ref.set(onBattery, true);
+        simpleListeners.get("on-battery")?.();
+        const batterySnapshot = Option.getOrThrow(yield* Fiber.join(batterySnapshotFiber));
+        assert.equal(batterySnapshot.power.onBattery, "true");
+
+        const metricsAfterBatteryEvent = metricsReadCount;
+        yield* TestClock.adjust(Duration.millis(4_999));
+        assert.equal(metricsReadCount, metricsAfterBatteryEvent);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.equal(metricsReadCount, metricsAfterBatteryEvent + 1);
+
+        const constrainedSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        thermalListener?.("serious");
+        const constrainedSnapshot = Option.getOrThrow(yield* Fiber.join(constrainedSnapshotFiber));
+        assert.equal(constrainedSnapshot.power.thermalState, "serious");
+
+        const metricsAfterThermalEvent = metricsReadCount;
+        yield* TestClock.adjust(Duration.millis(14_999));
+        assert.equal(metricsReadCount, metricsAfterThermalEvent);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.equal(metricsReadCount, metricsAfterThermalEvent + 1);
+
+        const speedLimitSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        speedLimitListener?.(65);
+        const speedLimitSnapshot = Option.getOrThrow(yield* Fiber.join(speedLimitSnapshotFiber));
+        assert.equal(Option.getOrNull(speedLimitSnapshot.speedLimitPercent), 65);
+
+        const stoppedSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* publisher.handleControl({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: false,
+        });
+        const stoppedSnapshot = Option.getOrThrow(yield* Fiber.join(stoppedSnapshotFiber));
+        assert.deepEqual(stoppedSnapshot.electronProcesses, []);
+        const backgroundSequence = stoppedSnapshot.sequence;
+        const metricsAfterStopping = metricsReadCount;
+
+        yield* TestClock.adjust(Duration.seconds(29));
+        assert.equal(
+          (yield* publisher.latest).pipe(Option.getOrThrow).sequence,
+          backgroundSequence,
+        );
+        assert.equal(metricsReadCount, metricsAfterStopping);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal(
+          (yield* publisher.latest).pipe(Option.getOrThrow).sequence,
+          backgroundSequence + 1,
+        );
+        assert.equal(metricsReadCount, metricsAfterStopping);
       }).pipe(Effect.provide(layer));
     }),
   );

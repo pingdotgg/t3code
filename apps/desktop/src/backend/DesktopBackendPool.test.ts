@@ -66,6 +66,7 @@ function makePoolLayer(
           latest: Effect.succeed(Option.none()),
           changes: Stream.empty,
           encoded: Stream.empty,
+          handleControl: () => Effect.void,
         }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
           resolvePrimary: Effect.die("unexpected primary config resolve"),

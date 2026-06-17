@@ -6,20 +6,26 @@ import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetryMessage as DesktopHostTelemetryMessageValue,
   type DesktopHostTelemetrySnapshot,
+  DesktopTelemetryControlMessage,
   type ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/unstable/encoding/Ndjson";
 
 import { ServerConfig } from "../config.ts";
+
+const STALE_AFTER_MS = 90_000;
+const STALE_CHECK_INTERVAL = Duration.seconds(30);
 
 export class DesktopTelemetryDescriptorUnavailable extends Schema.TaggedErrorClass<DesktopTelemetryDescriptorUnavailable>()(
   "DesktopTelemetryDescriptorUnavailable",
@@ -78,12 +84,37 @@ export class DesktopTelemetryStreamClosed extends Schema.TaggedErrorClass<Deskto
   }
 }
 
+export class DesktopTelemetryStale extends Schema.TaggedErrorClass<DesktopTelemetryStale>()(
+  "DesktopTelemetryStale",
+  {
+    fd: Schema.Number,
+    staleAfterMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Desktop telemetry on fd ${this.fd} has not updated for ${this.staleAfterMs}ms.`;
+  }
+}
+
 export type DesktopTelemetryReceiverError =
   | DesktopTelemetryDescriptorUnavailable
   | DesktopTelemetryProtocolMismatch
   | DesktopTelemetryDecodeFailed
   | DesktopTelemetryStreamFailed
   | DesktopTelemetryStreamClosed;
+
+export class DesktopTelemetryControlFailed extends Schema.TaggedErrorClass<DesktopTelemetryControlFailed>()(
+  "DesktopTelemetryControlFailed",
+  {
+    fd: Schema.Number,
+    operation: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop telemetry control '${this.operation}' failed on fd ${this.fd}.`;
+  }
+}
 
 export interface DesktopTelemetryReceiverHealth {
   readonly status: ResourceTelemetrySourceStatus;
@@ -96,6 +127,9 @@ export interface DesktopTelemetryReceiverShape {
   readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
   readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
   readonly healthChanges: Stream.Stream<DesktopTelemetryReceiverHealth>;
+  readonly setDiagnosticsDemand: (
+    enabled: boolean,
+  ) => Effect.Effect<void, DesktopTelemetryControlFailed>;
 }
 
 export class DesktopTelemetryReceiver extends Context.Service<
@@ -104,6 +138,9 @@ export class DesktopTelemetryReceiver extends Context.Service<
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
 const decodeMessage = Schema.decodeUnknownEffect(DesktopHostTelemetryMessage);
+const encodeControlMessage = Schema.encodeEffect(
+  Schema.fromJsonString(DesktopTelemetryControlMessage),
+);
 const isDescriptorUnavailable = Schema.is(DesktopTelemetryDescriptorUnavailable);
 const isProtocolMismatch = Schema.is(DesktopTelemetryProtocolMismatch);
 const isDecodeFailed = Schema.is(DesktopTelemetryDecodeFailed);
@@ -132,6 +169,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
+  const controlMutex = yield* Semaphore.make(1);
   const health = yield* Ref.make<DesktopTelemetryReceiverHealth>({
     status: config.desktopTelemetryFd === undefined ? "unavailable" : "starting",
     lastSampleAt: Option.none(),
@@ -153,6 +191,75 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     }).pipe(
       Effect.flatMap((next) => PubSub.publish(healthChanges, next)),
       Effect.asVoid,
+    );
+  const updateSampleHealth = (sampledAt: DateTime.Utc) =>
+    Ref.modify(health, (current) => {
+      const next: DesktopTelemetryReceiverHealth = {
+        status: "healthy",
+        lastSampleAt: Option.some(sampledAt),
+        lastError: Option.none(),
+      };
+      return [
+        current.status !== "healthy" || Option.isSome(current.lastError)
+          ? Option.some(next)
+          : Option.none(),
+        next,
+      ] as const;
+    }).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (next) => PubSub.publish(healthChanges, next),
+        }),
+      ),
+      Effect.asVoid,
+    );
+
+  const setDiagnosticsDemand: DesktopTelemetryReceiverShape["setDiagnosticsDemand"] = (enabled) =>
+    controlMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const fd = config.desktopTelemetryControlFd;
+        if (fd === undefined) return;
+        const encoded = yield* encodeControlMessage({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopTelemetryControlFailed({
+                fd,
+                operation: "encode",
+                cause,
+              }),
+          ),
+        );
+        yield* Effect.try({
+          try: () => {
+            const payload = Buffer.from(`${encoded}\n`);
+            let offset = 0;
+            while (offset < payload.byteLength) {
+              const written = NodeFileSystem.writeSync(fd, payload, offset);
+              if (written <= 0) throw new Error("desktop telemetry control pipe accepted no bytes");
+              offset += written;
+            }
+          },
+          catch: (cause) =>
+            new DesktopTelemetryControlFailed({
+              fd,
+              operation: "write",
+              cause,
+            }),
+        }).pipe(
+          Effect.tapError((error) =>
+            updateHealth((current) => ({
+              ...current,
+              status: "degraded",
+              lastError: Option.some(error.message),
+            })),
+          ),
+        );
+      }),
     );
 
   if (config.desktopTelemetryFd !== undefined) {
@@ -217,13 +324,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
 
         const sampledAt = DateTime.makeUnsafe(message.sampledAtUnixMs);
         return Ref.set(latest, Option.some(message)).pipe(
-          Effect.andThen(
-            Ref.set(health, {
-              status: "healthy",
-              lastSampleAt: Option.some(sampledAt),
-              lastError: Option.none(),
-            }),
-          ),
+          Effect.andThen(updateSampleHealth(sampledAt)),
           Effect.andThen(PubSub.publish(changes, message)),
           Effect.asVoid,
         );
@@ -248,6 +349,36 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       ),
       Effect.forkScoped,
     );
+
+    yield* Effect.forever(
+      Effect.sleep(STALE_CHECK_INTERVAL).pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const current = yield* Ref.get(latest);
+            if (Option.isNone(current) || current.value.power.stale) return;
+            const now = yield* DateTime.now;
+            if (DateTime.toEpochMillis(now) - current.value.sampledAtUnixMs < STALE_AFTER_MS)
+              return;
+            const staleSnapshot: DesktopHostTelemetrySnapshot = {
+              ...current.value,
+              power: { ...current.value.power, stale: true },
+            };
+            yield* Ref.set(latest, Option.some(staleSnapshot));
+            yield* updateHealth((currentHealth) => ({
+              ...currentHealth,
+              status: currentHealth.status === "stopped" ? "stopped" : "degraded",
+              lastError:
+                currentHealth.status === "stopped"
+                  ? currentHealth.lastError
+                  : Option.some(
+                      new DesktopTelemetryStale({ fd, staleAfterMs: STALE_AFTER_MS }).message,
+                    ),
+            }));
+            yield* PubSub.publish(changes, staleSnapshot);
+          }),
+        ),
+      ),
+    ).pipe(Effect.forkScoped);
   }
 
   return DesktopTelemetryReceiver.of({
@@ -255,6 +386,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     changes: Stream.fromPubSub(changes),
     health: Ref.get(health),
     healthChanges: Stream.fromPubSub(healthChanges),
+    setDiagnosticsDemand,
   });
 });
 
@@ -274,6 +406,7 @@ export const layerTest = (
         lastError: Option.some("Desktop telemetry test implementation is unavailable."),
       }),
       healthChanges: Stream.empty,
+      setDiagnosticsDemand: () => Effect.void,
       ...overrides,
     }),
   );

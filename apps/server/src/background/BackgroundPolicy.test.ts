@@ -65,7 +65,6 @@ function makeLayer(
           Effect.sync(() => {
             snapshot = next;
           }).pipe(Effect.andThen(PubSub.publish(changes, next)), Effect.asVoid),
-        setDemandActive: () => Effect.void,
         streamChanges: Stream.fromPubSub(changes),
       });
     }),
@@ -182,6 +181,33 @@ describe("BackgroundPolicy", () => {
             ...nominalHostPower,
             onBattery: "true",
             stale: false,
+          },
+          { backgroundActivityProfile: "battery-saver" },
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not gate work on stale host power values", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport(),
+      );
+
+      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
+    }).pipe(
+      Effect.provide(
+        makeLayer(
+          {
+            ...nominalHostPower,
+            locked: "true",
+            onBattery: "true",
+            lowPowerMode: "true",
+            thermalState: "critical",
+            stale: true,
           },
           { backgroundActivityProfile: "battery-saver" },
         ),

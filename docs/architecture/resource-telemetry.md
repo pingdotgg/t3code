@@ -11,9 +11,9 @@ subprocess probes with two persistent, direct data sources:
    through operating-system APIs via `sysinfo`;
 2. Electron main-process APIs for Electron process metrics and host power state.
 
-The server merges both sources, computes rates from cumulative counters, keeps
-bounded in-memory history, exposes typed RPCs, and drives the diagnostics page.
-Telemetry history is not persisted to disk.
+The native monitor owns bounded in-memory history. The server only merges and
+summarizes that history when diagnostics requests it. Telemetry history is not
+persisted to disk or continuously copied into Node.
 
 ## Why a standalone executable
 
@@ -38,14 +38,13 @@ native code into Node.
 ```text
 Electron main
   ├─ powerMonitor
-  ├─ app.getAppMetrics()
-  └─ inherited fd 4, NDJSON
-          │
-          ▼
+  ├─ app.getAppMetrics() while diagnostics is open
+  ├─ inherited fd 4, telemetry NDJSON ─────────────┐
+  └─ inherited fd 5, demand-control NDJSON ◀──────┤
+                                                   ▼
 Node server ── stdin/stdout NDJSON ── Rust resource monitor
      │
      ├─ ResourceTelemetry Effect service
-     ├─ bounded in-memory history
      ├─ background power policy projection
      └─ WebSocket RPC/subscription ── diagnostics UI
 ```
@@ -65,10 +64,14 @@ line on stdout:
 
 - `configure`
 - `setExternalProcesses`
+- `setSampleInterval`
+- `setStreaming`
 - `sampleNow`
+- `readHistory`
 - `shutdown`
 - `hello`
 - `snapshot`
+- `historyChunk`
 - `error`
 
 The protocol version is defined by
@@ -77,8 +80,8 @@ The protocol version is defined by
 
 ### Collection
 
-The monitor keeps one `sysinfo::System` instance and refreshes it on a one-second
-interval. It collects:
+The monitor keeps one `sysinfo::System` instance and refreshes it at the
+power-adaptive interval selected by the server. It collects:
 
 - PID and parent PID;
 - process start time and run time;
@@ -109,6 +112,26 @@ can have coarser platform resolution.
 
 The process list is emitted in depth-first tree order so renderer collapse and
 expansion preserves complete subtrees.
+
+### Native history and streaming
+
+Every native sample is appended to a one-hour in-memory ring bounded to 3,600
+snapshots and 20,000 retained process rows. History stays in the sidecar until a
+`readHistory` request and is returned in bounded chunks. The first bound reached
+wins, so high process counts shorten the effective history window.
+
+Periodic snapshot streaming is disabled by default. The server enables it only
+while at least one diagnostics subscription is retained. `sampleNow` remains
+available for explicit refreshes and identity validation.
+
+The server adjusts native sampling without restarting the sidecar:
+
+- suspended: paused;
+- locked, low-power, or serious/critical thermal state: 15 seconds;
+- battery: 5 seconds;
+- normal AC: 1 second;
+- unknown or stale power: 5 seconds in the background and 1 second while live
+  diagnostics is open.
 
 ### Sampling limits
 
@@ -143,13 +166,18 @@ columns are the operating system's cumulative counters for that process.
 
 Electron main owns `DesktopTelemetryPublisher`.
 
-It samples once per second from:
+Power events trigger an immediate snapshot. A low-rate 30-second heartbeat keeps
+the server-side power state fresh while diagnostics is closed. During that
+heartbeat Electron reads:
 
-- `app.getAppMetrics()`;
 - `powerMonitor.isOnBatteryPower()`;
 - `powerMonitor.getSystemIdleTime()`;
 - `powerMonitor.getSystemIdleState()`;
 - `powerMonitor.getCurrentThermalState()`.
+
+`app.getAppMetrics()` is only called while diagnostics demand is active. Its
+live cadence is 1 second on AC, 5 seconds on battery, and 15 seconds while
+locked, suspended, or thermally constrained.
 
 It also listens for:
 
@@ -165,10 +193,11 @@ remains `unknown`.
 The desktop backend is spawned with:
 
 - fd 3 for the existing bootstrap payload;
-- fd 4 for desktop telemetry NDJSON.
+- fd 4 for Electron-to-server telemetry NDJSON;
+- fd 5 for server-to-Electron diagnostics-demand NDJSON.
 
-This is a private Electron-main-to-server pipe. It does not use the renderer
-WebSocket and is recreated for every backend restart.
+These are private Electron-main/server pipes. They do not use the renderer
+WebSocket and are recreated for every backend restart.
 
 ## Server Effect services
 
@@ -192,7 +221,10 @@ Owns the resource-monitor process and protocol.
 
 - validates the hello/version handshake;
 - sends configuration and external process roots;
-- exposes automatic snapshots and `sampleNow`;
+- adapts the native interval from host power state;
+- enables streaming only for scoped live subscribers;
+- reads chunked native history on demand;
+- exposes `sampleNow`;
 - serializes commands;
 - supervises process exit and protocol failure;
 - restarts with bounded exponential backoff;
@@ -207,8 +239,10 @@ restart cannot freeze telemetry.
 ### `DesktopTelemetryReceiver`
 
 Reads fd 4, decodes schema-validated messages, stores the latest Electron
-snapshot, and publishes desktop health. Decode errors, protocol mismatch,
-stream failure, and normal stream closure are represented explicitly.
+snapshot, and publishes desktop health. It writes diagnostics demand to fd 5
+and marks the source stale after 90 seconds without a heartbeat. Decode errors,
+protocol mismatch, control-write failure, stream failure, stale input, and
+normal stream closure are represented explicitly.
 
 ### `ResourceTelemetry`
 
@@ -220,20 +254,21 @@ Merges native and Electron data and owns public telemetry semantics.
 - computes process depth and child relationships;
 - tracks starts, exits, CPU time, and observed I/O;
 - projects power data;
-- publishes live snapshots;
+- acquires native streaming and Electron process metrics only for scoped live
+  subscribers;
+- queries and replays native history only when requested;
 - validates `(pid, startTimeMs)` before process signaling;
 - updates history health even when no further native sample arrives.
 
 Electron and monitor processes are visible but are not valid targets for the
 existing process-signal RPC.
 
-### `ResourceTelemetryStore`
+### History projection
 
-Keeps aggregate and process samples in memory for at most one hour, subject to
-hard sample-count bounds. Aggregate history retains up to 3,600 samples.
-Detailed process history retains up to 20,000 process samples, so high process
-fan-out can shorten detailed per-process coverage while aggregate coverage
-remains available.
+`ResourceTelemetryHistory` is a pure on-demand projection. It replays raw native
+snapshots to derive rates, lifecycle counters, buckets, and process summaries.
+Current Electron process metrics are intentionally excluded from historical
+replay so they cannot overwrite older native CPU or memory samples.
 
 ### `ResourceAttribution`
 
@@ -249,8 +284,8 @@ adding diagnostics-specific counters.
 
 ## Background policy integration
 
-`HostPowerMonitor` now projects power state from `ResourceTelemetry`; it does not
-spawn macOS shell probes.
+`HostPowerMonitor` consumes `DesktopTelemetryReceiver` directly; observing host
+power does not retain live resource diagnostics or invoke shell probes.
 
 The monitor updates its latest timestamp on every Electron sample but only
 publishes semantic state changes. Increasing idle seconds alone does not cause a
@@ -300,11 +335,12 @@ with the CLI. Missing platform artifacts degrade native telemetry to
 Steady state uses:
 
 - one native process;
-- one native sample per second;
-- one Electron sample per second in desktop mode;
+- power-adaptive native counter sampling with no periodic Node snapshot stream;
+- event-driven Electron power updates plus a 30-second heartbeat;
+- no `app.getAppMetrics()` calls while diagnostics is closed;
 - no telemetry database;
 - no recurring shell probes;
-- bounded PubSub queues and bounded history.
+- bounded PubSub queues and native ring history.
 
 The diagnostics page exposes the monitor's own process resource usage and
 collection duration so the observer's cost is measurable.

@@ -6,10 +6,14 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
 const MAX_SAMPLE_INTERVAL_MS: u64 = 60_000;
 const EXTERNAL_PROCESS_START_TOLERANCE_MS: u64 = 2_000;
+const HISTORY_RETENTION_MS: u64 = 60 * 60_000;
+const MAX_HISTORY_SNAPSHOTS: usize = 3_600;
+const MAX_HISTORY_PROCESS_SAMPLES: usize = 20_000;
+const HISTORY_CHUNK_SNAPSHOTS: usize = 32;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,9 +41,22 @@ enum Command {
         version: u32,
         processes: Vec<ExternalProcess>,
     },
+    SetSampleInterval {
+        version: u32,
+        sample_interval_ms: u64,
+    },
+    SetStreaming {
+        version: u32,
+        enabled: bool,
+    },
     SampleNow {
         version: u32,
         request_id: String,
+    },
+    ReadHistory {
+        version: u32,
+        request_id: String,
+        window_ms: u64,
     },
     Shutdown {
         version: u32,
@@ -51,7 +68,10 @@ impl Command {
         match self {
             Self::Configure { version, .. }
             | Self::SetExternalProcesses { version, .. }
+            | Self::SetSampleInterval { version, .. }
+            | Self::SetStreaming { version, .. }
             | Self::SampleNow { version, .. }
+            | Self::ReadHistory { version, .. }
             | Self::Shutdown { version } => *version,
         }
     }
@@ -94,7 +114,7 @@ enum IoSemantics {
     AllIo,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProcessSample {
     pid: u32,
@@ -113,7 +133,7 @@ struct ProcessSample {
     io_semantics: IoSemantics,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SnapshotEvent {
     version: u32,
@@ -132,6 +152,17 @@ struct SnapshotEvent {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct HistoryChunkEvent<'a> {
+    version: u32,
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    request_id: &'a str,
+    done: bool,
+    snapshots: &'a [SnapshotEvent],
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ErrorEvent {
     version: u32,
     #[serde(rename = "type")]
@@ -144,8 +175,49 @@ struct ErrorEvent {
 #[derive(Debug, Clone)]
 struct CollectorConfig {
     root_pid: u32,
-    sample_interval: Duration,
+    sample_interval: Option<Duration>,
     external_processes: HashMap<u32, Option<u64>>,
+}
+
+#[derive(Default)]
+struct HistoryRecorder {
+    snapshots: VecDeque<SnapshotEvent>,
+    process_sample_count: usize,
+}
+
+impl HistoryRecorder {
+    fn record(&mut self, snapshot: &SnapshotEvent) {
+        let mut retained = snapshot.clone();
+        retained.request_id = None;
+        self.process_sample_count = self
+            .process_sample_count
+            .saturating_add(retained.processes.len());
+        self.snapshots.push_back(retained);
+        self.trim(snapshot.sampled_at_unix_ms);
+    }
+
+    fn trim(&mut self, now_ms: u64) {
+        while self.snapshots.front().is_some_and(|snapshot| {
+            snapshot.sampled_at_unix_ms < now_ms.saturating_sub(HISTORY_RETENTION_MS)
+                || self.snapshots.len() > MAX_HISTORY_SNAPSHOTS
+                || self.process_sample_count > MAX_HISTORY_PROCESS_SAMPLES
+        }) {
+            if let Some(removed) = self.snapshots.pop_front() {
+                self.process_sample_count = self
+                    .process_sample_count
+                    .saturating_sub(removed.processes.len());
+            }
+        }
+    }
+
+    fn read(&self, window_ms: u64, now_ms: u64) -> Vec<SnapshotEvent> {
+        let started_at_ms = now_ms.saturating_sub(window_ms.min(HISTORY_RETENTION_MS));
+        self.snapshots
+            .iter()
+            .filter(|snapshot| snapshot.sampled_at_unix_ms >= started_at_ms)
+            .cloned()
+            .collect()
+    }
 }
 
 struct Collector {
@@ -303,8 +375,12 @@ fn unix_time_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn clamp_sample_interval(sample_interval_ms: u64) -> Duration {
-    Duration::from_millis(sample_interval_ms.clamp(MIN_SAMPLE_INTERVAL_MS, MAX_SAMPLE_INTERVAL_MS))
+fn clamp_sample_interval(sample_interval_ms: u64) -> Option<Duration> {
+    (sample_interval_ms > 0).then(|| {
+        Duration::from_millis(
+            sample_interval_ms.clamp(MIN_SAMPLE_INTERVAL_MS, MAX_SAMPLE_INTERVAL_MS),
+        )
+    })
 }
 
 fn spawn_input_reader() -> Receiver<Input> {
@@ -368,6 +444,40 @@ fn write_error(
     )
 }
 
+fn write_history(
+    writer: &mut impl Write,
+    request_id: &str,
+    snapshots: &[SnapshotEvent],
+) -> io::Result<()> {
+    if snapshots.is_empty() {
+        return write_event(
+            writer,
+            &HistoryChunkEvent {
+                version: PROTOCOL_VERSION,
+                event_type: "historyChunk",
+                request_id,
+                done: true,
+                snapshots,
+            },
+        );
+    }
+
+    let chunk_count = snapshots.len().div_ceil(HISTORY_CHUNK_SNAPSHOTS);
+    for (index, chunk) in snapshots.chunks(HISTORY_CHUNK_SNAPSHOTS).enumerate() {
+        write_event(
+            writer,
+            &HistoryChunkEvent {
+                version: PROTOCOL_VERSION,
+                event_type: "historyChunk",
+                request_id,
+                done: index + 1 == chunk_count,
+                snapshots: chunk,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let mut writer = BufWriter::new(io::stdout().lock());
     write_event(
@@ -393,8 +503,10 @@ fn main() -> io::Result<()> {
 
     let receiver = spawn_input_reader();
     let mut collector = Collector::new();
+    let mut history = HistoryRecorder::default();
     let mut config: Option<CollectorConfig> = None;
     let mut next_sample_at: Option<Instant> = None;
+    let mut streaming_enabled = false;
 
     loop {
         let timeout = next_sample_at
@@ -435,7 +547,7 @@ fn main() -> io::Result<()> {
                                 .map(|process| (process.pid, process.start_time_ms))
                                 .collect(),
                         });
-                        next_sample_at = Some(Instant::now());
+                        next_sample_at = sample_interval.map(|_| Instant::now());
                     }
                     Command::SetExternalProcesses { processes, .. } => {
                         if let Some(current) = config.as_mut() {
@@ -452,11 +564,34 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    Command::SetSampleInterval {
+                        sample_interval_ms, ..
+                    } => {
+                        if let Some(current) = config.as_mut() {
+                            current.sample_interval = clamp_sample_interval(sample_interval_ms);
+                            next_sample_at = current
+                                .sample_interval
+                                .map(|interval| Instant::now() + interval);
+                        } else {
+                            write_error(
+                                &mut writer,
+                                "not-configured",
+                                "configure must be sent before changing the sample interval",
+                                true,
+                            )?;
+                        }
+                    }
+                    Command::SetStreaming { enabled, .. } => {
+                        streaming_enabled = enabled;
+                    }
                     Command::SampleNow { request_id, .. } => {
                         if let Some(current) = config.as_ref() {
                             let event = collector.sample(current, Some(request_id));
+                            history.record(&event);
                             write_event(&mut writer, &event)?;
-                            next_sample_at = Some(Instant::now() + current.sample_interval);
+                            next_sample_at = current
+                                .sample_interval
+                                .map(|interval| Instant::now() + interval);
                         } else {
                             write_error(
                                 &mut writer,
@@ -466,14 +601,38 @@ fn main() -> io::Result<()> {
                             )?;
                         }
                     }
+                    Command::ReadHistory {
+                        request_id,
+                        window_ms,
+                        ..
+                    } => {
+                        if config.is_some() {
+                            let snapshots = history.read(window_ms, unix_time_ms());
+                            write_history(&mut writer, &request_id, &snapshots)?;
+                        } else {
+                            write_error(
+                                &mut writer,
+                                "not-configured",
+                                "configure must be sent before reading history",
+                                true,
+                            )?;
+                        }
+                    }
                     Command::Shutdown { .. } => return Ok(()),
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(current) = config.as_ref() {
-                    let event = collector.sample(current, None);
-                    write_event(&mut writer, &event)?;
-                    next_sample_at = Some(Instant::now() + current.sample_interval);
+                    if let Some(interval) = current.sample_interval {
+                        let event = collector.sample(current, None);
+                        history.record(&event);
+                        if streaming_enabled {
+                            write_event(&mut writer, &event)?;
+                        }
+                        next_sample_at = Some(Instant::now() + interval);
+                    } else {
+                        next_sample_at = None;
+                    }
                 }
             }
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
@@ -518,7 +677,7 @@ mod tests {
     #[test]
     fn decodes_protocol_commands() {
         let configure = serde_json::from_str::<Command>(
-            r#"{"version":1,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
+            r#"{"version":2,"type":"configure","rootPid":42,"sampleIntervalMs":1000,"externalProcesses":[{"pid":7}]}"#,
         )
         .expect("configure command");
 
@@ -536,14 +695,61 @@ mod tests {
             }
             _ => panic!("unexpected command"),
         }
+
+        let read_history = serde_json::from_str::<Command>(
+            r#"{"version":2,"type":"readHistory","requestId":"history-1","windowMs":60000}"#,
+        )
+        .expect("read history command");
+        assert!(matches!(
+            read_history,
+            Command::ReadHistory {
+                request_id,
+                window_ms: 60_000,
+                ..
+            } if request_id == "history-1"
+        ));
     }
 
     #[test]
     fn clamps_sample_interval() {
-        assert_eq!(clamp_sample_interval(1), Duration::from_millis(250));
+        assert_eq!(clamp_sample_interval(0), None);
+        assert_eq!(clamp_sample_interval(1), Some(Duration::from_millis(250)));
         assert_eq!(
             clamp_sample_interval(100_000),
-            Duration::from_millis(60_000)
+            Some(Duration::from_millis(60_000))
+        );
+    }
+
+    #[test]
+    fn retains_bounded_history_without_request_ids() {
+        let mut history = HistoryRecorder::default();
+        for sequence in 0..=MAX_HISTORY_SNAPSHOTS {
+            history.record(&SnapshotEvent {
+                version: PROTOCOL_VERSION,
+                event_type: "snapshot",
+                sequence: sequence as u64,
+                sampled_at_unix_ms: sequence as u64 * 1_000,
+                collection_duration_micros: 1,
+                scanned_process_count: 0,
+                retained_process_count: 0,
+                inaccessible_process_count: 0,
+                request_id: Some("request".to_owned()),
+                processes: Vec::new(),
+            });
+        }
+
+        assert_eq!(history.snapshots.len(), MAX_HISTORY_SNAPSHOTS);
+        assert!(
+            history
+                .snapshots
+                .iter()
+                .all(|snapshot| snapshot.request_id.is_none())
+        );
+        assert_eq!(
+            history
+                .read(10_000, MAX_HISTORY_SNAPSHOTS as u64 * 1_000)
+                .len(),
+            11
         );
     }
 

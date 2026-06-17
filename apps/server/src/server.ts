@@ -137,14 +137,15 @@ const ServerSettingsLayerLive = ServerSettings.layer.pipe(
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
 );
+const DesktopTelemetryReceiverLayerLive = DesktopTelemetryReceiver.layer;
 
 const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
   Layer.provideMerge(NativeTelemetryLayerLive),
-  Layer.provideMerge(DesktopTelemetryReceiver.layer),
+  Layer.provideMerge(DesktopTelemetryReceiverLayerLive),
 );
 
 const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
-  Layer.provide(ResourceTelemetryLayerLive),
+  Layer.provide(DesktopTelemetryReceiverLayerLive),
 );
 
 const BackgroundLayerLive = BackgroundPolicy.layer.pipe(

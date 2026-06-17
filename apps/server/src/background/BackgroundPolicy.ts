@@ -81,6 +81,7 @@ function isHostConstrained(
   hostPower: HostPowerSnapshot,
   settings: ResolvedBackgroundActivitySettings,
 ): boolean {
+  if (hostPower.stale) return false;
   if (
     (settings.pauseWhenHostLocked && hostPower.locked === "true") ||
     hasThermalPressure(hostPower)
@@ -153,7 +154,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
 
   const backgroundActivitySettings = serverSettings.getSettings.pipe(
     Effect.map(resolveServerBackgroundActivitySettings),
-    Effect.catch(() => Effect.succeed(getBackgroundActivityPresetSettings("balanced"))),
+    Effect.orElseSucceed(() => getBackgroundActivityPresetSettings("balanced")),
   );
 
   const snapshot = Effect.gen(function* () {
@@ -166,10 +167,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
   });
 
-  const publishSnapshot = snapshot.pipe(
-    Effect.tap((next) => hostPowerMonitor.setDemandActive(next.activeForegroundLeaseCount > 0)),
-    Effect.flatMap((next) => PubSub.publish(changes, next)),
-  );
+  const publishSnapshot = snapshot.pipe(Effect.flatMap((next) => PubSub.publish(changes, next)));
 
   const reportClientActivity: BackgroundPolicyShape["reportClientActivity"] = (
     sessionId,

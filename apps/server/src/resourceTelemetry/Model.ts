@@ -10,7 +10,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-const MAX_DELTA_INTERVAL_MS = 10_000;
+const MAX_DELTA_INTERVAL_MS = 30_000;
 const ELECTRON_IDENTITY_TOLERANCE_MS = 2_000;
 
 export interface ProcessState {
@@ -47,6 +47,7 @@ export interface MergeProcessesInput {
   readonly fallbackSampledAtMs: number;
   readonly nativeSnapshot: Option.Option<ResourceMonitorSnapshotEvent>;
   readonly desktopSnapshot: Option.Option<DesktopHostTelemetrySnapshot>;
+  readonly electronRootPids?: ReadonlySet<number>;
   readonly previous: ReadonlyMap<string, ProcessState>;
   readonly counters: TelemetryCounters;
   readonly updatePrevious: boolean;
@@ -108,6 +109,15 @@ function electronCategory(metric: DesktopElectronProcessMetric): ResourceTelemet
     default:
       return "electron-utility";
   }
+}
+
+function inferredElectronCategory(
+  process: ResourceMonitorProcessSample,
+): ResourceTelemetryProcessCategory {
+  const command = process.command.toLowerCase();
+  if (command.includes("--type=renderer")) return "electron-renderer";
+  if (command.includes("--type=gpu-process")) return "electron-gpu";
+  return "electron-utility";
 }
 
 function matchElectronMetric(
@@ -386,15 +396,20 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
   }
   const processes = [...nativeByPid.values()];
   const processesByPid = new Map(processes.map((process) => [process.pid, process]));
-  const electronPids = new Set(metricsByPid.keys());
-  const electronRootPids = [...electronPids]
-    .filter((pid) => {
-      const process = processesByPid.get(pid);
-      return process === undefined
-        ? true
-        : !hasElectronAncestor(process, processesByPid, electronPids);
-    })
-    .toSorted((left, right) => left - right);
+  const explicitElectronRootPids = input.electronRootPids ?? new Set<number>();
+  const electronPids = new Set([...metricsByPid.keys(), ...explicitElectronRootPids]);
+  const electronRootPids = [
+    ...explicitElectronRootPids,
+    ...[...electronPids]
+      .filter((pid) => {
+        if (explicitElectronRootPids.has(pid)) return false;
+        const process = processesByPid.get(pid);
+        return process === undefined
+          ? true
+          : !hasElectronAncestor(process, processesByPid, electronPids);
+      })
+      .toSorted((left, right) => left - right),
+  ].filter((pid, index, values) => values.indexOf(pid) === index);
   const rootPids = [input.serverPid, ...electronRootPids];
   const roots = new Set(rootPids);
   const depths = processDepths(processes, roots);
@@ -438,11 +453,13 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
         ? "server"
         : Option.contains(input.sidecarPid, process.pid)
           ? "resource-monitor"
-          : electronMetric
-            ? electronCategory(electronMetric)
-            : isElectronDescendant(process.pid, processesByPid, electronPids)
-              ? "electron-utility"
-              : "server-child";
+          : explicitElectronRootPids.has(process.pid)
+            ? "electron-main"
+            : electronMetric
+              ? electronCategory(electronMetric)
+              : isElectronDescendant(process.pid, processesByPid, electronPids)
+                ? inferredElectronCategory(process)
+                : "server-child";
     const firstSeenAt = previous?.process.firstSeenAt ?? DateTime.makeUnsafe(sampledAtMs);
     const preservePreviousRates = !input.updatePrevious && previous !== undefined;
     const cpuPercent = preservePreviousRates

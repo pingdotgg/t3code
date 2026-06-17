@@ -39,7 +39,7 @@ function nativeSnapshot(
   sequence = 1,
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 1,
+    version: 2,
     type: "snapshot",
     sequence,
     sampledAtUnixMs,
@@ -74,6 +74,7 @@ function desktopSnapshot(
     type: "desktopTelemetry",
     sequence: 1,
     sampledAtUnixMs,
+    electronPid: electronProcesses[0]?.pid ?? 10_000,
     power: {
       source: "electron-main",
       idle: "false",
@@ -237,6 +238,45 @@ describe("resource telemetry process model", () => {
     expect(second.groups.backend.ioWriteBytes).toBe(3_000);
   });
 
+  it("derives deltas at the constrained 15-second sampling cadence", () => {
+    const first = merge({
+      native: nativeSnapshot(BASE_TIME_MS, [
+        processSample({
+          pid: SERVER_PID,
+          ppid: 1,
+          startTimeMs: 1_000,
+          cpuTimeMs: 1_000,
+          ioReadBytes: 10_000,
+          ioWriteBytes: 20_000,
+        }),
+      ]),
+    });
+    const second = merge({
+      previous: first,
+      native: nativeSnapshot(
+        BASE_TIME_MS + 15_000,
+        [
+          processSample({
+            pid: SERVER_PID,
+            ppid: 1,
+            startTimeMs: 1_000,
+            cpuTimeMs: 2_500,
+            ioReadBytes: 25_000,
+            ioWriteBytes: 50_000,
+          }),
+        ],
+        2,
+      ),
+    });
+
+    expect(second.processes[0]?.cpuPercent).toBe(10);
+    expect(second.processes[0]?.ioReadBytesPerSecond).toBe(1_000);
+    expect(second.processes[0]?.ioWriteBytesPerSecond).toBe(2_000);
+    expect(second.groups.backend.cpuTimeMs).toBe(1_500);
+    expect(second.groups.backend.ioReadBytes).toBe(15_000);
+    expect(second.groups.backend.ioWriteBytes).toBe(30_000);
+  });
+
   it("preserves native rates while applying a desktop-only update", () => {
     const first = merge({
       native: nativeSnapshot(BASE_TIME_MS, [
@@ -331,7 +371,7 @@ describe("resource telemetry process model", () => {
     const delayed = merge({
       previous: decreased,
       native: nativeSnapshot(
-        BASE_TIME_MS + 20_000,
+        BASE_TIME_MS + 90_000,
         [
           processSample({
             pid: SERVER_PID,

@@ -39,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -46,6 +47,8 @@ import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  DesktopTelemetryControlMessage,
+  type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
@@ -64,6 +67,8 @@ const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
+const { logWarning: logBackendProcessWarning } =
+  DesktopObservability.makeComponentLogger("desktop-backend-process");
 
 type BackendProcessLayerServices = ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient;
 
@@ -149,6 +154,9 @@ type BackendProcessError = BackendProcessBootstrapEncodeError | BackendProcessSp
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
+  readonly onDesktopTelemetryControl?: (
+    message: DesktopTelemetryControlMessageValue,
+  ) => Effect.Effect<void>;
   readonly readinessTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
@@ -326,6 +334,7 @@ function drainBackendOutput(
 }
 
 const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
+const decodeDesktopTelemetryControl = Schema.decodeUnknownEffect(DesktopTelemetryControlMessage);
 
 const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   options: RunBackendProcessOptions,
@@ -338,6 +347,24 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (options.bootstrapDelivery === "fd3") {
+    additionalFds.fd3 = {
+      type: "input",
+      stream: bootstrapStream,
+    };
+    if (options.bootstrap.desktopTelemetryFd !== undefined) {
+      additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
+        type: "input",
+        stream: options.desktopTelemetryStream,
+      };
+    }
+    if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
+      additionalFds[`fd${options.bootstrap.desktopTelemetryControlFd}`] = {
+        type: "output",
+      };
+    }
+  }
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -352,21 +379,7 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     // wsl.exe drops additional file descriptors when forwarding to the Linux
     // side, so the WSL spawn path delivers the bootstrap envelope via stdin
     // (`--bootstrap-fd 0`) instead.
-    ...(options.bootstrapDelivery === "fd3"
-      ? {
-          additionalFds: {
-            fd3: { type: "input" as const, stream: bootstrapStream },
-            ...(options.bootstrap.desktopTelemetryFd === 4
-              ? {
-                  fd4: {
-                    type: "input" as const,
-                    stream: options.desktopTelemetryStream,
-                  },
-                }
-              : {}),
-          },
-        }
-      : {}),
+    ...(options.bootstrapDelivery === "fd3" ? { additionalFds } : {}),
   });
 
   const handle = yield* spawner
@@ -378,6 +391,32 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
+  if (
+    options.bootstrap.desktopTelemetryControlFd !== undefined &&
+    options.onDesktopTelemetryControl !== undefined
+  ) {
+    const controlFd = options.bootstrap.desktopTelemetryControlFd;
+    const handleControl = options.onDesktopTelemetryControl;
+    yield* handle.getOutputFd(controlFd).pipe(
+      Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
+      Stream.mapEffect((message) => decodeDesktopTelemetryControl(message)),
+      Stream.runForEach(handleControl),
+      Effect.catchCause((cause) =>
+        logBackendProcessWarning("desktop telemetry control stream stopped", {
+          fd: controlFd,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.ensuring(
+        handleControl({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: false,
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }
   if (options.captureOutput) {
     yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
     yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
@@ -647,6 +686,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          onDesktopTelemetryControl: desktopTelemetryPublisher.handleControl,
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,

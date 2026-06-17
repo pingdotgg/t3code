@@ -3,16 +3,16 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 export interface HostPowerMonitorShape {
   readonly snapshot: Effect.Effect<HostPowerSnapshot>;
   readonly report: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
-  readonly setDemandActive: (active: boolean) => Effect.Effect<void>;
   readonly streamChanges: Stream.Stream<HostPowerSnapshot>;
 }
 
@@ -65,7 +65,6 @@ export const make = Effect.fn("background.hostPower.make")(function* (
   return HostPowerMonitor.of({
     snapshot: Ref.get(latestRef),
     report,
-    setDemandActive: () => Effect.void,
     streamChanges: Stream.fromPubSub(changes),
   });
 });
@@ -73,11 +72,18 @@ export const make = Effect.fn("background.hostPower.make")(function* (
 export const layer = Layer.effect(
   HostPowerMonitor,
   Effect.gen(function* () {
-    const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-    const initial = yield* telemetry.latest;
-    const monitor = yield* make(initial.power.source);
-    yield* monitor.report(initial.power);
-    yield* telemetry.changes.pipe(
+    const desktopTelemetry = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
+    const initial = yield* desktopTelemetry.latest;
+    const monitor = yield* make(
+      Option.match(initial, {
+        onNone: () => "unknown" as const,
+        onSome: (snapshot) => snapshot.power.source,
+      }),
+    );
+    if (Option.isSome(initial)) {
+      yield* monitor.report(initial.value.power);
+    }
+    yield* desktopTelemetry.changes.pipe(
       Stream.map((snapshot) => snapshot.power),
       Stream.runForEach(monitor.report),
       Effect.forkScoped,

@@ -734,6 +734,7 @@ describe("DesktopBackendConfiguration", () => {
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
+        assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
