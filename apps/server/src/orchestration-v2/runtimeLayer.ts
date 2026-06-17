@@ -6,6 +6,8 @@ import {
 } from "./Adapters/ClaudeAdapterV2.ts";
 import { layer as codexAdapterLayer } from "./Adapters/CodexAdapterV2.ts";
 import { codexAppServerClientFactoryFromSettingsLayer } from "./Adapters/CodexAdapterV2.ts";
+import { cursorAgentSdkRunnerLiveLayer } from "./Adapters/CursorAgentSdk.ts";
+import { BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2 } from "./builtInProviderAdapterDrivers.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
@@ -44,6 +46,7 @@ const codexAdapterProvided = codexAdapterLayer.pipe(
 
 const claudeAdapterProvided = claudeAdapterLayer.pipe(
   Layer.provide(claudeAgentSdkQueryRunnerLiveLayer),
+  Layer.provide(cursorAgentSdkRunnerLiveLayer),
   Layer.provide(idAllocatorLayer),
 );
 
