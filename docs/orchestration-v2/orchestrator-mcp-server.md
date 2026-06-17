@@ -84,10 +84,16 @@ Claude receives an HTTP MCP server in its query options:
 The adapter logs only whether MCP configuration exists; it does not log the
 server headers or token.
 
+### Cursor Agent SDK V2
+
+Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
+`mcpServers` agent and send options. The adapter passes the authorization header
+to the SDK but projects only redacted option metadata into protocol diagnostics.
+
 ### Initial Provider Support
 
-The initial V2 provider adapters are Codex and Claude Agent SDK. Capability
-discovery still reports other registered provider instances, but marks them
+The V2 provider adapters are Codex, Claude Agent SDK, and Cursor Agent SDK.
+Capability discovery still reports other registered provider instances, but marks them
 unavailable for orchestration when no V2 adapter exists. This keeps provider
 selection model-visible without allowing a request that cannot run.
 
@@ -293,6 +299,6 @@ Coverage includes:
 - inheritance and per-thread provider overrides; and
 - idempotent retries.
 
-Provider adapter tests separately verify Codex and Claude MCP injection, and
+Provider adapter tests separately verify Codex, Claude, and Cursor MCP injection, and
 the provider-session manager test verifies that credentials exist before an
 adapter opens and are revoked when it closes.

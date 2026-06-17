@@ -1,5 +1,6 @@
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
 import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts";
+import { assertCursorMessageSteeringOutput } from "./message_steering/cursor_output.ts";
 import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
@@ -7,6 +8,7 @@ import { multiTurnInput } from "./multi_turn/input.ts";
 import { assertPlanQuestionsOutput } from "./plan_questions/codex_output.ts";
 import { planQuestionsInput } from "./plan_questions/input.ts";
 import { assertProposedPlanOutput } from "./proposed_plan/codex_output.ts";
+import { assertProposedPlanCursorOutput } from "./proposed_plan/cursor_output.ts";
 import { proposedPlanInput } from "./proposed_plan/input.ts";
 import { assertQueuedTurnOutput } from "./queued_turn/codex_output.ts";
 import { queuedTurnInput } from "./queued_turn/input.ts";
@@ -16,14 +18,17 @@ import { simpleInput } from "./simple/input.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
 import { subagentInput } from "./subagent/input.ts";
+import { assertCursorSubagentOutput } from "./subagent/cursor_output.ts";
 import { assertSubagentContinueOutput } from "./subagent_continue/codex_output.ts";
 import { subagentContinueInput } from "./subagent_continue/input.ts";
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
+import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { todoListInput } from "./todo_list/input.ts";
 import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
+import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor_output.ts";
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
 import { assertToolCallReadOnlyOnRequestClaudeOutput } from "./tool_call_read_only_on_request/claude_output.ts";
 import { assertToolCallReadOnlyOnRequestOutput } from "./tool_call_read_only_on_request/codex_output.ts";
@@ -39,6 +44,7 @@ import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
+import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
 import { turnInterruptMidToolInput } from "./turn_interrupt_mid_tool/input.ts";
 import { assertTurnInterruptRestartClaudeOutput } from "./turn_interrupt_restart/claude_output.ts";
 import { turnInterruptRestartInput } from "./turn_interrupt_restart/input.ts";
@@ -48,6 +54,7 @@ import { webSearchInput } from "./web_search/input.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
+  CURSOR_MODEL_SELECTION,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
   RESTRICTED_GRANULAR_POLICY,
@@ -72,6 +79,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertSimpleClaudeOutput,
       },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./simple/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
     ],
   },
   {
@@ -84,6 +97,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyClaudeOutput,
+      },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./tool_call_read_only/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertToolCallReadOnlyCursorOutput,
       },
     ],
   },
@@ -182,6 +202,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeSubagentOutput,
       },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./subagent/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertCursorSubagentOutput,
+      },
     ],
   },
   {
@@ -211,6 +238,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         transcriptFile: new URL("./multi_turn/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertMultiTurnClaudeOutput,
+      },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./multi_turn/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
       },
     ],
   },
@@ -242,6 +275,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./queued_turn/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
     ],
   },
   {
@@ -254,6 +293,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertTodoListOutput,
+      },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./todo_list/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertTodoListCursorOutput,
       },
     ],
   },
@@ -299,6 +345,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertProposedPlanOutput,
       },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./proposed_plan/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertProposedPlanCursorOutput,
+      },
     ],
   },
   {
@@ -316,6 +369,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         transcriptFile: new URL("./message_steering/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeMessageSteeringOutput,
+      },
+      {
+        provider: "cursor",
+        transcriptFile: new URL("./message_steering/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertCursorMessageSteeringOutput,
       },
     ],
   },
@@ -362,6 +421,16 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolClaudeOutput,
+      },
+      {
+        provider: "cursor",
+        transcriptFile: new URL(
+          "./turn_interrupt_mid_tool/cursor_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptMidToolCursorOutput,
       },
     ],
   },

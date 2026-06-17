@@ -6,9 +6,11 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
+import { CursorOrchestratorReplayHarness } from "../Adapters/CursorAdapterV2.testkit.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
+import { messageRestartInput } from "./fixtures/message_steering/input.ts";
 import {
   materializeFixtureInput,
   type OrchestratorFixtureInput,
@@ -89,6 +91,11 @@ function runFixtureProviderWithRegisteredHarness(input: {
         ...input,
         harness: ClaudeOrchestratorReplayHarness,
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "cursor":
+      return runFixtureProvider({
+        ...input,
+        harness: CursorOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     default:
       return Effect.die(
         new Error(`No replay harness registered for provider ${input.provider.provider}.`),
@@ -109,5 +116,21 @@ describe("orchestrator replay fixtures", () => {
           }),
       );
     }
+  }
+
+  const steeringFixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+    (fixture) => fixture.name === "message_steering",
+  );
+  const cursorSteeringProvider = steeringFixture?.providers.find(
+    (provider) => provider.provider === "cursor",
+  );
+  if (cursorSteeringProvider !== undefined) {
+    it.effect("executes explicit Cursor restart_active through the recorded SDK boundary", () =>
+      runFixtureProviderWithRegisteredHarness({
+        fixtureName: "message_steering",
+        buildInput: messageRestartInput,
+        provider: cursorSteeringProvider,
+      }),
+    );
   }
 });

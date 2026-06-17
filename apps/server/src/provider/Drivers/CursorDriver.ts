@@ -1,9 +1,9 @@
 /**
  * CursorDriver — `ProviderDriver` for the Cursor Agent (`cursor-agent`) runtime.
  *
- * Cursor exposes an ACP-based CLI. Model catalog and capability refreshes
- * happen during the managed provider status check via Cursor's
- * `list_available_models` extension method.
+ * Provider status and model discovery use the official Cursor SDK when an API
+ * key is configured. The ACP CLI remains the compatibility fallback for
+ * installations that authenticate through the local Cursor binary.
  *
  * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
  * drives `runtime.prompt` with a structured-output schema and collects the
@@ -26,14 +26,13 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
-import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   makeCursorModelDiscovery,
   enrichCursorSnapshot,
-  makeCursorCommandCatalog,
 } from "../Layers/CursorProvider.ts";
+import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -55,7 +54,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { discoverCursorSkills, probeCursorSkills } from "./CursorSkills.ts";
+import { probeCursorSkills } from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -132,6 +131,11 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
+      const adapter = yield* makeCursorAdapter(effectiveConfig, {
+        environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        instanceId,
+      });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, processEnv);
@@ -140,25 +144,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         processEnv,
         discoverModels,
       ).pipe(
-        Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
-              )
-            : Effect.succeed(snapshot),
-        ),
         Effect.map(stampIdentity),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provide(CursorSdkCatalogLive),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const managedSnapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<CursorSettings>
-      >({
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -195,20 +189,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
-      const { snapshot, onAvailableCommands, snapshotForCwd } =
-        yield* makeCursorCommandCatalog(managedSnapshot);
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-        onAvailableCommands: (commands, cwd) =>
-          discoverCursorSkills(cwd, processEnv).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-            Effect.flatMap((skills) => onAvailableCommands(commands, cwd, skills)),
-          ),
-      });
-
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -220,20 +200,22 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot
-            : probeCursorSkills(cwd, processEnv).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderDriverError({
-                      driver: DRIVER_KIND,
-                      instanceId,
-                      detail: `Failed to discover Cursor skills for '${cwd}'`,
-                      cause,
-                    }),
+            : Effect.all([
+                snapshot.getSnapshot,
+                probeCursorSkills(cwd, processEnv).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail: `Failed to discover Cursor skills for '${cwd}'`,
+                        cause,
+                      }),
+                  ),
                 ),
-                Effect.flatMap((skills) => snapshotForCwd(cwd, skills)),
-              ),
+              ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
