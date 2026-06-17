@@ -18,6 +18,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   ThreadId,
@@ -47,6 +48,11 @@ import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RunExecutionServiceV2 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import {
+  makeSubagentChildThread,
+  subagentResultForRun,
+  subagentThreadTitle,
+} from "./SubagentProjection.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedErrorClass<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -158,6 +164,8 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "checkpoint.rollback":
     case "provider.switch":
       return command.threadId;
+    case "delegated_task.request":
+      return command.parentThreadId;
     case "thread.fork":
     case "thread.merge_back":
       return command.targetThreadId;
@@ -188,6 +196,25 @@ function nextProviderTurnOrdinal(
 
 function isBlockingRun(run: OrchestrationV2Run): boolean {
   return run.status === "starting" || run.status === "running" || run.status === "waiting";
+}
+
+function delegatedTaskTerminalStatus(
+  status: OrchestrationV2Run["status"],
+): OrchestrationV2Subagent["status"] | null {
+  switch (status) {
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "interrupted":
+      return status;
+    case "rolled_back":
+      return "cancelled";
+    case "queued":
+    case "starting":
+    case "running":
+    case "waiting":
+      return null;
+  }
 }
 
 function nextQueuedRun(
@@ -2604,6 +2631,246 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
     });
 
+  const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+      events: Ref.Ref<Array<OrchestrationV2StoredEvent>>,
+    ) {
+      const parentProjection = yield* projectionStore
+        .getThreadProjection(command.parentThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProjectionError({
+                threadId: command.parentThreadId,
+                cause,
+              }),
+          ),
+        );
+      const parentRun = parentProjection.runs.find(
+        (candidate) => candidate.id === command.parentRunId,
+      );
+      if (parentRun === undefined || !isBlockingRun(parentRun)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent run ${command.parentRunId} is not active.`,
+        });
+      }
+      const parentNode = parentProjection.nodes.find(
+        (candidate) => candidate.id === command.parentNodeId,
+      );
+      if (
+        parentNode === undefined ||
+        parentNode.runId !== parentRun.id ||
+        parentRun.rootNodeId === null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent node ${command.parentNodeId} is not part of active run ${parentRun.id}.`,
+        });
+      }
+
+      const now = command.createdAt ?? (yield* DateTime.now);
+      const taskNodeId = idAllocator.derive.delegatedTaskNode({
+        commandId: command.commandId,
+      });
+      const childThreadId = idAllocator.derive.delegatedTaskThread({
+        commandId: command.commandId,
+      });
+      const childMessageId = idAllocator.derive.delegatedTaskMessage({
+        commandId: command.commandId,
+      });
+      const taskTurnItemId = idAllocator.derive.delegatedTaskTurnItem({
+        commandId: command.commandId,
+      });
+      const taskTitle = subagentThreadTitle({
+        parentTitle: parentProjection.thread.title,
+        prompt: command.task,
+        ...(command.title === undefined ? {} : { title: command.title }),
+        ordinal: parentProjection.subagents.length + 1,
+      });
+      const childThread: OrchestrationV2AppThread = {
+        ...makeSubagentChildThread({
+          parentThread: parentProjection.thread,
+          childThreadId,
+          parentNodeId: taskNodeId,
+          activeProviderThreadId: null,
+          providerInstanceId: command.modelSelection.instanceId,
+          modelSelection: command.modelSelection,
+          title: taskTitle,
+          now,
+        }),
+        runtimeMode: command.runtimeMode,
+        interactionMode: command.interactionMode,
+      };
+      const task: OrchestrationV2Subagent = {
+        id: taskNodeId,
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        parentNodeId: command.parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        provider: command.modelSelection.instanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: command.task,
+        title: command.title ?? null,
+        model: command.modelSelection.model,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const taskNode: OrchestrationV2ExecutionNode = {
+        id: taskNodeId,
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        parentNodeId: command.parentNodeId,
+        rootNodeId: parentRun.rootNodeId,
+        kind: "subagent",
+        status: "running",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const parentProviderTurn = providerTurnForRun(parentProjection, parentRun);
+      const taskTurnItem: OrchestrationV2TurnItem = {
+        id: taskTurnItemId,
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        providerThreadId: parentRun.providerThreadId,
+        providerTurnId: parentProviderTurn?.id ?? null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: nextTurnItemOrdinal(parentProjection),
+        status: "running",
+        title: command.title ?? taskTitle,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "subagent",
+        subagentId: taskNodeId,
+        origin: "app_owned",
+        provider: command.modelSelection.instanceId,
+        childThreadId,
+        prompt: command.task,
+        result: null,
+      };
+      const emitEvent = emit(events, command);
+
+      yield* emitEvent({
+        type: "thread.created",
+        threadId: childThreadId,
+        provider: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: childThread,
+      });
+      yield* emitEvent({
+        type: "node.updated",
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        provider: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: taskNode,
+      });
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        provider: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: task,
+      });
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        provider: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: taskTurnItem,
+      });
+
+      const childMessageCommand = {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: childThreadId,
+        messageId: childMessageId,
+        text: command.task,
+        attachments: [],
+        modelSelection: command.modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
+      yield* dispatchMessage(childMessageCommand, events);
+
+      const childProjection = yield* projectionStore.getThreadProjection(childThreadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: childThreadId,
+              cause,
+            }),
+        ),
+      );
+      const childRun = childProjection.runs[0];
+      if (childRun === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Delegated child thread ${childThreadId} did not create a run.`,
+        });
+      }
+      const spawnTransferId = yield* mapDispatchError(command)(
+        idAllocator.allocate.contextTransfer({
+          sourceThreadId: command.parentThreadId,
+          targetThreadId: childThreadId,
+          type: "subagent_spawn",
+        }),
+      );
+      const spawnTransfer: OrchestrationV2ContextTransfer = {
+        id: spawnTransferId,
+        type: "subagent_spawn",
+        sourceThreadId: command.parentThreadId,
+        targetThreadId: childThreadId,
+        sourcePoint: {
+          ...contextSourcePointForRun(parentProjection, parentRun),
+          turnItemId: taskTurnItemId,
+        },
+        basePoint: null,
+        sourceProvider: parentRun.provider,
+        targetProvider: command.modelSelection.instanceId,
+        targetRunId: childRun.id,
+        status: "consumed",
+        resolution: null,
+        createdBy: "agent",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: now,
+      };
+      yield* emitEvent({
+        type: "context-transfer.created",
+        threadId: childThreadId,
+        runId: childRun.id,
+        provider: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: spawnTransfer,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = (
     command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
     events: Ref.Ref<Array<OrchestrationV2StoredEvent>>,
@@ -3048,7 +3315,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
-        message: "Interrupt requested",
+        message: command.reason ?? "Interrupt requested",
       };
       yield* emitEvent({
         type: "turn-item.updated",
@@ -3334,6 +3601,208 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  const finalizeAppOwnedSubagent = (childThreadId: ThreadId) =>
+    Effect.gen(function* () {
+      const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
+      const forkedFrom = childProjection.thread.forkedFrom;
+      if (
+        childProjection.thread.lineage.relationshipToParent !== "subagent" ||
+        childProjection.thread.lineage.parentThreadId === null ||
+        forkedFrom?.type !== "node"
+      ) {
+        return;
+      }
+      const childRun = childProjection.runs[0];
+      if (childRun === undefined) {
+        return;
+      }
+      const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
+      if (terminalStatus === null) {
+        return;
+      }
+
+      const parentThreadId = childProjection.thread.lineage.parentThreadId;
+      const parentProjection = yield* projectionStore.getThreadProjection(parentThreadId);
+      const task = parentProjection.subagents.find(
+        (candidate) =>
+          candidate.id === forkedFrom.nodeId &&
+          candidate.origin === "app_owned" &&
+          candidate.childThreadId === childThreadId,
+      );
+      if (task === undefined) {
+        return;
+      }
+      const existingResultTransfer = parentProjection.contextTransfers.find(
+        (transfer) =>
+          transfer.type === "subagent_result" &&
+          transfer.sourceThreadId === childThreadId &&
+          transfer.targetThreadId === parentThreadId,
+      );
+      if (existingResultTransfer !== undefined) {
+        return;
+      }
+
+      const now = yield* DateTime.now;
+      const result = subagentResultForRun(childProjection, childRun);
+      const parentRun =
+        task.runId === null
+          ? undefined
+          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
+      const parentTurnItem = parentProjection.turnItems.find(
+        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+      );
+      const updatedTask: OrchestrationV2Subagent = {
+        ...task,
+        providerThreadId: childRun.providerThreadId,
+        status: terminalStatus,
+        result: result.text,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const resultTransferId = yield* idAllocator.allocate.contextTransfer({
+        sourceThreadId: childThreadId,
+        targetThreadId: parentThreadId,
+        type: "subagent_result",
+      });
+      const childProviderThread =
+        childRun.providerThreadId === null
+          ? undefined
+          : childProjection.providerThreads.find(
+              (candidate) => candidate.id === childRun.providerThreadId,
+            );
+      const parentProviderThread =
+        parentRun?.providerThreadId === null || parentRun?.providerThreadId === undefined
+          ? undefined
+          : parentProjection.providerThreads.find(
+              (candidate) => candidate.id === parentRun.providerThreadId,
+            );
+      const resultHandoff: OrchestrationV2ContextHandoff | null =
+        parentRun === undefined ||
+        childProviderThread === undefined ||
+        parentProviderThread === undefined
+          ? null
+          : {
+              id: yield* idAllocator.allocate.contextHandoff({
+                threadId: parentThreadId,
+                fromProvider: childRun.provider,
+                toProvider: parentRun.provider,
+              }),
+              transferId: resultTransferId,
+              threadId: parentThreadId,
+              targetRunId: parentRun.id,
+              fromProviderThreadIds: [childProviderThread.id],
+              toProviderThreadId: parentProviderThread.id,
+              coveredRunOrdinals: {
+                from: childRun.ordinal,
+                to: childRun.ordinal,
+              },
+              strategy: "manual_context",
+              status: "ready",
+              summaryMessageId: result.messageId,
+              summaryText: result.text,
+              createdByProvider: childRun.provider,
+              createdAt: now,
+              updatedAt: now,
+            };
+      const resultTransfer: OrchestrationV2ContextTransfer = {
+        id: resultTransferId,
+        type: "subagent_result",
+        sourceThreadId: childThreadId,
+        targetThreadId: parentThreadId,
+        sourcePoint: {
+          ...contextSourcePointForRun(childProjection, childRun),
+          ...(result.turnItemId === null ? {} : { turnItemId: result.turnItemId }),
+        },
+        basePoint: null,
+        sourceProvider: childRun.provider,
+        targetProvider: parentRun?.provider ?? parentProjection.thread.defaultProvider,
+        targetRunId: parentRun?.id ?? null,
+        status: "consumed",
+        resolution:
+          resultHandoff === null
+            ? null
+            : {
+                strategy: "portable_context",
+                contextHandoffId: resultHandoff.id,
+              },
+        createdBy: "system",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: now,
+      };
+
+      yield* writeSystemEvents([
+        {
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          ...(task.runId === null ? {} : { runId: task.runId }),
+          nodeId: task.id,
+          provider: task.provider,
+          occurredAt: now,
+          payload: updatedTask,
+        },
+        ...(parentNode === undefined
+          ? []
+          : [
+              {
+                type: "node.updated" as const,
+                threadId: parentThreadId,
+                ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
+                nodeId: parentNode.id,
+                provider: task.provider,
+                occurredAt: now,
+                payload: {
+                  ...parentNode,
+                  status: terminalStatus,
+                  providerThreadId: childRun.providerThreadId,
+                  completedAt: now,
+                },
+              },
+            ]),
+        ...(parentTurnItem === undefined
+          ? []
+          : [
+              {
+                type: "turn-item.updated" as const,
+                threadId: parentThreadId,
+                ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
+                ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
+                provider: task.provider,
+                occurredAt: now,
+                payload: {
+                  ...parentTurnItem,
+                  status: terminalStatus,
+                  result: result.text,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              },
+            ]),
+        ...(resultHandoff === null
+          ? []
+          : [
+              {
+                type: "context-handoff.updated" as const,
+                threadId: parentThreadId,
+                ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+                provider: childRun.provider,
+                occurredAt: now,
+                payload: resultHandoff,
+              },
+            ]),
+        {
+          type: "context-transfer.created",
+          threadId: parentThreadId,
+          ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+          provider: childRun.provider,
+          occurredAt: now,
+          payload: resultTransfer,
+        },
+      ]);
+    });
+
   const dispatchUnsupported = (command: OrchestrationV2Command) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -3379,6 +3848,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
+        break;
+      case "delegated_task.request":
+        yield* dispatchDelegatedTaskRequest(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);
@@ -3486,7 +3958,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     Stream.runForEach((stored) =>
       dispatchSemaphore
-        .withPermit(startNextQueuedRun(stored.event.threadId))
+        .withPermit(
+          finalizeAppOwnedSubagent(stored.event.threadId).pipe(
+            Effect.andThen(startNextQueuedRun(stored.event.threadId)),
+          ),
+        )
         .pipe(Effect.catchCause(() => Effect.void)),
     ),
     Effect.forkDetach,

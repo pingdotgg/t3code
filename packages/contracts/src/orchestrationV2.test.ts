@@ -29,6 +29,7 @@ import {
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
+const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 
 describe("orchestration V2 contracts", () => {
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {
@@ -86,7 +87,7 @@ describe("orchestration V2 contracts", () => {
   });
 
   it("decodes command and domain event shapes for command-to-projection tests", () => {
-    const command = Schema.decodeUnknownSync(OrchestrationV2Command)({
+    const command = decodeOrchestrationV2Command({
       type: "message.dispatch",
       commandId: "command-1",
       threadId: "thread-1",
@@ -126,6 +127,32 @@ describe("orchestration V2 contracts", () => {
     expect(command.commandId).toBe(CommandId.make("command-1"));
     expect(event.id).toBe(EventId.make("event-1"));
     expect(event.payload.id).toBe(RunId.make("run-1"));
+  });
+
+  it("decodes app-owned delegated task commands", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "delegated_task.request",
+      commandId: "command-delegate-1",
+      parentThreadId: "thread-parent-1",
+      parentRunId: "run-parent-1",
+      parentNodeId: "node-parent-1",
+      task: "Inspect the API boundary.",
+      title: "API inspection",
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-4-6",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+
+    expect(command.type).toBe("delegated_task.request");
+    if (command.type !== "delegated_task.request") {
+      throw new Error("expected delegated_task.request");
+    }
+    expect(command.parentThreadId).toBe(ThreadId.make("thread-parent-1"));
+    expect(command.parentRunId).toBe(RunId.make("run-parent-1"));
+    expect(command.parentNodeId).toBe(NodeId.make("node-parent-1"));
   });
 
   it("decodes provider-neutral replay transcripts", () => {

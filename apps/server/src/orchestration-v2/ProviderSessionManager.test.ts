@@ -1,5 +1,7 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -7,7 +9,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type ProviderSessionId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,7 +19,11 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import { HttpServer } from "effect/unstable/http";
 
+import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
@@ -181,6 +187,9 @@ function makeProviderAdapter(
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly failEventStream?: boolean;
+    readonly mcpConfigs?: Ref.Ref<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -188,6 +197,12 @@ function makeProviderAdapter(
     getCapabilities: () => Effect.succeed(CodexCapabilities),
     openSession: (input) =>
       Effect.gen(function* () {
+        if (options.mcpConfigs !== undefined) {
+          yield* Ref.update(options.mcpConfigs, (configs) => [
+            ...configs,
+            McpProviderSession.readMcpProviderSession(input.threadId),
+          ]);
+        }
         const now = yield* DateTime.now;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const session = makeProviderSession({
@@ -242,9 +257,15 @@ function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly failEventStream?: boolean;
+  readonly mcpConfigs?: Ref.Ref<
+    ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+  >;
 }) {
   const registryLayer = makeProviderAdapterRegistryLayer(
-    makeProviderAdapter(input.state, { failEventStream: input.failEventStream ?? false }),
+    makeProviderAdapter(input.state, {
+      failEventStream: input.failEventStream ?? false,
+      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+    }),
   );
   return Layer.mergeAll(
     TestStoresLayer,
@@ -257,6 +278,22 @@ function makeTestLayer(input: {
     ),
   );
 }
+
+const fakeHttpServer = HttpServer.HttpServer.of({
+  address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 43123 },
+  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+});
+
+const fakeEnvironment = ServerEnvironment.of({
+  getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-provider-session-manager")),
+  getDescriptor: Effect.die("unused"),
+});
+
+const TestMcpRegistryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
+  Layer.provide(Layer.succeed(ServerEnvironment, fakeEnvironment)),
+  Layer.provide(NodeServices.layer),
+);
 
 function makePendingRuntimeRequestEvents(input: {
   readonly idAllocator: IdAllocatorV2Shape;
@@ -365,6 +402,64 @@ function makePendingRuntimeRequestEvents(input: {
     ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>;
   });
 }
+
+it.effect(
+  "ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-mcp");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          provider: "codex",
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        const captured = (yield* Ref.get(mcpConfigs))[0];
+        assert.isDefined(captured);
+        assert.equal(captured?.threadId, threadId);
+        assert.equal(captured?.providerInstanceId, modelSelection.instanceId);
+        assert.equal(captured?.endpoint, "http://127.0.0.1:43123/mcp");
+        const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+        const resolved = yield* registry.resolve(token!);
+        assert.equal(resolved?.threadId, threadId);
+        assert.deepEqual(resolved?.capabilities, new Set(["preview", "orchestration"]));
+
+        yield* manager.close(providerSessionId);
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* registry.resolve(token!));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+          }).pipe(Layer.provideMerge(TestMcpRegistryLayer)),
+        ),
+      );
+    }),
+);
 
 it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all sessions", () =>
   Effect.gen(function* () {
