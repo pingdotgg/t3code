@@ -3,6 +3,7 @@ import { CommandId, type OrchestrationV2ProviderCapabilities, ThreadId } from "@
 import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { CursorProviderCapabilitiesV2 } from "./Adapters/CursorAdapterV2.ts";
 import {
   CommandPolicyCapabilityUnsupportedError,
   CommandPolicyV2,
@@ -61,6 +62,22 @@ layer("CommandPolicyV2", (it) => {
     }),
   );
 
+  it.effect("honors an explicit interrupt-and-restart request", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+
+      const result = yield* policy.decideSteeringExecution({
+        commandId,
+        threadId,
+        provider: "codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        forceRestart: true,
+      });
+
+      assert.equal(result, "interrupt_restart");
+    }),
+  );
+
   it.effect("returns typed capability errors for unsupported active steering", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicyV2;
@@ -109,6 +126,73 @@ layer("CommandPolicyV2", (it) => {
 
       assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "native_fork");
+    }),
+  );
+
+  it.effect("uses a native fork when the provider supports the requested source point", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+
+      const result = yield* policy.decideForkExecution({
+        commandId,
+        threadId,
+        provider: "codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        sameProvider: true,
+        hasStrongNativeSource: true,
+        fromSpecificTurn: true,
+      });
+
+      assert.equal(result, "native_fork");
+    }),
+  );
+
+  it.effect("falls back to portable context when Cursor cannot fork natively", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+
+      const result = yield* policy.decideForkExecution({
+        commandId,
+        threadId,
+        provider: "cursor",
+        capabilities: CursorProviderCapabilitiesV2,
+        sameProvider: true,
+        hasStrongNativeSource: true,
+        fromSpecificTurn: true,
+      });
+
+      assert.equal(result, "portable_context");
+    }),
+  );
+
+  it.effect("returns a typed error when neither native nor portable fork is available", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+
+      const error = yield* policy
+        .decideForkExecution({
+          commandId,
+          threadId,
+          provider: "cursor",
+          capabilities: capabilities((current) => ({
+            ...current,
+            threads: {
+              ...current.threads,
+              canForkThread: false,
+            },
+            context: {
+              ...current.context,
+              canConsumeHandoffSummaries: false,
+            },
+          })),
+          sameProvider: true,
+          hasStrongNativeSource: true,
+          fromSpecificTurn: true,
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.equal(error.capability, "context_handoff");
     }),
   );
 

@@ -55,3 +55,13 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
+- [Getting started](./getting-started/quick-start.md)
+- [Architecture](./architecture/overview.md)
+- [T3 Connect](./cloud/t3-connect-clerk.md)
+- [Integrations](./integrations/source-control-providers.md)
+- [Mobile](./mobile/app.md)
+- [Operations](./operations/ci.md)
+- Providers: [Codex](./providers/codex.md), [Claude](./providers/claude.md),
+  [Cursor](./providers/cursor.md)
+- [Reference](./reference/encyclopedia.md)
+- [User guides](./user/keybindings.md)

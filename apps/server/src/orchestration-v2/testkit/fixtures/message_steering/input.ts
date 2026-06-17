@@ -16,3 +16,16 @@ export function messageSteeringInput(): OrchestratorFixtureInput {
     ],
   };
 }
+
+export function messageRestartInput(): OrchestratorFixtureInput {
+  return {
+    steps: [
+      { type: "message", text: MESSAGE_STEERING_INITIAL_PROMPT },
+      {
+        type: "restart",
+        text: MESSAGE_STEERING_STEER_PROMPT,
+        targetRunIndex: 1,
+      },
+    ],
+  };
+}

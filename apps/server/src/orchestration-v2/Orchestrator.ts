@@ -996,6 +996,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly messageId: OrchestrationV2ConversationMessage["id"];
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly forceRestart: boolean;
   }) =>
     Effect.gen(function* () {
       const targetRun = input.projection.runs.find(
@@ -1133,6 +1134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: input.command.threadId,
           provider: targetRun.provider,
           capabilities: session.providerSession.capabilities,
+          forceRestart: input.forceRestart,
         }),
       );
 
@@ -1178,7 +1180,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
-      const waitForInterruptedProviderTurn = (
+      const waitForInterruptedExecution = (
         attemptsRemaining = 1_000,
       ): Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error> =>
         Effect.gen(function* () {
@@ -1192,21 +1194,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const interruptedTurn = current.providerTurns.find(
             (candidate) => candidate.id === providerTurn.id,
           );
-          if (interruptedTurn !== undefined && interruptedTurn.status !== "running") {
+          const interruptedAttempt = current.attempts.find(
+            (candidate) => candidate.id === targetRun.activeAttemptId,
+          );
+          const interruptedRun = current.runs.find((candidate) => candidate.id === targetRun.id);
+          if (
+            interruptedTurn !== undefined &&
+            interruptedTurn.status !== "running" &&
+            interruptedAttempt !== undefined &&
+            interruptedAttempt.status !== "running" &&
+            interruptedRun !== undefined &&
+            !["queued", "starting", "running", "waiting"].includes(interruptedRun.status)
+          ) {
             return current;
           }
           if (attemptsRemaining <= 0) {
             return yield* new OrchestratorDispatchError({
               commandId: input.command.commandId,
               commandType: input.command.type,
-              cause: `Provider turn ${providerTurn.id} did not terminalize before steering restart.`,
+              cause: `Provider turn ${providerTurn.id} and attempt ${targetRun.activeAttemptId} did not terminalize before steering restart.`,
             });
           }
           yield* Effect.yieldNow;
-          return yield* waitForInterruptedProviderTurn(attemptsRemaining - 1);
+          return yield* waitForInterruptedExecution(attemptsRemaining - 1);
         });
 
-      const postInterruptProjection = yield* waitForInterruptedProviderTurn();
+      const postInterruptProjection = yield* waitForInterruptedExecution();
 
       const currentAttempt = postInterruptProjection.attempts.find(
         (candidate) => candidate.id === targetRun.activeAttemptId,
@@ -1432,7 +1445,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
       const dispatchMode = command.dispatchMode;
 
-      if (dispatchMode.type === "steer_active") {
+      if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
           command,
           events,
@@ -1442,6 +1455,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: command.messageId,
           text: command.text,
           attachments: command.attachments,
+          forceRestart: dispatchMode.type === "restart_active",
         });
         return;
       }
@@ -1745,12 +1759,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (candidate) => candidate.id === sourceRun.activeAttemptId,
             )?.providerTurnId ??
             undefined);
-      const canResolveForkNatively =
-        pendingForkTransfer !== undefined &&
-        pendingForkTransfer.sourceProvider === modelSelection.instanceId &&
-        sourceProviderThread?.nativeThreadRef?.strength === "strong";
-      const requiresPortableFork = pendingForkTransfer !== undefined && !canResolveForkNatively;
-
       if (pendingForkTransfer !== undefined) {
         if (sourceRun === null || sourceProviderThread === undefined) {
           return yield* new OrchestratorDispatchError({
@@ -1825,6 +1833,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      const forkExecution =
+        pendingForkTransfer === undefined
+          ? null
+          : yield* enforceCommandPolicy(command)(
+              commandPolicy.decideForkExecution({
+                commandId: command.commandId,
+                threadId: command.threadId,
+                provider: modelSelection.instanceId,
+                capabilities: session.providerSession.capabilities,
+                sameProvider: pendingForkTransfer.sourceProvider === modelSelection.instanceId,
+                hasStrongNativeSource: sourceProviderThread?.nativeThreadRef?.strength === "strong",
+                fromSpecificTurn: sourceRun !== null,
+              }),
+            );
+      const canResolveForkNatively = forkExecution === "native_fork";
+      const requiresPortableFork = forkExecution === "portable_context";
+
       if (canResolveForkNatively) {
         yield* enforceCommandPolicy(command)(
           commandPolicy.ensureNativeFork({
@@ -1906,17 +1931,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               );
               return itemRun !== undefined && itemRun.ordinal <= sourceRun.ordinal;
             });
-      if (requiresPortableFork) {
-        yield* enforceCommandPolicy(command)(
-          commandPolicy.ensureContextHandoff({
-            commandId: command.commandId,
-            threadId: command.threadId,
-            provider: modelSelection.instanceId,
-            capabilities: session.providerSession.capabilities,
-            strategy: "full_thread_summary",
-          }),
-        );
-      }
       const portableForkHandoff =
         !requiresPortableFork ||
         pendingForkTransfer === undefined ||
@@ -3095,6 +3109,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: queuedMessage.id,
         text: queuedMessage.text,
         attachments: queuedMessage.attachments,
+        forceRestart: false,
       });
     });
 

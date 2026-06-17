@@ -650,6 +650,28 @@ export const layerWithOptions = (
         };
       };
 
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          const activeSessions = [...(yield* Ref.get(sessions)).values()];
+          yield* Effect.forEach(
+            activeSessions,
+            (entry) =>
+              releaseEntry({
+                providerSessionId: entry.runtime.providerSessionId,
+                reason: "server_shutdown",
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.provider-session.shutdown-release-failed", {
+                    providerSessionId: entry.runtime.providerSessionId,
+                    cause,
+                  }),
+                ),
+              ),
+            { discard: true },
+          );
+        }),
+      );
+
       return ProviderSessionManagerV2.of({
         open: (input) =>
           Effect.gen(function* () {

@@ -43,6 +43,9 @@ export type MessageDispatchDecisionV2 = typeof MessageDispatchDecisionV2.Type;
 export const SteeringExecutionPolicyV2 = Schema.Literals(["active_steering", "interrupt_restart"]);
 export type SteeringExecutionPolicyV2 = typeof SteeringExecutionPolicyV2.Type;
 
+export const ForkExecutionPolicyV2 = Schema.Literals(["native_fork", "portable_context"]);
+export type ForkExecutionPolicyV2 = typeof ForkExecutionPolicyV2.Type;
+
 export const CommandPolicyCapability = Schema.Literals([
   "queued_messages",
   "active_steering",
@@ -129,7 +132,9 @@ export interface CommandPolicyV2Shape {
     input: CapabilityCheckInput,
   ) => Effect.Effect<void, CommandPolicyV2Error>;
   readonly decideSteeringExecution: (
-    input: CapabilityCheckInput,
+    input: CapabilityCheckInput & {
+      readonly forceRestart?: boolean;
+    },
   ) => Effect.Effect<SteeringExecutionPolicyV2, CommandPolicyV2Error>;
   readonly ensureInterrupt: (
     input: CapabilityCheckInput,
@@ -139,6 +144,13 @@ export interface CommandPolicyV2Shape {
       readonly fromSpecificTurn: boolean;
     },
   ) => Effect.Effect<void, CommandPolicyV2Error>;
+  readonly decideForkExecution: (
+    input: CapabilityCheckInput & {
+      readonly sameProvider: boolean;
+      readonly hasStrongNativeSource: boolean;
+      readonly fromSpecificTurn: boolean;
+    },
+  ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
   readonly ensureRollback: (
     input: CapabilityCheckInput,
   ) => Effect.Effect<void, CommandPolicyV2Error>;
@@ -175,7 +187,7 @@ const ensureQueuedMessages: CommandPolicyV2Shape["ensureQueuedMessages"] = (inpu
       );
 
 const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] = (input) => {
-  if (input.capabilities.turns.supportsActiveSteering) {
+  if (!input.forceRestart && input.capabilities.turns.supportsActiveSteering) {
     return Effect.succeed("active_steering");
   }
   if (
@@ -262,6 +274,27 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
     );
   }
   return Effect.void;
+};
+
+const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input) => {
+  const canForkNatively =
+    input.sameProvider &&
+    input.hasStrongNativeSource &&
+    input.capabilities.threads.canForkThread &&
+    (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
+    input.capabilities.identity.nativeThreadIds === "strong";
+
+  if (canForkNatively) {
+    return Effect.succeed("native_fork");
+  }
+
+  return ensureContextHandoff({
+    commandId: input.commandId,
+    threadId: input.threadId,
+    provider: input.provider,
+    capabilities: input.capabilities,
+    strategy: "full_thread_summary",
+  }).pipe(Effect.as("portable_context"));
 };
 
 const decideMessageDispatch: CommandPolicyV2Shape["decideMessageDispatch"] = (input) => {
@@ -359,6 +392,7 @@ export const layer: Layer.Layer<CommandPolicyV2> = Layer.succeed(CommandPolicyV2
   decideSteeringExecution,
   ensureInterrupt,
   ensureNativeFork,
+  decideForkExecution,
   ensureRollback,
   ensureContextHandoff,
 });
