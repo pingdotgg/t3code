@@ -48,6 +48,8 @@ import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as PreviewBrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as DesktopPdfRenderer from "./pdf/DesktopPdfRenderer.ts";
+import * as DesktopWorkspace from "./workspace/DesktopWorkspace.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -121,6 +123,8 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopCloudAuthTokenStore.layer,
   DesktopAssets.layer,
   DesktopObservability.layer,
+  DesktopPdfRenderer.layer,
+  DesktopWorkspace.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
 
 const desktopSshLayer = desktopSshEnvironmentLayer.pipe(
