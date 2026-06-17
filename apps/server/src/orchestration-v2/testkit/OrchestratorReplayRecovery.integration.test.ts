@@ -11,12 +11,22 @@ import {
   CodexOrchestratorReplayHarness,
   makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
+import {
+  type CursorAgentSdkReplayTranscript,
+  CursorOrchestratorReplayHarness,
+  makeCursorAgentSdkReplayRunner,
+  makeCursorProviderAdapterRegistryReplayLayer,
+} from "../Adapters/CursorAdapterV2.testkit.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
+  CODEX_MODEL_SELECTION,
+  CURSOR_MODEL_SELECTION,
   materializeFixtureInput,
   type MaterializedOrchestratorFixtureInput,
+  PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+  PROVIDER_THREAD_RESUME_SECOND_PROMPT,
 } from "./fixtures/shared.ts";
 import {
   assertAssistantTextIncludes,
@@ -31,24 +41,28 @@ import {
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
-const FIRST_PROMPT = "Respond with exactly: provider thread resume fixture first turn complete";
-const SECOND_PROMPT =
-  "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
 
 const decodeCodexTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
-const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* () {
-  const file = new URL(
-    "./fixtures/provider_thread_resume/codex_transcript.ndjson",
-    import.meta.url,
-  );
+const readRawTranscript = Effect.fn("readRecoveryTranscript")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
-  const transcript = yield* decodeProviderReplayNdjson(text);
+  return yield* decodeProviderReplayNdjson(text);
+});
+const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* () {
+  const transcript = yield* readRawTranscript(
+    new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
+  );
   return yield* decodeCodexTranscript(transcript);
+});
+const readCursorTranscript = Effect.fn("readCursorRecoveryTranscript")(function* () {
+  const transcript = yield* readRawTranscript(
+    new URL("./fixtures/provider_thread_resume/cursor_transcript.ndjson", import.meta.url),
+  );
+  return yield* CursorOrchestratorReplayHarness.decodeTranscript(transcript);
 });
 
 function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput) {
@@ -66,6 +80,94 @@ function splitAfterFirstIdle(materialized: MaterializedOrchestratorFixtureInput)
     phase2Commands: phase2Steps.flatMap((step) => (step.type === "dispatch" ? [step.command] : [])),
   };
 }
+
+const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
+  readonly transcript: CursorAgentSdkReplayTranscript;
+  readonly runner: ReturnType<typeof makeCursorAgentSdkReplayRunner>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = yield* Effect.acquireRelease(
+    fs.makeTempDirectory({
+      prefix: "t3-orchestration-v2-cursor-recovery-",
+    }),
+    (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+  );
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  const dbPath = path.join(tempDir, "state.sqlite");
+  const materialized = yield* materializeFixtureInput({
+    scenario: "provider_thread_resume",
+    fixtureInput: {
+      steps: [
+        { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+        { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
+      ],
+    },
+    modelSelection: CURSOR_MODEL_SELECTION,
+  });
+  const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+    splitAfterFirstIdle(materialized);
+  const options = {
+    databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer)),
+  };
+  const harness = {
+    ...CursorOrchestratorReplayHarness,
+    makeProviderAdapterRegistryLayer: () =>
+      makeCursorProviderAdapterRegistryReplayLayer(input.transcript, {
+        runner: input.runner,
+        assertCompleteOnFinalize: false,
+      }),
+  };
+
+  yield* Effect.scoped(
+    runOrchestratorV2ProviderReplayScenario(
+      {
+        name: "provider_thread_resume/cursor:first-runtime",
+        transcript: input.transcript,
+        commands: phase1Commands,
+        steps: phase1Steps,
+        projectionThreadIds: materialized.projectionThreadIds,
+        runtimePolicyOverride: { cwd: tempDir },
+      },
+      harness,
+      options,
+    ),
+  );
+
+  const result = yield* Effect.scoped(
+    runOrchestratorV2ProviderReplayScenario(
+      {
+        name: "provider_thread_resume/cursor:second-runtime",
+        transcript: input.transcript,
+        commands: phase2Commands,
+        steps: phase2Steps,
+        projectionThreadIds: materialized.projectionThreadIds,
+        runtimePolicyOverride: { cwd: tempDir },
+      },
+      harness,
+      options,
+    ),
+  );
+
+  assertBaseProjection({
+    result,
+    transcript: input.transcript,
+    runCount: 2,
+    runStatuses: ["completed", "completed"],
+  });
+  const projection = projectionFor(result, input.transcript.scenario);
+  assertSemanticProjectionIntegrity(projection);
+  assertRunOrdinals(projection, [1, 2]);
+  assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
+  assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
+  assertUserMessagesInclude(projection, [
+    PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+    PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+  ]);
+  assertAssistantTextIncludes(projection, FIRST_FINAL);
+  assertAssistantTextIncludes(projection, SECOND_FINAL);
+  assert.lengthOf(projection.providerThreads, 1);
+});
 
 describe("orchestrator replay recovery", () => {
   it.effect(
@@ -90,8 +192,8 @@ describe("orchestrator replay recovery", () => {
             scenario: "provider_thread_resume",
             fixtureInput: {
               steps: [
-                { type: "message", text: FIRST_PROMPT },
-                { type: "message", text: SECOND_PROMPT },
+                { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+                { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
               ],
             },
             modelSelection: CODEX_MODEL_SELECTION,
@@ -145,10 +247,29 @@ describe("orchestrator replay recovery", () => {
           assertRunOrdinals(projection, [1, 2]);
           assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
           assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
-          assertUserMessagesInclude(projection, [FIRST_PROMPT, SECOND_PROMPT]);
+          assertUserMessagesInclude(projection, [
+            PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+            PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+          ]);
           assertAssistantTextIncludes(projection, FIRST_FINAL);
           assertAssistantTextIncludes(projection, SECOND_FINAL);
           assert.lengthOf(projection.providerThreads, 1);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+        ),
+      ),
+  );
+
+  it.effect(
+    "resumes a provider-native Cursor thread after recreating the orchestrator runtime",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transcript = yield* readCursorTranscript();
+          const runner = makeCursorAgentSdkReplayRunner(transcript);
+          yield* runCursorRecovery({ transcript, runner });
+          yield* runner.assertComplete;
         }).pipe(
           provideDeterministicTestRuntime,
           Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
