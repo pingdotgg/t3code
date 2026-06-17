@@ -73,6 +73,36 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("upgrades saved file surfaces with neutral reveal state", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:src/index.ts",
+            surfaces: [{ id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "file:src/index.ts",
+          surfaces: [
+            {
+              id: "file:src/index.ts",
+              kind: "file",
+              relativePath: "src/index.ts",
+              revealLine: null,
+              revealRequestId: 0,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -108,8 +138,55 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "file:README.md",
       surfaces: [
-        { id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" },
-        { id: "file:README.md", kind: "file", relativePath: "README.md" },
+        {
+          id: "file:src/index.ts",
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: null,
+          revealRequestId: 2,
+        },
+        {
+          id: "file:README.md",
+          kind: "file",
+          relativePath: "README.md",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+      ],
+    });
+  });
+
+  it("updates line reveal requests when reopening a file surface", () => {
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", 42);
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", 87);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:src/index.ts",
+      surfaces: [
+        {
+          id: "file:src/index.ts",
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: 87,
+          revealRequestId: 2,
+        },
+      ],
+    });
+
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:src/index.ts",
+      surfaces: [
+        {
+          id: "file:src/index.ts",
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: null,
+          revealRequestId: 3,
+        },
       ],
     });
   });
@@ -314,7 +391,15 @@ describe("rightPanelStore", () => {
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
       activeSurfaceId: "file:src/index.ts",
-      surfaces: [{ id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" }],
+      surfaces: [
+        {
+          id: "file:src/index.ts",
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+      ],
     });
   });
 

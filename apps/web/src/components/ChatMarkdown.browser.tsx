@@ -288,6 +288,13 @@ describe("ChatMarkdown", () => {
         ).toMatchObject({
           isOpen: true,
           activeSurfaceId: "file:apps/web/src/components/ChatMarkdown.tsx",
+          surfaces: [
+            expect.objectContaining({
+              relativePath: "apps/web/src/components/ChatMarkdown.tsx",
+              revealLine: 978,
+              revealRequestId: 1,
+            }),
+          ],
         });
         expect(openInPreferredEditorMock).not.toHaveBeenCalled();
         expect(openFileInPreviewMock).not.toHaveBeenCalled();

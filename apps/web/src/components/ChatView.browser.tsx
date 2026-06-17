@@ -2700,13 +2700,97 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(fileTree.shadowRoot?.activeElement).toBe(fileSearchInput);
       expect(useComposerDraftStore.getState().draftsByThreadKey[THREAD_KEY]?.prompt ?? "").toBe("");
 
-      useRightPanelStore.getState().openFile(THREAD_REF, "src/large.ts");
-      const codeVirtualizer = await waitForElement(
-        () => document.querySelector<HTMLElement>(".file-preview-virtualizer"),
-        "Unable to find the virtualized file preview.",
+      const previousCodeVirtualizer = document.querySelector<HTMLElement>(
+        ".file-preview-virtualizer",
       );
+      useRightPanelStore.getState().openFile(THREAD_REF, "src/large.ts", 4_000);
+      const codeVirtualizer = await waitForElement(() => {
+        const current = document.querySelector<HTMLElement>(".file-preview-virtualizer");
+        return current !== previousCodeVirtualizer ? current : null;
+      }, "Unable to find the virtualized file preview.");
       expect(codeVirtualizer.querySelector("diffs-container")).not.toBeNull();
       expect(codeVirtualizer.classList.contains("overflow-auto")).toBe(true);
+      await vi.waitFor(
+        () => {
+          const fileHost = codeVirtualizer.querySelector<HTMLElement>("diffs-container");
+          const targetLine = fileHost?.shadowRoot?.querySelector<HTMLElement>('[data-line="4000"]');
+          const targetLineNumber = fileHost?.shadowRoot?.querySelector<HTMLElement>(
+            '[data-column-number="4000"]',
+          );
+          const previousLine =
+            fileHost?.shadowRoot?.querySelector<HTMLElement>('[data-line="3999"]');
+          const previousLineNumber = fileHost?.shadowRoot?.querySelector<HTMLElement>(
+            '[data-column-number="3999"]',
+          );
+          expect(codeVirtualizer.scrollTop).toBeGreaterThan(0);
+          expect(targetLine).not.toBeNull();
+          expect(previousLine).not.toBeNull();
+          expect(targetLine?.hasAttribute("data-file-link-reveal")).toBe(true);
+          expect(targetLineNumber?.hasAttribute("data-file-link-reveal")).toBe(true);
+          expect(targetLine?.hasAttribute("data-selected-line")).toBe(false);
+          expect(targetLineNumber?.hasAttribute("data-selected-line")).toBe(false);
+          expect(targetLineNumber?.querySelector("[data-gutter-utility-slot]")).toBeNull();
+          expect(window.getComputedStyle(targetLine!).backgroundColor).not.toBe(
+            window.getComputedStyle(previousLine!).backgroundColor,
+          );
+          expect(window.getComputedStyle(targetLineNumber!).backgroundColor).not.toBe(
+            window.getComputedStyle(previousLineNumber!).backgroundColor,
+          );
+
+          const viewportRect = codeVirtualizer.getBoundingClientRect();
+          const lineRect = targetLine!.getBoundingClientRect();
+          expect(lineRect.top).toBeGreaterThanOrEqual(viewportRect.top);
+          expect(lineRect.bottom).toBeLessThanOrEqual(viewportRect.bottom);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const fileHost = codeVirtualizer.querySelector<HTMLElement>("diffs-container");
+      const targetLineNumber =
+        fileHost?.shadowRoot?.querySelector<HTMLElement>('[data-column-number="4000"]') ?? null;
+      const previousLineNumber =
+        fileHost?.shadowRoot?.querySelector<HTMLElement>('[data-column-number="3999"]') ?? null;
+      expect(targetLineNumber).not.toBeNull();
+      expect(previousLineNumber).not.toBeNull();
+
+      targetLineNumber!.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerType: "mouse",
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(targetLineNumber?.querySelector("[data-gutter-utility-slot]")).not.toBeNull();
+      });
+
+      previousLineNumber!.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerType: "mouse",
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(targetLineNumber?.querySelector("[data-gutter-utility-slot]")).toBeNull();
+        expect(previousLineNumber?.querySelector("[data-gutter-utility-slot]")).not.toBeNull();
+      });
+
+      codeVirtualizer.scrollTop = 0;
+      useRightPanelStore.getState().openFile(THREAD_REF, "src/large.ts", 4_000);
+      await vi.waitFor(
+        () => {
+          const fileHost = codeVirtualizer.querySelector<HTMLElement>("diffs-container");
+          const targetLine = fileHost?.shadowRoot?.querySelector<HTMLElement>('[data-line="4000"]');
+          expect(targetLine).not.toBeNull();
+          expect(targetLine?.hasAttribute("data-file-link-reveal")).toBe(true);
+          expect(targetLine?.hasAttribute("data-selected-line")).toBe(false);
+          expect(codeVirtualizer.scrollTop).toBeGreaterThan(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
