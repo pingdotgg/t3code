@@ -66,6 +66,7 @@ const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
+const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.millis(250);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
@@ -389,6 +390,7 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         (cause) => new BackendProcessSpawnError({ executablePath: options.executablePath, cause }),
       ),
     );
+  const outputFibers: Array<Fiber.Fiber<void, never>> = [];
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
   if (
@@ -418,8 +420,10 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
   }
   if (options.captureOutput) {
-    yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
-    yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
+    outputFibers.push(
+      yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped),
+      yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped),
+    );
   }
   yield* waitForHttpReady(
     options.httpBaseUrl,
@@ -430,7 +434,12 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.forkScoped,
   );
 
-  return describeProcessExit(yield* Effect.result(handle.exitCode));
+  const exit = yield* Effect.result(handle.exitCode);
+  yield* Effect.forEach(outputFibers, Fiber.await, {
+    concurrency: "unbounded",
+    discard: true,
+  }).pipe(Effect.timeout(DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT), Effect.ignore);
+  return describeProcessExit(exit);
 });
 
 // Factory for one pooled backend instance. The returned instance owns
@@ -668,10 +677,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
               if (isCurrentRun) {
                 if (Option.isSome(pid)) {
-                  yield* backendOutputLog.writeSessionBoundary({
-                    phase: "END",
-                    details: `pid=${pid.value} ${reason}`,
-                  });
+                  if (nextState.desiredRunning) {
+                    yield* backendOutputLog.persistFailure({
+                      details: `pid=${pid.value} ${reason}`,
+                    });
+                  } else {
+                    yield* backendOutputLog.discardSession;
+                  }
                 }
                 yield* spec.onShutdown?.() ?? Effect.void;
               }
@@ -692,8 +704,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               pid: Option.some(pid),
             }));
-            yield* backendOutputLog.writeSessionBoundary({
-              phase: "START",
+            yield* backendOutputLog.beginSession({
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
           }),
@@ -719,10 +730,16 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
           }),
-          onReadinessFailure: (error) =>
-            logInstanceWarning("backend readiness check failed during bootstrap", {
-              error: error.message,
-            }),
+          onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
+            function* (error) {
+              yield* logInstanceWarning("backend readiness check failed during bootstrap", {
+                error: error.message,
+              });
+              yield* backendOutputLog.persistFailure({
+                details: error.message,
+              });
+            },
+          ),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -841,7 +858,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
     yield* Option.match(active, {
       onNone: () => Effect.void,
-      onSome: (run) => closeRun(run, options),
+      onSome: (run) => closeRun(run, options).pipe(Effect.andThen(backendOutputLog.discardSession)),
     });
   });
 

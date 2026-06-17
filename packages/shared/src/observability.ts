@@ -8,7 +8,7 @@ import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
 
 import { RotatingFileSink } from "./logging.ts";
 
-const FLUSH_BUFFER_THRESHOLD = 32;
+const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;

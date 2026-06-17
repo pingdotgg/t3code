@@ -58,8 +58,10 @@ function makePoolLayer(
         Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
           forInstance: () =>
             Effect.succeed({
-              writeSessionBoundary: () => Effect.void,
+              beginSession: () => Effect.void,
               writeOutputChunk: () => Effect.void,
+              persistFailure: () => Effect.void,
+              discardSession: Effect.void,
             } satisfies DesktopObservability.DesktopBackendOutputLogShape),
         } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
         Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {

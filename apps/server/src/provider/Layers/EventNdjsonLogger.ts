@@ -91,6 +91,41 @@ function resolveStreamLabel(stream: EventNdjsonStream): string {
   }
 }
 
+function writeBatchedMessages(
+  sink: RotatingFileSink,
+  messages: ReadonlyArray<string>,
+  maxBytes: number,
+): number {
+  let pendingMessages: Array<string> = [];
+  let pendingBytes = 0;
+  let logicalWriteBytes = 0;
+
+  const flush = () => {
+    if (pendingMessages.length === 0) {
+      return;
+    }
+    sink.write(pendingMessages.join(""));
+    pendingMessages = [];
+    pendingBytes = 0;
+  };
+
+  for (const message of messages) {
+    const messageBytes = textEncoder.encode(message).byteLength;
+    logicalWriteBytes += messageBytes;
+    if (pendingBytes > 0 && pendingBytes + messageBytes > maxBytes) {
+      flush();
+    }
+    pendingMessages.push(message);
+    pendingBytes += messageBytes;
+    if (pendingBytes >= maxBytes) {
+      flush();
+    }
+  }
+  flush();
+
+  return logicalWriteBytes;
+}
+
 const toLogMessage = Effect.fn("toLogMessage")(function* (
   event: unknown,
 ): Effect.fn.Return<string | undefined> {
@@ -145,14 +180,9 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
       const startedAt = yield* Clock.currentTimeMillis;
       const flushResult = yield* Effect.sync(() => {
         try {
-          let logicalWriteBytes = 0;
-          for (const message of messages) {
-            sink.write(message);
-            logicalWriteBytes += textEncoder.encode(message).byteLength;
-          }
           return {
             ok: true as const,
-            logicalWriteBytes,
+            logicalWriteBytes: writeBatchedMessages(sink, messages, input.maxBytes),
             count: messages.length,
           };
         } catch (error) {
