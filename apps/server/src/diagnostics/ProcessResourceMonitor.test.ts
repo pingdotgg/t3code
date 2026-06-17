@@ -1,255 +1,137 @@
 import { describe, expect, it } from "@effect/vitest";
+import type { ResourceTelemetryHistory } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import * as ProcessResourceMonitor from "./ProcessResourceMonitor.ts";
 
 describe("ProcessResourceMonitor", () => {
-  it.effect("samples the server root process and descendants", () =>
-    Effect.sync(() => {
-      const sampledAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
-      const samples = ProcessResourceMonitor.collectMonitoredSamples({
-        serverPid: 100,
-        sampledAt,
-        sampledAtMs: DateTime.toEpochMillis(sampledAt),
-        rows: [
-          {
-            pid: 100,
-            ppid: 1,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 2,
-            rssBytes: 1_000,
-            elapsed: "01:00",
-            command: "t3 server",
-          },
-          {
-            pid: 101,
-            ppid: 100,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 10,
-            rssBytes: 2_000,
-            elapsed: "00:20",
-            command: "codex app-server",
-          },
-          {
-            pid: 102,
-            ppid: 101,
-            pgid: 100,
-            status: "R",
-            cpuPercent: 50,
-            rssBytes: 3_000,
-            elapsed: "00:05",
-            command: "rg needle",
-          },
-          {
-            pid: 200,
-            ppid: 1,
-            pgid: 200,
-            status: "R",
-            cpuPercent: 99,
-            rssBytes: 9_000,
-            elapsed: "00:05",
-            command: "unrelated",
-          },
-        ],
-      });
-
-      expect(samples.map((sample) => sample.pid)).toEqual([100, 101, 102]);
-      expect(samples.map((sample) => sample.depth)).toEqual([0, 1, 2]);
-      expect(samples[0]?.isServerRoot).toBe(true);
-      expect(samples[1]?.isServerRoot).toBe(false);
-    }),
-  );
-
-  it.effect("rolls samples up by process and CPU time", () =>
-    Effect.sync(() => {
-      const firstAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
-      const secondAt = DateTime.makeUnsafe("2026-05-05T10:00:05.000Z");
-      const samples = [
-        ...ProcessResourceMonitor.collectMonitoredSamples({
-          serverPid: 100,
-          sampledAt: firstAt,
-          sampledAtMs: DateTime.toEpochMillis(firstAt),
-          rows: [
-            {
-              pid: 100,
-              ppid: 1,
-              pgid: 100,
-              status: "S",
-              cpuPercent: 10,
-              rssBytes: 1_000,
-              elapsed: "01:00",
-              command: "t3 server",
-            },
-          ],
-        }),
-        ...ProcessResourceMonitor.collectMonitoredSamples({
-          serverPid: 100,
-          sampledAt: secondAt,
-          sampledAtMs: DateTime.toEpochMillis(secondAt),
-          rows: [
-            {
-              pid: 100,
-              ppid: 1,
-              pgid: 100,
-              status: "S",
-              cpuPercent: 30,
-              rssBytes: 2_000,
-              elapsed: "01:05",
-              command: "t3 server",
-            },
-          ],
-        }),
-      ];
-
-      const result = ProcessResourceMonitor.aggregateProcessResourceHistory({
-        samples,
-        readAt: secondAt,
-        readAtMs: DateTime.toEpochMillis(secondAt),
-        windowMs: 60_000,
-        bucketMs: 10_000,
-        lastFailure: null,
-      });
-
-      expect(Option.isNone(result.error)).toBe(true);
-      expect(result.topProcesses).toHaveLength(1);
-      expect(result.topProcesses[0]?.avgCpuPercent).toBe(20);
-      expect(result.topProcesses[0]?.maxCpuPercent).toBe(30);
-      expect(result.topProcesses[0]?.cpuSecondsApprox).toBe(2);
-      expect(result.totalCpuSecondsApprox).toBe(2);
-      expect(result.buckets.some((bucket) => bucket.maxCpuPercent === 30)).toBe(true);
-    }),
-  );
-
-  it.effect("keeps a process grouped when elapsed time drifts between samples", () =>
-    Effect.sync(() => {
-      const firstAt = DateTime.makeUnsafe("2026-05-05T10:00:00.400Z");
-      const secondAt = DateTime.makeUnsafe("2026-05-05T10:00:05.900Z");
-      const samples = [
-        ...ProcessResourceMonitor.collectMonitoredSamples({
-          serverPid: 100,
-          sampledAt: firstAt,
-          sampledAtMs: DateTime.toEpochMillis(firstAt),
-          rows: [
-            {
-              pid: 100,
-              ppid: 1,
-              pgid: 100,
-              status: "S",
-              cpuPercent: 1,
-              rssBytes: 1_000,
-              elapsed: "01:00",
-              command: "t3 server",
-            },
-          ],
-        }),
-        ...ProcessResourceMonitor.collectMonitoredSamples({
-          serverPid: 100,
-          sampledAt: secondAt,
-          sampledAtMs: DateTime.toEpochMillis(secondAt),
-          rows: [
-            {
-              pid: 100,
-              ppid: 1,
-              pgid: 100,
-              status: "S",
-              cpuPercent: 2,
-              rssBytes: 2_000,
-              elapsed: "01:06",
-              command: "t3 server",
-            },
-          ],
-        }),
-      ];
-
-      const result = ProcessResourceMonitor.aggregateProcessResourceHistory({
-        samples,
-        readAt: secondAt,
-        readAtMs: DateTime.toEpochMillis(secondAt),
-        windowMs: 60_000,
-        bucketMs: 10_000,
-        lastFailure: null,
-      });
-
-      expect(result.topProcesses).toHaveLength(1);
-      expect(result.topProcesses[0]?.isServerRoot).toBe(true);
-      expect(result.topProcesses[0]?.sampleCount).toBe(2);
-      expect(result.topProcesses[0]?.maxRssBytes).toBe(2_000);
-    }),
-  );
-
-  it.effect("returns all process summaries in the selected window", () =>
-    Effect.sync(() => {
-      const sampledAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
-      const samples = ProcessResourceMonitor.collectMonitoredSamples({
-        serverPid: 100,
-        sampledAt,
-        sampledAtMs: DateTime.toEpochMillis(sampledAt),
-        rows: [
-          {
-            pid: 100,
-            ppid: 1,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 1,
-            rssBytes: 1_000,
-            elapsed: "01:00",
-            command: "t3 server",
-          },
-          ...Array.from({ length: 35 }, (_, index) => ({
-            pid: 200 + index,
-            ppid: index === 0 ? 100 : 199 + index,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 35 - index,
-            rssBytes: 2_000 + index,
-            elapsed: "00:10",
-            command: `worker ${index}`,
-          })),
-        ],
-      });
-
-      const result = ProcessResourceMonitor.aggregateProcessResourceHistory({
-        samples,
-        readAt: sampledAt,
-        readAtMs: DateTime.toEpochMillis(sampledAt),
-        windowMs: 60_000,
-        bucketMs: 10_000,
-        lastFailure: null,
-      });
-
-      expect(result.topProcesses).toHaveLength(36);
-      expect(result.topProcesses.some((process) => process.command === "worker 34")).toBe(true);
-    }),
-  );
-
-  it.effect("exposes bounded failure diagnostics while retaining the exact cause", () =>
-    Effect.sync(() => {
+  it.effect("projects resource telemetry history into the legacy diagnostics contract", () =>
+    Effect.gen(function* () {
       const readAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
-      const cause = new Error("stderr included credential=secret-value");
-      const failure = new ProcessResourceMonitor.ProcessResourceSamplingError({
-        failureTag: "ProcessDiagnosticsQueryFailedError",
-        cause,
-      });
-
-      const result = ProcessResourceMonitor.aggregateProcessResourceHistory({
-        samples: [],
+      const history: ResourceTelemetryHistory = {
         readAt,
-        readAtMs: DateTime.toEpochMillis(readAt),
         windowMs: 60_000,
         bucketMs: 10_000,
-        lastFailure: failure,
-      });
+        sampleIntervalMs: 1_000,
+        retainedSampleCount: 2,
+        buckets: [
+          {
+            startedAt: DateTime.makeUnsafe("2026-05-05T09:59:50.000Z"),
+            endedAt: readAt,
+            avgCpuPercent: 15,
+            maxCpuPercent: 25,
+            maxRssBytes: 4_096,
+            ioReadBytes: 1_024,
+            ioWriteBytes: 2_048,
+            maxProcessCount: 2,
+          },
+        ],
+        topProcesses: [
+          {
+            identity: { pid: process.pid, startTimeMs: 100 },
+            ppid: 1,
+            depth: 0,
+            name: "node",
+            command: "t3 server",
+            category: "server",
+            firstSeenAt: DateTime.makeUnsafe("2026-05-05T09:59:55.000Z"),
+            lastSeenAt: readAt,
+            currentCpuPercent: 5,
+            avgCpuPercent: 4,
+            maxCpuPercent: 8,
+            cpuTimeMs: 1_500,
+            currentRssBytes: 2_048,
+            peakRssBytes: 4_096,
+            ioReadBytes: 1_024,
+            ioWriteBytes: 2_048,
+            ioSemantics: "storage",
+            sampleCount: 2,
+          },
+        ],
+        health: {
+          native: {
+            status: "degraded",
+            lastSampleAt: Option.some(readAt),
+            lastError: Option.some("collector stalled"),
+          },
+          desktop: {
+            status: "healthy",
+            lastSampleAt: Option.some(readAt),
+            lastError: Option.none(),
+          },
+          sidecarVersion: Option.some("0.1.0"),
+          sidecarPid: Option.some(9_000),
+          restartCount: 1,
+          collectionDurationMicros: 250,
+          scannedProcessCount: 80,
+          retainedProcessCount: 2,
+          inaccessibleProcessCount: 0,
+        },
+      };
+      const telemetry: ResourceTelemetry.ResourceTelemetryShape = {
+        latest: Effect.die("unused"),
+        changes: Stream.empty,
+        readHistory: () => Effect.succeed(history),
+        refresh: Effect.die("unused"),
+        validateProcessIdentity: () => Effect.die("unused"),
+        retry: Effect.die("unused"),
+      };
+      const layer = ProcessResourceMonitor.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            ResourceTelemetry.ResourceTelemetry,
+            ResourceTelemetry.ResourceTelemetry.of(telemetry),
+          ),
+        ),
+      );
 
-      expect(failure.cause).toBe(cause);
-      expect(Option.getOrThrow(result.error)).toEqual({
-        failureTag: "ProcessDiagnosticsQueryFailedError",
-        message: "Failed to sample process resources (ProcessDiagnosticsQueryFailedError).",
+      const result = yield* Effect.service(ProcessResourceMonitor.ProcessResourceMonitor).pipe(
+        Effect.flatMap((monitor) =>
+          monitor.readHistory({
+            windowMs: 60_000,
+            bucketMs: 10_000,
+          }),
+        ),
+        Effect.provide(layer),
+      );
+
+      expect(result.totalCpuSecondsApprox).toBe(1.5);
+      expect(result.topProcesses).toEqual([
+        {
+          processKey: `${process.pid}:100`,
+          pid: process.pid,
+          ppid: 1,
+          command: "t3 server",
+          depth: 0,
+          isServerRoot: true,
+          firstSeenAt: DateTime.makeUnsafe("2026-05-05T09:59:55.000Z"),
+          lastSeenAt: readAt,
+          currentCpuPercent: 5,
+          avgCpuPercent: 4,
+          maxCpuPercent: 8,
+          cpuSecondsApprox: 1.5,
+          currentRssBytes: 2_048,
+          maxRssBytes: 4_096,
+          sampleCount: 2,
+        },
+      ]);
+      expect(result.buckets[0]).toMatchObject({
+        avgCpuPercent: 15,
+        maxCpuPercent: 25,
+        maxRssBytes: 4_096,
+        maxProcessCount: 2,
       });
-      expect(Option.getOrThrow(result.error).message).not.toContain("secret-value");
+      expect(result.error).toEqual(
+        Option.some({
+          failureTag: "ProcessDiagnosticsQueryFailedError",
+          message: "collector stalled",
+        }),
+      );
     }),
   );
 });

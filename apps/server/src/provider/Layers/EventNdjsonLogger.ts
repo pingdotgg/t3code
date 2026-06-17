@@ -12,6 +12,7 @@ import * as NodePath from "node:path";
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { errorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
@@ -20,6 +21,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+import type { ResourceAttributionShape } from "../../resourceTelemetry/ResourceAttribution.ts";
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 10;
@@ -27,6 +29,7 @@ const DEFAULT_BATCH_WINDOW_MS = 200;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
+const textEncoder = new TextEncoder();
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
@@ -41,6 +44,7 @@ export interface EventNdjsonLoggerOptions {
   readonly maxBytes?: number;
   readonly maxFiles?: number;
   readonly batchWindowMs?: number;
+  readonly attribution?: ResourceAttributionShape;
 }
 
 interface ThreadWriter {
@@ -105,6 +109,8 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
   readonly maxFiles: number;
   readonly batchWindowMs: number;
   readonly streamLabel: string;
+  readonly stream: EventNdjsonStream;
+  readonly attribution?: ResourceAttributionShape;
 }): Effect.fn.Return<ThreadWriter | undefined> {
   const sinkResult = yield* Effect.sync(() => {
     try {
@@ -136,12 +142,19 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
   const batchedLogger = yield* Logger.batched(lineLogger, {
     window: input.batchWindowMs,
     flush: Effect.fn("makeThreadWriter.flush")(function* (messages) {
+      const startedAt = yield* Clock.currentTimeMillis;
       const flushResult = yield* Effect.sync(() => {
         try {
+          let logicalWriteBytes = 0;
           for (const message of messages) {
             sink.write(message);
+            logicalWriteBytes += textEncoder.encode(message).byteLength;
           }
-          return { ok: true as const };
+          return {
+            ok: true as const,
+            logicalWriteBytes,
+            count: messages.length,
+          };
         } catch (error) {
           return { ok: false as const, error };
         }
@@ -151,6 +164,18 @@ const makeThreadWriter = Effect.fn("makeThreadWriter")(function* (input: {
         yield* logWarning("provider event log batch flush failed", {
           filePath: input.filePath,
           errorTag: errorTag(flushResult.error),
+        });
+        return;
+      }
+
+      if (input.attribution && flushResult.count > 0) {
+        const completedAt = yield* Clock.currentTimeMillis;
+        yield* input.attribution.record({
+          component: "provider-event-log",
+          operation: `${input.stream}.append`,
+          logicalWriteBytes: flushResult.logicalWriteBytes,
+          count: flushResult.count,
+          durationMs: Math.max(0, completedAt - startedAt),
         });
       }
     }),
@@ -217,6 +242,8 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
         maxFiles,
         batchWindowMs,
         streamLabel,
+        stream: options.stream,
+        ...(options.attribution ? { attribution: options.attribution } : {}),
       }).pipe(
         Effect.map((writer) => {
           if (!writer) {

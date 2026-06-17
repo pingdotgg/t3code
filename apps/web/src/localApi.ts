@@ -75,6 +75,9 @@ function createBrowserLocalApi(): LocalApi {
       getTraceDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
       getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
       getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
+      getResourceTelemetry: () => Promise.reject(unavailableLocalBackendError()),
+      getResourceTelemetryHistory: () => Promise.reject(unavailableLocalBackendError()),
+      retryResourceTelemetry: () => Promise.reject(unavailableLocalBackendError()),
       signalProcess: () => Promise.reject(unavailableLocalBackendError()),
     },
   };

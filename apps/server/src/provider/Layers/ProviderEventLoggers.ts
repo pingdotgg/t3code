@@ -32,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ServerConfig } from "../../config.ts";
+import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 export interface ProviderEventLoggersShape {
@@ -71,11 +72,14 @@ export const ProviderEventLoggersLive = Layer.effect(
   ProviderEventLoggers,
   Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
+    const attribution = yield* ResourceAttribution.ResourceAttribution;
     const native = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "native",
+      attribution,
     });
     const canonical = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
+      attribution,
     });
     return {
       native,

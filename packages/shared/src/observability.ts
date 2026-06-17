@@ -9,6 +9,7 @@ import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
 import { RotatingFileSink } from "./logging.ts";
 
 const FLUSH_BUFFER_THRESHOLD = 32;
+const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
 
@@ -109,6 +110,13 @@ export interface TraceSinkOptions {
   readonly maxBytes: number;
   readonly maxFiles: number;
   readonly batchWindowMs: number;
+  readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
+}
+
+export interface TraceSinkFlushStats {
+  readonly logicalWriteBytes: number;
+  readonly count: number;
+  readonly durationMs: number;
 }
 
 export interface TraceSink {
@@ -278,23 +286,50 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
+  let pendingFlushStats: TraceSinkFlushStats = {
+    logicalWriteBytes: 0,
+    count: 0,
+    durationMs: 0,
+  };
 
   const flushUnsafe = () => {
     if (buffer.length === 0) {
       return;
     }
 
-    const chunk = buffer.join("");
+    const records = buffer;
+    const chunk = records.join("");
     buffer = [];
+    const startedAt = performance.now();
 
     try {
       sink.write(chunk);
+      pendingFlushStats = {
+        logicalWriteBytes:
+          pendingFlushStats.logicalWriteBytes + textEncoder.encode(chunk).byteLength,
+        count: pendingFlushStats.count + records.length,
+        durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
+      };
     } catch {
-      buffer.unshift(chunk);
+      buffer.unshift(...records);
     }
   };
 
-  const flush = Effect.sync(flushUnsafe).pipe(Effect.withTracerEnabled(false));
+  const flush = Effect.sync(() => {
+    flushUnsafe();
+    const stats = pendingFlushStats;
+    pendingFlushStats = {
+      logicalWriteBytes: 0,
+      count: 0,
+      durationMs: 0,
+    };
+    return stats;
+  }).pipe(
+    Effect.flatMap((stats) =>
+      stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
+    ),
+    Effect.withTracerEnabled(false),
+  );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(

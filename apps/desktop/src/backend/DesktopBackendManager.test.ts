@@ -21,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
@@ -52,6 +53,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
 const configWithObservability: DesktopBackendBootstrapValue = {
   ...baseConfig.bootstrap,
   tailscaleServeEnabled: true,
+  desktopTelemetryFd: 4,
   otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
 };
 
@@ -113,6 +115,7 @@ interface MakeInstanceInput {
   ) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
   readonly configResolve?: Effect.Effect<DesktopBackendManager.DesktopBackendStartConfig>;
+  readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
 }
 
 // Helper that constructs a primary backend instance using the factory
@@ -135,6 +138,11 @@ function makeTestInstance(input: MakeInstanceInput) {
     Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
       forInstance: () => Effect.succeed(stubLog),
     } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
+    Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+      latest: Effect.succeed(Option.none()),
+      changes: Stream.empty,
+      encoded: input.desktopTelemetryStream ?? Stream.empty,
+    }),
   );
 
   const instance = DesktopBackendManager.makeBackendInstance({
@@ -150,11 +158,12 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
-  it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
+  it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let spawnedCommand: ChildProcess.Command | undefined;
         let bootstrapJson = "";
+        let telemetryJson = "";
         let readyCount = 0;
         const ready = yield* Deferred.make<void>();
         const exited = yield* Queue.unbounded<void>();
@@ -168,6 +177,10 @@ describe("DesktopBackendManager", () => {
                 const fd3 = command.options.additionalFds?.fd3;
                 if (fd3?.type === "input" && fd3.stream) {
                   bootstrapJson = yield* fd3.stream.pipe(Stream.decodeText(), Stream.mkString);
+                }
+                const fd4 = command.options.additionalFds?.fd4;
+                if (fd4?.type === "input" && fd4.stream) {
+                  telemetryJson = yield* fd4.stream.pipe(Stream.decodeText(), Stream.mkString);
                 }
               }
 
@@ -184,6 +197,9 @@ describe("DesktopBackendManager", () => {
             bootstrap: configWithObservability,
           },
           spawnerLayer,
+          desktopTelemetryStream: Stream.encodeText(
+            Stream.make('{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n'),
+          ),
           onReady: Effect.sync(() => {
             readyCount += 1;
           }).pipe(Effect.andThen(Deferred.succeed(ready, void 0)), Effect.asVoid),
@@ -216,6 +232,10 @@ describe("DesktopBackendManager", () => {
         );
 
         assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
+        assert.equal(
+          telemetryJson,
+          '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
+        );
       }),
     ),
   );

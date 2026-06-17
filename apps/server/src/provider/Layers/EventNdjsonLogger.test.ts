@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 
+import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
@@ -235,6 +236,40 @@ describe("EventNdjsonLogger", () => {
           matchingFiles.some((entry) => entry === `${fileStem}.3`),
           false,
         );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("reports logical provider log writes to resource attribution", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"),
+      );
+      const basePath = NodePath.join(tempDir, "provider-native.ndjson");
+
+      try {
+        const attribution = yield* ResourceAttribution.make();
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "native",
+          batchWindowMs: 0,
+          attribution,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        yield* logger.write({ id: "attributed-event" }, ThreadId.make("thread-attribution"));
+        yield* logger.close();
+
+        const snapshot = yield* attribution.snapshot;
+        assert.equal(snapshot.entries.length, 1);
+        assert.equal(snapshot.entries[0]?.component, "provider-event-log");
+        assert.equal(snapshot.entries[0]?.operation, "native.append");
+        assert.equal(snapshot.entries[0]?.count, 1);
+        assert.isAbove(snapshot.entries[0]?.logicalWriteBytes ?? 0, 0);
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }

@@ -1,282 +1,132 @@
 import { describe, expect, it } from "@effect/vitest";
+import type {
+  DesktopHostTelemetrySnapshot,
+  ResourceMonitorSnapshotEvent,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
+import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
-const encoder = new TextEncoder();
+function makeNativeSnapshot(
+  processes: ResourceMonitorSnapshotEvent["processes"],
+): ResourceMonitorSnapshotEvent {
+  return {
+    version: 1,
+    type: "snapshot",
+    sequence: 1,
+    sampledAtUnixMs: DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z")),
+    collectionDurationMicros: 250,
+    scannedProcessCount: processes.length,
+    retainedProcessCount: processes.length,
+    inaccessibleProcessCount: 0,
+    processes,
+  };
+}
 
-function mockHandle(result: {
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly code?: number;
-}) {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
-    unref: Effect.succeed(Effect.void),
-    stdin: Sink.drain,
-    stdout: Stream.make(encoder.encode(result.stdout ?? "")),
-    stderr: Stream.make(encoder.encode(result.stderr ?? "")),
-    all: Stream.empty,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
+function makeTelemetryLayer(
+  snapshot: ResourceMonitorSnapshotEvent,
+  desktopSnapshot?: DesktopHostTelemetrySnapshot,
+) {
+  const nativeLayer = NativeTelemetryClient.layerTest({
+    sampleNow: Effect.succeed(snapshot),
+    health: Effect.succeed({
+      status: "healthy",
+      hello: Option.none(),
+      lastSampleAt: Option.some(DateTime.makeUnsafe(snapshot.sampledAtUnixMs)),
+      lastError: Option.none(),
+      restartCount: 0,
+    }),
   });
+  const desktopLayer = desktopSnapshot
+    ? DesktopTelemetryReceiver.layerTest({
+        latest: Effect.succeedSome(desktopSnapshot),
+        health: Effect.succeed({
+          status: "healthy",
+          lastSampleAt: Option.some(DateTime.makeUnsafe(desktopSnapshot.sampledAtUnixMs)),
+          lastError: Option.none(),
+        }),
+      })
+    : DesktopTelemetryReceiver.layerTest();
+  return ResourceTelemetry.layer.pipe(
+    Layer.provide(Layer.mergeAll(nativeLayer, desktopLayer, ResourceAttribution.layer)),
+  );
 }
 
 describe("ProcessDiagnostics", () => {
-  it.effect("parses POSIX ps rows with full commands", () =>
-    Effect.sync(() => {
-      const rows = ProcessDiagnostics.parsePosixProcessRows(
-        [
-          "  10     1    10 Ss      0.0   1024   01:02.03 /usr/bin/node server.js",
-          "  11    10    10 S+     12.5  20480      00:04 codex app-server --config /tmp/one two",
-        ].join("\n"),
-      );
-
-      expect(rows).toEqual([
+  it.effect("projects live process data from resource telemetry", () =>
+    Effect.gen(function* () {
+      const snapshot = makeNativeSnapshot([
         {
-          pid: 10,
+          pid: process.pid,
           ppid: 1,
-          pgid: 10,
-          status: "Ss",
+          startTimeMs: 1_000,
+          runTimeMs: 60_000,
+          name: "node",
+          command: "t3 server",
+          status: "Running",
           cpuPercent: 0,
-          rssBytes: 1024 * 1024,
-          elapsed: "01:02.03",
-          command: "/usr/bin/node server.js",
+          cpuTimeMs: 100,
+          residentBytes: 1_024,
+          virtualBytes: 2_048,
+          ioReadBytes: 100,
+          ioWriteBytes: 200,
+          ioSemantics: "storage",
         },
         {
-          pid: 11,
-          ppid: 10,
-          pgid: 10,
-          status: "S+",
-          cpuPercent: 12.5,
-          rssBytes: 20480 * 1024,
-          elapsed: "00:04",
-          command: "codex app-server --config /tmp/one two",
+          pid: 4_242,
+          ppid: process.pid,
+          startTimeMs: 2_000,
+          runTimeMs: 4_000,
+          name: "agent",
+          command: "codex app-server",
+          status: "Running",
+          cpuPercent: 1.5,
+          cpuTimeMs: 60,
+          residentBytes: 2_048,
+          virtualBytes: 4_096,
+          ioReadBytes: 300,
+          ioWriteBytes: 400,
+          ioSemantics: "storage",
         },
       ]);
-    }),
-  );
+      const telemetryLayer = makeTelemetryLayer(snapshot);
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(telemetryLayer));
 
-  it.effect("aggregates only descendants of the server process", () =>
-    Effect.sync(() => {
-      const diagnostics = ProcessDiagnostics.aggregateProcessDiagnostics({
-        serverPid: 100,
-        readAt: DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"),
-        rows: [
-          {
-            pid: 100,
-            ppid: 1,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 0,
-            rssBytes: 1_000,
-            elapsed: "01:00",
-            command: "t3 server",
-          },
-          {
-            pid: 101,
-            ppid: 100,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 1.5,
-            rssBytes: 2_000,
-            elapsed: "00:20",
-            command: "codex app-server",
-          },
-          {
-            pid: 102,
-            ppid: 101,
-            pgid: 100,
-            status: "R",
-            cpuPercent: 3.25,
-            rssBytes: 4_000,
-            elapsed: "00:05",
-            command: "git status",
-          },
-          {
-            pid: 200,
-            ppid: 1,
-            pgid: 200,
-            status: "S",
-            cpuPercent: 99,
-            rssBytes: 8_000,
-            elapsed: "00:01",
-            command: "unrelated",
-          },
-          {
-            pid: 201,
-            ppid: 100,
-            pgid: 100,
-            status: "R",
-            cpuPercent: 9,
-            rssBytes: 9_000,
-            elapsed: "00:00",
-            command: "ps -axo pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=",
-          },
-        ],
-      });
-
-      expect(diagnostics.serverPid).toBe(100);
-      expect(DateTime.formatIso(diagnostics.readAt)).toBe("2026-05-05T10:00:00.000Z");
-      expect(diagnostics.processCount).toBe(2);
-      expect(diagnostics.totalRssBytes).toBe(6_000);
-      expect(diagnostics.totalCpuPercent).toBe(4.75);
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([101, 102]);
-      expect(diagnostics.processes.map((process) => process.depth)).toEqual([0, 1]);
-      expect(Option.getOrNull(diagnostics.processes[0]!.pgid)).toBe(100);
-      expect(diagnostics.processes[0]?.childPids).toEqual([102]);
-    }),
-  );
-
-  it.effect("preserves ascending sibling order for nested descendants", () =>
-    Effect.sync(() => {
-      const diagnostics = ProcessDiagnostics.aggregateProcessDiagnostics({
-        serverPid: 100,
-        readAt: DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"),
-        rows: [
-          {
-            pid: 101,
-            ppid: 100,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 0,
-            rssBytes: 100,
-            elapsed: "00:10",
-            command: "agent",
-          },
-          {
-            pid: 103,
-            ppid: 101,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 0,
-            rssBytes: 100,
-            elapsed: "00:10",
-            command: "child-b",
-          },
-          {
-            pid: 102,
-            ppid: 101,
-            pgid: 100,
-            status: "S",
-            cpuPercent: 0,
-            rssBytes: 100,
-            elapsed: "00:10",
-            command: "child-a",
-          },
-        ],
-      });
-
-      expect(diagnostics.processes.map((process) => process.pid)).toEqual([101, 102, 103]);
-    }),
-  );
-
-  it.effect("queries processes through the ChildProcessSpawner service", () =>
-    Effect.gen(function* () {
-      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
-        [];
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
-          const childProcess = command as unknown as {
-            readonly command: string;
-            readonly args: ReadonlyArray<string>;
-          };
-          commands.push({ command: childProcess.command, args: childProcess.args });
-          return Effect.succeed(
-            mockHandle({
-              stdout: [
-                ` ${process.pid}     1 ${process.pid} Ss 0.0 1024 01:02.03 t3 server`,
-                ` 4242 ${process.pid} ${process.pid} S  1.5 2048 00:04 agent`,
-              ].join("\n"),
-            }),
-          );
-        }),
-      );
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
-
-      const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
-        Effect.flatMap((pd) => pd.read),
-        Effect.provide(layer),
-      );
+      const diagnostics = yield* Effect.gen(function* () {
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
+        yield* telemetry.refresh;
+        return yield* processDiagnostics.read;
+      }).pipe(Effect.provide(layer));
 
       expect(diagnostics.processes.map((process) => process.pid)).toEqual([4242]);
-      expect(commands).toEqual([
-        {
-          command: "ps",
-          args: ["-axo", "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command="],
-        },
-      ]);
+      expect(diagnostics.processes[0]?.startTimeMs).toBe(2_000);
+      expect(diagnostics.processes[0]?.cpuPercent).toBe(1.5);
+      expect(diagnostics.processes[0]?.rssBytes).toBe(2_048);
     }),
   );
 
-  it.effect("keeps bounded command diagnostics when the process query exits unsuccessfully", () =>
+  it.effect("rejects stale process identities before signaling", () =>
     Effect.gen(function* () {
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            mockHandle({
-              code: 17,
-              stdout: "partial process output",
-              stderr: "process access denied",
-            }),
-          ),
-        ),
-      );
-
-      const error = yield* ProcessDiagnostics.readProcessRows.pipe(
-        Effect.provide(spawnerLayer),
-        Effect.provideService(HostProcessPlatform, "linux"),
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({
-        _tag: "ProcessDiagnosticsQueryFailedError",
-        command: "ps",
-        argCount: 2,
-        cwd: process.cwd(),
-        exitCode: 17,
-        stdoutBytes: 22,
-        stderrBytes: 21,
-        stdoutTruncated: false,
-        stderrTruncated: false,
-      });
-      expect(error.message).toBe(
-        `Process diagnostics query 'ps' failed with exit code 17 in '${process.cwd()}'.`,
-      );
-    }),
-  );
-
-  it.effect("does not allow signaling the diagnostics query process", () =>
-    Effect.gen(function* () {
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            mockHandle({
-              stdout: [
-                ` ${process.pid}     1 ${process.pid} Ss 0.0 1024 01:02.03 t3 server`,
-                ` 4242 ${process.pid} ${process.pid} R  1.5 2048 00:00 ps -axo pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=`,
-              ].join("\n"),
-            }),
-          ),
-        ),
-      );
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
+      const snapshot = makeNativeSnapshot([]);
+      const telemetryLayer = makeTelemetryLayer(snapshot);
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
-        Effect.flatMap((pd) => pd.signal({ pid: 4242, signal: "SIGINT" })),
+        Effect.flatMap((processDiagnostics) =>
+          processDiagnostics.signal({
+            pid: 4_242,
+            startTimeMs: 2_000,
+            signal: "SIGINT",
+          }),
+        ),
         Effect.provide(layer),
       );
 
@@ -284,7 +134,84 @@ describe("ProcessDiagnostics", () => {
         pid: 4242,
         signal: "SIGINT",
         signaled: false,
-        message: Option.some("Process 4242 is not a live descendant of the T3 server."),
+        message: Option.some("Process 4242 no longer matches the selected process identity."),
+      });
+    }),
+  );
+
+  it.effect("rejects Electron processes as signal targets", () =>
+    Effect.gen(function* () {
+      const sampledAtUnixMs = DateTime.toEpochMillis(
+        DateTime.makeUnsafe("2026-05-05T10:00:00.000Z"),
+      );
+      const snapshot = makeNativeSnapshot([
+        {
+          pid: 4_242,
+          ppid: 1,
+          startTimeMs: 2_000,
+          runTimeMs: 4_000,
+          name: "electron",
+          command: "electron",
+          status: "Running",
+          cpuPercent: 1.5,
+          cpuTimeMs: 60,
+          residentBytes: 2_048,
+          virtualBytes: 4_096,
+          ioReadBytes: 300,
+          ioWriteBytes: 400,
+          ioSemantics: "storage",
+        },
+      ]);
+      const sampledAt = DateTime.makeUnsafe(sampledAtUnixMs);
+      const telemetryLayer = makeTelemetryLayer(snapshot, {
+        version: 1,
+        type: "desktopTelemetry",
+        sequence: 1,
+        sampledAtUnixMs,
+        power: {
+          source: "electron-main",
+          idle: "false",
+          idleSeconds: 0,
+          locked: "false",
+          suspended: false,
+          onBattery: "false",
+          lowPowerMode: "unknown",
+          thermalState: "nominal",
+          stale: false,
+          updatedAt: sampledAt,
+        },
+        speedLimitPercent: Option.none(),
+        electronProcesses: [
+          {
+            pid: 4_242,
+            creationTimeMs: 2_000,
+            type: "Browser",
+            name: "electron",
+            cpuPercent: 1.5,
+            idleWakeupsPerSecond: 0,
+            workingSetBytes: 2_048,
+            peakWorkingSetBytes: 2_048,
+          },
+        ],
+      });
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
+
+      const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+        Effect.flatMap((processDiagnostics) =>
+          processDiagnostics.signal({
+            pid: 4_242,
+            startTimeMs: 2_000,
+            signal: "SIGKILL",
+          }),
+        ),
+        Effect.provide(layer),
+      );
+
+      expect(result).toEqual({
+        pid: 4_242,
+        signal: "SIGKILL",
+        signaled: false,
+        message: Option.some("Process 4242 is not a signalable T3 backend descendant."),
       });
     }),
   );

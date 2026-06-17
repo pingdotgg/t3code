@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -19,6 +20,7 @@ import {
   makeLocalFileTracer,
   makeTraceSink,
   type TraceRecord,
+  type TraceSinkFlushStats,
 } from "./observability.ts";
 
 describe("errorTag", () => {
@@ -172,6 +174,34 @@ describe("observability", () => {
           assert.equal(lines.length, 2);
           assert.equal(lines[0]?.name, "alpha");
           assert.equal(lines[1]?.name, "beta");
+        }),
+      ),
+    );
+
+    it.effect("reports successful logical trace writes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const reported = yield* Ref.make<ReadonlyArray<TraceSinkFlushStats>>([]);
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            onFlush: (stats) => Ref.update(reported, (current) => [...current, stats]),
+          });
+
+          sink.push(makeRecord("attributed"));
+          yield* sink.flush;
+
+          const stats = yield* Ref.get(reported);
+          assert.equal(stats.length, 1);
+          assert.equal(stats[0]?.count, 1);
+          assert.isAbove(stats[0]?.logicalWriteBytes ?? 0, 0);
         }),
       ),
     );
