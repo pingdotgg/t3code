@@ -58,6 +58,7 @@ import {
   makeEventNdjsonLogger,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -140,7 +141,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsToolStarted: true,
     emitsToolCompleted: true,
     emitsToolOutput: true,
-    supportsMcpTools: false,
+    supportsMcpTools: true,
     supportsDynamicToolCallbacks: true,
   },
   approvals: {
@@ -320,6 +321,7 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly allowDangerouslySkipPermissions?: true;
   readonly hasCanUseTool?: true;
   readonly hasEnvironment?: true;
+  readonly hasMcpServers?: true;
 }
 
 export type ClaudeAgentSdkProtocolLogEvent =
@@ -411,6 +413,7 @@ export function loggedClaudeQueryOptions(
       : {}),
     ...(options.canUseTool === undefined ? {} : { hasCanUseTool: true }),
     ...(options.env === undefined ? {} : { hasEnvironment: true }),
+    ...(options.mcpServers === undefined ? {} : { hasMcpServers: true }),
   };
 }
 
@@ -607,6 +610,7 @@ export function makeClaudeQueryOptions(input: {
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -637,9 +641,35 @@ export function makeClaudeQueryOptions(input: {
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   return input.cwd === null ? options : { ...options, cwd: input.cwd };
+}
+
+export function claudeMcpQueryOverrides(input: {
+  readonly threadId: ThreadId;
+  readonly allowedTools?: ReadonlyArray<string>;
+}): {
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+} {
+  const session = McpProviderSession.readMcpProviderSession(input.threadId);
+  if (session === undefined) {
+    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+  }
+  return {
+    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), "mcp__t3-code__*"])),
+    mcpServers: {
+      "t3-code": {
+        type: "http",
+        url: session.endpoint,
+        headers: {
+          Authorization: session.authorizationHeader,
+        },
+      },
+    },
+  };
 }
 
 function providerSession(input: {
@@ -2688,6 +2718,12 @@ export function makeClaudeAdapterV2(
           nativeThreadId: string,
         ) {
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
+          const mcpOverrides = claudeMcpQueryOverrides({
+            threadId: turnInput.threadId,
+            ...(queryPolicy.allowedTools === undefined
+              ? {}
+              : { allowedTools: queryPolicy.allowedTools }),
+          });
           const queryPolicyKey = claudeRuntimeQueryPolicyKey(queryPolicy);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -2729,9 +2765,7 @@ export function makeClaudeAdapterV2(
               settings: adapterOptions.settings,
               environment: adapterOptions.environment,
               tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
-              ...(queryPolicy.allowedTools === undefined
-                ? {}
-                : { allowedTools: queryPolicy.allowedTools }),
+              ...mcpOverrides,
               permissionMode: queryPolicy.permissionMode,
               ...(queryPolicy.allowDangerouslySkipPermissions === undefined
                 ? {}

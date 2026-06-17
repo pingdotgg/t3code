@@ -1,5 +1,6 @@
 import {
   ClaudeSettings,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -16,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
@@ -24,10 +26,12 @@ import {
   CLAUDE_PROVIDER,
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
   ClaudeProviderCapabilitiesV2,
+  claudeMcpQueryOverrides,
   claudeRuntimeQueryPolicyForRuntimePolicy,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
   makeClaudeAgentSdkProtocolLogger,
+  makeClaudeQueryOptions,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
@@ -124,6 +128,53 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 });
 
 describe("ClaudeAdapterV2 native protocol logging", () => {
+  it("injects thread-scoped MCP configuration without logging the credential", () => {
+    const threadId = ThreadId.make("thread-claude-mcp");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("environment-claude-mcp"),
+      threadId,
+      providerSessionId: "mcp-session-claude",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-claude-token",
+    });
+
+    try {
+      const overrides = claudeMcpQueryOverrides({
+        threadId,
+        allowedTools: ["Read"],
+      });
+      assert.deepEqual(overrides, {
+        allowedTools: ["Read", "mcp__t3-code__*"],
+        mcpServers: {
+          "t3-code": {
+            type: "http",
+            url: "http://127.0.0.1:43123/mcp",
+            headers: {
+              Authorization: "Bearer secret-claude-token",
+            },
+          },
+        },
+      });
+
+      const options = makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        },
+        nativeThreadId: "native-thread-claude-mcp",
+        resume: false,
+        cwd: "/workspace",
+        ...overrides,
+      });
+      const logged = loggedClaudeQueryOptions(options);
+      assert.equal(logged.hasMcpServers, true);
+      assert.notInclude(JSON.stringify(logged), "secret-claude-token");
+    } finally {
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }
+  });
+
   it.effect("writes Claude Agent SDK protocol frames to the native provider log", () =>
     Effect.gen(function* () {
       const writes: Array<{
