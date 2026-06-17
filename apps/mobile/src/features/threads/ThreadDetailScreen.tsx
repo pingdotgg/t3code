@@ -11,17 +11,20 @@ import type {
 } from "@t3tools/contracts";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import * as Haptics from "expo-haptics";
+import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, type LayoutChangeEvent } from "react-native";
+import { View, type GestureResponderEvent, type LayoutChangeEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { runOnJS } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
+import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { MobileLayoutVariant } from "../../lib/mobileLayout";
+import { resolveThreadFeedBottomInset } from "../../lib/threadFeedLayout";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -33,7 +36,6 @@ import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
-  COMPOSER_EXPANDED_TOOLBAR_CHROME,
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
@@ -200,7 +202,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const { onOpenDrawer } = props;
 
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
+  const composerRef = useRef<ComposerEditorHandle>(null);
+  const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
@@ -211,10 +216,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
+  const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const expandedToolbarInset = composerExpanded ? COMPOSER_EXPANDED_TOOLBAR_CHROME : 0;
-  const feedBottomInset =
-    Math.max(estimatedOverlayHeight, measuredOverlayHeight) + expandedToolbarInset + 8;
+  const feedBottomInset = resolveThreadFeedBottomInset({
+    estimatedOverlayHeight,
+    measuredOverlayHeight,
+    gap: 8,
+  });
+  const selectedProviderSkills = useMemo(
+    () =>
+      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
+        ?.skills ?? [],
+    [props.serverConfig, selectedInstanceId],
+  );
 
   const completeDrawerGesture = useCallback(() => {
     void Haptics.selectionAsync();
@@ -245,20 +259,66 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     );
   }, []);
 
+  const collapseComposer = useCallback(() => {
+    composerRef.current?.blur();
+  }, []);
+
+  const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
+    feedTouchStartRef.current = {
+      pageX: event.nativeEvent.pageX,
+      pageY: event.nativeEvent.pageY,
+    };
+  }, []);
+
+  const handleFeedTouchMove = useCallback((event: GestureResponderEvent) => {
+    const start = feedTouchStartRef.current;
+    if (!start) {
+      return;
+    }
+    const deltaX = event.nativeEvent.pageX - start.pageX;
+    const deltaY = event.nativeEvent.pageY - start.pageY;
+    if (Math.hypot(deltaX, deltaY) > 8) {
+      feedTouchStartRef.current = null;
+    }
+  }, []);
+
+  const handleFeedTouchEnd = useCallback(() => {
+    if (feedTouchStartRef.current) {
+      collapseComposer();
+    }
+    feedTouchStartRef.current = null;
+  }, [collapseComposer]);
+
+  const handleFeedTouchCancel = useCallback(() => {
+    feedTouchStartRef.current = null;
+  }, []);
+
   return (
     <GestureDetector gesture={headerDrawerGesture}>
       <View className="flex-1">
         {showContent ? (
-          <ThreadFeed
-            threadId={props.selectedThread.id}
-            feed={props.selectedThreadFeed}
-            httpBaseUrl={props.httpBaseUrl}
-            bearerToken={props.bearerToken}
-            agentLabel={agentLabel}
-            contentBottomInset={feedBottomInset}
-            layoutVariant={layoutVariant}
-            composerExpanded={composerExpanded}
-          />
+          <View
+            style={{ flex: 1 }}
+            onTouchStart={handleFeedTouchStart}
+            onTouchMove={handleFeedTouchMove}
+            onTouchEnd={handleFeedTouchEnd}
+            onTouchCancel={handleFeedTouchCancel}
+          >
+            <ThreadFeed
+              key={props.selectedThread.id}
+              threadId={props.selectedThread.id}
+              feed={props.selectedThreadFeed}
+              httpBaseUrl={props.httpBaseUrl}
+              bearerToken={props.bearerToken}
+              agentLabel={agentLabel}
+              latestTurn={props.selectedThread.latestTurn}
+              contentTopInset={headerHeight}
+              contentBottomInset={feedBottomInset}
+              layoutVariant={layoutVariant}
+              composerExpanded={composerExpanded}
+              skills={selectedProviderSkills}
+            />
+          </View>
         ) : (
           <View style={{ flex: 1 }} />
         )}
@@ -298,6 +358,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               ) : null}
 
               <ThreadComposer
+                editorRef={composerRef}
                 draftMessage={props.draftMessage}
                 draftAttachments={props.draftAttachments}
                 placeholder="Ask the repo agent, or run a command…"
