@@ -133,6 +133,19 @@ const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) 
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.some((run) => ["queued", "starting", "running", "waiting"].includes(run.status));
 
+const SCENARIO_WAIT_ATTEMPTS = 10_000;
+
+const yieldToRuntime = Effect.yieldNow.pipe(
+  Effect.andThen(
+    Effect.promise(
+      () =>
+        new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        }),
+    ),
+  ),
+);
+
 function collectProjectionThreadIds(scenario: OrchestratorV2Scenario): ReadonlyArray<ThreadId> {
   if (scenario.projectionThreadIds) {
     return scenario.projectionThreadIds;
@@ -187,7 +200,7 @@ export function runOrchestratorV2Scenario(
 
       const waitForPendingRuntimeRequest = (
         threadId: ThreadId,
-        attemptsRemaining = 1_000,
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
       ): Effect.Effect<
         OrchestrationV2RuntimeRequest,
         OrchestratorV2Error | OrchestratorV2ScenarioStepError,
@@ -205,13 +218,13 @@ export function runOrchestratorV2Scenario(
               step: `respond_to_next_runtime_request:${threadId}`,
             });
           }
-          yield* Effect.yieldNow;
+          yield* yieldToRuntime;
           return yield* waitForPendingRuntimeRequest(threadId, attemptsRemaining - 1);
         });
 
       const waitForThreadIdle = (
         threadId: ThreadId,
-        attemptsRemaining = 1_000,
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -224,14 +237,14 @@ export function runOrchestratorV2Scenario(
               step: `await_thread_idle:${threadId}`,
             });
           }
-          yield* Effect.yieldNow;
+          yield* yieldToRuntime;
           return yield* waitForThreadIdle(threadId, attemptsRemaining - 1);
         });
 
       const waitForRunSteerable = (
         threadId: ThreadId,
         runId: OrchestrationV2Run["id"],
-        attemptsRemaining = 1_000,
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -251,7 +264,7 @@ export function runOrchestratorV2Scenario(
               step: `await_run_steerable:${runId}`,
             });
           }
-          yield* Effect.yieldNow;
+          yield* yieldToRuntime;
           return yield* waitForRunSteerable(threadId, runId, attemptsRemaining - 1);
         });
 
@@ -259,7 +272,7 @@ export function runOrchestratorV2Scenario(
         threadId: ThreadId,
         runId: OrchestrationV2Run["id"],
         itemType: OrchestrationV2TurnItem["type"],
-        attemptsRemaining = 1_000,
+        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -275,7 +288,7 @@ export function runOrchestratorV2Scenario(
               step: `await_run_turn_item:${runId}:${itemType}`,
             });
           }
-          yield* Effect.yieldNow;
+          yield* yieldToRuntime;
           return yield* waitForRunTurnItem(threadId, runId, itemType, attemptsRemaining - 1);
         });
 

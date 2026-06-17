@@ -161,6 +161,12 @@ export type OrchestratorFixtureInputStep =
       readonly targetRunIndex: number;
     }
   | {
+      readonly type: "restart";
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<ChatAttachment>;
+      readonly targetRunIndex: number;
+    }
+  | {
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
@@ -223,6 +229,11 @@ export const CODEX_MODEL_SELECTION = {
 export const CLAUDE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
+} satisfies ModelSelection;
+
+export const CURSOR_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("cursor"),
+  model: "composer-2.5",
 } satisfies ModelSelection;
 
 export const READ_ONLY_ON_REQUEST_POLICY = {
@@ -384,7 +395,8 @@ export function materializeFixtureInput(input: {
             const shouldRunInBackground =
               (nextStep !== undefined &&
                 ((nextStep.type === "interrupt" && nextStep.targetRunIndex === messageIndex) ||
-                  nextStep.type === "queue_message")) ||
+                  nextStep.type === "queue_message" ||
+                  (nextStep.type === "restart" && nextStep.targetRunIndex === messageIndex))) ||
               nextStep?.type === "approve_next_runtime_request" ||
               nextStep?.type === "answer_next_user_input_request";
             const key = `run:${messageIndex}`;
@@ -410,7 +422,7 @@ export function materializeFixtureInput(input: {
             } else if (
               !(
                 nextStep !== undefined &&
-                nextStep.type === "steer" &&
+                (nextStep.type === "steer" || nextStep.type === "restart") &&
                 nextStep.targetRunIndex === messageIndex
               )
             ) {
@@ -514,6 +526,40 @@ export function materializeFixtureInput(input: {
               ...(step.attachments === undefined ? {} : { attachments: step.attachments }),
               dispatchMode: {
                 type: "steer_active",
+                targetRunId: runIdFor(step.targetRunIndex),
+              },
+            }),
+          );
+          if (input.fixtureInput.steps[stepIndex + 1]?.type !== "approve_next_runtime_request") {
+            if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+              steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+            }
+            steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          }
+          break;
+        case "restart":
+          messageIndex += 1;
+          steps.push({
+            type: "await_run_steerable",
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+          });
+          pushDispatch(
+            dispatchMessageCommand({
+              commandId: yield* idAllocator.allocate.command({
+                fixtureName: input.scenario,
+                commandName: `restart-${messageIndex}`,
+              }),
+              ids,
+              modelSelection: input.modelSelection,
+              messageId: yield* idAllocator.allocate.message({
+                threadId: ids.threadId,
+                ordinal: messageIndex,
+              }),
+              text: step.text,
+              ...(step.attachments === undefined ? {} : { attachments: step.attachments }),
+              dispatchMode: {
+                type: "restart_active",
                 targetRunId: runIdFor(step.targetRunIndex),
               },
             }),

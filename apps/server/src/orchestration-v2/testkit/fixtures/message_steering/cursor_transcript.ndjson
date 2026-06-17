@@ -1,0 +1,21 @@
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"message_steering","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":false,"enableAgentRetries":true}}}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with exactly: steering fixture initial response","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","update":{"type":"text-delta","text":"ste"}}}
+{"type":"expect_outbound","label":"run.cancel:1","frame":{"type":"run.cancel","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1"}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","requestId":"60f12d12-3cd5-47f1-a4dc-bda43dc5a136","status":"cancelled","model":{"id":"composer-2.5"},"durationMs":4219}}}
+{"type":"expect_outbound","label":"run.start:2","frame":{"type":"run.start","message":"Actually, respond with exactly: steering fixture observed","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
+{"type":"emit_inbound","label":"run.started:2","frame":{"type":"run.started","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":"ste"}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":"ering"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":" fixture"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":" observed"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"step-completed","stepId":1,"stepDurationMs":1055}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"turn-ended","usage":{"inputTokens":10270,"outputTokens":42,"cacheReadTokens":7441,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:2","frame":{"type":"run.completed","result":{"id":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","requestId":"21e1995e-2649-4e30-aec6-d967e9bce64c","status":"finished","result":"steering fixture observed","model":{"id":"composer-2.5"},"durationMs":1465}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
