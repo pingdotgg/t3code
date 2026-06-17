@@ -1,9 +1,9 @@
 /**
  * CursorDriver — `ProviderDriver` for the Cursor Agent (`cursor-agent`) runtime.
  *
- * Cursor exposes an ACP-based CLI. Model catalog and capability refreshes
- * happen during the managed provider status check via Cursor's
- * `list_available_models` extension method.
+ * Provider status and model discovery use the official Cursor SDK when an API
+ * key is configured. The ACP CLI remains the compatibility fallback for
+ * installations that authenticate through the local Cursor binary.
  *
  * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
  * drives `runtime.prompt` with a structured-output schema and collects the
@@ -31,6 +31,7 @@ import {
   checkCursorProviderStatus,
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
+import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -134,7 +135,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
 
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provide(CursorSdkCatalogLive),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

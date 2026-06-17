@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 import { useSettings } from "../hooks/useSettings";
+import { removeAndRenumberTimelineItem } from "../lib/orchestrationV2Timeline";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
 import {
@@ -603,8 +604,9 @@ function applyStreamEventToProjection(
       };
       const withoutStaleItem = {
         ...nextProjection,
-        visibleTurnItems: activeVisibleTurnItems(nextProjection).filter(
-          (row) => row.sourceItemId !== event.payload.id,
+        visibleTurnItems: removeAndRenumberTimelineItem(
+          activeVisibleTurnItems(nextProjection),
+          event.payload.id,
         ),
       };
       return {
