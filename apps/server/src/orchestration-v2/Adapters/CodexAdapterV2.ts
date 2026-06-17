@@ -18,6 +18,8 @@ import type {
   ProviderApprovalDecision,
   ProviderRequestKind,
   ProviderTurnId,
+  ProviderInstanceId,
+  RuntimeMode,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -44,7 +46,12 @@ import {
   type EventNdjsonLogger,
   makeEventNdjsonLogger,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  ProviderAdapterDriverCreateError,
+  type ProviderAdapterDriver,
+} from "../ProviderAdapterDriver.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -262,6 +269,57 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
   }
 }
 
+export interface CodexDynamicToolProjection {
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly output?: unknown;
+  readonly status: OrchestrationV2TurnItem["status"];
+}
+
+function codexMcpToolOutput(
+  item: Extract<CodexDynamicToolItem, { readonly type: "mcpToolCall" }>,
+): unknown | undefined {
+  const resultOutput =
+    item.result === null || item.result === undefined
+      ? undefined
+      : item.result.structuredContent !== null && item.result.structuredContent !== undefined
+        ? item.result.structuredContent
+        : item.result.content;
+
+  if (item.error === null || item.error === undefined) {
+    return resultOutput;
+  }
+  return resultOutput === undefined
+    ? { error: item.error.message }
+    : { error: item.error.message, result: resultOutput };
+}
+
+function codexDynamicToolOutput(
+  item: Extract<CodexDynamicToolItem, { readonly type: "dynamicToolCall" }>,
+): unknown | undefined {
+  if (item.contentItems !== null && item.contentItems !== undefined) {
+    return item.contentItems;
+  }
+  return item.success === false ? { success: false } : undefined;
+}
+
+export function projectCodexDynamicToolItem(
+  item: CodexDynamicToolItem,
+): CodexDynamicToolProjection {
+  const output =
+    item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
+  const toolName =
+    item.type === "mcpToolCall"
+      ? `${item.server}.${item.tool}`
+      : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
+  const projection: CodexDynamicToolProjection = {
+    toolName,
+    input: item.arguments,
+    status: codexItemStatus(item.status).turnItem,
+  };
+  return output === undefined ? projection : { ...projection, output };
+}
+
 function codexNativeItemRef(nativeItemId: string) {
   return {
     provider: CODEX_PROVIDER,
@@ -402,20 +460,50 @@ const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.
 type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
 
-function buildTurnStartParams(input: {
+function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
+  readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
+  readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
+} {
+  switch (runtimeMode) {
+    case "approval-required":
+      return {
+        approvalPolicy: "untrusted",
+        sandboxPolicy: {
+          type: "readOnly",
+        },
+      };
+    case "auto-accept-edits":
+      return {
+        approvalPolicy: "on-request",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+      };
+    case "full-access":
+      return {
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "dangerFullAccess",
+        },
+      };
+  }
+}
+
+export function buildCodexTurnStartParams(input: {
   readonly nativeThreadId: string;
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly model: string;
 }) {
   return Effect.gen(function* () {
+    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
-        ? undefined
+        ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
-        ? undefined
+        ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const effort =
       input.runtimePolicy.reasoningEffort === undefined
@@ -652,6 +740,12 @@ type CodexWebSearchItem = {
     | null;
 };
 
+export type CodexDynamicToolItem = Extract<
+  | CodexSchema.V2ItemStartedNotification__ThreadItem
+  | CodexSchema.V2ItemCompletedNotification__ThreadItem,
+  { readonly type: "mcpToolCall" | "dynamicToolCall" }
+>;
+
 export interface CodexAppServerClientFactoryShape {
   readonly open: (input: {
     readonly threadId: ThreadId;
@@ -668,6 +762,26 @@ export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
   CodexAppServerClientFactoryShape
 >()("t3/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
+
+export function codexAppServerMcpLaunchConfig(threadId: ThreadId): {
+  readonly args: ReadonlyArray<string>;
+  readonly environment: NodeJS.ProcessEnv;
+} | null {
+  const session = McpProviderSession.readMcpProviderSession(threadId);
+  return session === undefined
+    ? null
+    : {
+        args: [
+          "-c",
+          `mcp_servers.t3-code.url=${session.endpoint}`,
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        ],
+        environment: {
+          T3_MCP_BEARER_TOKEN: session.authorizationHeader.replace(/^Bearer\s+/, ""),
+        },
+      };
+}
 
 export const makeCodexAppServerSpawnCommand = Effect.fn(
   "CodexAdapterV2.makeCodexAppServerSpawnCommand",
@@ -706,13 +820,22 @@ export const makeCodexAppServerClientFactoryCommandLayer = (
         open: (input) =>
           Effect.gen(function* () {
             const scope = yield* Scope.Scope;
+            const mcp = codexAppServerMcpLaunchConfig(input.threadId);
             const command = yield* makeCodexAppServerSpawnCommand({
               command: options.command,
-              args: options.args ?? [],
+              args: [...(options.args ?? []), ...(mcp?.args ?? [])],
               ...((input.runtimePolicy.cwd ?? options.cwd) === undefined
                 ? {}
                 : { cwd: input.runtimePolicy.cwd ?? options.cwd }),
-              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
+              ...(options.env === undefined && mcp === null
+                ? {}
+                : {
+                    env: {
+                      ...options.env,
+                      ...mcp?.environment,
+                    },
+                    extendEnv: true,
+                  }),
             });
             const handle = yield* spawner.spawn(command).pipe(
               Effect.provideService(Scope.Scope, scope),
@@ -777,13 +900,15 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
       open: (input) =>
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
+          const mcp = codexAppServerMcpLaunchConfig(input.threadId);
           const environment = {
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
+            ...mcp?.environment,
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: ["app-server"],
+            args: ["app-server", ...(mcp?.args ?? [])],
             ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
             env: environment,
           });
@@ -2448,6 +2573,64 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return { node, turnItem };
           });
 
+        const buildDynamicToolArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: CodexDynamicToolItem,
+        ) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const status = codexItemStatus(item.status);
+            const completedAt = status.completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const projection = projectCodexDynamicToolItem(item);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status: status.node,
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: projection.status,
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "dynamic_tool",
+              toolName: projection.toolName,
+              input: projection.input,
+              ...(projection.output === undefined ? {} : { output: projection.output }),
+            };
+            return { node, turnItem };
+          });
+
         const buildProposedPlanArtifacts = (input: {
           readonly context: ActiveCodexTurnContext;
           readonly nativeItemId: string;
@@ -2895,6 +3078,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
 
+            if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
+              const artifacts = yield* buildDynamicToolArtifacts(context, payload.item);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                provider: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                provider: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
             if (payload.item.type !== "webSearch") {
               return;
             }
@@ -2932,6 +3130,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
             if (payload.item.type === "commandExecution") {
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                provider: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                provider: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
+            if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
+              const artifacts = yield* buildDynamicToolArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
                 provider: CODEX_PROVIDER,
@@ -3602,86 +3815,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
 
-              if (payload.item.type === "fileChange") {
-                const artifacts = yield* buildFileChangeArtifacts(context, payload.item);
-                if (artifacts === null) {
-                  return;
-                }
-                yield* emitProviderEvent({
-                  type: "node.updated",
-                  provider: CODEX_PROVIDER,
-                  node: artifacts.node,
-                });
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  provider: CODEX_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                });
-                return;
-              }
-
-              if (payload.item.type === "webSearch") {
-                const artifacts = yield* buildWebSearchArtifacts({
-                  context,
-                  item: payload.item,
-                  completed: true,
-                });
-                yield* emitProviderEvent({
-                  type: "node.updated",
-                  provider: CODEX_PROVIDER,
-                  node: artifacts.node,
-                });
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  provider: CODEX_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                });
-                return;
-              }
-
-              if (payload.item.type === "plan") {
-                const deltas = yield* Ref.get(planDeltas);
-                const markdown =
-                  payload.item.text.length > 0
-                    ? payload.item.text
-                    : (deltas.get(payload.item.id) ?? "");
-                const artifacts = yield* buildProposedPlanArtifacts({
-                  context,
-                  nativeItemId: payload.item.id,
-                  status: "completed",
-                  markdown,
-                  completed: true,
-                });
-                yield* emitProviderEvent({
-                  type: "node.updated",
-                  provider: CODEX_PROVIDER,
-                  node: artifacts.node,
-                });
-                yield* emitProviderEvent({
-                  type: "plan.updated",
-                  provider: CODEX_PROVIDER,
-                  plan: artifacts.plan,
-                });
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  provider: CODEX_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                });
-                return;
-              }
-
-              if (payload.item.type !== "agentMessage") {
-                return;
-              }
-
-              const deltas = yield* Ref.get(agentMessageDeltas);
-              const text =
-                payload.item.text.length > 0
-                  ? payload.item.text
-                  : (deltas.get(payload.item.id) ?? "");
-              const artifacts = yield* buildAgentMessageArtifacts(context, {
-                ...payload.item,
-                text,
+              const codexInput = yield* toCodexInput(turnInput);
+              const turnStartParams = yield* buildCodexTurnStartParams({
+                nativeThreadId: threadId,
+                codexInput,
+                runtimePolicy: turnInput.runtimePolicy,
+                model: turnInput.modelSelection.model,
               });
               yield* emitProviderEvent({
                 type: "node.updated",
