@@ -1,19 +1,13 @@
 import { Stack, useRouter } from "expo-router";
-import { TextInputWrapper } from "expo-paste-input";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import {
-  InteractionManager,
-  View,
-  useColorScheme,
-  type TextInput as RNTextInput,
-} from "react-native";
+import { InteractionManager, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EnvironmentId, type ModelSelection } from "@t3tools/contracts";
 
-import { AppTextInput as TextInput } from "../../components/AppText";
+import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
@@ -27,7 +21,6 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { buildThreadRoutePath } from "../../lib/routes";
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
-import { useNativePaste } from "../../lib/useNativePaste";
 import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useProjectActions } from "./use-project-actions";
@@ -75,7 +68,7 @@ export function NewTaskDraftScreen(props: {
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { logicalProjects, selectedProject, setProject } = flow;
-  const promptInputRef = useRef<RNTextInput>(null);
+  const promptInputRef = useRef<ComposerEditorHandle>(null);
 
   const borderColor = useThemeColor("--color-border");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
@@ -410,10 +403,6 @@ export function NewTaskDraftScreen(props: {
     [flow],
   );
 
-  const handleNativePaste = useNativePaste((uris) => {
-    void handleNativePasteImages(uris);
-  });
-
   async function handleStart(): Promise<void> {
     if (
       !flow.selectedProject ||
@@ -478,23 +467,19 @@ export function NewTaskDraftScreen(props: {
 
       <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
         <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
-          <TextInputWrapper
-            onPaste={(payload) => void handleNativePaste(payload)}
+          <ComposerEditor
+            ref={promptInputRef}
+            autoFocus
+            multiline
+            scrollEnabled
+            value={flow.prompt}
+            skills={flow.selectedProviderSkills}
+            onChangeText={flow.setPrompt}
+            onPasteImages={(uris) => void handleNativePasteImages(uris)}
+            placeholder={`Describe a coding task in ${selectedProject.title}`}
             style={{ flex: 1, minHeight: 0 }}
-          >
-            <TextInput
-              ref={promptInputRef}
-              autoFocus
-              multiline
-              scrollEnabled
-              value={flow.prompt}
-              onChangeText={flow.setPrompt}
-              placeholder={`Describe a coding task in ${selectedProject.title}`}
-              textAlignVertical="top"
-              className="h-full flex-1 border-0 bg-transparent text-[18px] leading-[28px]"
-              style={{ flex: 1, minHeight: 0 }}
-            />
-          </TextInputWrapper>
+            textStyle={{ fontSize: 18, lineHeight: 28 }}
+          />
         </View>
 
         <View

@@ -5,7 +5,9 @@ import {
   DMSans_700Bold,
   useFonts,
 } from "@expo-google-fonts/dm-sans";
+import { usePathname } from "expo-router";
 import Stack from "expo-router/stack";
+import { useCallback } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -21,14 +23,40 @@ import {
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
+import {
+  ClerkSettingsSheetDetentProvider,
+  useClerkSettingsSheetDetent,
+} from "../features/cloud/ClerkSettingsSheetDetent";
 import { useAgentNotificationNavigation } from "../features/agent-awareness/notificationNavigation";
+import { useThemeColor } from "../lib/useThemeColor";
 
 function AppNavigator() {
+  const pathname = usePathname();
+  const clerkRouteIsActive = pathname === "/settings/auth";
+
+  return (
+    <ClerkSettingsSheetDetentProvider initiallyExpanded={clerkRouteIsActive}>
+      <AppNavigatorContent />
+    </ClerkSettingsSheetDetentProvider>
+  );
+}
+
+function AppNavigatorContent() {
   const { isLoadingSavedConnection } = useRemoteEnvironmentState();
+  const { collapse, isExpanded } = useClerkSettingsSheetDetent();
   const colorScheme = useColorScheme();
-  const statusBarBg = colorScheme === "dark" ? "#0a0a0a" : "#f2f2f7";
+  const statusBarBg = useThemeColor("--color-status-bar");
   const sheetStyle = useResolveClassNames("bg-sheet");
   useAgentNotificationNavigation();
+
+  const handleSettingsTransitionEnd = useCallback(
+    (event: { data: { closing: boolean } }) => {
+      if (event.data.closing) {
+        collapse();
+      }
+    },
+    [collapse],
+  );
 
   const newTaskScreenOptions = {
     contentStyle: sheetStyle,
@@ -50,7 +78,7 @@ function AppNavigator() {
 
   const settingsSheetScreenOptions = {
     ...connectionSheetScreenOptions,
-    sheetAllowedDetents: [0.7],
+    sheetAllowedDetents: isExpanded ? [0.92] : [0.7],
   };
 
   if (isLoadingSavedConnection) {
@@ -61,7 +89,7 @@ function AppNavigator() {
     <>
       <StatusBar
         barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
-        backgroundColor={statusBarBg as string}
+        backgroundColor={String(statusBarBg)}
         translucent
       />
       <Stack screenOptions={{ headerShown: false }}>
@@ -74,7 +102,11 @@ function AppNavigator() {
             headerShadowVisible: false,
           }}
         />
-        <Stack.Screen name="settings" options={settingsSheetScreenOptions} />
+        <Stack.Screen
+          name="settings"
+          listeners={{ transitionEnd: handleSettingsTransitionEnd }}
+          options={settingsSheetScreenOptions}
+        />
         <Stack.Screen name="connections" options={connectionSheetScreenOptions} />
         <Stack.Screen name="new" options={newTaskScreenOptions} />
         <Stack.Screen

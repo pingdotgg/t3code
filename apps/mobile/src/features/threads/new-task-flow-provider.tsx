@@ -5,6 +5,7 @@ import type {
   ModelSelection,
   ProviderInteractionMode,
   RuntimeMode,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -94,6 +95,7 @@ type NewTaskFlowContextValue = {
   readonly modelOptions: ReadonlyArray<ModelOption>;
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
+  readonly selectedProviderSkills: ReadonlyArray<ServerProviderSkill>;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
@@ -283,6 +285,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
+  const selectedProviderSkills =
+    (selectedProject
+      ? serverConfigByEnvironmentId[selectedProject.environmentId]
+      : null
+    )?.providers.find((provider) => provider.instanceId === selectedModel?.instanceId)?.skills ??
+    [];
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const setPrompt = useCallback(
@@ -450,6 +458,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       modelOptions,
       selectedModel,
       selectedModelOption,
+      selectedProviderSkills,
       providerGroups,
       filteredBranches,
       reset,
@@ -498,6 +507,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedModelKey,
       selectedModelOption,
+      selectedProviderSkills,
       selectedProject,
       selectedProjectKey,
       selectedWorktreePath,

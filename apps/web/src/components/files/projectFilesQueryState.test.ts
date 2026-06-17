@@ -19,6 +19,7 @@ import {
   confirmProjectFileQueryData,
   getProjectEntriesQueryAtom,
   getProjectFileQueryAtom,
+  getOptimisticProjectFileQueryData,
   resolveProjectFileQueryData,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -103,6 +104,10 @@ describe("project files queries", () => {
 
     setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}');
     setProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}');
+
+    expect(getOptimisticProjectFileQueryData(environmentId, "/repo", "convex.json")?.contents).toBe(
+      '{"nodeVersion":"22"}',
+    );
 
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"220"}'),
