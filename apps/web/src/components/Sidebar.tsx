@@ -322,6 +322,15 @@ interface SidebarThreadRowProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
 }
 
+/**
+ * Helper: Check if thread is a materials session based on worktreePath.
+ * Materials sessions use student-specific workspace folders at .../students/<slug>.
+ * TEMPORARY: For hiding PR status/branch label until wholesale materials workspace removal.
+ */
+function isMaterialsThread(thread: SidebarThreadSummary): boolean {
+  return thread.worktreePath?.includes("/students/") ?? false;
+}
+
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     orderedProjectThreadKeys,
@@ -385,9 +394,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     ),
   );
   const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
+  // TEMPORARY: Skip VCS status for materials threads (no git branch/PR UI needed)
+  const shouldSkipVcsStatus = isMaterialsThread(thread);
   const gitStatus = useVcsStatus({
     environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+    cwd: thread.branch != null && !shouldSkipVcsStatus ? gitCwd : null,
   });
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =
@@ -607,7 +618,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && (
+          {/* TEMPORARY: Hide PR status icon for materials threads */}
+          {prStatus && !isMaterialsThread(thread) && (
             <Tooltip>
               <TooltipTrigger
                 render={

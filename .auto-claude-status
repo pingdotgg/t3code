@@ -3,13 +3,13 @@
   "spec": "002-implement-materials-workspace-and-pdf-features",
   "state": "building",
   "subtasks": {
-    "completed": 14,
+    "completed": 17,
     "total": 20,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Web: Markdown-to-HTML + PDF Orchestration + LocalApi Wrappers",
+    "current": "Web: UI Components (StudentDetail, RenderPdfButton, Sidebar trim)",
     "id": null,
     "total": 3
   },
@@ -18,8 +18,8 @@
     "max": 1
   },
   "session": {
-    "number": 1010,
+    "number": 1013,
     "started_at": "2026-06-18T01:19:19.685871"
   },
-  "last_update": "2026-06-18T04:04:30.777817"
+  "last_update": "2026-06-18T04:19:01.810803"
 }
