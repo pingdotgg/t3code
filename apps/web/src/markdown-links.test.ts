@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
+  resolveMarkdownInlineCodeFileLinkMeta,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
 
@@ -125,5 +126,37 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  });
+});
+
+describe("resolveMarkdownInlineCodeFileLinkMeta", () => {
+  it("resolves path-shaped inline code with source positions", () => {
+    expect(
+      resolveMarkdownInlineCodeFileLinkMeta(
+        "apps/server/src/provider/Layers/EventNdjsonLogger.ts:148",
+        "/repo/project",
+      ),
+    ).toMatchObject({
+      basename: "EventNdjsonLogger.ts",
+      line: 148,
+      targetPath: "/repo/project/apps/server/src/provider/Layers/EventNdjsonLogger.ts:148",
+      workspaceRelativePath: "apps/server/src/provider/Layers/EventNdjsonLogger.ts",
+    });
+  });
+
+  it("resolves bare filenames only when they include a source position", () => {
+    expect(resolveMarkdownInlineCodeFileLinkMeta("script.ts:10", "/repo/project")).toMatchObject({
+      basename: "script.ts",
+      line: 10,
+      targetPath: "/repo/project/script.ts:10",
+    });
+    expect(resolveMarkdownInlineCodeFileLinkMeta("script.ts", "/repo/project")).toBeNull();
+  });
+
+  it("leaves ordinary code and ambiguous slash values alone", () => {
+    expect(resolveMarkdownInlineCodeFileLinkMeta("sink.write()", "/repo/project")).toBeNull();
+    expect(resolveMarkdownInlineCodeFileLinkMeta("1.2.3", "/repo/project")).toBeNull();
+    expect(resolveMarkdownInlineCodeFileLinkMeta("1/2", "/repo/project")).toBeNull();
+    expect(resolveMarkdownInlineCodeFileLinkMeta("client/server", "/repo/project")).toBeNull();
   });
 });

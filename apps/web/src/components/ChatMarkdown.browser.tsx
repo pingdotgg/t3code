@@ -384,6 +384,64 @@ describe("ChatMarkdown", () => {
     }
   });
 
+  it("renders path-shaped inline code as interactive file chips", async () => {
+    const source = [
+      "Call `appendFileSync` once per batch.",
+      "Inspect `apps/server/src/provider/Layers/EventNdjsonLogger.ts:148` and keep `1.2.3` unchanged.",
+    ].join("\n\n");
+    const screen = await render(
+      <ChatMarkdown text={source} cwd="/repo/project" threadRef={threadRef} />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "EventNdjsonLogger.ts · L148" });
+      await expect.element(link).toHaveClass(/chat-markdown-file-link/);
+      await expect
+        .element(link)
+        .toHaveAttribute(
+          "href",
+          "/repo/project/apps/server/src/provider/Layers/EventNdjsonLogger.ts:148",
+        );
+
+      const inlineCodeValues = [
+        ...document.querySelectorAll<HTMLElement>(".chat-markdown :not(pre) > code"),
+      ].map((element) => element.textContent);
+      expect(inlineCodeValues).toEqual(["appendFileSync", "1.2.3"]);
+
+      await link.click();
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+        ).toMatchObject({
+          isOpen: true,
+          activeSurfaceId: "file:apps/server/src/provider/Layers/EventNdjsonLogger.ts",
+        });
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("disambiguates inline-code file chips with duplicate basenames", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text="Compare `apps/web/src/first/config.ts` with `packages/shared/src/second/config.ts`."
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByRole("link", { name: "config.ts · src/first" }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole("link", { name: "config.ts · src/second" }))
+        .toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("renders sanitized details with the design-system collapsible", async () => {
     const source = [
       "<details open>",

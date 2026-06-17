@@ -211,3 +211,28 @@ export function resolveMarkdownFileLinkMeta(
     ...(columnNumber !== undefined ? { column: columnNumber } : {}),
   };
 }
+
+/**
+ * Inline code is used for many non-path values, so only promote references
+ * with unambiguous path syntax. Markdown links remain more permissive because
+ * the link destination itself already signals intent.
+ */
+export function resolveMarkdownInlineCodeFileLinkMeta(
+  value: string,
+  cwd?: string,
+): MarkdownFileLinkMeta | null {
+  const candidate = value.trim();
+  const hasSourcePosition =
+    POSITION_SUFFIX_PATTERN.test(candidate) || /#L\d+(?:C\d+)?$/i.test(candidate);
+  if (!/[\\/]/.test(candidate) && !hasSourcePosition) {
+    return null;
+  }
+  const meta = resolveMarkdownFileLinkMeta(candidate, cwd);
+  if (!meta) {
+    return null;
+  }
+  if (!/[A-Za-z]/.test(meta.basename) || (!meta.basename.includes(".") && !hasSourcePosition)) {
+    return null;
+  }
+  return meta;
+}

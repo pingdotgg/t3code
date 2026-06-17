@@ -54,6 +54,7 @@ import {
 import {
   normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkMeta,
+  resolveMarkdownInlineCodeFileLinkMeta,
   rewriteMarkdownFileUriHref,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
@@ -161,6 +162,8 @@ function extractPreCodeMeta(node: unknown): string | undefined {
 type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
+  value?: unknown;
+  url?: string;
   data?: {
     hProperties?: Record<string, unknown>;
   };
@@ -178,6 +181,25 @@ function remarkPreserveCodeMeta() {
             dataCodeMeta: node.meta.trim(),
           },
         };
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
+function remarkLinkInlineCodeFilePaths(options: { readonly cwd: string | undefined }) {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (node.type === "inlineCode" && typeof node.value === "string") {
+        const value = node.value;
+        if (resolveMarkdownInlineCodeFileLinkMeta(value, options.cwd)) {
+          node.type = "link";
+          node.url = value.trim();
+          node.children = [{ type: "text", value }];
+          delete node.value;
+        }
       }
       node.children?.forEach(visit);
     };
@@ -667,6 +689,7 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const MARKDOWN_INLINE_CODE_PATTERN = /(?<!`)(`{1,2})(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
 
@@ -738,6 +761,16 @@ function extractMarkdownLinkHrefs(text: string): string[] {
     hrefs.push(href);
   }
   return hrefs;
+}
+
+function extractMarkdownInlineCodeValues(text: string): string[] {
+  const values: string[] = [];
+  for (const match of text.matchAll(MARKDOWN_INLINE_CODE_PATTERN)) {
+    const value = match[2]?.trim();
+    if (!value) continue;
+    values.push(value);
+  }
+  return values;
 }
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
@@ -1190,6 +1223,14 @@ function ChatMarkdown({
         metaByHref.set(normalizedHref, meta);
       }
     }
+    for (const value of extractMarkdownInlineCodeValues(text)) {
+      const normalizedHref = normalizeMarkdownLinkHrefKey(value);
+      if (metaByHref.has(normalizedHref)) continue;
+      const meta = resolveMarkdownInlineCodeFileLinkMeta(normalizedHref, cwd);
+      if (meta) {
+        metaByHref.set(normalizedHref, meta);
+      }
+    }
     return metaByHref;
   }, [cwd, text]);
   const fileLinkParentSuffixByPath = useMemo(() => {
@@ -1220,7 +1261,10 @@ function ChatMarkdown({
       },
       a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1327,6 +1371,7 @@ function ChatMarkdown({
     }),
     [
       diffThemeName,
+      cwd,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
@@ -1347,8 +1392,13 @@ function ChatMarkdown({
       <ReactMarkdown
         remarkPlugins={
           lineBreaks
-            ? [remarkGfm, remarkBreaks, remarkPreserveCodeMeta]
-            : [remarkGfm, remarkPreserveCodeMeta]
+            ? [
+                remarkGfm,
+                remarkBreaks,
+                [remarkLinkInlineCodeFilePaths, { cwd }],
+                remarkPreserveCodeMeta,
+              ]
+            : [remarkGfm, [remarkLinkInlineCodeFilePaths, { cwd }], remarkPreserveCodeMeta]
         }
         rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}
         components={markdownComponents}
