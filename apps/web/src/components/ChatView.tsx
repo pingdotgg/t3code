@@ -170,7 +170,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
-import { PanelLayoutControls } from "./chat/PanelLayoutControls";
+import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -1333,9 +1333,8 @@ function ChatViewContent(props: ChatViewProps) {
   const planSidebarOpen = activeRightPanelKind === "plan";
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+    rightPanelOpen && !shouldUsePlanSidebarSheet && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
 
   useEffect(() => {
@@ -3036,23 +3035,25 @@ function ChatViewContent(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const dismissPlanSidebarForCurrentTurn = useCallback(() => {
+    planSidebarDismissedForTurnRef.current =
+      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
   const togglePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     if (planSidebarOpen) {
-      planSidebarDismissedForTurnRef.current =
-        activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+      dismissPlanSidebarForCurrentTurn();
     } else {
       planSidebarDismissedForTurnRef.current = null;
     }
     useRightPanelStore.getState().toggle(activeThreadRef, "plan");
-  }, [activePlan?.turnId, activeThreadRef, planSidebarOpen, sidebarProposedPlan?.turnId]);
+  }, [activeThreadRef, dismissPlanSidebarForCurrentTurn, planSidebarOpen]);
   const closePlanSidebar = useCallback(() => {
     if (!activeThreadRef) return;
     setMaximizedRightPanelThreadKey(null);
     useRightPanelStore.getState().close(activeThreadRef);
-    planSidebarDismissedForTurnRef.current =
-      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-  }, [activePlan?.turnId, activeThreadRef, sidebarProposedPlan?.turnId]);
+    dismissPlanSidebarForCurrentTurn();
+  }, [activeThreadRef, dismissPlanSidebarForCurrentTurn]);
   const closePreviewPanel = useCallback(() => {
     if (!activeThreadRef) return;
     setMaximizedRightPanelThreadKey(null);
@@ -3061,6 +3062,11 @@ function ChatViewContent(props: ChatViewProps) {
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
+      if (surface.kind === "plan") {
+        planSidebarDismissedForTurnRef.current = null;
+      } else if (planSidebarOpen) {
+        dismissPlanSidebarForCurrentTurn();
+      }
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
       if (surface.kind === "preview" && surface.resourceId) {
         usePreviewStateStore.getState().setActiveTab(activeThreadRef, surface.resourceId);
@@ -3085,17 +3091,31 @@ function ChatViewContent(props: ChatViewProps) {
         });
       }
     },
-    [activeThreadRef, diffOpen, environmentId, navigate, onDiffPanelOpen, threadId],
+    [
+      activeThreadRef,
+      diffOpen,
+      dismissPlanSidebarForCurrentTurn,
+      environmentId,
+      navigate,
+      onDiffPanelOpen,
+      planSidebarOpen,
+      threadId,
+    ],
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
-      setMaximizedRightPanelThreadKey(null);
+      if (planSidebarOpen) {
+        closePlanSidebar();
+      } else {
+        closePreviewPanel();
+      }
+      return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, rightPanelOpen]);
+  }, [activeThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
   const toggleRightPanelMaximized = () => {
-    if (!canMaximizeRightPanel) return;
+    if (!rightPanelOpen || shouldUsePlanSidebarSheet) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
@@ -3103,6 +3123,9 @@ function ChatViewContent(props: ChatViewProps) {
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
+      if (surfaces.some((surface) => surface.kind === "plan")) {
+        dismissPlanSidebarForCurrentTurn();
+      }
 
       const api = readEnvironmentApi(activeThreadRef.environmentId);
       for (const surface of surfaces) {
@@ -3133,7 +3156,14 @@ function ChatViewContent(props: ChatViewProps) {
         });
       }
     },
-    [activeThreadRef, diffOpen, environmentId, navigate, threadId],
+    [
+      activeThreadRef,
+      diffOpen,
+      dismissPlanSidebarForCurrentTurn,
+      environmentId,
+      navigate,
+      threadId,
+    ],
   );
   const syncActivePreviewSurface = useCallback(() => {
     if (!activeThreadRef) return;
@@ -4654,7 +4684,7 @@ function ChatViewContent(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const panelLayoutControls = (
+  const panelToggleControls = (
     <PanelLayoutControls
       terminalAvailable={Boolean(activeProject)}
       terminalOpen={Boolean(terminalUiState.terminalOpen)}
@@ -4662,20 +4692,95 @@ function ChatViewContent(props: ChatViewProps) {
       rightPanelAvailable={Boolean(activeProject)}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={rightPanelToggleShortcutLabel}
-      rightPanelMaximized={rightPanelMaximized}
-      canMaximizeRightPanel={canMaximizeRightPanel}
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
-      onToggleRightPanelMaximized={toggleRightPanelMaximized}
     />
   );
+  const panelLayoutControls = (
+    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
+      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
+        <RightPanelMaximizeControl
+          maximized={rightPanelMaximized}
+          onToggle={toggleRightPanelMaximized}
+        />
+      ) : null}
+      {panelToggleControls}
+    </div>
+  );
+  const rightPanelContent = activeThreadRef ? (
+    activeRightPanelSurface?.kind === "preview" ? (
+      <Suspense fallback={null}>
+        <PreviewPanel
+          mode="embedded"
+          threadRef={activeThreadRef}
+          tabId={activeRightPanelSurface.resourceId}
+          configuredUrls={configuredPreviewUrls}
+          visible
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "terminal" ? (
+      <PersistentThreadTerminalPanel
+        threadRef={activeThreadRef}
+        surface={activeRightPanelSurface}
+        launchContext={activeTerminalLaunchContext ?? null}
+        focusRequestId={terminalFocusRequestId}
+        keybindings={keybindings}
+        onAddTerminalContext={addTerminalContextToDraft}
+        onSplitTerminal={splitPanelTerminal}
+        onSplitTerminalVertical={splitPanelTerminalVertical}
+        onNewTerminal={addTerminalSurface}
+        onActiveTerminalChange={activatePanelTerminal}
+        onCloseTerminal={closePanelTerminal}
+        splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+        splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+        newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+      />
+    ) : activeRightPanelSurface?.kind === "diff" ? (
+      <Suspense fallback={null}>
+        <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "plan" ? (
+      <PlanSidebar
+        activePlan={activePlan}
+        activeProposedPlan={sidebarProposedPlan}
+        label={planSidebarLabel}
+        environmentId={environmentId}
+        threadRef={activeThreadRef}
+        markdownCwd={gitCwd ?? undefined}
+        workspaceRoot={activeWorkspaceRoot}
+        timestampFormat={timestampFormat}
+        mode="embedded"
+      />
+    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+      activeProject &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <FilePreviewPanel
+          key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
+          environmentId={activeProject.environmentId}
+          cwd={activeWorkspaceRoot}
+          projectName={activeProject.name}
+          threadRef={activeThreadRef}
+          composerDraftTarget={composerDraftTarget}
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          relativePath={
+            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
+          }
+          onOpenFile={openFileSurface}
+          onPendingChange={handleFilePendingChange}
+        />
+      </Suspense>
+    ) : null
+  ) : null;
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {isElectron && activeThreadRef ? (
         <PreviewAutomationOwner threadRef={activeThreadRef} visible={previewPanelOpen} />
       ) : null}
-      {rightPanelOpen ? panelLayoutControls : null}
+      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-hidden",
@@ -4944,69 +5049,15 @@ function ChatViewContent(props: ChatViewProps) {
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={Boolean(activeProject)}
         >
-          {activeRightPanelSurface?.kind === "preview" ? (
-            <Suspense fallback={null}>
-              <PreviewPanel
-                mode="embedded"
-                threadRef={activeThreadRef}
-                tabId={activeRightPanelSurface.resourceId}
-                configuredUrls={configuredPreviewUrls}
-                visible
-              />
-            </Suspense>
-          ) : activeRightPanelSurface?.kind === "terminal" ? (
-            <PersistentThreadTerminalPanel
-              threadRef={activeThreadRef}
-              surface={activeRightPanelSurface}
-              launchContext={activeTerminalLaunchContext ?? null}
-              focusRequestId={terminalFocusRequestId}
-              keybindings={keybindings}
-              onAddTerminalContext={addTerminalContextToDraft}
-              onSplitTerminal={splitPanelTerminal}
-              onSplitTerminalVertical={splitPanelTerminalVertical}
-              onNewTerminal={addTerminalSurface}
-              onActiveTerminalChange={activatePanelTerminal}
-              onCloseTerminal={closePanelTerminal}
-              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            />
-          ) : activeRightPanelSurface?.kind === "diff" ? (
-            <Suspense fallback={null}>
-              <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
-            </Suspense>
-          ) : (activeRightPanelSurface?.kind === "files" ||
-              activeRightPanelSurface?.kind === "file") &&
-            activeProject &&
-            activeWorkspaceRoot ? (
-            <Suspense fallback={null}>
-              <FilePreviewPanel
-                key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
-                environmentId={activeProject.environmentId}
-                cwd={activeWorkspaceRoot}
-                projectName={activeProject.name}
-                threadRef={activeThreadRef}
-                composerDraftTarget={composerDraftTarget}
-                keybindings={keybindings}
-                availableEditors={availableEditors}
-                relativePath={
-                  activeRightPanelSurface.kind === "file"
-                    ? activeRightPanelSurface.relativePath
-                    : null
-                }
-                onOpenFile={openFileSurface}
-                onPendingChange={handleFilePendingChange}
-              />
-            </Suspense>
-          ) : null}
+          {rightPanelContent}
         </RightPanelTabs>
       ) : null}
 
       {shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
-        <RightPanelSheet open onClose={closePreviewPanel}>
+        <RightPanelSheet open onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}>
           <RightPanelTabs
             mode="sheet"
+            layoutControls={panelToggleControls}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}
@@ -5026,75 +5077,7 @@ function ChatViewContent(props: ChatViewProps) {
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={Boolean(activeProject)}
           >
-            {activeRightPanelSurface?.kind === "preview" ? (
-              <Suspense fallback={null}>
-                <PreviewPanel
-                  mode="embedded"
-                  threadRef={activeThreadRef}
-                  tabId={activeRightPanelSurface.resourceId}
-                  configuredUrls={configuredPreviewUrls}
-                  visible
-                />
-              </Suspense>
-            ) : activeRightPanelSurface?.kind === "terminal" ? (
-              <PersistentThreadTerminalPanel
-                threadRef={activeThreadRef}
-                surface={activeRightPanelSurface}
-                launchContext={activeTerminalLaunchContext ?? null}
-                focusRequestId={terminalFocusRequestId}
-                keybindings={keybindings}
-                onAddTerminalContext={addTerminalContextToDraft}
-                onSplitTerminal={splitPanelTerminal}
-                onSplitTerminalVertical={splitPanelTerminalVertical}
-                onNewTerminal={addTerminalSurface}
-                onActiveTerminalChange={activatePanelTerminal}
-                onCloseTerminal={closePanelTerminal}
-                splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-                splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-                newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-                closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-              />
-            ) : activeRightPanelSurface?.kind === "diff" ? (
-              <Suspense fallback={null}>
-                <DiffPanel mode="embedded" composerDraftTarget={composerDraftTarget} />
-              </Suspense>
-            ) : activeRightPanelSurface?.kind === "plan" ? (
-              <PlanSidebar
-                activePlan={activePlan}
-                activeProposedPlan={sidebarProposedPlan}
-                label={planSidebarLabel}
-                environmentId={environmentId}
-                threadRef={activeThreadRef}
-                markdownCwd={gitCwd ?? undefined}
-                workspaceRoot={activeWorkspaceRoot}
-                timestampFormat={timestampFormat}
-                mode="embedded"
-                onClose={closePlanSidebar}
-              />
-            ) : (activeRightPanelSurface?.kind === "files" ||
-                activeRightPanelSurface?.kind === "file") &&
-              activeProject &&
-              activeWorkspaceRoot ? (
-              <Suspense fallback={null}>
-                <FilePreviewPanel
-                  key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
-                  environmentId={activeProject.environmentId}
-                  cwd={activeWorkspaceRoot}
-                  projectName={activeProject.name}
-                  threadRef={activeThreadRef}
-                  composerDraftTarget={composerDraftTarget}
-                  keybindings={keybindings}
-                  availableEditors={availableEditors}
-                  relativePath={
-                    activeRightPanelSurface.kind === "file"
-                      ? activeRightPanelSurface.relativePath
-                      : null
-                  }
-                  onOpenFile={openFileSurface}
-                  onPendingChange={handleFilePendingChange}
-                />
-              </Suspense>
-            ) : null}
+            {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}

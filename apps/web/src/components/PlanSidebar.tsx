@@ -11,7 +11,6 @@ import {
   ChevronRightIcon,
   EllipsisIcon,
   LoaderIcon,
-  PanelRightCloseIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
@@ -61,7 +60,6 @@ interface PlanSidebarProps {
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
   mode?: "sheet" | "sidebar" | "embedded";
-  onClose: () => void;
 }
 
 const PlanSidebar = memo(function PlanSidebar({
@@ -74,7 +72,6 @@ const PlanSidebar = memo(function PlanSidebar({
   workspaceRoot,
   timestampFormat,
   mode = "sidebar",
-  onClose,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
@@ -182,15 +179,6 @@ const PlanSidebar = memo(function PlanSidebar({
               </MenuPopup>
             </Menu>
           ) : null}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={onClose}
-            aria-label={`Close ${label.toLowerCase()} sidebar`}
-            className="text-muted-foreground/50 hover:text-foreground/70"
-          >
-            <PanelRightCloseIcon className="size-3.5" />
-          </Button>
         </div>
       </div>
 

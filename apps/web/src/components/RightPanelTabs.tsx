@@ -27,6 +27,7 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
@@ -342,8 +343,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "px-2 pr-28",
-          props.mode === "inline" ? "workspace-topbar" : "flex h-10 shrink-0 items-center",
+          "workspace-topbar gap-1 pl-2",
+          props.mode === "inline" ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
         )}
         data-right-panel-tabbar
@@ -457,6 +458,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null}
           </div>
         </ScrollArea>
+        {props.layoutControls}
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         {props.activeSurfaceId === null ? (

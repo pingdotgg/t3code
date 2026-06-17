@@ -2110,6 +2110,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the compact chat header on one row", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-compact-header" as MessageId,
+        targetText: "keep the compact header aligned",
+      }),
+    });
+
+    try {
+      const chatHeader = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-header]"),
+        "Unable to find chat header.",
+      );
+      const threadTitle = await waitForElement(
+        () => chatHeader.querySelector<HTMLElement>("h2"),
+        "Unable to find thread title.",
+      );
+      const headerActions = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-header-actions]"),
+        "Unable to find chat header actions.",
+      );
+
+      const headerRect = chatHeader.getBoundingClientRect();
+      const titleRect = threadTitle.getBoundingClientRect();
+      const actionsRect = headerActions.getBoundingClientRect();
+      const headerCenter = headerRect.top + headerRect.height / 2;
+
+      expect(headerRect.height).toBe(52);
+      expect(titleRect.top).toBeGreaterThanOrEqual(headerRect.top);
+      expect(titleRect.bottom).toBeLessThanOrEqual(headerRect.bottom);
+      expect(actionsRect.top).toBeGreaterThanOrEqual(headerRect.top);
+      expect(actionsRect.bottom).toBeLessThanOrEqual(headerRect.bottom);
+      expect(Math.abs(titleRect.top + titleRect.height / 2 - headerCenter)).toBeLessThanOrEqual(1);
+      expect(Math.abs(actionsRect.top + actionsRect.height / 2 - headerCenter)).toBeLessThanOrEqual(
+        1,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps panel toggles fixed and can maximize the right panel", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
@@ -2270,6 +2312,151 @@ describe("ChatView timeline estimator parity (full app)", () => {
             .querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]')
             ?.getBoundingClientRect().left,
         ).toBeCloseTo(initialRightPanelRect.left, 1);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the plan surface in the inline right panel", async () => {
+    useRightPanelStore.getState().open(THREAD_REF, "plan");
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-inline-plan-panel" as MessageId,
+        targetText: "show the inline plan panel",
+      }),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("p")).find(
+            (element) => element.textContent?.trim() === "No active plan yet.",
+          ) ?? null,
+        "Unable to find inline plan panel content.",
+      );
+
+      expect(
+        document.querySelector<HTMLElement>("[data-right-panel-tabbar]")?.textContent,
+      ).toContain("Plan");
+      expect(document.body.textContent).toContain("Plans will appear here when generated.");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the shared panel toggles in the responsive right-panel sheet", async () => {
+    useRightPanelStore.getState().open(THREAD_REF, "plan");
+    useRightPanelStore.getState().openTerminal(THREAD_REF, DEFAULT_TERMINAL_ID);
+    useRightPanelStore.getState().activateSurface(THREAD_REF, "plan");
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-responsive-plan-panel-controls" as MessageId,
+      targetText: "show responsive plan panel controls",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? {
+              ...thread,
+              activities: [
+                {
+                  id: EventId.make("activity-responsive-panel-plan"),
+                  tone: "info",
+                  kind: "turn.plan.updated",
+                  summary: "Plan updated",
+                  payload: {
+                    explanation: "Claude Tasks",
+                    plan: [{ step: "Keep terminal navigation available", status: "inProgress" }],
+                  },
+                  turnId: null,
+                  sequence: 1,
+                  createdAt: isoAt(1_000),
+                },
+              ],
+            }
+          : thread,
+      ),
+    };
+
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const sheet = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-slot="sheet-popup"]'),
+        "Unable to find responsive right-panel sheet.",
+      );
+      const controls = await waitForElement(
+        () => sheet.querySelector<HTMLElement>("[data-panel-layout-controls]"),
+        "Unable to find shared controls in the responsive right-panel sheet.",
+      );
+      const tabbar = await waitForElement(
+        () => sheet.querySelector<HTMLElement>("[data-right-panel-tabbar]"),
+        "Unable to find responsive right-panel tabbar.",
+      );
+      const controlButtons = Array.from(controls.querySelectorAll<HTMLButtonElement>("button"));
+      const tabbarRect = tabbar.getBoundingClientRect();
+      const controlsRect = controls.getBoundingClientRect();
+
+      expect(controlButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+        "Toggle terminal drawer",
+        "Toggle right panel",
+      ]);
+      expect(tabbarRect.height).toBe(52);
+      expect(controlsRect.height).toBe(52);
+      expect(controlsRect.top).toBe(tabbarRect.top);
+      expect(window.innerWidth - controlsRect.right).toBe(12);
+      for (const button of controlButtons) {
+        const rect = button.getBoundingClientRect();
+        const buttonCenter = rect.top + rect.height / 2;
+        const tabbarCenter = tabbarRect.top + tabbarRect.height / 2;
+        expect(rect.width).toBe(32);
+        expect(rect.height).toBe(32);
+        expect(Math.abs(buttonCenter - tabbarCenter)).toBeLessThanOrEqual(1);
+      }
+      expect(
+        controlButtons[1]!.getBoundingClientRect().left -
+          controlButtons[0]!.getBoundingClientRect().right,
+      ).toBe(4);
+      expect(sheet.querySelector('button[aria-label="Maximize panel"]')).toBeNull();
+      expect(sheet.querySelector('button[aria-label="Close tasks sidebar"]')).toBeNull();
+
+      const terminalTab = Array.from(
+        sheet.querySelectorAll<HTMLButtonElement>("[data-right-panel-tab-list] button"),
+      ).find((button) => button.textContent?.includes("Terminal"));
+      terminalTab?.click();
+
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF)
+            .activeSurfaceId,
+        ).toBe(`terminal:${DEFAULT_TERMINAL_ID}`);
+        expect(sheet.querySelector('[data-terminal-owner="right-panel"]')).not.toBeNull();
+        expect(sheet.textContent).not.toContain("Claude Tasks");
+      });
+
+      sheet.querySelector<HTMLButtonElement>('button[aria-label="Close Plan"]')?.click();
+
+      await vi.waitFor(() => {
+        const panelState = selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          THREAD_REF,
+        );
+        expect(panelState.surfaces.some((surface) => surface.kind === "plan")).toBe(false);
+        expect(panelState.activeSurfaceId).toBe(`terminal:${DEFAULT_TERMINAL_ID}`);
+      });
+
+      controls.querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]')?.click();
+
+      await vi.waitFor(() => {
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF).isOpen,
+        ).toBe(false);
       });
     } finally {
       await mounted.cleanup();
