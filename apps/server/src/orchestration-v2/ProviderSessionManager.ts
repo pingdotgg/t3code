@@ -22,6 +22,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import {
@@ -202,6 +204,21 @@ export const layerWithOptions = (
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+        McpSessionRegistry.issueActiveMcpCredential({
+          threadId,
+          providerInstanceId,
+        }).pipe(
+          Effect.tap((credential) =>
+            credential === undefined
+              ? Effect.void
+              : Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config)),
+          ),
+        );
+      const clearMcpSession = (threadId: ThreadId) =>
+        McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
+          Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+        );
 
       const cancelIdleFiber = (fiber: Fiber.Fiber<void, never> | null) =>
         fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.ignore);
@@ -373,6 +390,7 @@ export const layerWithOptions = (
             entry: entry.value,
             reason: input.reason,
           });
+          yield* Effect.forEach(entry.value.attachedThreadIds, clearMcpSession, { discard: true });
           if (Exit.isFailure(closeExit)) {
             return yield* Effect.failCause(closeExit.cause);
           }
@@ -656,6 +674,7 @@ export const layerWithOptions = (
                   }),
               ),
             );
+            yield* prepareMcpSession(input.threadId, input.modelSelection.instanceId);
             const sessionScope = yield* Scope.make();
             const runtime = yield* adapter
               .openSession({
@@ -669,7 +688,12 @@ export const layerWithOptions = (
               })
               .pipe(
                 Effect.provideService(Scope.Scope, sessionScope),
-                Effect.tapError(() => Scope.close(sessionScope, Exit.void).pipe(Effect.ignore)),
+                Effect.tapError(() =>
+                  Scope.close(sessionScope, Exit.void).pipe(
+                    Effect.ignore,
+                    Effect.andThen(clearMcpSession(input.threadId)),
+                  ),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new ProviderSessionOpenError({
