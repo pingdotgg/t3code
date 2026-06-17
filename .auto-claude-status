@@ -3,23 +3,23 @@
   "spec": "002-implement-materials-workspace-and-pdf-features",
   "state": "building",
   "subtasks": {
-    "completed": 17,
+    "completed": 18,
     "total": 20,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Web: UI Components (StudentDetail, RenderPdfButton, Sidebar trim)",
+    "current": "Integration: Cross-Service Type Check + E2E Verification",
     "id": null,
-    "total": 3
+    "total": 2
   },
   "workers": {
     "active": 0,
     "max": 1
   },
   "session": {
-    "number": 1013,
+    "number": 1014,
     "started_at": "2026-06-18T01:19:19.685871"
   },
-  "last_update": "2026-06-18T04:19:01.810803"
+  "last_update": "2026-06-18T04:24:49.428619"
 }
