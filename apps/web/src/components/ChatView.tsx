@@ -4542,6 +4542,10 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onProviderModelSelect = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
+      if (!activeThread) {
+        scheduleComposerFocus();
+        return;
+      }
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
       // are rejected by returning early; the server remains authoritative too.
@@ -4555,7 +4559,7 @@ function ChatViewContent(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const activeThreadInstanceId = activeThread?.session?.providerInstanceId;
+      const activeThreadInstanceId = activeThread.session?.providerInstanceId;
       if (lockedProvider !== null && activeThreadInstanceId) {
         const currentEntry = providerStatuses.find(
           (snapshot) => snapshot.instanceId === activeThreadInstanceId,
