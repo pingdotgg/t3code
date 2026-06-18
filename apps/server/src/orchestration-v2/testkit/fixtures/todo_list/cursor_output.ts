@@ -35,6 +35,24 @@ export function assertTodoListCursorOutput(
   assertUserMessagesInclude(projection, [TODO_LIST_PROMPT]);
   assertAssistantTextIncludes(projection, "todo list fixture complete");
 
+  const conversationalItems = projection.turnItems.filter(
+    (item) => item.type === "assistant_message" || item.type === "reasoning",
+  );
+  assert.deepEqual(
+    conversationalItems.map((item) => item.type),
+    ["assistant_message", "reasoning", "reasoning", "assistant_message", "assistant_message"],
+    "separate Cursor reasoning and assistant segments must not be concatenated",
+  );
+  const assistantMessages = conversationalItems.filter((item) => item.type === "assistant_message");
+  assert.lengthOf(assistantMessages, 3);
+  assert.include(assistantMessages[0]?.text ?? "", "I'll use the update_plan tool");
+  assert.include(assistantMessages[1]?.text ?? "", "No `update_plan` tool is available");
+  assert.equal(assistantMessages[2]?.text, "todo list fixture complete");
+  assert.lengthOf(
+    conversationalItems.filter((item) => item.type === "reasoning"),
+    2,
+  );
+
   const todoLists = projection.plans.filter((plan) => plan.kind === "todo_list");
   assert.isAtLeast(todoLists.length, 1);
   assert.deepEqual(
