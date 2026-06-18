@@ -13,6 +13,9 @@ import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.
 import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
@@ -150,6 +153,7 @@ export function runOrchestratorV2ProviderReplayScenario<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly enableAssistantStreaming?: boolean;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -177,6 +181,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly enableAssistantStreaming?: boolean;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(scenario.transcript);
@@ -191,6 +196,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly enableAssistantStreaming?: boolean;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const serverConfigLayer = Layer.effect(
@@ -204,6 +210,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
           Layer.provide(runtimePolicyLayer),
         );
   const databaseLayer = options.databaseLayer ?? SqlitePersistenceMemory;
+  const serverSettingsLayer = ServerSettingsService.layerTest({
+    enableAssistantStreaming: options.enableAssistantStreaming ?? false,
+  }).pipe(Layer.orDie);
   const storesLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
     Layer.provide(databaseLayer),
   );
@@ -245,6 +254,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         eventSinkProvided,
         idAllocatorLayer,
         providerEventIngestorProvided,
+        serverSettingsLayer,
       ),
     ),
   );
