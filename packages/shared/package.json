@@ -79,10 +79,6 @@
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
     },
-    "./providerToolClassification": {
-      "types": "./src/providerToolClassification.ts",
-      "import": "./src/providerToolClassification.ts"
-    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"

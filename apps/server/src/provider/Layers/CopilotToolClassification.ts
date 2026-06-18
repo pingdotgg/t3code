@@ -1,4 +1,4 @@
-import type { CanonicalRequestType, ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -41,6 +41,41 @@ function toolArgumentsLookLikeFileChange(arguments_: unknown): boolean {
   return hasFilePath && hasEditPayload;
 }
 
+function commandLooksLikeFileChange(command: string | undefined): boolean {
+  if (!command) {
+    return false;
+  }
+  return /(?:^|\s)apply_patch(?:\s|$)/u.test(command) || command.includes("*** Begin Patch");
+}
+
+function toolCommandLooksLikeFileChange(arguments_: unknown): boolean {
+  if (!isRecord(arguments_)) {
+    return false;
+  }
+  const candidates = [
+    arguments_.command,
+    arguments_.cmd,
+    arguments_.fullCommandText,
+    arguments_.commandText,
+    isRecord(arguments_.input) ? arguments_.input.command : undefined,
+  ];
+  return candidates.some((candidate) => commandLooksLikeFileChange(trimmedString(candidate)));
+}
+
+export function isReadOnlyCopilotToolName(toolName: string): boolean {
+  const normalized = toolName.toLowerCase();
+  return (
+    normalized === "read" ||
+    normalized.includes("read file") ||
+    normalized.includes("read_file") ||
+    normalized.includes("readfile") ||
+    normalized.includes("view") ||
+    normalized.includes("grep") ||
+    normalized.includes("glob") ||
+    normalized.includes("search")
+  );
+}
+
 function toolNameImpliesFileChange(toolName: string, arguments_: unknown): boolean {
   const normalized = toolName.toLowerCase();
   if (
@@ -66,21 +101,7 @@ function toolNameImpliesFileChange(toolName: string, arguments_: unknown): boole
   return toolArgumentsLookLikeFileChange(arguments_);
 }
 
-export function isReadOnlyProviderToolName(toolName: string): boolean {
-  const normalized = toolName.toLowerCase();
-  return (
-    normalized === "read" ||
-    normalized.includes("read file") ||
-    normalized.includes("read_file") ||
-    normalized.includes("readfile") ||
-    normalized.includes("view") ||
-    normalized.includes("grep") ||
-    normalized.includes("glob") ||
-    normalized.includes("search")
-  );
-}
-
-export function classifyProviderToolItemType(input: {
+export function classifyCopilotToolItemType(input: {
   readonly toolName: string;
   readonly mcpServerName?: string | undefined;
   readonly arguments?: unknown;
@@ -101,6 +122,12 @@ export function classifyProviderToolItemType(input: {
     return "collab_agent_tool_call";
   }
   if (
+    toolNameImpliesFileChange(input.toolName, input.arguments) ||
+    toolCommandLooksLikeFileChange(input.arguments)
+  ) {
+    return "file_change";
+  }
+  if (
     normalized.includes("bash") ||
     normalized.includes("shell") ||
     normalized.includes("exec") ||
@@ -108,9 +135,6 @@ export function classifyProviderToolItemType(input: {
     normalized.includes("terminal")
   ) {
     return "command_execution";
-  }
-  if (toolNameImpliesFileChange(input.toolName, input.arguments)) {
-    return "file_change";
   }
   if (
     normalized.includes("websearch") ||
@@ -125,17 +149,4 @@ export function classifyProviderToolItemType(input: {
     return "image_view";
   }
   return "dynamic_tool_call";
-}
-
-export function classifyProviderToolRequestType(toolName: string): CanonicalRequestType {
-  const itemType = classifyProviderToolItemType({ toolName });
-  return itemType === "command_execution"
-    ? "command_execution_approval"
-    : itemType === "file_change"
-      ? "file_change_approval"
-      : itemType === "web_search"
-        ? "dynamic_tool_call"
-        : isReadOnlyProviderToolName(toolName)
-          ? "file_read_approval"
-          : "dynamic_tool_call";
 }
