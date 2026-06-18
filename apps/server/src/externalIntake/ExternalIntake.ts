@@ -118,19 +118,70 @@ export class ExternalIntake extends Context.Service<ExternalIntake, ExternalInta
   "t3/externalIntake/ExternalIntake",
 ) {}
 
-/** Claude Opus 4.8 at extra-high effort — the [claude] routing target. */
-const CLAUDE_OPUS_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("claudeAgent"),
-  model: "claude-opus-4-8",
-  options: [{ id: "effort", value: "xhigh" }],
-} as const satisfies ModelSelection;
+function claudeModelSelection(input: {
+  readonly model: "claude-opus-4-8" | "claude-fable-5";
+  readonly effort: "high" | "xhigh" | "ultracode";
+}): ModelSelection {
+  return {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: input.model,
+    options: [{ id: "effort", value: input.effort }],
+  };
+}
 
-/** GPT-5.5 on the fast service tier — the [codex] routing target. */
-const CODEX_FAST_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.5",
-  options: [{ id: "serviceTier", value: "fast" }],
-} as const satisfies ModelSelection;
+function codexModelSelection(input: {
+  readonly reasoningEffort: "medium" | "high";
+  readonly serviceTier: "default" | "priority";
+}): ModelSelection {
+  return {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.5",
+    options: [
+      { id: "reasoningEffort", value: input.reasoningEffort },
+      { id: "serviceTier", value: input.serviceTier },
+    ],
+  };
+}
+
+const INTAKE_MODEL_SELECTION_BY_TAG = {
+  "codex-fast": codexModelSelection({ reasoningEffort: "medium", serviceTier: "priority" }),
+  codex: codexModelSelection({ reasoningEffort: "medium", serviceTier: "default" }),
+  "codex-high-fast": codexModelSelection({ reasoningEffort: "high", serviceTier: "priority" }),
+  "codex-high": codexModelSelection({ reasoningEffort: "high", serviceTier: "default" }),
+  claude: claudeModelSelection({ model: "claude-opus-4-8", effort: "xhigh" }),
+  "claude-opus": claudeModelSelection({ model: "claude-opus-4-8", effort: "xhigh" }),
+  "claude-opus-high": claudeModelSelection({ model: "claude-opus-4-8", effort: "high" }),
+  "claude-opus-ultracode": claudeModelSelection({
+    model: "claude-opus-4-8",
+    effort: "ultracode",
+  }),
+  "claude-fable": claudeModelSelection({ model: "claude-fable-5", effort: "high" }),
+  "claude-fable-xhigh": claudeModelSelection({ model: "claude-fable-5", effort: "xhigh" }),
+  "claude-fable-ultracode": claudeModelSelection({
+    model: "claude-fable-5",
+    effort: "ultracode",
+  }),
+} as const satisfies Record<string, ModelSelection>;
+
+const INTAKE_MODEL_ROUTING_TAGS = Object.keys(INTAKE_MODEL_SELECTION_BY_TAG).sort(
+  (left, right) => right.length - left.length,
+);
+
+const INTAKE_MODEL_ROUTING_TAG_PATTERN = new RegExp(
+  `\\[(${INTAKE_MODEL_ROUTING_TAGS.map(escapeRegExp).join("|")})\\]`,
+  "gi",
+);
+
+const INTAKE_MODEL_ROUTING_PREFIX_PATTERN = new RegExp(
+  `^\\s*(${INTAKE_MODEL_ROUTING_TAGS.map(escapeRegExp).join("|")})\\s*:`,
+  "i",
+);
+
+function isIntakeModelRoutingTag(
+  value: string | undefined,
+): value is keyof typeof INTAKE_MODEL_SELECTION_BY_TAG {
+  return value !== undefined && value in INTAKE_MODEL_SELECTION_BY_TAG;
+}
 
 const DEFAULT_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -144,21 +195,34 @@ const DEFAULT_MODEL_SELECTION = {
 /**
  * Inline routing tags an intake requester can drop into their message to force
  * the model the new thread runs on:
- *   - `[codex]`  → GPT-5.5 fast
- *   - `[claude]` → Claude Opus 4.8 (extra-high effort)
+ *   - `codex-fast:` / `[codex-fast]`           → GPT-5.5, medium reasoning, fast service tier
+ *   - `codex:` / `[codex]`                     → GPT-5.5, medium reasoning, standard service tier
+ *   - `codex-high-fast:` / `[codex-high-fast]` → GPT-5.5, high reasoning, fast service tier
+ *   - `codex-high:` / `[codex-high]`           → GPT-5.5, high reasoning, standard service tier
+ *   - `claude:` / `[claude]`                   → Claude Opus 4.8, xhigh effort
+ *   - `claude-opus-high:`                      → Claude Opus 4.8, high effort
+ *   - `claude-opus-ultracode:`                 → Claude Opus 4.8, ultracode effort
+ *   - `claude-fable:`                          → Claude Fable 5, high effort
+ *   - `claude-fable-xhigh:`                    → Claude Fable 5, xhigh effort
+ *   - `claude-fable-ultracode:`                → Claude Fable 5, ultracode effort
+ *
+ * Bracketed tags can appear anywhere. Prefix tags must be the leading content
+ * in the message.
  *
  * Returns `undefined` when no tag is present so callers fall back to the
- * profile/project default selection. When both tags appear, the one that
+ * profile/project default selection. When multiple tags appear, the one that
  * appears first in the message wins.
  */
 export function modelSelectionFromIntakeTags(text: string): ModelSelection | undefined {
-  const haystack = text.toLowerCase();
-  const codexIndex = haystack.indexOf("[codex]");
-  const claudeIndex = haystack.indexOf("[claude]");
-  if (codexIndex === -1 && claudeIndex === -1) return undefined;
-  if (claudeIndex === -1) return CODEX_FAST_MODEL_SELECTION;
-  if (codexIndex === -1) return CLAUDE_OPUS_MODEL_SELECTION;
-  return codexIndex < claudeIndex ? CODEX_FAST_MODEL_SELECTION : CLAUDE_OPUS_MODEL_SELECTION;
+  INTAKE_MODEL_ROUTING_TAG_PATTERN.lastIndex = 0;
+  const prefixMatch = INTAKE_MODEL_ROUTING_PREFIX_PATTERN.exec(text);
+  const bracketMatch = INTAKE_MODEL_ROUTING_TAG_PATTERN.exec(text);
+  const tag =
+    prefixMatch &&
+    (!bracketMatch || prefixMatch.index + prefixMatch[0].search(/\S/) <= bracketMatch.index)
+      ? prefixMatch[1]?.toLowerCase()
+      : bracketMatch?.[1]?.toLowerCase();
+  return isIntakeModelRoutingTag(tag) ? INTAKE_MODEL_SELECTION_BY_TAG[tag] : undefined;
 }
 
 const EXTERNAL_INTAKE_AGENT_PROMPT = [
