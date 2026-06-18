@@ -24,13 +24,13 @@ import {
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadTokenUsageSnapshot,
   ThreadId,
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { classifyProviderToolItemType } from "@t3tools/shared/providerToolClassification";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { DateTime, Deferred, Effect, Path, Predicate, PubSub, Stream } from "effect";
 
@@ -46,10 +46,15 @@ import {
 } from "../Errors.ts";
 import { type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { createCopilotClient, trimOrUndefined } from "../copilotRuntime.ts";
+import {
+  classifyCopilotToolItemType,
+  isReadOnlyCopilotToolName,
+} from "./CopilotToolClassification.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("copilot");
 const COPILOT_RESUME_SCHEMA_VERSION = 1 as const;
+const SDK_TURN_REPLAY_THRESHOLD_MS = 1_000;
 
 type CopilotMode = "interactive" | "plan" | "autopilot";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
@@ -66,8 +71,16 @@ type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve
 type SessionApproval = NonNullable<SessionApprovalDecision["approval"]>;
 type CopilotTaskStatus = "running" | "idle" | "completed" | "failed" | "cancelled";
 type CopilotTaskInfo = {
+  readonly id?: string;
+  readonly type?: string;
   readonly description: string;
   readonly status: CopilotTaskStatus;
+  readonly agentType?: string;
+  readonly command?: string;
+  readonly prompt?: string;
+  readonly latestResponse?: string;
+  readonly result?: string;
+  readonly error?: string;
 };
 type CopilotTaskList = {
   readonly tasks: ReadonlyArray<CopilotTaskInfo>;
@@ -82,6 +95,13 @@ type PlanStep = {
   step: string;
   status: "pending" | "inProgress" | "completed";
 };
+
+interface CopilotTaskState {
+  readonly id: string;
+  description: string;
+  status: CopilotTaskStatus;
+  taskType: string | undefined;
+}
 
 export interface CopilotAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -156,6 +176,7 @@ interface CopilotSessionContext {
   readonly cwd: string;
   readonly turns: Array<CopilotTurnSnapshot>;
   readonly queuedTurnIds: Array<TurnId>;
+  readonly turnQueuedAtMsByTurnId: Map<TurnId, number>;
   readonly sdkTurnIdsToTurnIds: Map<string, TurnId>;
   readonly completedTurnIds: Set<TurnId>;
   readonly turnUsageByTurnId: Map<TurnId, ThreadTokenUsageSnapshot>;
@@ -176,10 +197,13 @@ interface CopilotSessionContext {
   readonly emittedTextByItemId: Map<string, string>;
   readonly assistantItemIdByTurnId: Map<TurnId, string>;
   readonly pendingTaskCompletionTextByTurnId: Map<TurnId, string>;
+  readonly emittedTurnDiffByTurnId: Map<TurnId, string>;
+  readonly copilotTasks: Map<string, CopilotTaskState>;
   readonly turnIdsWithAssistantText: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   activeTurnId: TurnId | undefined;
   activeSdkTurnId: string | undefined;
+  activeSdkTurnKey: string | undefined;
   eventChain: Promise<void>;
   stopped: boolean;
 }
@@ -522,6 +546,16 @@ function sessionApprovalDecisionFromPermissionRequest(
   }
 }
 
+function isPermissionCompletionApproved(result: PermissionRequestResult): boolean {
+  const kind = result.kind as string;
+  return (
+    kind === "approved" ||
+    kind.startsWith("approved-") ||
+    kind === "approve-once" ||
+    kind === "approve-for-session"
+  );
+}
+
 function permissionSignature(request: SessionPermissionRequest): string {
   switch (request.kind) {
     case "shell":
@@ -633,7 +667,7 @@ function toolItemType(
   mcpServerName?: string,
   arguments_?: unknown,
 ): ToolMeta["itemType"] {
-  return classifyProviderToolItemType({
+  return classifyCopilotToolItemType({
     toolName,
     ...(mcpServerName ? { mcpServerName } : {}),
     ...(arguments_ !== undefined ? { arguments: arguments_ } : {}),
@@ -648,17 +682,47 @@ function isApplyPatchTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "applypatch";
 }
 
-function hasApplyPatchEdit(detail: string): boolean {
-  const normalized = detail.replace(/\r\n/g, "\n").trim();
-  if (!normalized.startsWith("*** Begin Patch")) {
+function commandLooksLikePatchEdit(command: string | undefined): boolean {
+  if (!command) {
     return false;
   }
-  return (
-    normalized.includes("\n*** Update File: ") ||
-    normalized.includes("\n*** Add File: ") ||
-    normalized.includes("\n*** Delete File: ") ||
-    normalized.includes("\n*** Move to: ")
-  );
+  return /(?:^|\s)apply_patch(?:\s|$)/u.test(command) || command.includes("*** Begin Patch");
+}
+
+function hasApplyPatchEdit(detail: string): boolean {
+  return extractApplyPatchEdit(detail) !== undefined;
+}
+
+function extractApplyPatchEdit(detail: string | undefined): string | undefined {
+  const normalized = trimOrUndefined(detail?.replace(/\r\n/g, "\n"));
+  if (!normalized) {
+    return undefined;
+  }
+  const beginIndex = normalized.indexOf("*** Begin Patch");
+  if (beginIndex < 0) {
+    return undefined;
+  }
+  const lines = normalized.slice(beginIndex).split("\n");
+  if (lines[0]?.trim() !== "*** Begin Patch") {
+    return undefined;
+  }
+  const patchLines: Array<string> = [];
+  for (const line of lines) {
+    patchLines.push(line);
+    if (line.trim() === "*** End Patch") {
+      break;
+    }
+  }
+  if (patchLines.at(-1)?.trim() !== "*** End Patch") {
+    return undefined;
+  }
+  const patch = patchLines.join("\n").trim();
+  return patch.includes("\n*** Update File: ") ||
+    patch.includes("\n*** Add File: ") ||
+    patch.includes("\n*** Delete File: ") ||
+    patch.includes("\n*** Move to: ")
+    ? patch
+    : undefined;
 }
 
 const SHELL_COMPLETION_CONTROL_LINE_PATTERN = /^<shellId: [^>]+ completed with exit code \d+>$/;
@@ -679,6 +743,10 @@ function hasUnifiedDiffShape(detail: string): boolean {
   );
 }
 
+function hasPatchHeaderShape(detail: string): boolean {
+  return /(?:^|\n)--- [^\n]+\n\+\+\+ [^\n]+/u.test(detail);
+}
+
 function completedToolDiffText(
   toolMeta: ToolMeta | undefined,
   detail: string | undefined,
@@ -687,10 +755,15 @@ function completedToolDiffText(
   if (!normalized) {
     return undefined;
   }
+  const applyPatchDiff =
+    extractApplyPatchEdit(normalized) ?? extractApplyPatchEdit(toolMeta?.command);
   if (isApplyPatchTool(toolMeta?.toolName)) {
-    return hasApplyPatchEdit(normalized) ? normalized : undefined;
+    return applyPatchDiff;
   }
-  if (toolMeta?.itemType !== "command_execution") {
+  if (toolMeta?.itemType === "file_change" && applyPatchDiff) {
+    return applyPatchDiff;
+  }
+  if (toolMeta?.itemType !== "command_execution" && toolMeta?.itemType !== "file_change") {
     return undefined;
   }
   const diffCandidate = stripShellCompletionControlLines(normalized);
@@ -721,6 +794,57 @@ function normalizeCopilotTaskStatus(status: CopilotTaskStatus): PlanStep["status
   }
 }
 
+function completedCopilotTaskStatus(
+  status: CopilotTaskStatus,
+): "completed" | "failed" | "stopped" | undefined {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "stopped";
+    case "running":
+    case "idle":
+      return undefined;
+  }
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function copilotTaskId(task: CopilotTaskInfo): string | undefined {
+  return readString(task.id);
+}
+
+function copilotTaskType(task: CopilotTaskInfo): string | undefined {
+  return readString(task.type) ?? readString(task.agentType);
+}
+
+function copilotTaskDescription(task: CopilotTaskInfo): string {
+  return (
+    readString(task.description) ??
+    readString(task.command) ??
+    readString(task.prompt) ??
+    readString(task.latestResponse) ??
+    "Task"
+  );
+}
+
+function copilotTaskProgressSummary(status: CopilotTaskStatus): string {
+  return status === "idle" ? "Task idle" : "Task running";
+}
+
+function copilotTaskCompletionSummary(task: CopilotTaskInfo): string | undefined {
+  return (
+    readString(task.error) ??
+    readString(task.result) ??
+    readString(task.latestResponse) ??
+    copilotTaskDescription(task)
+  );
+}
+
 function copilotTaskStatusSuffix(status: CopilotTaskStatus): string {
   switch (status) {
     case "failed":
@@ -736,12 +860,53 @@ function copilotTaskStatusSuffix(status: CopilotTaskStatus): string {
 
 function planStepsFromCopilotTasks(tasks: ReadonlyArray<CopilotTaskInfo>): PlanStep[] {
   return tasks.map((task) => {
-    const description = trimOrUndefined(task.description) ?? "Task";
+    const description = copilotTaskDescription(task);
     return {
       step: `${description}${copilotTaskStatusSuffix(task.status)}`,
       status: normalizeCopilotTaskStatus(task.status),
     };
   });
+}
+
+function isTodoTool(toolName: string): boolean {
+  const normalized = toolName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return normalized.includes("todo");
+}
+
+function normalizeTodoStatus(value: unknown): PlanStep["status"] {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "completed" || normalized === "done") {
+    return "completed";
+  }
+  if (
+    normalized === "in_progress" ||
+    normalized === "inprogress" ||
+    normalized === "running" ||
+    normalized === "active"
+  ) {
+    return "inProgress";
+  }
+  return "pending";
+}
+
+function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep[] | undefined {
+  const todos = input.todos;
+  if (!Array.isArray(todos) || todos.length === 0) {
+    return undefined;
+  }
+  const steps = todos.flatMap((todo): Array<PlanStep> => {
+    if (!isStringRecord(todo)) {
+      return [];
+    }
+    const step = readString(todo.content) ?? readString(todo.title) ?? readString(todo.task);
+    return [
+      {
+        step: step ?? "Task",
+        status: normalizeTodoStatus(todo.status),
+      },
+    ];
+  });
+  return steps.length > 0 ? steps : undefined;
 }
 
 function toolStreamKind(
@@ -787,9 +952,59 @@ function commandFromToolArguments(arguments_: unknown): string | undefined {
 }
 
 function toolLifecycleTitle(toolMeta: ToolMeta | undefined): string {
-  return toolMeta?.itemType === "command_execution"
-    ? "Ran command"
-    : (toolMeta?.toolName ?? "tool");
+  if (toolMeta?.itemType === "command_execution") {
+    const command = trimOrUndefined(toolMeta.command);
+    return command ? `Ran command: ${truncateSingleLine(command, 96)}` : "Ran command";
+  }
+  if (toolMeta?.itemType === "file_change") {
+    return isApplyPatchTool(toolMeta.toolName) || commandLooksLikePatchEdit(toolMeta.command)
+      ? "Applied patch"
+      : (toolMeta.toolName ?? "Updated files");
+  }
+  return toolMeta?.toolName ?? "tool";
+}
+
+function truncateSingleLine(value: string, max = 120): string {
+  const singleLine = value.replace(/\r\n/g, "\n").replace(/\n+/g, " ").trim();
+  if (singleLine.length <= max) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
+}
+
+function startedToolDetail(toolMeta: ToolMeta | undefined): string | undefined {
+  if (toolMeta?.itemType === "command_execution") {
+    return trimOrUndefined(toolMeta.command);
+  }
+  return undefined;
+}
+
+function normalizedToolCompletionDetail(
+  toolMeta: ToolMeta | undefined,
+  detail: string | undefined,
+): string | undefined {
+  const normalized = trimOrUndefined(detail);
+  if (!normalized) {
+    return undefined;
+  }
+  if (toolMeta?.itemType === "command_execution") {
+    const withoutControlLines = stripShellCompletionControlLines(normalized);
+    return trimOrUndefined(withoutControlLines);
+  }
+  return normalized;
+}
+
+function toolLifecycleDataKind(toolMeta: ToolMeta | undefined): "edit" | "read" | undefined {
+  if (!toolMeta) {
+    return undefined;
+  }
+  if (toolMeta.itemType === "file_change") {
+    return "edit";
+  }
+  if (isReadOnlyCopilotToolName(toolMeta.toolName)) {
+    return "read";
+  }
+  return undefined;
 }
 
 function toolLifecycleData(input: {
@@ -800,11 +1015,22 @@ function toolLifecycleData(input: {
   readonly error?: unknown;
   readonly toolTelemetry?: unknown;
 }): Record<string, unknown> {
+  const argumentsData: Record<string, unknown> = input.arguments ? { ...input.arguments } : {};
+  const kind = toolLifecycleDataKind(input.toolMeta);
+  if (input.toolMeta?.itemType !== "command_execution") {
+    delete argumentsData.command;
+    delete argumentsData.cmd;
+    delete argumentsData.fullCommandText;
+    delete argumentsData.commandText;
+  }
   return {
-    ...input.arguments,
+    ...argumentsData,
+    ...(kind ? { kind } : {}),
     toolCallId: input.toolCallId,
     ...(input.toolMeta?.toolName ? { toolName: input.toolMeta.toolName } : {}),
-    ...(input.toolMeta?.command ? { command: input.toolMeta.command } : {}),
+    ...(input.toolMeta?.itemType === "command_execution" && input.toolMeta.command
+      ? { command: input.toolMeta.command }
+      : {}),
     ...(input.result !== undefined ? { result: input.result } : {}),
     ...(input.error ? { error: input.error } : {}),
     ...(input.toolTelemetry ? { toolTelemetry: input.toolTelemetry } : {}),
@@ -932,19 +1158,92 @@ function latestTurnId(context: CopilotSessionContext): TurnId | undefined {
   return context.turns.at(-1)?.id;
 }
 
-function resolveTurnIdForSdkTurn(context: CopilotSessionContext, sdkTurnId: string): TurnId {
-  const existing = context.sdkTurnIdsToTurnIds.get(sdkTurnId);
+function epochMsFromIso(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isSdkEventBeforeQueuedTurn(
+  context: CopilotSessionContext,
+  turnId: TurnId,
+  timestamp: string | undefined,
+): boolean {
+  const eventAtMs = epochMsFromIso(timestamp);
+  const turnQueuedAtMs = context.turnQueuedAtMsByTurnId.get(turnId);
+  return (
+    eventAtMs !== undefined &&
+    turnQueuedAtMs !== undefined &&
+    eventAtMs + SDK_TURN_REPLAY_THRESHOLD_MS < turnQueuedAtMs
+  );
+}
+
+function sdkTurnMappingKey(agentId: string | undefined, sdkTurnId: string): string {
+  return agentId ? `${agentId}:${sdkTurnId}` : sdkTurnId;
+}
+
+function removeQueuedTurn(context: CopilotSessionContext, turnId: TurnId): void {
+  const queueIndex = context.queuedTurnIds.indexOf(turnId);
+  if (queueIndex >= 0) {
+    context.queuedTurnIds.splice(queueIndex, 1);
+  }
+}
+
+function clearSdkTurnMappingsForTurn(context: CopilotSessionContext, turnId: TurnId): void {
+  context.turnQueuedAtMsByTurnId.delete(turnId);
+  for (const [sdkTurnKey, mappedTurnId] of context.sdkTurnIdsToTurnIds.entries()) {
+    if (mappedTurnId === turnId) {
+      context.sdkTurnIdsToTurnIds.delete(sdkTurnKey);
+      if (context.activeSdkTurnKey === sdkTurnKey) {
+        context.activeSdkTurnId = undefined;
+        context.activeSdkTurnKey = undefined;
+      }
+    }
+  }
+}
+
+function resolveTurnIdForSdkTurn(
+  context: CopilotSessionContext,
+  sdkTurnId: string,
+  input?: {
+    readonly timestamp?: string | undefined;
+    readonly agentId?: string | undefined;
+  },
+): TurnId | undefined {
+  const sdkTurnKey = sdkTurnMappingKey(input?.agentId, sdkTurnId);
+  const existing = context.sdkTurnIdsToTurnIds.get(sdkTurnKey);
   if (existing) {
     return existing;
   }
-  const nextTurnId =
-    context.queuedTurnIds.shift() ??
-    context.activeTurnId ??
-    latestTurnId(context) ??
-    TurnId.make(`copilot-turn-${randomUUID()}`);
-  context.sdkTurnIdsToTurnIds.set(sdkTurnId, nextTurnId);
+
+  const activeTurnId = context.activeTurnId;
+  if (activeTurnId && !isSdkEventBeforeQueuedTurn(context, activeTurnId, input?.timestamp)) {
+    removeQueuedTurn(context, activeTurnId);
+    context.sdkTurnIdsToTurnIds.set(sdkTurnKey, activeTurnId);
+    context.activeSdkTurnId = sdkTurnId;
+    context.activeSdkTurnKey = sdkTurnKey;
+    updateProviderSession(context, {
+      status: "running",
+      activeTurnId,
+    });
+    return activeTurnId;
+  }
+
+  // When no T3 turn is active, a new SDK turn can start the next queued app turn.
+  const nextTurnId = context.queuedTurnIds[0];
+  if (!nextTurnId) {
+    return undefined;
+  }
+  if (isSdkEventBeforeQueuedTurn(context, nextTurnId, input?.timestamp)) {
+    return undefined;
+  }
+  context.queuedTurnIds.shift();
+  context.sdkTurnIdsToTurnIds.set(sdkTurnKey, nextTurnId);
   ensureTurnSnapshot(context, nextTurnId);
   context.activeSdkTurnId = sdkTurnId;
+  context.activeSdkTurnKey = sdkTurnKey;
   context.activeTurnId = nextTurnId;
   updateProviderSession(context, {
     status: "running",
@@ -958,7 +1257,10 @@ function resolveTurnIdForEvent(
   input?: {
     readonly providerItemId?: string | undefined;
     readonly sdkTurnId?: string | undefined;
+    readonly sdkEventTimestamp?: string | undefined;
+    readonly agentId?: string | undefined;
     readonly parentProviderItemId?: string | undefined;
+    readonly allowActiveFallback?: boolean | undefined;
   },
 ): TurnId | undefined {
   const parentTurnId =
@@ -972,12 +1274,18 @@ function resolveTurnIdForEvent(
     return providerItemTurnId;
   }
   if (input?.sdkTurnId) {
-    return resolveTurnIdForSdkTurn(context, input.sdkTurnId);
+    return resolveTurnIdForSdkTurn(context, input.sdkTurnId, {
+      timestamp: input.sdkEventTimestamp,
+      agentId: input.agentId,
+    });
   }
-  if (context.activeSdkTurnId) {
-    return context.sdkTurnIdsToTurnIds.get(context.activeSdkTurnId) ?? context.activeTurnId;
+  if (input?.allowActiveFallback === false) {
+    return undefined;
   }
-  return context.activeTurnId ?? latestTurnId(context);
+  if (context.activeSdkTurnKey) {
+    return context.sdkTurnIdsToTurnIds.get(context.activeSdkTurnKey) ?? context.activeTurnId;
+  }
+  return context.activeTurnId;
 }
 
 export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
@@ -1116,7 +1424,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     send: (
       context: CopilotSessionContext,
       messageOptions: MessageOptions,
-    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+    ): Effect.Effect<string, ProviderAdapterRequestError> =>
       Effect.tryPromise({
         try: () => context.sdkSession.send(messageOptions),
         catch: (cause) =>
@@ -1195,8 +1503,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       readonly raw?: SessionEvent | undefined;
     },
   ) => {
-    // Copilot can report both assistant.turn_end and session.idle for the same
-    // turn; keep the public runtime lifecycle canonical and idempotent.
+    // Copilot can report duplicate idle/error signals around the same user turn;
+    // keep the public runtime lifecycle canonical and idempotent.
     if (context.completedTurnIds.has(turnId)) {
       context.pendingTaskCompletionTextByTurnId.delete(turnId);
       context.turnIdsWithAssistantText.delete(turnId);
@@ -1205,6 +1513,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.completedTurnIds.add(turnId);
     context.pendingTaskCompletionTextByTurnId.delete(turnId);
     context.turnIdsWithAssistantText.delete(turnId);
+    clearSdkTurnMappingsForTurn(context, turnId);
     if (context.activeTurnId === turnId) {
       context.activeTurnId = undefined;
     }
@@ -1232,6 +1541,43 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ? { usage: context.turnUsageByTurnId.get(turnId) }
           : {}),
         ...(input?.errorMessage ? { errorMessage: input.errorMessage } : {}),
+      },
+    });
+  };
+
+  const emitTurnDiffUpdated = async (input: {
+    readonly context: CopilotSessionContext;
+    readonly turnId: TurnId;
+    readonly diffText: string;
+    readonly raw?: SessionEvent | undefined;
+  }) => {
+    const normalizedDiff = trimOrUndefined(input.diffText);
+    if (!normalizedDiff) {
+      return;
+    }
+    const hasParsedFiles = parseTurnDiffFilesFromUnifiedDiff(normalizedDiff).length > 0;
+    if (
+      !hasParsedFiles &&
+      !hasApplyPatchEdit(normalizedDiff) &&
+      !hasUnifiedDiffShape(normalizedDiff) &&
+      !hasPatchHeaderShape(normalizedDiff)
+    ) {
+      return;
+    }
+    const previousDiff = input.context.emittedTurnDiffByTurnId.get(input.turnId);
+    if (previousDiff === normalizedDiff) {
+      return;
+    }
+    input.context.emittedTurnDiffByTurnId.set(input.turnId, normalizedDiff);
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        turnId: input.turnId,
+        raw: input.raw,
+      }),
+      type: "turn.diff.updated",
+      payload: {
+        unifiedDiff: normalizedDiff,
       },
     });
   };
@@ -1513,6 +1859,73 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       const taskList = yield* copilotSdk.readBackgroundTasks(context);
       if (!taskList) {
         return;
+      }
+      for (const task of taskList.tasks) {
+        const taskId = copilotTaskId(task);
+        if (!taskId) {
+          continue;
+        }
+        const description = copilotTaskDescription(task);
+        const taskType = copilotTaskType(task);
+        const previous = context.copilotTasks.get(taskId);
+        const runtimeTaskId = RuntimeTaskId.make(taskId);
+        if (!previous) {
+          yield* emit({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw,
+            }),
+            type: "task.started",
+            payload: {
+              taskId: runtimeTaskId,
+              description,
+              ...(taskType ? { taskType } : {}),
+            },
+          });
+        }
+        if (
+          (task.status === "running" || task.status === "idle") &&
+          (!previous || previous.status !== task.status || previous.description !== description)
+        ) {
+          yield* emit({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw,
+            }),
+            type: "task.progress",
+            payload: {
+              taskId: runtimeTaskId,
+              description,
+              summary: copilotTaskProgressSummary(task.status),
+            },
+          });
+        }
+        const completedStatus = completedCopilotTaskStatus(task.status);
+        if (completedStatus && previous?.status !== task.status) {
+          yield* emit({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw,
+            }),
+            type: "task.completed",
+            payload: {
+              taskId: runtimeTaskId,
+              status: completedStatus,
+              ...(copilotTaskCompletionSummary(task)
+                ? { summary: copilotTaskCompletionSummary(task) }
+                : {}),
+            },
+          });
+        }
+        context.copilotTasks.set(taskId, {
+          id: taskId,
+          description,
+          status: task.status,
+          taskType,
+        });
       }
       const plan = planStepsFromCopilotTasks(taskList.tasks);
       if (plan.length === 0) {
@@ -1916,7 +2329,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       case "assistant.turn_start": {
-        const turnId = resolveTurnIdForSdkTurn(context, event.data.turnId);
+        const turnId = resolveTurnIdForSdkTurn(context, event.data.turnId, {
+          timestamp: event.timestamp,
+          agentId: event.agentId,
+        });
+        if (!turnId) {
+          return;
+        }
         updateProviderSession(context, {
           status: "running",
           activeTurnId: turnId,
@@ -1938,6 +2357,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       case "assistant.reasoning_delta": {
         const turnId = resolveTurnIdForEvent(context, {
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
           providerItemId: event.data.reasoningId,
         });
         if (!turnId) {
@@ -1959,6 +2380,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       case "assistant.reasoning": {
         const turnId = resolveTurnIdForEvent(context, {
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
           providerItemId: event.data.reasoningId,
         });
         if (!turnId) {
@@ -1998,6 +2421,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       case "assistant.message_delta": {
         const turnId = resolveTurnIdForEvent(context, {
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
           providerItemId: event.data.messageId,
           parentProviderItemId: event.data.parentToolCallId,
         });
@@ -2020,7 +2445,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "assistant.message": {
         const turnId = resolveTurnIdForEvent(context, {
-          sdkTurnId: context.activeSdkTurnId,
+          sdkTurnId: event.data.turnId ?? context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
           providerItemId: event.data.messageId,
           parentProviderItemId: event.data.parentToolCallId,
         });
@@ -2085,17 +2512,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       case "assistant.turn_end": {
-        const turnId = context.sdkTurnIdsToTurnIds.get(event.data.turnId) ?? context.activeTurnId;
+        const sdkTurnKey = sdkTurnMappingKey(event.agentId, event.data.turnId);
+        const turnId = context.sdkTurnIdsToTurnIds.get(sdkTurnKey);
         if (!turnId) {
           return;
         }
-        await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
-        await emitTurnCompleted(context, turnId, "completed", {
-          raw: event,
-          stopReason: null,
-        });
-        if (context.activeSdkTurnId === event.data.turnId) {
+        if (context.activeSdkTurnKey === sdkTurnKey) {
           context.activeSdkTurnId = undefined;
+          context.activeSdkTurnKey = undefined;
         }
         return;
       }
@@ -2103,6 +2527,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const turnId = resolveTurnIdForEvent(context, {
           parentProviderItemId: event.data.parentToolCallId,
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
         });
         if (!turnId) {
           return;
@@ -2148,10 +2574,30 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
           parentProviderItemId: event.data.parentToolCallId,
-          sdkTurnId: context.activeSdkTurnId,
+          sdkTurnId: event.data.turnId ?? context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
         });
         if (!turnId) {
           return;
+        }
+        const todoPlan =
+          isTodoTool(event.data.toolName) && isStringRecord(event.data.arguments)
+            ? extractPlanStepsFromTodoInput(event.data.arguments)
+            : undefined;
+        if (todoPlan && todoPlan.length > 0) {
+          await emitAsync({
+            ...createBaseEvent({
+              threadId: context.threadId,
+              turnId,
+              raw: event,
+            }),
+            type: "turn.plan.updated",
+            payload: {
+              explanation: "Copilot Todos",
+              plan: todoPlan,
+            },
+          });
         }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
         const itemType = toolItemType(
@@ -2159,10 +2605,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           event.data.mcpServerName,
           event.data.arguments,
         );
-        const command =
-          itemType === "command_execution"
-            ? commandFromToolArguments(event.data.arguments)
-            : undefined;
+        const command = commandFromToolArguments(event.data.arguments);
         const toolMeta: ToolMeta = {
           toolName: event.data.toolName,
           itemType,
@@ -2185,6 +2628,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             itemType,
             status: "inProgress",
             title: toolLifecycleTitle(toolMeta),
+            ...(startedToolDetail(toolMeta) ? { detail: startedToolDetail(toolMeta) } : {}),
             data: toolLifecycleData({
               toolCallId: event.data.toolCallId,
               toolMeta,
@@ -2198,6 +2642,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
+          allowActiveFallback: false,
         });
         if (!turnId) {
           return;
@@ -2223,6 +2670,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
           sdkTurnId: context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
+          allowActiveFallback: false,
         });
         const summary = trimOrUndefined(event.data.progressMessage);
         if (!turnId || !summary) {
@@ -2249,7 +2699,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
           parentProviderItemId: event.data.parentToolCallId,
-          sdkTurnId: context.activeSdkTurnId,
+          sdkTurnId: event.data.turnId ?? context.activeSdkTurnId,
+          sdkEventTimestamp: event.timestamp,
+          agentId: event.agentId,
         });
         if (!turnId) {
           return;
@@ -2266,10 +2718,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             }
           : undefined;
         const toolMeta = context.toolMetaById.get(event.data.toolCallId) ?? fallbackToolMeta;
-        const detail =
+        const rawDetail =
           trimOrUndefined(event.data.result?.detailedContent) ??
           trimOrUndefined(event.data.result?.content) ??
           trimOrUndefined(event.data.error?.message);
+        const detail = normalizedToolCompletionDetail(toolMeta, rawDetail);
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -2292,18 +2745,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             }),
           },
         });
-        const diffText = event.data.success ? completedToolDiffText(toolMeta, detail) : undefined;
+        const diffText = event.data.success
+          ? completedToolDiffText(toolMeta, rawDetail)
+          : undefined;
         if (diffText) {
-          await emitAsync({
-            ...createBaseEvent({
-              threadId: context.threadId,
-              turnId,
-              raw: event,
-            }),
-            type: "turn.diff.updated",
-            payload: {
-              unifiedDiff: diffText,
-            },
+          await emitTurnDiffUpdated({
+            context,
+            turnId,
+            diffText,
+            raw: event,
           });
         }
         const toolItem: CopilotToolExecutionItem = {
@@ -2337,6 +2787,25 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.pendingPermissionBindings.delete(event.data.requestId);
+        if (binding.permissionRequest.kind === "write") {
+          const turnId =
+            binding.turnId ??
+            resolveTurnIdForEvent(context, {
+              providerItemId: toolCallIdFromPermissionRequest(binding.permissionRequest),
+              sdkTurnId: context.activeSdkTurnId,
+            });
+          if (turnId && isPermissionCompletionApproved(event.data.result)) {
+            const writeDiff = trimOrUndefined(binding.permissionRequest.diff);
+            if (writeDiff) {
+              await emitTurnDiffUpdated({
+                context,
+                turnId,
+                diffText: writeDiff,
+                raw: event,
+              });
+            }
+          }
+        }
         await runWithContext(
           emitPermissionRequestResolved(
             context,
@@ -2544,6 +3013,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         },
         turns: [],
         queuedTurnIds: [],
+        turnQueuedAtMsByTurnId: new Map(),
         sdkTurnIdsToTurnIds: new Map(),
         completedTurnIds: new Set(),
         turnUsageByTurnId: new Map(),
@@ -2558,10 +3028,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         emittedTextByItemId: new Map(),
         assistantItemIdByTurnId: new Map(),
         pendingTaskCompletionTextByTurnId: new Map(),
+        emittedTurnDiffByTurnId: new Map(),
+        copilotTasks: new Map(),
         turnIdsWithAssistantText: new Set(),
         startedItemIds: new Set(),
         activeTurnId: undefined,
         activeSdkTurnId: undefined,
+        activeSdkTurnKey: undefined,
         eventChain: Promise.resolve(),
         stopped: false,
       };
@@ -2649,10 +3122,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
     yield* syncSessionMode(context, mode);
 
+    const queuedAt = yield* DateTime.now;
     ensureTurnSnapshot(context, turnId);
+    context.turnQueuedAtMsByTurnId.set(turnId, epochMsFromIso(DateTime.formatIso(queuedAt)) ?? 0);
     context.queuedTurnIds.push(turnId);
     const shouldPromoteQueuedTurn =
-      context.activeTurnId === undefined && context.activeSdkTurnId === undefined;
+      context.activeTurnId === undefined && context.activeSdkTurnKey === undefined;
     if (shouldPromoteQueuedTurn) {
       context.activeTurnId = turnId;
     }
@@ -2681,13 +3156,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       mode: "enqueue",
     };
 
-    yield* copilotSdk.send(context, messageOptions).pipe(
+    const providerMessageId = yield* copilotSdk.send(context, messageOptions).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           const queueIndex = context.queuedTurnIds.indexOf(turnId);
           if (queueIndex >= 0) {
             context.queuedTurnIds.splice(queueIndex, 1);
           }
+          context.turnQueuedAtMsByTurnId.delete(turnId);
           if (context.activeTurnId === turnId) {
             context.activeTurnId = undefined;
           }
@@ -2723,6 +3199,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }),
       ),
     );
+    if (trimOrUndefined(providerMessageId)) {
+      context.turnIdByProviderItemId.set(providerMessageId, turnId);
+    }
 
     return {
       threadId: input.threadId,
@@ -2780,6 +3259,34 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             : decision === "acceptForSession"
               ? APPROVED_PERMISSION_RESULT
               : DENIED_PERMISSION_RESULT;
+      if (
+        binding.permissionRequest.kind === "write" &&
+        (decision === "accept" || decision === "acceptForSession")
+      ) {
+        const turnId =
+          binding.turnId ??
+          resolveTurnIdForEvent(context, {
+            providerItemId: toolCallIdFromPermissionRequest(binding.permissionRequest),
+            sdkTurnId: context.activeSdkTurnId,
+          });
+        const writeDiff = trimOrUndefined(binding.permissionRequest.diff);
+        if (turnId && writeDiff) {
+          yield* Effect.tryPromise({
+            try: () =>
+              emitTurnDiffUpdated({
+                context,
+                turnId,
+                diffText: writeDiff,
+              }),
+            catch: (cause) =>
+              processError(
+                threadId,
+                detailFromCause(cause, "Failed to emit Copilot write diff update."),
+                cause,
+              ),
+          });
+        }
+      }
       yield* emitPermissionRequestResolved(context, binding, decision, result);
       context.pendingPermissionBindings.delete(requestId);
       yield* Deferred.succeed(binding.deferred, result);
