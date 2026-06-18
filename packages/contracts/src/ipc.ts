@@ -95,12 +95,13 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type { DesktopBootstrapWorkspaceFolder } from "./desktopBootstrap.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -262,14 +263,104 @@ export interface DesktopEnvironmentBootstrap {
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
   bootstrapToken?: string;
+  /** Host-issued bearer credential. Treat as secret: never log or persist in plaintext. */
+  bearerToken?: SensitiveString;
 }
+
+export type SensitiveString = string;
 
 export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   label: Schema.String,
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),
   bootstrapToken: Schema.optionalKey(Schema.String),
+  bearerToken: Schema.optionalKey(Schema.String),
 });
+
+export interface T3HostDisplayPreferences {
+  showOpenInPicker: boolean;
+  showCheckoutModeIndicator: boolean;
+  showBranchSelector: boolean;
+  enableTerminal: boolean;
+  enableSourceControlPanel: boolean;
+  threadConversationMaxWidthPx: number | null;
+}
+
+export const THREAD_CONVERSATION_MIN_WIDTH_PX = 320;
+export const THREAD_CONVERSATION_MAX_WIDTH_PX = 4096;
+
+const ThreadConversationMaxWidthPxSchema = Schema.Number.check(
+  Schema.isBetween({
+    minimum: THREAD_CONVERSATION_MIN_WIDTH_PX,
+    maximum: THREAD_CONVERSATION_MAX_WIDTH_PX,
+  }),
+);
+
+export const T3HostDisplayPreferencesSchema = Schema.Struct({
+  showOpenInPicker: Schema.Boolean,
+  showCheckoutModeIndicator: Schema.Boolean,
+  showBranchSelector: Schema.Boolean,
+  enableTerminal: Schema.Boolean,
+  enableSourceControlPanel: Schema.Boolean,
+  threadConversationMaxWidthPx: Schema.NullOr(ThreadConversationMaxWidthPxSchema),
+});
+
+export type T3HostThemeSource = "default" | "vscode";
+export type T3HostColorScheme = "light" | "dark";
+
+export interface T3HostAppearance {
+  themeSource: T3HostThemeSource;
+  colorScheme: T3HostColorScheme;
+}
+
+export const T3HostAppearanceSchema = Schema.Struct({
+  themeSource: Schema.Literals(["default", "vscode"]),
+  colorScheme: Schema.Literals(["light", "dark"]),
+});
+
+export interface T3HostRequestMessage {
+  readonly type: "t3.hostRequest";
+  readonly id: string;
+  readonly method: "getClientSettings" | "setClientSettings" | "confirm";
+  readonly args?: readonly unknown[];
+}
+
+export type T3HostBridgePostMessage = T3HostRequestMessage;
+
+export interface T3HostBridge {
+  getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getVscodeWorkspaceBootstrap?: () => T3HostVscodeWorkspaceBootstrap | null;
+  getDisplayPreferences?: () => T3HostDisplayPreferences | null;
+  onDisplayPreferencesChanged?: (
+    callback: (preferences: T3HostDisplayPreferences) => void,
+  ) => () => void;
+  getHostAppearance?: () => T3HostAppearance | null;
+  onHostAppearanceChanged?: (callback: (appearance: T3HostAppearance) => void) => () => void;
+  onBackendConnectionChanged?: (
+    callback: (bootstrap: DesktopEnvironmentBootstrap) => void,
+  ) => () => void;
+  getClientSettings?: () => Promise<ClientSettings | null>;
+  setClientSettings?: (settings: ClientSettings) => Promise<void>;
+  /** Optional because non-hosted browser surfaces fall back to `window.confirm`. */
+  confirm?: (message: string) => Promise<boolean>;
+  postMessage?: (message: T3HostBridgePostMessage) => void;
+}
+
+export interface T3HostVscodeWorkspaceBootstrapProject {
+  readonly workspaceFolderKey: string;
+  readonly workspaceFolderName: string;
+  readonly cwd: string;
+  readonly projectId: ProjectId;
+  readonly bootstrapThreadId: ThreadId;
+  readonly isActive?: boolean;
+}
+
+export interface T3HostVscodeWorkspaceBootstrap {
+  readonly environmentId: EnvironmentId;
+  readonly workspaceFolders: readonly DesktopBootstrapWorkspaceFolder[];
+  readonly activeWorkspaceFolderKey?: string;
+  readonly bootstrapProjects: readonly T3HostVscodeWorkspaceBootstrapProject[];
+}
 
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   alias: Schema.String,

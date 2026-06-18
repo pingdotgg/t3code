@@ -43,6 +43,9 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         if (window.desktopBridge) {
           return window.desktopBridge.confirm(message);
         }
+        if (window.t3HostBridge?.confirm) {
+          return window.t3HostBridge.confirm(message);
+        }
         return window.confirm(message);
       },
     },
@@ -79,11 +82,17 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         if (window.desktopBridge) {
           return window.desktopBridge.getClientSettings();
         }
+        if (window.t3HostBridge?.getClientSettings) {
+          return window.t3HostBridge.getClientSettings();
+        }
         return readBrowserClientSettings();
       },
       setClientSettings: async (settings) => {
         if (window.desktopBridge) {
           return window.desktopBridge.setClientSettings(settings);
+        }
+        if (window.t3HostBridge?.setClientSettings) {
+          return window.t3HostBridge.setClientSettings(settings);
         }
         writeBrowserClientSettings(settings);
       },

@@ -108,7 +108,15 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly mcpServers?: ReadonlyArray<CodexMcpServerConfig>;
   readonly appServerArgs?: ReadonlyArray<string>;
+}
+
+export interface CodexMcpServerConfig {
+  readonly name: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly toolTimeoutSec?: number;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -293,14 +301,44 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly mcpServers?: ReadonlyArray<CodexMcpServerConfig>;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const mcpConfig = buildCodexMcpConfig(input.mcpServers ?? []);
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
+    ...(mcpConfig ? { config: mcpConfig } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+  };
+}
+
+function buildCodexMcpConfig(servers: ReadonlyArray<CodexMcpServerConfig>):
+  | {
+      readonly mcp_servers: Record<
+        string,
+        { readonly command: string; readonly args: string[]; readonly tool_timeout_sec?: number }
+      >;
+    }
+  | undefined {
+  if (servers.length === 0) {
+    return undefined;
+  }
+  return {
+    mcp_servers: Object.fromEntries(
+      servers.map((server) => [
+        server.name,
+        {
+          command: server.command,
+          args: [...server.args],
+          ...(server.toolTimeoutSec !== undefined
+            ? { tool_timeout_sec: server.toolTimeoutSec }
+            : {}),
+        },
+      ]),
+    ),
   };
 }
 
@@ -443,6 +481,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly mcpServers?: ReadonlyArray<CodexMcpServerConfig>;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -450,6 +489,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -1215,6 +1255,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       });
 
       const providerThreadId = opened.thread.id;

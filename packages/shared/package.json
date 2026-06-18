@@ -11,6 +11,10 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
+    "./displayPreferences": {
+      "types": "./src/displayPreferences.ts",
+      "import": "./src/displayPreferences.ts"
+    },
     "./agentAwareness": {
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
@@ -150,6 +154,18 @@
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
+    },
+    "./mcp": {
+      "types": "./src/mcp.ts",
+      "import": "./src/mcp.ts"
+    },
+    "./hostMcp": {
+      "types": "./src/hostMcp.ts",
+      "import": "./src/hostMcp.ts"
+    },
+    "./desktopBackendAdvertisement": {
+      "types": "./src/desktopBackendAdvertisement.ts",
+      "import": "./src/desktopBackendAdvertisement.ts"
     },
     "./relayClient": {
       "types": "./src/relayClient.ts",

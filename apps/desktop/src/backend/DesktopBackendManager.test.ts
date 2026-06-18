@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -18,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { readDesktopBackendAdvertisements } from "@t3tools/shared/desktopBackendAdvertisement";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
@@ -82,6 +87,12 @@ function responseForRequest(
   return HttpClientResponse.fromWeb(request, new Response(null, { status }));
 }
 
+function healthyResponseForRequest(
+  request: HttpClientRequest.HttpClientRequest,
+): HttpClientResponse.HttpClientResponse {
+  return responseForRequest(request, 200);
+}
+
 function httpClientLayer(
   handler: (
     request: HttpClientRequest.HttpClientRequest,
@@ -94,7 +105,7 @@ function httpClientLayer(
 }
 
 const healthyHttpClientLayer = httpClientLayer((request) =>
-  Effect.succeed(responseForRequest(request, 200)),
+  Effect.succeed(healthyResponseForRequest(request)),
 );
 
 function decodeBootstrap(raw: string) {
@@ -346,6 +357,66 @@ describe("DesktopBackendManager", () => {
         assert.equal(stoppedSnapshot.ready, false);
         assert.equal(Option.isNone(stoppedSnapshot.activePid), true);
       }).pipe(Effect.provide(managerLayer));
+    }),
+  );
+
+  it.effect("removes the backend advertisement after closing the run scope", () =>
+    Effect.gen(function* () {
+      const t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3-desktop-stop-order-"));
+      const closeObservedAdvertisement = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const scope = yield* Scope.Scope;
+            const close = Effect.sync(() => {
+              const readResult = readDesktopBackendAdvertisements({ t3Home });
+              assert.lengthOf(readResult.advertisements, 1);
+            }).pipe(
+              Effect.andThen(Deferred.succeed(closeObservedAdvertisement, void 0)),
+              Effect.andThen(Deferred.succeed(closed, void 0)),
+              Effect.asVoid,
+            );
+            yield* Scope.addFinalizer(scope, close);
+            return makeProcess({
+              exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              kill: () => close,
+            });
+          }),
+        ),
+      );
+
+      const managerLayer = makeManagerLayer({
+        config: {
+          ...baseConfig,
+          bootstrap: {
+            ...baseConfig.bootstrap,
+            t3Home,
+          },
+        },
+        spawnerLayer,
+        desktopWindow: {
+          handleBackendReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+        },
+      });
+
+      try {
+        yield* Effect.gen(function* () {
+          const manager = yield* DesktopBackendManager.DesktopBackendManager;
+          yield* manager.start;
+          yield* Deferred.await(ready);
+
+          yield* manager.stop();
+          yield* Deferred.await(closeObservedAdvertisement);
+
+          assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
+        }).pipe(Effect.provide(managerLayer));
+      } finally {
+        fs.rmSync(t3Home, { force: true, recursive: true });
+      }
     }),
   );
 

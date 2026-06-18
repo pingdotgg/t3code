@@ -62,7 +62,7 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
-import { isElectron } from "../env";
+import { isElectron, isVscodeWebview } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
@@ -163,11 +163,13 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
+  filterProjectsForVscodeScope,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveVscodeProjectScope,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -183,7 +185,7 @@ import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
-import { useServerKeybindings } from "../rpc/serverState";
+import { useServerConfig, useServerKeybindings, useServerWelcome } from "../rpc/serverState";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -222,6 +224,10 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+function readVscodeWorkspaceBootstrap() {
+  return window.t3HostBridge?.getVscodeWorkspaceBootstrap?.() ?? null;
+}
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
 
@@ -2931,15 +2937,33 @@ export default function Sidebar() {
   const shortcutModifiers = useShortcutModifierState();
   const modelPickerOpen = useModelPickerOpen();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverConfig = useServerConfig();
+  const serverWelcome = useServerWelcome();
+  const vscodeWorkspaceBootstrap = isVscodeWebview ? readVscodeWorkspaceBootstrap() : null;
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
+  const visibleProjects = useMemo(
+    () =>
+      isVscodeWebview
+        ? filterProjectsForVscodeScope(
+            projects,
+            resolveVscodeProjectScope({
+              serverConfig,
+              serverWelcome,
+              vscodeWorkspaceBootstrap,
+              fallbackEnvironmentId: primaryEnvironmentId,
+            }),
+          )
+        : projects,
+    [primaryEnvironmentId, projects, serverConfig, serverWelcome, vscodeWorkspaceBootstrap],
+  );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
-      items: projects,
+      items: visibleProjects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
     });
-  }, [projectOrder, projects]);
+  }, [projectOrder, visibleProjects]);
 
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
@@ -3561,7 +3585,7 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={projects.length}
+            projectsLength={visibleProjects.length}
           />
 
           <SidebarSeparator />

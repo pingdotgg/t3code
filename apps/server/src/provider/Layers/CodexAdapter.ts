@@ -52,7 +52,9 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
 import {
+  type CodexMcpServerConfig,
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
   makeCodexSessionRuntime,
@@ -69,6 +71,32 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+
+function codexMcpServersFromHostConfig(input: {
+  readonly hostMcpServers: ReadonlyArray<{
+    readonly name: string;
+    readonly socketPath: string;
+    readonly toolTimeoutSec?: number | undefined;
+  }>;
+  readonly codexBinaryPath: string;
+}): ReadonlyArray<CodexMcpServerConfig> {
+  const codexBinaryPath = input.codexBinaryPath.trim() || "codex";
+  return input.hostMcpServers.map((server) => {
+    if (server.toolTimeoutSec !== undefined) {
+      return {
+        name: server.name,
+        command: codexBinaryPath,
+        args: ["stdio-to-uds", server.socketPath],
+        toolTimeoutSec: server.toolTimeoutSec,
+      };
+    }
+    return {
+      name: server.name,
+      command: codexBinaryPath,
+      args: ["stdio-to-uds", server.socketPath],
+    };
+  });
+}
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -1382,6 +1410,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const hostMcpServers = yield* Effect.promise(() =>
+          resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+        );
         const serviceTier =
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
@@ -1392,6 +1423,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          mcpServers: codexMcpServersFromHostConfig({
+            hostMcpServers,
+            codexBinaryPath: codexConfig.binaryPath,
+          }),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)

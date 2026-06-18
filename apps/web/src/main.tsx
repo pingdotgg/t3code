@@ -10,7 +10,7 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
-import { isElectron } from "./env";
+import { isElectron, isVscodeWebview } from "./env";
 import { DesktopClerkProvider } from "./cloud/desktopClerk";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
@@ -19,8 +19,8 @@ import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 
-// Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
+// Electron and VS Code webviews load the app from file-backed shells, so hash history avoids path resolution issues.
+const history = isElectron || isVscodeWebview ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
 

@@ -6,9 +6,12 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { SidebarThreadSummary, Thread } from "../types";
+import type { Project, SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import type { T3HostVscodeWorkspaceBootstrap } from "@t3tools/contracts";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -22,6 +25,71 @@ type SidebarProject = {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
+export type VscodeProjectScope = {
+  environmentId: EnvironmentId | null;
+  projectId?: ProjectId | null | undefined;
+  projectIds?: readonly ProjectId[] | null | undefined;
+  activeProjectId?: ProjectId | null | undefined;
+  cwd?: string | null | undefined;
+  cwds?: readonly string[] | null | undefined;
+};
+
+type VscodeBootstrapProject = {
+  readonly projectId: ProjectId;
+  readonly cwd: string;
+  readonly isActive?: boolean;
+};
+
+export function resolveVscodeProjectScope(input: {
+  readonly serverWelcome:
+    | {
+        readonly environment: { readonly environmentId: EnvironmentId };
+        readonly bootstrapProjectId?: ProjectId | null | undefined;
+        readonly bootstrapProjects?: readonly VscodeBootstrapProject[] | null | undefined;
+        readonly cwd?: string | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly serverConfig:
+    | {
+        readonly environment: { readonly environmentId: EnvironmentId };
+        readonly cwd?: string | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly vscodeWorkspaceBootstrap?: T3HostVscodeWorkspaceBootstrap | null | undefined;
+  readonly fallbackEnvironmentId?: EnvironmentId | null | undefined;
+}): VscodeProjectScope {
+  const bootstrapProjects = input.serverWelcome?.bootstrapProjects ?? null;
+  const vscodeBootstrapProjects = input.vscodeWorkspaceBootstrap?.bootstrapProjects ?? null;
+  const bootstrapProjectId = input.serverWelcome?.bootstrapProjectId ?? null;
+  const firstVscodeProjectId = vscodeBootstrapProjects?.[0]?.projectId;
+  const activeBootstrapProjectId =
+    bootstrapProjects?.find((project) => project.isActive)?.projectId ??
+    vscodeBootstrapProjects?.find((project) => project.isActive)?.projectId ??
+    bootstrapProjectId ??
+    firstVscodeProjectId;
+
+  return {
+    environmentId:
+      input.serverWelcome?.environment.environmentId ??
+      input.serverConfig?.environment.environmentId ??
+      input.vscodeWorkspaceBootstrap?.environmentId ??
+      input.fallbackEnvironmentId ??
+      null,
+    projectId: bootstrapProjectId ?? firstVscodeProjectId ?? null,
+    projectIds:
+      bootstrapProjects?.map((project) => project.projectId) ??
+      vscodeBootstrapProjects?.map((project) => project.projectId) ??
+      null,
+    activeProjectId: activeBootstrapProjectId,
+    cwd: input.serverConfig?.cwd ?? input.serverWelcome?.cwd ?? null,
+    cwds:
+      bootstrapProjects?.map((project) => project.cwd) ??
+      vscodeBootstrapProjects?.map((project) => project.cwd) ??
+      null,
+  };
+}
 
 export type ThreadTraversalDirection = "previous" | "next";
 
@@ -266,6 +334,99 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
   limit = SIDEBAR_THREAD_PREWARM_LIMIT,
 ): TThreadId[] {
   return visibleThreadIds.slice(0, Math.max(0, limit));
+}
+
+export function filterProjectsForVscodeScope<
+  TProject extends Pick<Project, "cwd" | "environmentId" | "id">,
+>(projects: readonly TProject[], scope: VscodeProjectScope): TProject[] {
+  if (!scope.environmentId) {
+    return [];
+  }
+
+  return projects.filter((project) => {
+    if (project.environmentId !== scope.environmentId) {
+      return false;
+    }
+    if (scope.projectIds && scope.projectIds.length > 0) {
+      return scope.projectIds.includes(project.id);
+    }
+    if (scope.projectId) {
+      return project.id === scope.projectId;
+    }
+    if (scope.cwds && scope.cwds.length > 0) {
+      return scope.cwds.includes(project.cwd);
+    }
+    return Boolean(scope.cwd) && project.cwd === scope.cwd;
+  });
+}
+
+export function resolveVscodeInitialThreadRef(input: {
+  threads: readonly SidebarThreadSummary[];
+  threadLastVisitedAtById: Readonly<Record<string, string>>;
+  scope: VscodeProjectScope;
+}): ScopedThreadRef | null {
+  if (!input.scope.environmentId) {
+    return null;
+  }
+  const scopedProjectIds =
+    input.scope.projectIds && input.scope.projectIds.length > 0
+      ? input.scope.projectIds
+      : input.scope.projectId
+        ? [input.scope.projectId]
+        : [];
+  if (scopedProjectIds.length === 0) {
+    return null;
+  }
+
+  const allCandidates = input.threads.filter(
+    (thread) =>
+      thread.environmentId === input.scope.environmentId &&
+      scopedProjectIds.includes(thread.projectId) &&
+      thread.archivedAt === null,
+  );
+  const activeProjectId = input.scope.activeProjectId ?? input.scope.projectId ?? null;
+  const activeCandidates = activeProjectId
+    ? allCandidates.filter((thread) => thread.projectId === activeProjectId)
+    : [];
+  const candidates = activeCandidates.length > 0 ? activeCandidates : allCandidates;
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const sorted = candidates.toSorted((left, right) => {
+    if (activeProjectId && left.projectId !== right.projectId) {
+      if (left.projectId === activeProjectId) {
+        return -1;
+      }
+      if (right.projectId === activeProjectId) {
+        return 1;
+      }
+    }
+
+    const leftVisitedAt =
+      toSortableTimestamp(
+        input.threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(left.environmentId, left.id))],
+      ) ?? Number.NEGATIVE_INFINITY;
+    const rightVisitedAt =
+      toSortableTimestamp(
+        input.threadLastVisitedAtById[
+          scopedThreadKey(scopeThreadRef(right.environmentId, right.id))
+        ],
+      ) ?? Number.NEGATIVE_INFINITY;
+    if (leftVisitedAt !== rightVisitedAt) {
+      return rightVisitedAt - leftVisitedAt;
+    }
+
+    const rightTimestamp = getThreadSortTimestamp(right, "updated_at");
+    const leftTimestamp = getThreadSortTimestamp(left, "updated_at");
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+
+    return right.id.localeCompare(left.id);
+  });
+  const thread = sorted[0];
+  return thread ? scopeThreadRef(thread.environmentId, thread.id) : null;
 }
 
 export function resolveAdjacentThreadId<T>(input: {

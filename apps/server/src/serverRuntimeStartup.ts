@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  type ServerLifecycleBootstrapProject,
   type ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -180,58 +181,87 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
+  const bootstrapProjects: ServerLifecycleBootstrapProject[] = [];
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
-      const existingProject = yield* projectionReadModelQuery.getActiveProjectByWorkspaceRoot(
-        serverConfig.cwd,
-      );
-      let nextProjectId: ProjectId;
-      let nextProjectDefaultModelSelection: ModelSelection;
+      const workspaceTargets =
+        serverConfig.autoBootstrapWorkspaceFolders.length > 0
+          ? serverConfig.autoBootstrapWorkspaceFolders
+          : [makeFallbackWorkspaceTarget(serverConfig.cwd, path)];
+      const activeWorkspaceKey =
+        serverConfig.activeBootstrapWorkspaceFolderKey ?? workspaceTargets[0]?.key;
+      const seenWorkspaceKeys = new Set<string>();
 
-      if (Option.isNone(existingProject)) {
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
-        nextProjectId = ProjectId.make(yield* randomUUID);
-        const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
-        nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
-        yield* orchestrationEngine.dispatch({
-          type: "project.create",
-          commandId: CommandId.make(yield* randomUUID),
-          projectId: nextProjectId,
-          title: bootstrapProjectTitle,
-          workspaceRoot: serverConfig.cwd,
-          defaultModelSelection: nextProjectDefaultModelSelection,
-          createdAt,
-        });
-      } else {
-        nextProjectId = existingProject.value.id;
-        nextProjectDefaultModelSelection =
-          existingProject.value.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
-      }
+      for (const target of workspaceTargets) {
+        if (seenWorkspaceKeys.has(target.key)) {
+          continue;
+        }
+        seenWorkspaceKeys.add(target.key);
 
-      const existingThreadId =
-        yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
-      if (Option.isNone(existingThreadId)) {
-        const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const createdThreadId = ThreadId.make(yield* randomUUID);
-        yield* orchestrationEngine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(yield* randomUUID),
-          threadId: createdThreadId,
+        const existingProject = yield* projectionReadModelQuery.getActiveProjectByWorkspaceRoot(
+          target.cwd,
+        );
+        let nextProjectId: ProjectId;
+        let nextProjectDefaultModelSelection: ModelSelection;
+
+        if (Option.isNone(existingProject)) {
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          nextProjectId = ProjectId.make(yield* randomUUID);
+          const bootstrapProjectTitle = target.name || path.basename(target.cwd) || "project";
+          nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
+          yield* orchestrationEngine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make(yield* randomUUID),
+            projectId: nextProjectId,
+            title: bootstrapProjectTitle,
+            workspaceRoot: target.cwd,
+            defaultModelSelection: nextProjectDefaultModelSelection,
+            createdAt,
+          });
+        } else {
+          nextProjectId = existingProject.value.id;
+          nextProjectDefaultModelSelection =
+            existingProject.value.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
+        }
+
+        const existingThreadId =
+          yield* projectionReadModelQuery.getFirstActiveThreadIdByProjectId(nextProjectId);
+        let nextThreadId: ThreadId;
+        if (Option.isNone(existingThreadId)) {
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          nextThreadId = ThreadId.make(yield* randomUUID);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(yield* randomUUID),
+            threadId: nextThreadId,
+            projectId: nextProjectId,
+            title: "New thread",
+            modelSelection: nextProjectDefaultModelSelection,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          });
+        } else {
+          nextThreadId = existingThreadId.value;
+        }
+
+        const isActive = target.key === activeWorkspaceKey;
+        bootstrapProjects.push({
+          workspaceFolderKey: target.key,
+          workspaceFolderName: target.name,
+          cwd: target.cwd,
           projectId: nextProjectId,
-          title: "New thread",
-          modelSelection: nextProjectDefaultModelSelection,
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "full-access",
-          branch: null,
-          worktreePath: null,
-          createdAt,
+          bootstrapThreadId: nextThreadId,
+          isActive,
         });
-        bootstrapProjectId = nextProjectId;
-        bootstrapThreadId = createdThreadId;
-      } else {
-        bootstrapProjectId = nextProjectId;
-        bootstrapThreadId = existingThreadId.value;
+
+        if (isActive || bootstrapProjectId === undefined) {
+          bootstrapProjectId = nextProjectId;
+          bootstrapThreadId = nextThreadId;
+        }
       }
     });
   }
@@ -239,8 +269,28 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   return {
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
+    ...(bootstrapProjects.length > 0 ? { bootstrapProjects } : {}),
   } as const;
 });
+
+function makeFallbackWorkspaceTarget(
+  cwd: string,
+  path: Path.Path,
+): {
+  readonly key: string;
+  readonly name: string;
+  readonly cwd: string;
+  readonly uriScheme: string;
+  readonly uriAuthority: string;
+} {
+  return {
+    key: `cwd:${encodeURIComponent(cwd)}`,
+    name: path.basename(cwd) || "project",
+    cwd,
+    uriScheme: "file",
+    uriAuthority: "",
+  };
+}
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;

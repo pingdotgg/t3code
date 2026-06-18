@@ -504,12 +504,23 @@ export const ServerLifecycleReadyPayload = Schema.Struct({
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
 
+export const ServerLifecycleBootstrapProject = Schema.Struct({
+  workspaceFolderKey: TrimmedNonEmptyString,
+  workspaceFolderName: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  bootstrapThreadId: Schema.optional(ThreadId),
+  isActive: Schema.Boolean,
+});
+export type ServerLifecycleBootstrapProject = typeof ServerLifecycleBootstrapProject.Type;
+
 export const ServerLifecycleWelcomePayload = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   cwd: TrimmedNonEmptyString,
   projectName: TrimmedNonEmptyString,
   bootstrapProjectId: Schema.optional(ProjectId),
   bootstrapThreadId: Schema.optional(ThreadId),
+  bootstrapProjects: Schema.optional(Schema.Array(ServerLifecycleBootstrapProject)),
 });
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 

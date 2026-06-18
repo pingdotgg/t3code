@@ -47,6 +47,7 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessionRepository,
   listActive: () => Effect.succeed([]),
   revoke: () => Effect.succeed(false),
   revokeAllExcept: () => Effect.succeed([]),
+  revokeStaleDesktopBootstrapBearerSessions: () => Effect.succeed([]),
   setLastConnectedAt: () => Effect.void,
 });
 

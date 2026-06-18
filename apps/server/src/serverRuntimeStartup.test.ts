@@ -138,6 +138,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
       Effect.provideService(ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
+        autoBootstrapWorkspaceFolders: [],
+        activeBootstrapWorkspaceFolderKey: undefined,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
@@ -180,6 +182,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
     assert.deepStrictEqual(targets, {
       bootstrapProjectId,
       bootstrapThreadId,
+      bootstrapProjects: [
+        {
+          workspaceFolderKey: "cwd:%2Ftmp%2Fstartup-project",
+          workspaceFolderName: "startup-project",
+          cwd: "/tmp/startup-project",
+          projectId: bootstrapProjectId,
+          bootstrapThreadId,
+          isActive: true,
+        },
+      ],
     });
     assert.deepStrictEqual(yield* Ref.get(dispatchCalls), []);
   });
@@ -192,6 +204,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       Effect.provideService(ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
+        autoBootstrapWorkspaceFolders: [],
+        activeBootstrapWorkspaceFolderKey: undefined,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
@@ -221,6 +235,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
 
     assert.equal(typeof targets.bootstrapProjectId, "string");
     assert.equal(typeof targets.bootstrapThreadId, "string");
+    assert.deepStrictEqual(
+      targets.bootstrapProjects?.map((project) => project.cwd),
+      ["/tmp/startup-project"],
+    );
     assert.deepStrictEqual(yield* Ref.get(dispatchCalls), ["project.create", "thread.create"]);
   }),
 );
@@ -240,6 +258,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
       Effect.provideService(ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
+        autoBootstrapWorkspaceFolders: [],
+        activeBootstrapWorkspaceFolderKey: undefined,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
@@ -275,3 +295,96 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
     assert.deepStrictEqual(yield* Ref.get(dispatchCalls), []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("resolveAutoBootstrapWelcomeTargets bootstraps every VS Code workspace folder", () => {
+  const projectA = ProjectId.make("project-a");
+  const projectB = ProjectId.make("project-b");
+  const threadA = ThreadId.make("thread-a");
+  const threadB = ThreadId.make("thread-b");
+
+  return Effect.gen(function* () {
+    const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const targets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerConfig, {
+        cwd: "/workspaces/a",
+        autoBootstrapProjectFromCwd: true,
+        autoBootstrapWorkspaceFolders: [
+          {
+            key: "vscode-remote:ssh-remote+host:/workspaces/a",
+            name: "A",
+            cwd: "/workspaces/a",
+            uriScheme: "vscode-remote",
+            uriAuthority: "ssh-remote+host",
+          },
+          {
+            key: "vscode-remote:ssh-remote+host:/workspaces/b",
+            name: "B",
+            cwd: "/workspaces/b",
+            uriScheme: "vscode-remote",
+            uriAuthority: "ssh-remote+host",
+          },
+        ],
+        activeBootstrapWorkspaceFolderKey: "vscode-remote:ssh-remote+host:/workspaces/b",
+      } as never),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getCommandReadModel: () => Effect.die("unused"),
+        getSnapshot: () => Effect.die("unused"),
+        getShellSnapshot: () => Effect.die("unused"),
+        getArchivedShellSnapshot: () => Effect.die("unused"),
+        getSnapshotSequence: () => Effect.die("unused"),
+        getCounts: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+          Effect.succeed(
+            Option.some({
+              id: workspaceRoot.endsWith("/a") ? projectA : projectB,
+              title: workspaceRoot.endsWith("/a") ? "A" : "B",
+              workspaceRoot,
+              defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
+              scripts: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              deletedAt: null,
+            }),
+          ),
+        getProjectShellById: () => Effect.die("unused"),
+        getFirstActiveThreadIdByProjectId: (projectId) =>
+          Effect.succeed(Option.some(projectId === projectA ? threadA : threadB)),
+        getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+        getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadShellById: () => Effect.die("unused"),
+        getThreadDetailById: () => Effect.die("unused"),
+      }),
+      Effect.provideService(OrchestrationEngineService, {
+        readEvents: () => Stream.empty,
+        dispatch: (command) =>
+          Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
+            Effect.as({ sequence: 1 }),
+          ),
+        streamDomainEvents: Stream.empty,
+      } satisfies OrchestrationEngineShape),
+      Effect.provide(NodeServices.layer),
+    );
+
+    assert.equal(targets.bootstrapProjectId, projectB);
+    assert.equal(targets.bootstrapThreadId, threadB);
+    assert.deepStrictEqual(targets.bootstrapProjects, [
+      {
+        workspaceFolderKey: "vscode-remote:ssh-remote+host:/workspaces/a",
+        workspaceFolderName: "A",
+        cwd: "/workspaces/a",
+        projectId: projectA,
+        bootstrapThreadId: threadA,
+        isActive: false,
+      },
+      {
+        workspaceFolderKey: "vscode-remote:ssh-remote+host:/workspaces/b",
+        workspaceFolderName: "B",
+        cwd: "/workspaces/b",
+        projectId: projectB,
+        bootstrapThreadId: threadB,
+        isActive: true,
+      },
+    ]);
+    assert.deepStrictEqual(yield* Ref.get(dispatchCalls), []);
+  });
+});

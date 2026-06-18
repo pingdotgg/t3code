@@ -1,4 +1,8 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import {
+  type ProjectId,
+  type ServerLifecycleWelcomePayload,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import {
   Outlet,
@@ -44,7 +48,7 @@ import {
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
-import { useStore } from "../store";
+import { selectSidebarThreadsForProjectRefs, useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import {
@@ -63,6 +67,109 @@ import {
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { isVscodeWebview } from "../env";
+import { resolveVscodeInitialThreadRef } from "../components/Sidebar.logic";
+
+type BootstrapProject = NonNullable<ServerLifecycleWelcomePayload["bootstrapProjects"]>[number];
+type EnvironmentStateSnapshot = ReturnType<
+  typeof useStore.getState
+>["environmentStateById"][string];
+type ProjectGroupingSettings = ReturnType<typeof selectProjectGroupingSettings>;
+type ServerConfigSnapshot = ReturnType<typeof useServerConfig>;
+
+function resolveActiveBootstrapProject(payload: ServerLifecycleWelcomePayload): {
+  readonly bootstrapProjects: readonly BootstrapProject[];
+  readonly activeBootstrapProject: BootstrapProject | null;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+} | null {
+  const bootstrapProjects = payload.bootstrapProjects ?? [];
+  const activeBootstrapProject =
+    bootstrapProjects.find((project) => project.isActive) ?? bootstrapProjects[0] ?? null;
+  const projectId = activeBootstrapProject?.projectId ?? payload.bootstrapProjectId;
+  const threadId = activeBootstrapProject?.bootstrapThreadId ?? payload.bootstrapThreadId;
+  if (!projectId || !threadId) {
+    return null;
+  }
+  return {
+    bootstrapProjects,
+    activeBootstrapProject,
+    projectId,
+    threadId,
+  };
+}
+
+function resolveBootstrapProjectKey(input: {
+  readonly payload: ServerLifecycleWelcomePayload;
+  readonly activeBootstrapProject: BootstrapProject | null;
+  readonly projectId: ProjectId;
+  readonly bootstrapEnvironmentState: EnvironmentStateSnapshot | undefined;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
+  readonly serverConfig: ServerConfigSnapshot;
+}): string {
+  const bootstrapProject = input.bootstrapEnvironmentState?.projectById[input.projectId] ?? null;
+  const bootstrapProjectCwd = input.activeBootstrapProject?.cwd ?? input.serverConfig?.cwd ?? null;
+  return (
+    (bootstrapProject
+      ? deriveLogicalProjectKeyFromSettings(bootstrapProject, input.projectGroupingSettings)
+      : null) ??
+    (bootstrapProjectCwd
+      ? derivePhysicalProjectKeyFromPath(
+          input.payload.environment.environmentId,
+          bootstrapProjectCwd,
+        )
+      : null) ??
+    scopedProjectKey(scopeProjectRef(input.payload.environment.environmentId, input.projectId))
+  );
+}
+
+function expandBootstrapProjects(input: {
+  readonly payload: ServerLifecycleWelcomePayload;
+  readonly bootstrapProjects: readonly BootstrapProject[];
+  readonly bootstrapEnvironmentState: EnvironmentStateSnapshot | undefined;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
+}): void {
+  for (const project of input.bootstrapProjects) {
+    const storeProject = input.bootstrapEnvironmentState?.projectById[project.projectId] ?? null;
+    const projectKey =
+      (storeProject
+        ? deriveLogicalProjectKeyFromSettings(storeProject, input.projectGroupingSettings)
+        : null) ??
+      derivePhysicalProjectKeyFromPath(input.payload.environment.environmentId, project.cwd);
+    useUiStateStore.getState().setProjectExpanded(projectKey, true);
+  }
+}
+
+function resolveInitialThreadRefForBootstrap(input: {
+  readonly payload: ServerLifecycleWelcomePayload;
+  readonly bootstrapProjects: readonly BootstrapProject[];
+  readonly projectId: ProjectId;
+}) {
+  if (!isVscodeWebview) {
+    return null;
+  }
+  return resolveVscodeInitialThreadRef({
+    threads: selectSidebarThreadsForProjectRefs(
+      useStore.getState(),
+      input.bootstrapProjects.length > 0
+        ? input.bootstrapProjects.map((project) =>
+            scopeProjectRef(input.payload.environment.environmentId, project.projectId),
+          )
+        : [scopeProjectRef(input.payload.environment.environmentId, input.projectId)],
+    ),
+    threadLastVisitedAtById: useUiStateStore.getState().threadLastVisitedAtById,
+    scope: {
+      environmentId: input.payload.environment.environmentId,
+      projectId: input.projectId,
+      projectIds:
+        input.bootstrapProjects.length > 0
+          ? input.bootstrapProjects.map((project) => project.projectId)
+          : [input.projectId],
+      activeProjectId: input.projectId,
+      cwd: input.payload.cwd,
+    },
+  });
+}
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -303,40 +410,57 @@ function EventRouter() {
         return;
       }
 
-      if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+      const activeBootstrapContext = resolveActiveBootstrapProject(payload);
+      if (!activeBootstrapContext) {
         return;
       }
+      const {
+        bootstrapProjects,
+        activeBootstrapProject,
+        projectId: activeBootstrapProjectId,
+        threadId: activeBootstrapThreadId,
+      } = activeBootstrapContext;
       const bootstrapEnvironmentState =
         useStore.getState().environmentStateById[payload.environment.environmentId];
-      const bootstrapProject =
-        bootstrapEnvironmentState?.projectById[payload.bootstrapProjectId] ?? null;
-      const bootstrapProjectKey =
-        (bootstrapProject
-          ? deriveLogicalProjectKeyFromSettings(bootstrapProject, projectGroupingSettings)
-          : null) ??
-        (serverConfig?.cwd
-          ? derivePhysicalProjectKeyFromPath(payload.environment.environmentId, serverConfig.cwd)
-          : null) ??
-        scopedProjectKey(
-          scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
-        );
+      const bootstrapProjectKey = resolveBootstrapProjectKey({
+        payload,
+        activeBootstrapProject,
+        projectId: activeBootstrapProjectId,
+        bootstrapEnvironmentState,
+        projectGroupingSettings,
+        serverConfig,
+      });
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
+      expandBootstrapProjects({
+        payload,
+        bootstrapProjects,
+        bootstrapEnvironmentState,
+        projectGroupingSettings,
+      });
 
       if (readPathname() !== "/") {
         return;
       }
-      if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+      if (handledBootstrapThreadIdRef.current === activeBootstrapThreadId) {
         return;
       }
+      const initialThreadRef = resolveInitialThreadRefForBootstrap({
+        payload,
+        bootstrapProjects,
+        projectId: activeBootstrapProjectId,
+      });
+      const targetEnvironmentId =
+        initialThreadRef?.environmentId ?? payload.environment.environmentId;
+      const targetThreadId = initialThreadRef?.threadId ?? activeBootstrapThreadId;
       await navigate({
         to: "/$environmentId/$threadId",
         params: {
-          environmentId: payload.environment.environmentId,
-          threadId: payload.bootstrapThreadId,
+          environmentId: targetEnvironmentId,
+          threadId: targetThreadId,
         },
         replace: true,
       });
-      handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+      handledBootstrapThreadIdRef.current = activeBootstrapThreadId;
     })().catch(() => undefined);
   });
 

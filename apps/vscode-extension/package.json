@@ -1,0 +1,207 @@
+{
+  "name": "t3code-vscode",
+  "displayName": "T3 Code",
+  "version": "0.0.27",
+  "description": "Run T3 Code inside VS Code.",
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/t3tools/t3code.git",
+    "directory": "apps/vscode-extension"
+  },
+  "publisher": "t3tools",
+  "files": [
+    "dist",
+    "resources",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./dist/extension.mjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:extension": "tsdown",
+    "package": "node scripts/package.mjs",
+    "test": "vp test run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/vscode": "^1.106.0",
+    "@vscode/vsce": "^3.6.0",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "t3code.open",
+        "title": "T3 Code: Open"
+      },
+      {
+        "command": "t3code.newThread",
+        "title": "T3 Code: New Thread"
+      },
+      {
+        "command": "t3code.restartBackend",
+        "title": "T3 Code: Reconnect to Desktop Backend"
+      },
+      {
+        "command": "t3code.cleanVirtualWorkspaceCache",
+        "title": "T3 Code: Clean Virtual Workspace Cache"
+      }
+    ],
+    "configuration": {
+      "title": "T3 Code",
+      "properties": {
+        "t3code.home": {
+          "type": "string",
+          "default": "",
+          "description": "Optional T3 home directory. Defaults to ~/.t3 to match the desktop app."
+        },
+        "t3code.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the VS Code MCP bridge so agent sessions launched by T3 Code can use VS Code-backed tools."
+        },
+        "t3code.mcp.toolTimeoutSec": {
+          "type": "number",
+          "default": 120,
+          "minimum": 5,
+          "description": "Maximum time, in seconds, that provider sessions should wait for a VS Code MCP tool call before timing out. Applied where the provider supports equivalent timeout configuration."
+        },
+        "t3code.mcp.allowedRunCommands": {
+          "type": "array",
+          "default": [
+            "t3code.*",
+            "vscode.open",
+            "vscode.diff",
+            "revealLine"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^*]+\\*?$"
+          },
+          "description": "VS Code command ids that the vscodeRunCommand MCP tool may execute. Entries ending in * are treated as non-empty command-prefix rules."
+        },
+        "t3code.mcp.allowedActivateExtensions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": "Installed VS Code extension ids that vscodeRunCommand may activate before executing an allowed command. Extension activation is disabled by default."
+        },
+        "t3code.ui.showOpenInPicker": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the T3 Code open/reveal picker inside VS Code webviews."
+        },
+        "t3code.ui.showCheckoutModeIndicator": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the T3 Code checkout mode indicator inside VS Code webviews."
+        },
+        "t3code.ui.showBranchSelector": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the T3 Code branch/ref selector inside VS Code webviews."
+        },
+        "t3code.ui.enableTerminal": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the T3 Code terminal drawer, terminal actions, and terminal keybindings inside VS Code webviews."
+        },
+        "t3code.ui.enableSourceControlPanel": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the T3 Code Version Control right-panel surface inside VS Code webviews."
+        },
+        "t3code.ui.threadConversationMaxWidth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 320,
+          "maximum": 4096,
+          "description": "Optional maximum width, in pixels, for the thread conversation timeline and prompt input inside VS Code webviews. Leave empty for no maximum width."
+        },
+        "t3code.ui.restoreDefaultTheme": {
+          "type": "boolean",
+          "default": false,
+          "description": "Restore T3 Code's default app theme in VS Code webviews instead of matching the active VS Code theme and fonts."
+        }
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "t3code.conversationEditor",
+        "displayName": "T3 Code Thread",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "t3-code:/**/*"
+          }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "t3code",
+          "title": "T3 Code",
+          "icon": "resources/t3code.svg"
+        }
+      ]
+    },
+    "views": {
+      "t3code": [
+        {
+          "id": "t3code.sidebarView",
+          "type": "webview",
+          "name": "T3 Code"
+        }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "t3code.open"
+        },
+        {
+          "command": "t3code.newThread"
+        },
+        {
+          "command": "t3code.restartBackend"
+        },
+        {
+          "command": "t3code.cleanVirtualWorkspaceCache"
+        }
+      ]
+    }
+  },
+  "activationEvents": [
+    "onCommand:t3code.cleanVirtualWorkspaceCache",
+    "onCommand:t3code.newThread",
+    "onCommand:t3code.open",
+    "onCommand:t3code.restartBackend",
+    "onCustomEditor:t3code.conversationEditor",
+    "onView:t3code.sidebarView"
+  ],
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.106.0"
+  }
+}

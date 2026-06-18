@@ -1,6 +1,7 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  type AuthBearerBootstrapResult,
   AuthStandardClientScopes,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -19,6 +20,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
@@ -26,9 +28,10 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -60,6 +63,63 @@ const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =
     }
     return yield* error;
   });
+
+const LegacyAuthBootstrapInput = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+});
+
+const respondToLegacyAuthError = (input: {
+  readonly status: number;
+  readonly message: string;
+  readonly cause?: unknown;
+}) =>
+  Effect.gen(function* () {
+    if (input.status >= 500) {
+      yield* Effect.logError("legacy auth compatibility route failed", {
+        message: input.message,
+        cause: input.cause,
+      });
+    }
+    return HttpServerResponse.jsonUnsafe({ error: input.message }, { status: input.status });
+  });
+
+type LegacyAuthCompatibilityError =
+  | EnvironmentAuth.ServerAuthInvalidCredentialError
+  | EnvironmentAuth.ServerAuthInvalidRequestError
+  | EnvironmentAuth.ServerAuthInternalError;
+
+const catchLegacyAuthErrors = <R>(
+  effect: Effect.Effect<
+    ReturnType<typeof HttpServerResponse.jsonUnsafe>,
+    LegacyAuthCompatibilityError,
+    R
+  >,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      ServerAuthInvalidCredentialError: (error) =>
+        respondToLegacyAuthError({
+          status: 401,
+          message:
+            error.reason === "missing_credential"
+              ? "Authentication required."
+              : "Invalid bootstrap credential.",
+          cause: error,
+        }),
+      ServerAuthInvalidRequestError: (error) =>
+        respondToLegacyAuthError({
+          status: 400,
+          message: error.reason === "invalid_scope" ? "Invalid auth scope." : "Scope not granted.",
+          cause: error,
+        }),
+      ServerAuthInternalError: (error) =>
+        respondToLegacyAuthError({
+          status: 500,
+          message: error.message,
+          cause: error,
+        }),
+    }),
+  );
 
 export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
@@ -180,6 +240,61 @@ export const environmentAuthenticatedAuthLayer = Layer.effect(
         );
       }).pipe(Effect.catchTag("EnvironmentAuthInvalidError", appendDpopChallengeOnUnauthorized));
   }),
+);
+
+export const authBearerBootstrapCompatibilityRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/bootstrap/bearer",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const payload = yield* HttpServerRequest.schemaBodyJson(LegacyAuthBootstrapInput).pipe(
+      Effect.mapError(
+        (cause) =>
+          new EnvironmentAuth.ServerAuthInvalidCredentialError({
+            reason: "invalid_credential",
+            cause,
+          }),
+      ),
+    );
+    const result = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+      payload.credential,
+      undefined,
+      deriveAuthClientMetadata({ request }),
+    );
+    const now = yield* DateTime.now;
+    const expiresAt = DateTime.toUtc(
+      DateTime.add(now, { milliseconds: Math.max(0, result.expires_in) * 1000 }),
+    );
+    return HttpServerResponse.jsonUnsafe(
+      {
+        authenticated: true,
+        role: "owner",
+        sessionMethod: "bearer-session-token",
+        expiresAt,
+        sessionToken: result.access_token,
+      } satisfies AuthBearerBootstrapResult,
+      { status: 200 },
+    );
+  }).pipe(catchLegacyAuthErrors),
+);
+
+export const authSessionRevokeCompatibilityRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/session/revoke",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const session = yield* serverAuth.authenticateHttpRequest(request);
+    if (session.method !== "bearer-access-token") {
+      return yield* respondToLegacyAuthError({
+        status: 403,
+        message: "Bearer session authentication required.",
+      });
+    }
+    const revoked = yield* serverAuth.revokeSession(session.sessionId);
+    return HttpServerResponse.jsonUnsafe({ revoked }, { status: 200 });
+  }).pipe(catchLegacyAuthErrors),
 );
 
 export const authHttpApiLayer = HttpApiBuilder.group(

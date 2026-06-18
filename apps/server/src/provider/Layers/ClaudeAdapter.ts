@@ -19,6 +19,7 @@ import {
   type SettingSource,
   type SDKUserMessage,
   type ModelUsage,
+  type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
@@ -26,6 +27,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type ClaudeSettings,
+  type DesktopBootstrapMcpServer,
   EventId,
   type ProviderApprovalDecision,
   ProviderDriverKind,
@@ -70,6 +72,8 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
+import { hostMcpServersToStdioServers } from "../hostMcpServers.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -98,6 +102,7 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+type ClaudeMcpServers = Record<string, McpServerConfig>;
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -942,6 +947,70 @@ function buildUserMessage(input: {
       content: input.sdkContent as unknown as SDKUserMessage["message"]["content"],
     },
   } as SDKUserMessage;
+}
+
+function buildClaudeMcpServers(
+  hostMcpServers: ReadonlyArray<DesktopBootstrapMcpServer>,
+  mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+): ClaudeMcpServers | undefined {
+  const stdioServers = Object.fromEntries(
+    hostMcpServersToStdioServers(hostMcpServers).map((server) => [
+      server.name,
+      {
+        type: "stdio",
+        command: server.command,
+        args: [...server.args],
+        ...(Object.keys(server.env).length > 0 ? { env: { ...server.env } } : {}),
+      } satisfies McpServerConfig,
+    ]),
+  ) as ClaudeMcpServers;
+  const mcpServers = {
+    ...stdioServers,
+    ...(mcpSession
+      ? {
+          "t3-code": {
+            type: "http",
+            url: mcpSession.endpoint,
+            headers: {
+              Authorization: mcpSession.authorizationHeader,
+            },
+          } satisfies McpServerConfig,
+        }
+      : {}),
+  };
+  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
+}
+
+function buildClaudeMcpServersDiagnostics(mcpServers: ClaudeMcpServers | undefined): unknown {
+  if (!mcpServers) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(mcpServers).map(([name, server]) => {
+      if ("url" in server) {
+        return [name, { type: server.type, url: server.url }];
+      }
+      const stdioServer = server as {
+        readonly type?: unknown;
+        readonly command?: unknown;
+        readonly args?: unknown;
+        readonly env?: unknown;
+      };
+      const envKeys =
+        stdioServer.env && typeof stdioServer.env === "object"
+          ? Object.keys(stdioServer.env).toSorted()
+          : [];
+      return [
+        name,
+        {
+          type: stdioServer.type,
+          command: stdioServer.command,
+          args: Array.isArray(stdioServer.args) ? stdioServer.args : [],
+          ...(envKeys.length > 0 ? { envKeys } : {}),
+        },
+      ];
+    }),
+  );
 }
 
 function buildClaudeImageContentBlock(input: {
@@ -3447,6 +3516,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const hostMcpServers = yield* Effect.promise(() =>
+        resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+      );
+      const mcpServers = buildClaudeMcpServers(hostMcpServers, mcpSession);
+      const mcpServersDiagnostics = buildClaudeMcpServersDiagnostics(mcpServers);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3465,6 +3539,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        ...(mcpServers ? { mcpServers } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
@@ -3472,19 +3547,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -3508,6 +3570,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.additional_directories": input.cwd ? [input.cwd] : [],
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
+        "claude.query.mcp_servers_json":
+          encodeJsonStringForDiagnostics(mcpServersDiagnostics) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
       });

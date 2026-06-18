@@ -23,6 +23,7 @@ import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
 import * as Data from "effect/Data";
 import * as Predicate from "effect/Predicate";
+import { getHostBearerToken, getHostBootstrapCredential } from "./hostBootstrap";
 
 export class BootstrapHttpError extends Data.TaggedError("BootstrapHttpError")<{
   readonly message: string;
@@ -88,13 +89,6 @@ export function takePairingTokenFromUrl(): string | null {
   }
   stripPairingTokenFromUrl();
   return token;
-}
-
-function getDesktopBootstrapCredential(): string | null {
-  const bootstrap = window.desktopBridge?.getLocalEnvironmentBootstrap();
-  return typeof bootstrap?.bootstrapToken === "string" && bootstrap.bootstrapToken.length > 0
-    ? bootstrap.bootstrapToken
-    : null;
 }
 
 export async function fetchSessionState(): Promise<AuthSessionState> {
@@ -252,7 +246,18 @@ function isTransientBootstrapError(error: unknown): boolean {
 }
 
 async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
-  const bootstrapCredential = getDesktopBootstrapCredential();
+  if (getHostBearerToken()) {
+    const session = await fetchSessionState();
+    if (session.authenticated) {
+      return { status: "authenticated" };
+    }
+    return {
+      status: "requires-auth",
+      auth: session.auth,
+    };
+  }
+
+  const bootstrapCredential = getHostBootstrapCredential();
   const currentSession = await fetchSessionState();
   if (currentSession.authenticated) {
     return { status: "authenticated" };

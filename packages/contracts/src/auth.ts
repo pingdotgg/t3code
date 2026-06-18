@@ -193,6 +193,15 @@ export const AuthAccessTokenResult = Schema.Struct({
 });
 export type AuthAccessTokenResult = typeof AuthAccessTokenResult.Type;
 
+export const AuthBearerBootstrapResult = Schema.Struct({
+  authenticated: Schema.Literal(true),
+  role: Schema.Literal("owner"),
+  sessionMethod: Schema.Literal("bearer-session-token"),
+  expiresAt: Schema.DateTimeUtc,
+  sessionToken: TrimmedNonEmptyString,
+});
+export type AuthBearerBootstrapResult = typeof AuthBearerBootstrapResult.Type;
+
 export const AuthWebSocketTicketResult = Schema.Struct({
   ticket: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,

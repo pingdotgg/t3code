@@ -23,6 +23,7 @@ catalog:
   "@vitest/runner": 4.1.8
   effect: 4.0.0-beta.78
   jose: 6.2.2
+  tsdown: ^0.20.3
   typescript: ~6.0.3
   vite: npm:@voidzero-dev/vite-plus-core@0.1.24
   vite-plus: 0.1.24

@@ -117,6 +117,7 @@ export interface OpenCodeRuntimeShape {
   readonly startOpenCodeServerProcess: (input: {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly configContent?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -130,6 +131,7 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly serverUrl?: string | null;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly configContent?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -349,7 +351,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             shell: spawnCommand.shell,
             env: {
               ...input.environment,
-              OPENCODE_CONFIG_CONTENT: OPENCODE_EMPTY_CONFIG_CONTENT,
+              OPENCODE_CONFIG_CONTENT: input.configContent ?? OPENCODE_EMPTY_CONFIG_CONTENT,
             },
             extendEnv: input.environment === undefined,
           }),
@@ -489,6 +491,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
     return startOpenCodeServerProcess({
       binaryPath: input.binaryPath,
+      ...(input.configContent !== undefined ? { configContent: input.configContent } : {}),
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),

@@ -1,5 +1,6 @@
-import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
+
+import { getHostLocalEnvironmentBootstrap } from "./hostBootstrap";
 
 export interface PrimaryEnvironmentTarget {
   readonly source: KnownEnvironment["source"];
@@ -7,10 +8,6 @@ export interface PrimaryEnvironmentTarget {
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-
-function getDesktopLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap | null {
-  return window.desktopBridge?.getLocalEnvironmentBootstrap() ?? null;
-}
 
 function normalizeBaseUrl(rawValue: string): string {
   return new URL(rawValue, window.location.origin).toString();
@@ -109,25 +106,25 @@ function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {
   };
 }
 
-function resolveDesktopPrimaryTarget(): PrimaryEnvironmentTarget | null {
-  const desktopBootstrap = getDesktopLocalEnvironmentBootstrap();
-  if (!desktopBootstrap) {
+function resolveHostPrimaryTarget(): PrimaryEnvironmentTarget | null {
+  const hostBootstrap = getHostLocalEnvironmentBootstrap();
+  if (!hostBootstrap) {
     return null;
   }
-  if (!desktopBootstrap.httpBaseUrl && !desktopBootstrap.wsBaseUrl) {
+  if (!hostBootstrap.httpBaseUrl && !hostBootstrap.wsBaseUrl) {
     return null;
   }
-  if (!desktopBootstrap.httpBaseUrl || !desktopBootstrap.wsBaseUrl) {
+  if (!hostBootstrap.httpBaseUrl || !hostBootstrap.wsBaseUrl) {
     throw new Error(
-      "Desktop bootstrap must provide both httpBaseUrl and wsBaseUrl for the local environment.",
+      "Host bootstrap must provide both httpBaseUrl and wsBaseUrl for the local environment.",
     );
   }
 
   return {
     source: "desktop-managed",
     target: {
-      httpBaseUrl: normalizeBaseUrl(desktopBootstrap.httpBaseUrl),
-      wsBaseUrl: normalizeBaseUrl(desktopBootstrap.wsBaseUrl),
+      httpBaseUrl: normalizeBaseUrl(hostBootstrap.httpBaseUrl),
+      wsBaseUrl: normalizeBaseUrl(hostBootstrap.wsBaseUrl),
     },
   };
 }
@@ -151,7 +148,7 @@ export function resolvePrimaryEnvironmentHttpUrl(
 
 export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget | null {
   return (
-    resolveDesktopPrimaryTarget() ??
+    resolveHostPrimaryTarget() ??
     resolveConfiguredPrimaryTarget() ??
     resolveWindowOriginPrimaryTarget()
   );

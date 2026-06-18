@@ -10,7 +10,10 @@ import {
   PrimaryEnvironmentHttpClient,
   primaryEnvironmentHttpClientLive,
 } from "../environments/primary/httpClient";
-import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
+import {
+  primaryEnvironmentRequestInit,
+  withPrimaryHostAuthorization,
+} from "../environments/primary/requestInit";
 
 import { browserCryptoLayer } from "../cloud/dpop";
 import { webManagedRelayClientLayer } from "../cloud/managedRelayLayer";
@@ -34,7 +37,9 @@ const primaryHttpRuntime = ManagedRuntime.make(
   primaryEnvironmentHttpClientLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        remoteHttpClientLayer((input, init) => globalThis.fetch(input, init)),
+        remoteHttpClientLayer((input, init) =>
+          globalThis.fetch(input, withPrimaryHostAuthorization(init, input)),
+        ),
         Layer.succeed(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
         httpHeaderRedactionLayer,
       ),

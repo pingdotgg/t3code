@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
+import {
+  applyHostAppearanceToDocument,
+  readHostAppearance,
+  resolveHostResolvedTheme,
+  subscribeHostAppearance,
+} from "../hostAppearance";
+
 type Theme = "light" | "dark" | "system";
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
+  hostResolvedTheme: "light" | "dark" | null;
 };
 
 const STORAGE_KEY = "t3code:theme";
@@ -11,6 +19,7 @@ const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
   systemDark: false,
+  hostResolvedTheme: null,
 };
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
@@ -92,10 +101,15 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
-  document.documentElement.classList.toggle("dark", isDark);
+  const hostResolvedTheme = applyHostAppearanceToDocument(readHostAppearance());
+  if (!hostResolvedTheme) {
+    const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+    document.documentElement.classList.toggle("dark", isDark);
+  }
   syncBrowserChromeTheme();
-  syncDesktopTheme(theme);
+  if (!hostResolvedTheme) {
+    syncDesktopTheme(theme);
+  }
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions
@@ -127,15 +141,26 @@ if (typeof document !== "undefined" && hasThemeStorage()) {
 }
 
 function getSnapshot(): ThemeSnapshot {
-  if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT;
+  if (!hasThemeStorage()) {
+    const hostResolvedTheme = resolveHostResolvedTheme(readHostAppearance());
+    return hostResolvedTheme
+      ? { ...DEFAULT_THEME_SNAPSHOT, hostResolvedTheme }
+      : DEFAULT_THEME_SNAPSHOT;
+  }
   const theme = getStored();
+  const hostResolvedTheme = resolveHostResolvedTheme(readHostAppearance());
   const systemDark = theme === "system" ? getSystemDark() : false;
 
-  if (lastSnapshot && lastSnapshot.theme === theme && lastSnapshot.systemDark === systemDark) {
+  if (
+    lastSnapshot &&
+    lastSnapshot.theme === theme &&
+    lastSnapshot.systemDark === systemDark &&
+    lastSnapshot.hostResolvedTheme === hostResolvedTheme
+  ) {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark };
+  lastSnapshot = { theme, systemDark, hostResolvedTheme };
   return lastSnapshot;
 }
 
@@ -155,6 +180,11 @@ function subscribe(listener: () => void): () => void {
   };
   mq.addEventListener("change", handleChange);
 
+  const unsubscribeHostAppearance = subscribeHostAppearance(() => {
+    applyTheme(getStored(), true);
+    emitChange();
+  });
+
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY) {
@@ -167,6 +197,7 @@ function subscribe(listener: () => void): () => void {
   return () => {
     listeners = listeners.filter((l) => l !== listener);
     mq.removeEventListener("change", handleChange);
+    unsubscribeHostAppearance();
     window.removeEventListener("storage", handleStorage);
   };
 }
@@ -176,7 +207,8 @@ export function useTheme() {
   const theme = snapshot.theme;
 
   const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+    snapshot.hostResolvedTheme ??
+    (theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme);
 
   const setTheme = useCallback((next: Theme) => {
     if (!hasThemeStorage()) return;

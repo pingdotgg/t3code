@@ -5,6 +5,7 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+apps/vscode-extension/*.vsix
 infra/*/dist
 .astro
 packages/*/dist

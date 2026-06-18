@@ -43,6 +43,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { hostMcpServersToStdioServers } from "../hostMcpServers.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -294,6 +296,35 @@ function applyRequestedSessionConfiguration<E>(input: {
   });
 }
 
+function buildCursorAcpMcpServers(
+  hostMcpServers: ReadonlyArray<import("@t3tools/contracts").DesktopBootstrapMcpServer>,
+  mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+): ReadonlyArray<EffectAcpSchema.McpServer> {
+  return [
+    ...hostMcpServersToStdioServers(hostMcpServers).map((server) => ({
+      name: server.name,
+      command: server.command,
+      args: [...server.args],
+      env: Object.entries(server.env).map(([name, value]) => ({ name, value })),
+    })),
+    ...(mcpSession
+      ? [
+          {
+            type: "http" as const,
+            name: "t3-code",
+            url: mcpSession.endpoint,
+            headers: [
+              {
+                name: "Authorization",
+                value: mcpSession.authorizationHeader,
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
+}
+
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
@@ -531,31 +562,18 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
+          const hostMcpServers = yield* Effect.promise(() =>
+            resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+          );
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            mcpServers: buildCursorAcpMcpServers(hostMcpServers, mcpSession),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

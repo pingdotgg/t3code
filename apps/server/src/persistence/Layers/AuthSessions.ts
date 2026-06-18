@@ -20,6 +20,7 @@ import {
   ListActiveAuthSessionsInput,
   RevokeAuthSessionInput,
   RevokeOtherAuthSessionsInput,
+  RevokeStaleDesktopBootstrapBearerSessionsInput,
   SetAuthSessionLastConnectedAtInput,
 } from "../Services/AuthSessions.ts";
 
@@ -197,6 +198,21 @@ const makeAuthSessionRepository = Effect.gen(function* () {
       `,
   });
 
+  const revokeStaleDesktopBootstrapBearerSessionRows = SqlSchema.findAll({
+    Request: RevokeStaleDesktopBootstrapBearerSessionsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ issuedBefore, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE subject IN ('desktop-bootstrap', 'desktop-control')
+          AND method = 'bearer-access-token'
+          AND issued_at < ${issuedBefore}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const create: AuthSessionRepositoryShape["create"] = (input) =>
     createSessionRow(input).pipe(
       Effect.mapError(
@@ -256,6 +272,18 @@ const makeAuthSessionRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeStaleDesktopBootstrapBearerSessions: AuthSessionRepositoryShape["revokeStaleDesktopBootstrapBearerSessions"] =
+    (input) =>
+      revokeStaleDesktopBootstrapBearerSessionRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.revokeStaleDesktopBootstrapBearerSessions:query",
+            "AuthSessionRepository.revokeStaleDesktopBootstrapBearerSessions:decodeRows",
+          ),
+        ),
+        Effect.map((rows) => rows.map((row) => row.sessionId)),
+      );
+
   const setLastConnectedAt: AuthSessionRepositoryShape["setLastConnectedAt"] = (input) =>
     setLastConnectedAtRow(input).pipe(
       Effect.mapError(
@@ -272,6 +300,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
     listActive,
     revoke,
     revokeAllExcept,
+    revokeStaleDesktopBootstrapBearerSessions,
     setLastConnectedAt,
   } satisfies AuthSessionRepositoryShape;
 });

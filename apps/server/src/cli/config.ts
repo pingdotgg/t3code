@@ -1,6 +1,10 @@
 import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import {
+  DesktopBackendBootstrap,
+  PortSchema,
+  type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
+} from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -298,6 +302,13 @@ export const resolveServerConfig = (
       () => mode === "desktop",
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    const hostIntegration = bootstrap?.hostIntegration;
+    const autoBootstrapWorkspaceFolders = bootstrap?.workspaceFolders ?? [];
+    const hostMcpServers = bootstrap?.mcpServers ?? [];
+    const activeBootstrapWorkspaceFolderKey = resolveActiveBootstrapWorkspaceFolderKey(
+      autoBootstrapWorkspaceFolders,
+      bootstrap?.activeWorkspaceFolderKey,
+    );
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -370,7 +381,11 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      hostIntegration,
       autoBootstrapProjectFromCwd,
+      autoBootstrapWorkspaceFolders,
+      activeBootstrapWorkspaceFolderKey,
+      hostMcpServers,
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
@@ -378,6 +393,19 @@ export const resolveServerConfig = (
 
     return config;
   });
+
+function resolveActiveBootstrapWorkspaceFolderKey(
+  workspaceFolders: NonNullable<DesktopBackendBootstrapValue["workspaceFolders"]>,
+  activeWorkspaceFolderKey: string | undefined,
+): string | undefined {
+  if (
+    !activeWorkspaceFolderKey ||
+    !workspaceFolders.some((folder) => folder.key === activeWorkspaceFolderKey)
+  ) {
+    return undefined;
+  }
+  return activeWorkspaceFolderKey;
+}
 
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,
