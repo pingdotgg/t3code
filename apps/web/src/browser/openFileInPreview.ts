@@ -15,7 +15,11 @@ import * as Data from "effect/Data";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
-import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  isPreviewSupportedInRuntime,
+  rememberPreviewUrl,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
@@ -42,8 +46,8 @@ export async function openUrlInPreview<E>(input: {
     input: { threadId: input.threadRef.threadId, url: input.url },
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, snapshot);
-    usePreviewStateStore.getState().rememberUrl(input.threadRef, input.url);
+    applyPreviewServerSnapshot(input.threadRef, snapshot);
+    rememberPreviewUrl(input.threadRef, input.url);
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
 }

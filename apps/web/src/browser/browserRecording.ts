@@ -2,9 +2,11 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
 } from "@t3tools/contracts";
-import { create } from "zustand";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/unstable/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 
 interface ActiveRecording {
@@ -17,21 +19,14 @@ interface ActiveRecording {
   readonly startedAt: string;
 }
 
-interface BrowserRecordingState {
-  activeTabId: string | null;
-  startedAt: string | null;
-  lastArtifact: DesktopPreviewRecordingArtifact | null;
-  setActive: (tabId: string | null, startedAt: string | null) => void;
-  setArtifact: (artifact: DesktopPreviewRecordingArtifact) => void;
-}
+const activeBrowserRecordingTabIdAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("preview:active-browser-recording-tab"),
+);
 
-export const useBrowserRecordingStore = create<BrowserRecordingState>()((set) => ({
-  activeTabId: null,
-  startedAt: null,
-  lastArtifact: null,
-  setActive: (activeTabId, startedAt) => set({ activeTabId, startedAt }),
-  setArtifact: (lastArtifact) => set({ lastArtifact }),
-}));
+export function useActiveBrowserRecordingTabId(): string | null {
+  return useAtomValue(activeBrowserRecordingTabIdAtom);
+}
 
 let active: ActiveRecording | null = null;
 let unsubscribeFrames: (() => void) | null = null;
@@ -56,9 +51,30 @@ const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
   image.src = `data:image/jpeg;base64,${frame.data}`;
 };
 
-export async function startBrowserRecording(tabId: string): Promise<void> {
+const stopMediaRecorder = async (recorder: MediaRecorder): Promise<void> => {
+  if (recorder.state === "inactive") return;
+  const stopped = new Promise<void>((resolve) =>
+    recorder.addEventListener("stop", () => resolve(), { once: true }),
+  );
+  recorder.stop();
+  await stopped;
+};
+
+const clearActiveRecording = (recording: ActiveRecording): void => {
+  if (active !== recording) return;
+  active = null;
+  unsubscribeFrames?.();
+  unsubscribeFrames = null;
+  appAtomRegistry.set(activeBrowserRecordingTabIdAtom, null);
+};
+
+export async function startBrowserRecording(tabId: string): Promise<string> {
   const bridge = previewBridge;
-  if (!bridge || active) return;
+  if (!bridge) throw new Error("Browser recording is unavailable.");
+  if (active) {
+    if (active.tabId === tabId) return active.startedAt;
+    throw new Error("Another preview tab is already being recorded.");
+  }
   const rect = useBrowserSurfaceStore.getState().byTabId[tabId]?.rect;
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, rect?.width ?? 1280);
@@ -75,15 +91,17 @@ export async function startBrowserRecording(tabId: string): Promise<void> {
   recorder.addEventListener("dataavailable", (event) => {
     if (event.data.size > 0) chunks.push(event.data);
   });
-  active = { tabId, canvas, context, recorder, chunks, mimeType, startedAt };
+  const recording = { tabId, canvas, context, recorder, chunks, mimeType, startedAt };
+  active = recording;
   unsubscribeFrames ??= bridge.recording.onFrame(drawFrame);
   recorder.start(1_000);
   try {
     await bridge.recording.startScreencast(tabId);
-    useBrowserRecordingStore.getState().setActive(tabId, startedAt);
+    appAtomRegistry.set(activeBrowserRecordingTabIdAtom, tabId);
+    return startedAt;
   } catch (error) {
-    active = null;
-    recorder.stop();
+    await stopMediaRecorder(recorder);
+    clearActiveRecording(recording);
     throw error;
   }
 }
@@ -94,22 +112,17 @@ export async function stopBrowserRecording(
   const bridge = previewBridge;
   const recording = active;
   if (!bridge || !recording || recording.tabId !== tabId) return null;
-  await bridge.recording.stopScreencast(tabId);
-  const stopped = new Promise<void>((resolve) =>
-    recording.recorder.addEventListener("stop", () => resolve(), { once: true }),
-  );
-  recording.recorder.stop();
-  await stopped;
-  const blob = new Blob(recording.chunks, { type: recording.mimeType });
-  const artifact = await bridge.recording.save(
-    tabId,
-    recording.mimeType,
-    new Uint8Array(await blob.arrayBuffer()),
-  );
-  active = null;
-  unsubscribeFrames?.();
-  unsubscribeFrames = null;
-  useBrowserRecordingStore.getState().setActive(null, null);
-  useBrowserRecordingStore.getState().setArtifact(artifact);
-  return artifact;
+  try {
+    await bridge.recording.stopScreencast(tabId);
+    await stopMediaRecorder(recording.recorder);
+    const blob = new Blob(recording.chunks, { type: recording.mimeType });
+    return await bridge.recording.save(
+      tabId,
+      recording.mimeType,
+      new Uint8Array(await blob.arrayBuffer()),
+    );
+  } finally {
+    await stopMediaRecorder(recording.recorder);
+    clearActiveRecording(recording);
+  }
 }

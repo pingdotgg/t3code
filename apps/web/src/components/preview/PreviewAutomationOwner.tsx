@@ -1,6 +1,5 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   PreviewAutomationNavigateInput,
@@ -12,14 +11,14 @@ import type {
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useId, useRef } from "react";
 
-import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  readThreadPreviewState,
+  subscribeThreadPreviewState,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
-import {
-  startBrowserRecording,
-  stopBrowserRecording,
-  useBrowserRecordingStore,
-} from "~/browser/browserRecording";
+import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentConnectionState } from "~/state/environments";
@@ -52,7 +51,7 @@ const waitForDesktopOverlay = async (
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, threadRef);
+    const state = readThreadPreviewState(threadRef);
     const tabId = state.snapshot?.tabId;
     if (tabId && state.desktopOverlay && previewBridge) {
       const status = await previewBridge.automation.status(tabId);
@@ -93,7 +92,7 @@ const currentStatus = async (
   threadRef: ScopedThreadRef,
   visible: boolean,
 ): Promise<PreviewAutomationStatus> => {
-  const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, threadRef);
+  const state = readThreadPreviewState(threadRef);
   const tabId = state.snapshot?.tabId ?? null;
   if (tabId && previewBridge && state.desktopOverlay) {
     const status = await previewBridge.automation.status(tabId);
@@ -176,10 +175,7 @@ export function PreviewAutomationOwner(props: {
         error.name = "PreviewAutomationUnavailableError";
         throw error;
       }
-      const state = selectThreadPreviewState(
-        usePreviewStateStore.getState().byThreadKey,
-        threadRef,
-      );
+      const state = readThreadPreviewState(threadRef);
       const tabId = request.tabId ?? state.snapshot?.tabId ?? null;
       switch (request.operation) {
         case "status":
@@ -200,7 +196,7 @@ export function PreviewAutomationOwner(props: {
               throw squashAtomCommandFailure(result);
             }
             const snapshot = result.value;
-            usePreviewStateStore.getState().applyServerSnapshot(threadRef, snapshot);
+            applyPreviewServerSnapshot(threadRef, snapshot);
             activeTabId = snapshot.tabId;
           } else if (input.url && previewBridge) {
             await previewBridge.navigate(activeTabId, input.url);
@@ -267,11 +263,11 @@ export function PreviewAutomationOwner(props: {
           );
         case "recordingStart": {
           if (!tabId) throw new Error("Preview tab is not initialized.");
-          await startBrowserRecording(tabId);
+          const startedAt = await startBrowserRecording(tabId);
           return {
             tabId,
             recording: true,
-            startedAt: useBrowserRecordingStore.getState().startedAt,
+            startedAt,
           };
         }
         case "recordingStop": {
@@ -322,10 +318,7 @@ export function PreviewAutomationOwner(props: {
     if (!observation.shouldReport) return;
 
     const ownerState = ownerStateRef.current;
-    const state = selectThreadPreviewState(
-      usePreviewStateStore.getState().byThreadKey,
-      ownerState.threadRef,
-    );
+    const state = readThreadPreviewState(ownerState.threadRef);
     void reportAutomationOwner({
       environmentId: ownerState.threadRef.environmentId,
       input: {
@@ -342,10 +335,7 @@ export function PreviewAutomationOwner(props: {
 
   useEffect(() => {
     const report = () => {
-      const state = selectThreadPreviewState(
-        usePreviewStateStore.getState().byThreadKey,
-        threadRef,
-      );
+      const state = readThreadPreviewState(threadRef);
       void reportAutomationOwner({
         environmentId: threadRef.environmentId,
         input: {
@@ -361,9 +351,8 @@ export function PreviewAutomationOwner(props: {
     };
     report();
     window.addEventListener("focus", report);
-    const unsubscribe = usePreviewStateStore.subscribe((state, previous) => {
-      const key = scopedThreadKey(threadRef);
-      if (state.byThreadKey[key]?.snapshot?.tabId !== previous.byThreadKey[key]?.snapshot?.tabId) {
+    const unsubscribe = subscribeThreadPreviewState(threadRef, (state, previous) => {
+      if (state.snapshot?.tabId !== previous.snapshot?.tabId) {
         report();
       }
     });

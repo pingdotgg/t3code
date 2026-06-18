@@ -6,7 +6,6 @@ import {
 
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { usePreviewStateStore } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { openPreviewSession } from "./openPreviewSession";
 
@@ -16,13 +15,10 @@ export async function openDiscoveredPort<E>(input: {
   readonly openPreview: OpenPreviewMutation<E>;
 }): Promise<AtomCommandResult<void, E>> {
   const resolvedUrl = resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
-  const previewState = usePreviewStateStore.getState();
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,
     url: resolvedUrl,
-    applyServerSnapshot: previewState.applyServerSnapshot,
-    rememberUrl: previewState.rememberUrl,
   });
   return mapAtomCommandResult(result, (snapshot) => {
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);

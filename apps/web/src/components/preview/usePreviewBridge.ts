@@ -9,7 +9,7 @@ import type {
 import { useEffect, useRef } from "react";
 
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
-import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewStateStore";
+import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -21,7 +21,6 @@ import { previewBridge } from "./previewBridge";
  */
 export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: string }): void {
   const { threadRef, tabId } = input;
-  const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const bridge = previewBridge;
@@ -42,7 +41,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
         clearBrowserPointer(tabId);
       }
       lastDesktopNavStatus.current = state.navStatus;
-      applyDesktopState(threadRef, tabId, projectDesktopState(state));
+      applyPreviewDesktopState(threadRef, tabId, projectDesktopState(state));
       const reported = buildReportInput({
         threadId: threadRef.threadId,
         tabId,
@@ -59,7 +58,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       });
     });
     return unsubscribe;
-  }, [applyDesktopState, bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
+  }, [bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
 }
 
 function shouldClearBrowserPointer(

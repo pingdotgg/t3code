@@ -36,13 +36,14 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { useCommandPaletteStore } from "../commandPaletteStore";
+import { OpenAddProjectCommandPaletteProvider } from "../commandPaletteContext";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
@@ -322,10 +323,49 @@ function errorMessage(error: unknown): string {
   return "An error occurred.";
 }
 
+interface CommandPaletteOpenIntent {
+  readonly kind: "add-project";
+}
+
+interface CommandPaletteUiState {
+  readonly open: boolean;
+  readonly openIntent: CommandPaletteOpenIntent | null;
+}
+
+type CommandPaletteUiAction =
+  | { readonly _tag: "SetOpen"; readonly open: boolean }
+  | { readonly _tag: "Toggle" }
+  | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "ClearOpenIntent" };
+
+function reduceCommandPaletteUiState(
+  state: CommandPaletteUiState,
+  action: CommandPaletteUiAction,
+): CommandPaletteUiState {
+  switch (action._tag) {
+    case "SetOpen":
+      return {
+        open: action.open,
+        openIntent: action.open ? state.openIntent : null,
+      };
+    case "Toggle":
+      return { open: !state.open, openIntent: null };
+    case "OpenAddProject":
+      return { open: true, openIntent: { kind: "add-project" } };
+    case "ClearOpenIntent":
+      return state.openIntent ? { ...state, openIntent: null } : state;
+  }
+}
+
 export function CommandPalette({ children }: { children: ReactNode }) {
-  const open = useCommandPaletteStore((store) => store.open);
-  const setOpen = useCommandPaletteStore((store) => store.setOpen);
-  const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
+  const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
+    open: false,
+    openIntent: null,
+  });
+  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
+  const toggleOpen = useCallback(() => dispatch({ _tag: "Toggle" }), []);
+  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
+  const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -360,37 +400,48 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [keybindings, terminalOpen, toggleOpen]);
 
   return (
-    <ComposerHandleContext value={composerHandleRef}>
-      <CommandDialog open={open} onOpenChange={setOpen}>
-        {children}
-        <CommandPaletteDialog />
-      </CommandDialog>
-    </ComposerHandleContext>
+    <OpenAddProjectCommandPaletteProvider openAddProject={openAddProject}>
+      <ComposerHandleContext value={composerHandleRef}>
+        <CommandDialog open={state.open} onOpenChange={setOpen}>
+          {children}
+          <CommandPaletteDialog
+            open={state.open}
+            openIntent={state.openIntent}
+            setOpen={setOpen}
+            clearOpenIntent={clearOpenIntent}
+          />
+        </CommandDialog>
+      </ComposerHandleContext>
+    </OpenAddProjectCommandPaletteProvider>
   );
 }
 
-function CommandPaletteDialog() {
-  const open = useCommandPaletteStore((store) => store.open);
-  const setOpen = useCommandPaletteStore((store) => store.setOpen);
-
-  useEffect(() => {
-    return () => {
-      setOpen(false);
-    };
-  }, [setOpen]);
-
-  if (!open) {
+function CommandPaletteDialog(props: {
+  readonly open: boolean;
+  readonly openIntent: CommandPaletteOpenIntent | null;
+  readonly setOpen: (open: boolean) => void;
+  readonly clearOpenIntent: () => void;
+}) {
+  if (!props.open) {
     return null;
   }
 
-  return <OpenCommandPaletteDialog />;
+  return (
+    <OpenCommandPaletteDialog
+      openIntent={props.openIntent}
+      setOpen={props.setOpen}
+      clearOpenIntent={props.clearOpenIntent}
+    />
+  );
 }
 
-function OpenCommandPaletteDialog() {
+function OpenCommandPaletteDialog(props: {
+  readonly openIntent: CommandPaletteOpenIntent | null;
+  readonly setOpen: (open: boolean) => void;
+  readonly clearOpenIntent: () => void;
+}) {
   const navigate = useNavigate();
-  const setOpen = useCommandPaletteStore((store) => store.setOpen);
-  const openIntent = useCommandPaletteStore((store) => store.openIntent);
-  const clearOpenIntent = useCommandPaletteStore((store) => store.clearOpenIntent);
+  const { clearOpenIntent, openIntent, setOpen } = props;
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -1466,6 +1517,7 @@ function OpenCommandPaletteDialog() {
     <CommandDialogPopup
       aria-label="Command palette"
       className="overflow-hidden p-0"
+      data-command-palette="true"
       data-testid="command-palette"
       finalFocus={() => {
         composerHandleRef?.current?.focusAtEnd();

@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
-import type { PreviewStateStoreState } from "~/previewStateStore";
+import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
   openPreview: (input: {
@@ -15,8 +15,6 @@ interface OpenPreviewSessionInput<E> {
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
   url: string;
-  applyServerSnapshot: PreviewStateStoreState["applyServerSnapshot"];
-  rememberUrl: PreviewStateStoreState["rememberUrl"];
 }
 
 export async function openPreviewSession<E>(
@@ -33,8 +31,8 @@ export async function openPreviewSession<E>(
     return result;
   }
   const snapshot = result.value;
-  input.applyServerSnapshot(input.threadRef, snapshot);
-  input.rememberUrl(
+  applyPreviewServerSnapshot(input.threadRef, snapshot);
+  rememberPreviewUrl(
     input.threadRef,
     snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
   );

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
-import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
+import { rememberPreviewUrl, useThreadPreviewState } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -31,7 +31,7 @@ import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
-  useBrowserRecordingStore,
+  useActiveBrowserRecordingTabId,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -51,14 +51,10 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const activeRecordingTabId = useBrowserRecordingStore((state) => state.activeTabId);
+  const activeRecordingTabId = useActiveBrowserRecordingTabId();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
-  const previewState = usePreviewStateStore((state) =>
-    selectThreadPreviewState(state.byThreadKey, threadRef),
-  );
-  const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
-  const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
+  const previewState = useThreadPreviewState(threadRef);
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
@@ -104,21 +100,19 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           // Drive the webview imperatively; `usePreviewBridge` mirrors the
           // resolved URL back to the server so other clients stay in sync.
           await previewBridge.navigate(tabId, resolvedUrl);
-          rememberUrl(threadRef, resolvedUrl);
+          rememberPreviewUrl(threadRef, resolvedUrl);
         } else {
           await openPreviewSession({
             openPreview: open,
             threadRef,
             url: resolvedUrl,
-            applyServerSnapshot,
-            rememberUrl,
           });
         }
       } catch {
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [applyServerSnapshot, open, rememberUrl, tabId, threadRef],
+    [open, tabId, threadRef],
   );
 
   const handleRefresh = useCallback(() => {

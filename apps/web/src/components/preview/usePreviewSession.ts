@@ -1,76 +1,111 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useEffect } from "react";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import { readPreviewStateRevision, usePreviewStateStore } from "~/previewStateStore";
+import {
+  applyPreviewServerEvent,
+  applyPreviewServerSnapshot,
+  readThreadPreviewState,
+} from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
-import { useEnvironmentQuery } from "~/state/query";
-import { useAtomCommand } from "~/state/use-atom-command";
 
-import { refreshPreviewSessionState, usePreviewSessionState } from "./previewSessionState";
+const previewSessionSyncAtom = Atom.family((threadKey: string) => {
+  const threadRef = parseScopedThreadKey(threadKey);
+  if (!threadRef) {
+    throw new Error(`Invalid scoped preview thread key: ${threadKey}`);
+  }
 
-export function usePreviewSession(threadRef: ScopedThreadRef): void {
-  const query = usePreviewSessionState(threadRef);
-  const events = useEnvironmentQuery(
-    previewEnvironment.events({
-      environmentId: threadRef.environmentId,
-      input: {},
-    }),
-  );
-  const open = useAtomCommand(previewEnvironment.open);
-  const applyServerSnapshot = usePreviewStateStore((state) => state.applyServerSnapshot);
-  const applyServerEvent = usePreviewStateStore((state) => state.applyServerEvent);
+  const sessionsAtom = previewEnvironment.list({
+    environmentId: threadRef.environmentId,
+    input: { threadId: threadRef.threadId },
+  });
+  const eventsAtom = previewEnvironment.events({
+    environmentId: threadRef.environmentId,
+    input: {},
+  });
 
-  useEffect(() => {
-    if (
-      query.isPending ||
-      !query.data ||
-      query.data.revision !== readPreviewStateRevision(threadRef)
-    ) {
-      return;
-    }
-    let cancelled = false;
-    if (query.data.result.sessions.length > 0) {
-      for (const snapshot of query.data.result.sessions) {
-        applyServerSnapshot(threadRef, snapshot);
-      }
-      return;
-    }
+  return Atom.make((get) => {
+    let disposed = false;
+    let recoveryId = 0;
+    let recoveringUrl: string | null = null;
+    let sessionsVersion = 0;
+    let eventsVersion = 0;
 
-    const localSnapshot =
-      usePreviewStateStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.snapshot;
-    const recoverableUrl =
-      localSnapshot && localSnapshot.navStatus._tag !== "Idle" ? localSnapshot.navStatus.url : null;
-    if (!recoverableUrl) {
-      applyServerSnapshot(threadRef, null);
-      return;
-    }
-
-    void open({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, url: recoverableUrl },
-    }).then((result) => {
-      if (cancelled) return;
-      if (result._tag === "Failure") {
+    const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
+      if (!AsyncResult.isSuccess(result)) return;
+      if (result.value.sessions.length > 0) {
+        recoveringUrl = null;
+        recoveryId += 1;
+        for (const snapshot of result.value.sessions) {
+          applyPreviewServerSnapshot(threadRef, snapshot);
+        }
         return;
       }
-      applyServerSnapshot(threadRef, result.value);
-      refreshPreviewSessionState(threadRef);
-    });
 
-    return () => {
-      cancelled = true;
+      const localSnapshot = readThreadPreviewState(threadRef).snapshot;
+      const recoverableUrl =
+        localSnapshot && localSnapshot.navStatus._tag !== "Idle"
+          ? localSnapshot.navStatus.url
+          : null;
+      if (!recoverableUrl) {
+        applyPreviewServerSnapshot(threadRef, null);
+        return;
+      }
+      if (recoveringUrl === recoverableUrl) return;
+
+      recoveringUrl = recoverableUrl;
+      const currentRecoveryId = ++recoveryId;
+      void runAtomCommand(
+        get.registry,
+        previewEnvironment.open,
+        {
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, url: recoverableUrl },
+        },
+        { reportDefect: false, reportFailure: false },
+      ).then((openResult) => {
+        if (disposed || currentRecoveryId !== recoveryId) return;
+        recoveringUrl = null;
+        if (openResult._tag === "Failure") return;
+        applyPreviewServerSnapshot(threadRef, openResult.value);
+        get.refresh(sessionsAtom);
+      });
     };
-  }, [applyServerSnapshot, open, query.data, query.isPending, threadRef]);
 
-  useEffect(() => {
-    const event = events.data;
-    if (!event || event.threadId !== threadRef.threadId) return;
-    applyServerEvent(threadRef, event);
-    if (event.type === "opened" || event.type === "closed") {
-      refreshPreviewSessionState(threadRef);
-    }
-  }, [applyServerEvent, events.data, threadRef]);
+    const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
+      if (!AsyncResult.isSuccess(result) || result.value.threadId !== threadRef.threadId) return;
+      applyPreviewServerEvent(threadRef, result.value);
+      if (result.value.type === "opened" || result.value.type === "closed") {
+        get.refresh(sessionsAtom);
+      }
+    };
+
+    get.addFinalizer(() => {
+      disposed = true;
+      recoveryId += 1;
+    });
+    const initialSessions = get.once(sessionsAtom);
+    const initialEvent = get.once(eventsAtom);
+    get.subscribe(sessionsAtom, (result) => {
+      sessionsVersion += 1;
+      reconcileSessions(result);
+    });
+    get.subscribe(eventsAtom, (result) => {
+      eventsVersion += 1;
+      applyLatestEvent(result);
+    });
+    queueMicrotask(() => {
+      if (disposed) return;
+      if (sessionsVersion === 0) reconcileSessions(initialSessions);
+      if (eventsVersion === 0) applyLatestEvent(initialEvent);
+    });
+  }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`preview:session-sync:${threadKey}`));
+});
+
+export function usePreviewSession(threadRef: ScopedThreadRef): void {
+  useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
 }

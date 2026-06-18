@@ -99,7 +99,7 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useCommandPaletteStore } from "../commandPaletteStore";
+import { isCommandPaletteOpen } from "../commandPaletteContext";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -111,9 +111,11 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
+  applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime,
-  selectThreadPreviewState,
-  usePreviewStateStore,
+  removePreviewSession,
+  setActivePreviewTab,
+  useThreadPreviewState,
 } from "../previewStateStore";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
@@ -1262,9 +1264,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
-  const activePreviewState = usePreviewStateStore((state) =>
-    selectThreadPreviewState(state.byThreadKey, activeThreadRef),
-  );
+  const activePreviewState = useThreadPreviewState(activeThreadRef);
   const panelTerminalIds = useMemo(
     () =>
       new Set(
@@ -2759,7 +2759,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (result._tag === "Failure") {
         return;
       }
-      usePreviewStateStore.getState().applyServerSnapshot(activeThreadRef, result.value);
+      applyPreviewServerSnapshot(activeThreadRef, result.value);
       useRightPanelStore.getState().openBrowser(activeThreadRef, result.value.tabId);
     })();
   }, [activePreviewState.activeTabId, activeThreadRef, openPreview]);
@@ -2933,7 +2933,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
       if (surface.kind === "preview" && surface.resourceId) {
-        usePreviewStateStore.getState().setActiveTab(activeThreadRef, surface.resourceId);
+        setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
       if (surface.kind === "terminal") {
         setTerminalFocusRequestId((value) => value + 1);
@@ -2993,7 +2993,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       for (const surface of surfaces) {
         if (surface.kind === "preview" && surface.resourceId) {
-          usePreviewStateStore.getState().removeSession(activeThreadRef, surface.resourceId);
+          removePreviewSession(activeThreadRef, surface.resourceId);
           void closePreview({
             environmentId: activeThreadRef.environmentId,
             input: { threadId: activeThreadRef.threadId, tabId: surface.resourceId },
@@ -3037,7 +3037,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThreadRef,
     );
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
-      usePreviewStateStore.getState().setActiveTab(activeThreadRef, nextActiveSurface.resourceId);
+      setActivePreviewTab(activeThreadRef, nextActiveSurface.resourceId);
     }
   }, [activeThreadRef]);
   const closeRightPanelSurface = useCallback(
@@ -3422,7 +3422,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || useCommandPaletteStore.getState().open) {
+      if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();

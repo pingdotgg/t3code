@@ -2,7 +2,7 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
-import { useCommandPaletteStore } from "../commandPaletteStore";
+import { isCommandPaletteOpen } from "../commandPaletteContext";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
@@ -54,7 +54,7 @@ function ChatRouteGlobalShortcuts() {
         },
       });
 
-      if (useCommandPaletteStore.getState().open) {
+      if (isCommandPaletteOpen()) {
         return;
       }
 

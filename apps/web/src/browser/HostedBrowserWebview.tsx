@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 
-import { useBrowserRecordingStore } from "./browserRecording";
+import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { acquireDesktopTab } from "./desktopTabLifetime";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
@@ -36,7 +36,7 @@ export function HostedBrowserWebview(props: {
   const initialSrcRef = useRef(initialUrl ?? "about:blank");
   const webviewRef = useRef<ElectronWebview | null>(null);
   const presentation = useBrowserSurfaceStore(useShallow((state) => state.byTabId[tabId] ?? null));
-  const recording = useBrowserRecordingStore((state) => state.activeTabId === tabId);
+  const recording = useActiveBrowserRecordingTabId() === tabId;
 
   usePreviewBridge({ threadRef, tabId });
 

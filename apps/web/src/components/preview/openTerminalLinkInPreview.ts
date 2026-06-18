@@ -2,7 +2,7 @@ import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
+import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 interface OpenTerminalLinkInPreviewInput<E> {
@@ -50,7 +50,7 @@ export async function openTerminalLinkInPreview<E>(
       input.fallbackToBrowser();
       return;
     }
-    usePreviewStateStore.getState().applyServerSnapshot(input.threadRef, result.value);
+    applyPreviewServerSnapshot(input.threadRef, result.value);
     useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }
