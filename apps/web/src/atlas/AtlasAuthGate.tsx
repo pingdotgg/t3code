@@ -9,6 +9,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 const TOKEN_KEY = "atlas.token";
 const API_URL = import.meta.env.VITE_ATLAS_API_URL?.trim();
+const AUTOPAIR = import.meta.env.VITE_ATLAS_AUTOPAIR === "1";
 
 export interface AtlasUser {
   readonly id: string;
@@ -50,6 +51,28 @@ async function fetchMe(token: string): Promise<AtlasUser | null> {
   }
 }
 
+/**
+ * When auto-pair is enabled, fetch the long-lived pairing token the server
+ * published same-origin (/atlas-autopair.json) and hand it to T3's existing
+ * `/pair#token=...` auto-submit. Returns true if it triggered a redirect, so
+ * the caller stops rendering. A sessionStorage guard (set only once we actually
+ * redirect) prevents loops while still retrying in a fresh tab.
+ */
+async function tryAutoPair(): Promise<boolean> {
+  if (!AUTOPAIR || sessionStorage.getItem("atlas.autopair.tried")) return false;
+  try {
+    const res = await fetch("/atlas-autopair.json", { cache: "no-store" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { token?: string };
+    if (!data.token) return false;
+    sessionStorage.setItem("atlas.autopair.tried", "1");
+    window.location.replace(`/pair#token=${encodeURIComponent(data.token)}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type GateState = "loading" | "authed" | "anon";
 
 export function AtlasAuthGate({ children }: { readonly children: ReactNode }) {
@@ -64,13 +87,14 @@ export function AtlasAuthGate({ children }: { readonly children: ReactNode }) {
       setState("anon");
       return;
     }
-    void fetchMe(token).then((user) => {
-      if (user) {
-        setState("authed");
-      } else {
+    void fetchMe(token).then(async (user) => {
+      if (!user) {
         clearAtlasToken();
         setState("anon");
+        return;
       }
+      if (await tryAutoPair()) return; // redirecting to /pair#token=...
+      setState("authed");
     });
   }, []);
 
@@ -82,7 +106,18 @@ export function AtlasAuthGate({ children }: { readonly children: ReactNode }) {
     );
   }
   if (state === "authed") return <>{children}</>;
-  return <AtlasLogin onSuccess={() => setState("authed")} />;
+  return (
+    <AtlasLogin
+      onSuccess={() => {
+        // Mirror the mount-effect auto-pair so a fresh login lands in the app
+        // (not the manual /pair screen) when auto-pair is enabled.
+        setState("loading");
+        void tryAutoPair().then((redirected) => {
+          if (!redirected) setState("authed");
+        });
+      }}
+    />
+  );
 }
 
 function AtlasLogin({ onSuccess }: { readonly onSuccess: (user: AtlasUser) => void }) {

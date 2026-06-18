@@ -17,7 +17,10 @@ FROM node:24-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && npm install -g node-gyp
+ && npm install -g node-gyp \
+ # Agent runner backends T3 drives (same as ../vector/apps/api). They must be on
+ # PATH so the Codex/Claude providers resolve and the connect flow works.
+ && npm install -g @openai/codex @anthropic-ai/claude-code
 RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
 
 WORKDIR /repo
@@ -36,6 +39,8 @@ ARG VITE_ATLAS_API_URL=http://localhost:8000
 ENV VITE_ATLAS_API_URL=${VITE_ATLAS_API_URL}
 ARG VITE_ATLAS_APP_NAME="Atlas Vector"
 ENV VITE_ATLAS_APP_NAME=${VITE_ATLAS_APP_NAME}
+ARG VITE_ATLAS_AUTOPAIR=0
+ENV VITE_ATLAS_AUTOPAIR=${VITE_ATLAS_AUTOPAIR}
 RUN pnpm --filter @t3tools/web run build \
  && pnpm --filter t3 run build:bundle \
  && mkdir -p apps/server/dist/client \
@@ -48,5 +53,6 @@ WORKDIR /repo/apps/server
 EXPOSE 3773
 HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=12 \
   CMD node -e "fetch('http://127.0.0.1:3773/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-# `serve` = headless, no browser; reads T3CODE_HOST/T3CODE_PORT from the env.
-CMD ["node", "dist/bin.mjs", "serve"]
+# Entrypoint runs `serve` and (when ATLAS_AUTOPAIR=1) publishes a long-lived
+# pairing token for the gate's auto-pair. Reads T3CODE_HOST/T3CODE_PORT from env.
+CMD ["sh", "/repo/docker/atlas/t3-entrypoint.sh"]

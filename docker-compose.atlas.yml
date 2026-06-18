@@ -52,11 +52,18 @@ services:
         # browser runs on the host). Override via .env.atlas / the environment.
         VITE_ATLAS_API_URL: ${VITE_ATLAS_API_URL:-http://localhost:8000}
         VITE_ATLAS_APP_NAME: ${VITE_ATLAS_APP_NAME:-Atlas Vector}
+        VITE_ATLAS_AUTOPAIR: ${VITE_ATLAS_AUTOPAIR:-1}
     environment:
       T3CODE_HOST: 0.0.0.0
       T3CODE_PORT: "3773"
+      # Publish a long-lived pairing token so the login gate auto-pairs (local dev).
+      ATLAS_AUTOPAIR: "1"
       # Shared-workspace seam: the agent runs where FastAPI syncs each deal.
       WORKSPACES_ROOT: /workspaces
+      # Runner auth/config on the shared volume — same paths as ../vector's api,
+      # so connecting a provider once is shared between the two and persists.
+      CODEX_HOME: /workspaces/.codex
+      CLAUDE_CONFIG_DIR: /workspaces/.claude
     ports:
       - "3773:3773"
     volumes:
