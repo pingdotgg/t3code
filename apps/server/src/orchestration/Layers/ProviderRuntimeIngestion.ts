@@ -1430,8 +1430,8 @@ const make = Effect.gen(function* () {
                 existingRelation.parentItemId !== null &&
                 existingRelation.parentItemId !== child.parentItemId;
               const restartsRunningChild =
-                event.type === "item.started" &&
-                (startsNewParentActivity || existingRelation?.status !== "running");
+                startsNewParentActivity ||
+                (event.type === "item.started" && existingRelation?.status !== "running");
               const parentRelation: SubagentThreadParentRelation = {
                 kind: "subagent" as const,
                 rootThreadId,
