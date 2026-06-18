@@ -2615,6 +2615,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ...toolMeta,
         });
         context.turnIdByProviderItemId.set(event.data.toolCallId, turnId);
+        if (isTaskCompleteTool(event.data.toolName)) {
+          return;
+        }
         context.startedItemIds.add(itemId);
         await emitAsync({
           ...createBaseEvent({
@@ -2723,6 +2726,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           trimOrUndefined(event.data.result?.content) ??
           trimOrUndefined(event.data.error?.message);
         const detail = normalizedToolCompletionDetail(toolMeta, rawDetail);
+        if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
+          context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
+          return;
+        }
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -2765,9 +2772,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ...(detail ? { detail } : {}),
         };
         appendTurnItem(context, turnId, toolItem);
-        if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
-          context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
-        }
         return;
       }
       case "permission.requested": {

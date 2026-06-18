@@ -659,7 +659,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
   );
 
   it.effect(
-    "renders Copilot Task_complete tool output as assistant text when no assistant message arrives",
+    "renders Copilot Task_complete output as assistant text instead of a tool call",
     () =>
       Effect.gen(function* () {
         const adapter = yield* CopilotAdapter;
@@ -768,6 +768,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           messageId: `copilot-task-completion-${String(turn.turnId)}`,
           content: resultText,
         });
+        assert.equal(
+          turnSnapshot.items.some(
+            (item) =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              item.type === "tool_execution",
+          ),
+          false,
+        );
 
         yield* waitForSdkEventQueue();
         yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
@@ -787,16 +797,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             delta: resultText,
           });
         }
-        const completedTool = runtimeEvents.find(
+        const taskCompleteToolLifecycleEvent = runtimeEvents.find(
           (event) =>
-            event.type === "item.completed" &&
-            event.payload.itemType === "collab_agent_tool_call" &&
+            (event.type === "item.started" || event.type === "item.completed") &&
             String(event.itemId) === "copilot-tool-tool-task-complete",
         );
-        assert.equal(completedTool?.type, "item.completed");
-        if (completedTool?.type === "item.completed") {
-          assert.equal(completedTool.providerRefs?.providerItemId, "tool-task-complete");
-        }
+        assert.equal(taskCompleteToolLifecycleEvent, undefined);
         assert.equal(
           runtimeEvents.some((event) => event.type === "turn.diff.updated"),
           false,
