@@ -1216,10 +1216,16 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
+  const getProviderSessionForThread = Effect.fn("getProviderSessionForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const sessions = yield* providerService.listSessions();
+    return sessions.find((entry) => entry.threadId === threadId);
+  });
+
   const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
     function* (threadId: ThreadId) {
-      const sessions = yield* providerService.listSessions();
-      const session = sessions.find((entry) => entry.threadId === threadId);
+      const session = yield* getProviderSessionForThread(threadId);
       return session?.activeTurnId;
     },
   );
@@ -1288,10 +1294,15 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const lifecycleEventTurnId =
+        event.type === "turn.completed" && eventTurnId === undefined
+          ? (activeTurnId ?? undefined)
+          : eventTurnId;
 
       const conflictsWithActiveTurn =
-        activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
-      const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+        activeTurnId !== null &&
+        lifecycleEventTurnId !== undefined &&
+        !sameId(activeTurnId, lifecycleEventTurnId);
 
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
@@ -1322,12 +1333,12 @@ const make = Effect.gen(function* () {
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
           case "turn.completed":
-            if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+            if (conflictsWithActiveTurn) {
               return false;
             }
             // Only the active turn may close the lifecycle state.
-            if (activeTurnId !== null && eventTurnId !== undefined) {
-              return sameId(activeTurnId, eventTurnId);
+            if (activeTurnId !== null && lifecycleEventTurnId !== undefined) {
+              return sameId(activeTurnId, lifecycleEventTurnId);
             }
             // If no active turn is tracked, accept completion scoped to this thread.
             return true;
@@ -1610,7 +1621,7 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId = toTurnId(event.turnId);
+        const turnId = toTurnId(event.turnId) ?? (shouldApplyThreadLifecycle ? activeTurnId : null);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
