@@ -9,8 +9,9 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#161616" />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/atlas-favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/atlas-favicon-16.png" />
+    <link rel="apple-touch-icon" href="/atlas-apple-touch-icon.png" />
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
@@ -74,23 +75,28 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 96px;
+        min-width: 96px;
         height: 96px;
+        padding: 0 16px;
       }
 
       #boot-shell-logo {
-        width: 64px;
-        height: 64px;
+        width: auto;
+        height: 88px;
         object-fit: contain;
       }
+
+      html.dark #boot-shell-logo {
+        filter: brightness(0) invert(1);
+      }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>Atlas Vector</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="Atlas Vector splash screen">
+          <img id="boot-shell-logo" src="/atlas-logo.png" alt="Atlas Vector" />
         </div>
       </div>
     </div>

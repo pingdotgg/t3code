@@ -16,7 +16,7 @@ export const HOSTED_APP_CHANNEL =
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
 export const APP_BASE_NAME =
-  injectedDesktopAppBranding?.baseName ?? import.meta.env.VITE_ATLAS_APP_NAME ?? "T3 Code";
+  injectedDesktopAppBranding?.baseName ?? import.meta.env.VITE_ATLAS_APP_NAME ?? "Atlas Vector";
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??
