@@ -486,6 +486,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 const EXTERNAL_TERMINAL_AUTO_DETECT = "__auto-detect__";
+const EXTERNAL_TERMINAL_CUSTOM = "__custom__";
 
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
@@ -493,6 +494,9 @@ export function GeneralSettingsPanel() {
   const { updateSettings } = useUpdateSettings();
   const observability = useServerObservability();
   const availableTerminals = useServerAvailableTerminals();
+  const [customTerminalPlatforms, setCustomTerminalPlatforms] = useState<
+    Record<"osx" | "linux" | "windows", boolean>
+  >({ osx: false, linux: false, windows: false });
   const serverProviders = useServerProviders();
   const hostPlatform = typeof navigator === "undefined" ? "" : navigator.platform;
   const hostPlatformKey: "osx" | "linux" | "windows" = isMacPlatform(hostPlatform)
@@ -523,31 +527,58 @@ export function GeneralSettingsPanel() {
     commit: (next: string) => void;
   }) => {
     const baseOptions = externalTerminalOptionsFor(input.platform);
-    const options =
-      input.value === "" || baseOptions.includes(input.value)
-        ? baseOptions
-        : [...baseOptions, input.value];
+    const isCustomValue = input.value !== "" && !baseOptions.includes(input.value);
+    const isCustom = isCustomValue || customTerminalPlatforms[input.platform];
+    const setCustom = (next: boolean) =>
+      setCustomTerminalPlatforms((prev) => ({ ...prev, [input.platform]: next }));
+    const selectValue = isCustom
+      ? EXTERNAL_TERMINAL_CUSTOM
+      : input.value === ""
+        ? EXTERNAL_TERMINAL_AUTO_DETECT
+        : input.value;
     return (
-      <Select
-        value={input.value === "" ? EXTERNAL_TERMINAL_AUTO_DETECT : input.value}
-        onValueChange={(next) =>
-          input.commit(next === EXTERNAL_TERMINAL_AUTO_DETECT ? "" : String(next))
-        }
-      >
-        <SelectTrigger className="w-full sm:w-72" aria-label={input.ariaLabel}>
-          <SelectValue>{input.value === "" ? "Auto-detect" : input.value}</SelectValue>
-        </SelectTrigger>
-        <SelectPopup align="end" alignItemWithTrigger={false}>
-          <SelectItem hideIndicator value={EXTERNAL_TERMINAL_AUTO_DETECT}>
-            Auto-detect
-          </SelectItem>
-          {options.map((terminal) => (
-            <SelectItem key={terminal} hideIndicator value={terminal}>
-              {terminal}
+      <div className="flex w-full flex-col items-end gap-2 sm:w-72">
+        <Select
+          value={selectValue}
+          onValueChange={(next) => {
+            if (next === EXTERNAL_TERMINAL_CUSTOM) {
+              setCustom(true);
+              return;
+            }
+            setCustom(false);
+            input.commit(next === EXTERNAL_TERMINAL_AUTO_DETECT ? "" : String(next));
+          }}
+        >
+          <SelectTrigger className="w-full" aria-label={input.ariaLabel}>
+            <SelectValue>
+              {isCustom ? "Custom" : input.value === "" ? "Auto-detect" : input.value}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value={EXTERNAL_TERMINAL_AUTO_DETECT}>
+              Auto-detect
             </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>
+            {baseOptions.map((terminal) => (
+              <SelectItem key={terminal} hideIndicator value={terminal}>
+                {terminal}
+              </SelectItem>
+            ))}
+            <SelectItem hideIndicator value={EXTERNAL_TERMINAL_CUSTOM}>
+              Custom…
+            </SelectItem>
+          </SelectPopup>
+        </Select>
+        {isCustom ? (
+          <DraftInput
+            className="w-full"
+            value={input.value}
+            onCommit={(next) => input.commit(next)}
+            placeholder={input.platform === "osx" ? "Terminal app name or path" : "Command"}
+            spellCheck={false}
+            aria-label={`${input.ariaLabel} custom value`}
+          />
+        ) : null}
+      </div>
     );
   };
   const diagnosticsDescription = formatDiagnosticsDescription({
