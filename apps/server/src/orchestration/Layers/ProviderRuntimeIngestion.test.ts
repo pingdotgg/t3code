@@ -2763,8 +2763,8 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     harness.emit({
-      type: "item.started",
-      eventId: asEventId("evt-subagent-resume-followup-started"),
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-resume-followup-completed"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:01:00.000Z",
       threadId: asThreadId("thread-1"),
@@ -2772,7 +2772,7 @@ describe("ProviderRuntimeIngestion", () => {
       itemId: asItemId("parent-item-followup"),
       payload: {
         itemType: "collab_agent_tool_call",
-        status: "in_progress",
+        status: "completed",
         title: "Subagent",
         detail: "Run follow-up check",
         data: {

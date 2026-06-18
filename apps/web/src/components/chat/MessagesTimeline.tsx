@@ -39,6 +39,7 @@ import {
   formatTerminalSubagentStatusDuration,
   LiveSubagentDuration,
   subagentStatusToneClass,
+  type SubagentThreadStatus,
 } from "../../subagentDisplay";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
@@ -2220,6 +2221,7 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
           key={`${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`}
           parentCreatedAt={workEntry.createdAt}
           threadId={child.threadId}
+          {...(child.parentItemId ? { parentItemId: child.parentItemId } : {})}
           {...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)
             ? { titleSeed: child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail }
             : {})}
@@ -2231,6 +2233,7 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
 
 const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   parentCreatedAt: string;
+  parentItemId?: string;
   threadId: ThreadId;
   titleSeed?: string;
 }) {
@@ -2248,9 +2251,57 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   const rawTitle = childShell?.title?.trim();
   const title = rawTitle && rawTitle !== "Subagent" ? rawTitle : null;
   const displayTitle = title ? `Subagent - ${title}` : "Subagent";
-  const status = relation?.status ?? null;
-  const startedAt = relation?.startedAt ?? props.parentCreatedAt;
-  const completedAt = relation?.completedAt ?? null;
+  const terminalSnapshotRef = useRef<{
+    status: Exclude<SubagentThreadStatus, "running">;
+    startedAt: string;
+    completedAt: string | null;
+  } | null>(null);
+  const relationParentItemId = relation?.parentItemId ?? null;
+  const relationMatchesThisBlock =
+    !props.parentItemId || !relationParentItemId || relationParentItemId === props.parentItemId;
+  if (relation && relationMatchesThisBlock && relation.status !== "running") {
+    terminalSnapshotRef.current = {
+      status: relation.status,
+      startedAt: relation.startedAt,
+      completedAt: relation.completedAt,
+    };
+  }
+  const parentCreatedAfterRelationCompleted = Boolean(
+    props.parentItemId &&
+    relation &&
+    relation.status !== "running" &&
+    relation.completedAt &&
+    Date.parse(props.parentCreatedAt) > Date.parse(relation.completedAt),
+  );
+  const displayState =
+    relation && relationMatchesThisBlock
+      ? {
+          status: relation.status,
+          startedAt: relation.startedAt,
+          completedAt: relation.completedAt,
+        }
+      : parentCreatedAfterRelationCompleted
+        ? {
+            status: "running" as const,
+            startedAt: props.parentCreatedAt,
+            completedAt: null,
+          }
+        : terminalSnapshotRef.current
+          ? terminalSnapshotRef.current
+          : relation?.status === "running"
+            ? {
+                status: "completed" as const,
+                startedAt: props.parentCreatedAt,
+                completedAt: null,
+              }
+            : {
+                status: relation?.status ?? null,
+                startedAt: relation?.startedAt ?? props.parentCreatedAt,
+                completedAt: relation?.completedAt ?? null,
+              };
+  const status = displayState.status;
+  const startedAt = displayState.startedAt;
+  const completedAt = displayState.completedAt;
   const statusDurationLabel =
     status === "running" ? (
       <LiveSubagentDuration startedAt={startedAt} />
