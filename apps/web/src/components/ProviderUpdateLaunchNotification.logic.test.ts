@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
   collectUpdatedProviderSnapshots,
-  firstRejectedProviderUpdateMessage,
+  firstFailedProviderUpdateMessage,
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
@@ -246,12 +248,9 @@ describe("provider update launch notification logic", () => {
     expect(
       collectUpdatedProviderSnapshots({
         results: [
-          {
-            status: "fulfilled",
-            value: {
-              providers: [updatedPersonal, currentDefaultSibling],
-            },
-          },
+          AsyncResult.success({
+            providers: [updatedPersonal, currentDefaultSibling],
+          }),
         ],
         providerInstanceIds: new Set([targetInstanceId]),
       }),
@@ -435,11 +434,9 @@ describe("provider update launch notification logic", () => {
   });
 
   it("falls back to a rejected RPC message for transport-level failures", () => {
-    const results: PromiseSettledResult<unknown>[] = [
-      { status: "rejected", reason: new Error("WebSocket closed") },
-    ];
+    const results = [AsyncResult.failure(Cause.die(new Error("WebSocket closed")))];
 
-    expect(firstRejectedProviderUpdateMessage(results)).toBe("WebSocket closed");
+    expect(firstFailedProviderUpdateMessage(results)).toBe("WebSocket closed");
     expect(getProviderUpdateRejectedToastView(2, "WebSocket closed")).toMatchObject({
       phase: "failed",
       title: "Provider updates failed",
@@ -450,9 +447,7 @@ describe("provider update launch notification logic", () => {
   it("collects only attempted provider snapshots from update responses", () => {
     const codex = provider({ driver: driver("codex") });
     const cursor = provider({ driver: driver("cursor") });
-    const results: PromiseSettledResult<{ readonly providers: ReadonlyArray<ServerProvider> }>[] = [
-      { status: "fulfilled", value: { providers: [codex, cursor] } },
-    ];
+    const results = [AsyncResult.success({ providers: [codex, cursor] })];
 
     expect(
       collectUpdatedProviderSnapshots({

@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/unstable/http";
-import { ManagedRelayClient } from "@t3tools/client-runtime";
+import { ManagedRelayClient } from "@t3tools/client-runtime/relay";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { savePreferencesPatch } from "../../lib/storage";

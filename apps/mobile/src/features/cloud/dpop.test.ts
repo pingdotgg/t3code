@@ -12,7 +12,7 @@ import {
   createDpopProof,
   generateDpopProofKeyPair,
   loadOrCreateDpopProofKeyPair,
-  mobileCryptoLayer,
+  cryptoLayer,
 } from "./dpop";
 
 vi.mock("expo-crypto", () => ({
@@ -75,7 +75,7 @@ describe("mobile DPoP", () => {
       expect(Buffer.from(digest).toString("hex")).toBe(
         NodeCrypto.createHash("sha256").update("typed-array").digest("hex"),
       );
-    }).pipe(Effect.provide(mobileCryptoLayer)),
+    }).pipe(Effect.provide(cryptoLayer)),
   );
 
   it.effect("persists and reuses the installation proof key", () =>
@@ -86,7 +86,7 @@ describe("mobile DPoP", () => {
 
       expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
-    }).pipe(Effect.provide(mobileCryptoLayer)),
+    }).pipe(Effect.provide(cryptoLayer)),
   );
 
   it.effect("rejects malformed persisted proof keys", () =>
@@ -96,7 +96,7 @@ describe("mobile DPoP", () => {
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);
 
       expect(error.message).toBe("Stored DPoP proof key is invalid.");
-    }).pipe(Effect.provide(mobileCryptoLayer)),
+    }).pipe(Effect.provide(cryptoLayer)),
   );
 
   it.effect("signs connect and bootstrap proofs with the same ephemeral proof key", () =>
@@ -135,7 +135,7 @@ describe("mobile DPoP", () => {
           nowEpochSeconds: proofIat(bootstrap.proof),
         }),
       ).toMatchObject({ ok: true, thumbprint: proofKey.thumbprint });
-    }).pipe(Effect.provide(mobileCryptoLayer)),
+    }).pipe(Effect.provide(cryptoLayer)),
   );
 
   it.effect("signs DPoP proofs with RFC 9449 htu normalization", () =>
@@ -161,6 +161,6 @@ describe("mobile DPoP", () => {
           nowEpochSeconds: proofIat(proof.proof),
         }),
       ).toMatchObject({ ok: true });
-    }).pipe(Effect.provide(mobileCryptoLayer)),
+    }).pipe(Effect.provide(cryptoLayer)),
   );
 });

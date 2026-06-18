@@ -9,8 +9,9 @@ import type {
 import { useEffect, useRef } from "react";
 
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
-import { ensureEnvironmentApi } from "~/environmentApi";
-import { type DesktopPreviewOverlay, usePreviewStateStore } from "~/previewStateStore";
+import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 
@@ -20,8 +21,8 @@ import { previewBridge } from "./previewBridge";
  */
 export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: string }): void {
   const { threadRef, tabId } = input;
-  const applyDesktopState = usePreviewStateStore((state) => state.applyDesktopState);
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
+  const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
   const bridge = previewBridge;
 
   // One bridge subscription does both jobs (mirror state + forward to
@@ -31,7 +32,6 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   useEffect(() => {
     if (!bridge || typeof window === "undefined") return;
-    const api = ensureEnvironmentApi(threadRef.environmentId);
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
@@ -41,7 +41,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
         clearBrowserPointer(tabId);
       }
       lastDesktopNavStatus.current = state.navStatus;
-      applyDesktopState(threadRef, tabId, projectDesktopState(state));
+      applyPreviewDesktopState(threadRef, tabId, projectDesktopState(state));
       const reported = buildReportInput({
         threadId: threadRef.threadId,
         tabId,
@@ -52,10 +52,13 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       if (!reported) return;
       lastReportedUrl.current = reported.lastReportedUrl;
       lastReportedKind.current = reported.lastReportedKind;
-      void api.preview.reportStatus(reported.input).catch(() => undefined);
+      void reportStatus({
+        environmentId: threadRef.environmentId,
+        input: reported.input,
+      });
     });
     return unsubscribe;
-  }, [applyDesktopState, bridge, clearBrowserPointer, tabId, threadRef]);
+  }, [bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
 }
 
 function shouldClearBrowserPointer(

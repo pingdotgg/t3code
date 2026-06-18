@@ -1,23 +1,62 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ArchivedSnapshotEntry,
-  createArchivedThreadsManager,
   makeArchivedThreadsEnvironmentKey,
-  readArchivedThreadsSnapshotState,
-} from "@t3tools/client-runtime";
+  parseArchivedThreadsEnvironmentKey,
+} from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { readEnvironmentApi } from "../environmentApi";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
-const archivedThreadsManager = createArchivedThreadsManager({
-  getRegistry: () => appAtomRegistry,
-  getClient: (environmentId) => readEnvironmentApi(environmentId)?.orchestration ?? null,
-});
+const archivedSnapshotsAtom = Atom.family((environmentKey: string) =>
+  Atom.make((get) => {
+    const snapshots: ArchivedSnapshotEntry[] = [];
+    let error: string | null = null;
+    let isLoading = false;
+
+    for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
+      const result = get(
+        orchestrationEnvironment.archivedShellSnapshot({
+          environmentId,
+          input: {},
+        }),
+      );
+      isLoading ||= result.waiting;
+      const snapshot = Option.getOrNull(AsyncResult.value(result));
+      if (snapshot !== null) {
+        snapshots.push({ environmentId, snapshot });
+      }
+      if (error === null && result._tag === "Failure") {
+        const cause = Cause.squash(result.cause);
+        error =
+          cause instanceof Error && cause.message.trim().length > 0
+            ? cause.message
+            : "Failed to load archived threads.";
+      }
+    }
+
+    return {
+      snapshots,
+      error,
+      isLoading,
+    };
+  }).pipe(Atom.withLabel(`web:archived-thread-snapshots:${environmentKey}`)),
+);
+
+function archivedSnapshotAtom(environmentId: EnvironmentId) {
+  return orchestrationEnvironment.archivedShellSnapshot({
+    environmentId,
+    input: {},
+  });
+}
 
 export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentId): void {
-  archivedThreadsManager.refreshForEnvironment(environmentId);
+  appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
 }
 
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
@@ -30,14 +69,15 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     () => makeArchivedThreadsEnvironmentKey(environmentIds),
     [environmentIds],
   );
-  const atom = archivedThreadsManager.getAtom(environmentKey);
-  const result = useAtomValue(atom);
+  const result = useAtomValue(archivedSnapshotsAtom(environmentKey));
   const refresh = useCallback(() => {
-    archivedThreadsManager.refresh(environmentIds);
+    for (const environmentId of environmentIds) {
+      appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+    }
   }, [environmentIds]);
 
   return {
-    ...readArchivedThreadsSnapshotState(result),
+    ...result,
     refresh,
   };
 }

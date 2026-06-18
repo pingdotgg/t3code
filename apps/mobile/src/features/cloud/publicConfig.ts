@@ -70,13 +70,13 @@ type Configured<T> = {
   readonly [Key in keyof T]: NonNullable<T[Key]>;
 };
 
-type MobileTracingPublicConfig = Omit<CloudPublicConfig, "observability"> & {
+type TracingPublicConfig = Omit<CloudPublicConfig, "observability"> & {
   readonly observability: Configured<CloudPublicConfig["observability"]>;
 };
 
-export function hasMobileTracingPublicConfig(
+export function hasTracingPublicConfig(
   config: CloudPublicConfig = resolveCloudPublicConfig(),
-): config is MobileTracingPublicConfig {
+): config is TracingPublicConfig {
   return Boolean(
     config.observability.tracesUrl &&
     config.observability.tracesDataset &&

@@ -20,7 +20,7 @@ export interface PendingUserInputCardProps {
     questionId: string,
     customAnswer: string,
   ) => void;
-  readonly onSubmit: () => Promise<void>;
+  readonly onSubmit: () => Promise<unknown>;
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {

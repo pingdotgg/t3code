@@ -10,7 +10,10 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
-import { makeCloudManagedEndpointRuntime } from "./ManagedEndpointRuntime.ts";
+import {
+  classifyRelayClientOutput,
+  makeCloudManagedEndpointRuntime,
+} from "./ManagedEndpointRuntime.ts";
 
 const relayClientAvailableLayer = Layer.succeed(
   RelayClient.RelayClient,
@@ -57,6 +60,20 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it("classifies Cloudflare connection and warning output", () => {
+    expect(
+      classifyRelayClientOutput(
+        "2026-06-17T02:00:00Z INF Registered tunnel connection connIndex=0",
+      ),
+    ).toBe("connected");
+    expect(
+      classifyRelayClientOutput("2026-06-17T02:00:00Z ERR Failed to serve tunnel connection"),
+    ).toBe("warning");
+    expect(classifyRelayClientOutput("2026-06-17T02:00:00Z INF Starting metrics server")).toBe(
+      "debug",
+    );
+  });
+
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
     Effect.gen(function* () {
       const spawned: Array<ChildProcess.StandardCommand> = [];
@@ -113,8 +130,8 @@ describe("CloudManagedEndpointRuntime", () => {
         "token-1",
         "token-2",
       ]);
-      expect(spawned.map((command) => command.options.stdout)).toEqual(["ignore", "ignore"]);
-      expect(spawned.map((command) => command.options.stderr)).toEqual(["ignore", "ignore"]);
+      expect(spawned.map((command) => command.options.stdout)).toEqual(["pipe", "pipe"]);
+      expect(spawned.map((command) => command.options.stderr)).toEqual(["pipe", "pipe"]);
       expect(spawned.map((command) => command.options.detached)).toEqual([false, false]);
       expect(spawned.map((command) => command.options.shell)).toEqual([false, false]);
       expect(killed).toEqual([100, 101]);

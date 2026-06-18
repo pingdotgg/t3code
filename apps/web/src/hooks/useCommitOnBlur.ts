@@ -1,4 +1,4 @@
-import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useState } from "react";
 
 /**
  * Buffer text input locally so keystrokes don't cause a settings-wide
@@ -16,27 +16,21 @@ import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } fro
  *   <Input {...bag} placeholder="e.g. Work" />
  */
 export function useCommitOnBlur(value: string, onCommit: (next: string) => void) {
-  const [draft, setDraft] = useState(value);
-  const focusedRef = useRef(false);
-
-  useEffect(() => {
-    if (!focusedRef.current) {
-      setDraft(value);
-    }
-  }, [value]);
+  const [draft, setDraft] = useState<string | null>(null);
 
   return {
-    value: draft,
+    value: draft ?? value,
     onChange: (event: ChangeEvent<HTMLInputElement>) => {
       setDraft(event.target.value);
     },
     onFocus: () => {
-      focusedRef.current = true;
+      setDraft(value);
     },
     onBlur: () => {
-      focusedRef.current = false;
-      if (draft !== value) {
-        onCommit(draft);
+      const next = draft ?? value;
+      setDraft(null);
+      if (next !== value) {
+        onCommit(next);
       }
     },
     onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {

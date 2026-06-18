@@ -1,11 +1,5 @@
 import * as Schema from "effect/Schema";
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 
@@ -66,10 +60,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     }
   });
 
-  // Re-clamp if min/max change at runtime (e.g. window resize narrows max).
-  useEffect(() => {
-    setWidth((current) => clamp(current));
-  }, [clamp]);
+  const clampedWidth = clamp(width);
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -114,13 +105,13 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       dragStateRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
-        startWidth: width,
-        pending: width,
+        startWidth: clampedWidth,
+        pending: clampedWidth,
         rafId: null,
         target,
       };
     },
-    [width],
+    [clampedWidth],
   );
 
   const onPointerMove = useCallback(
@@ -170,7 +161,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   );
 
   return {
-    width,
+    width: clampedWidth,
     handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }

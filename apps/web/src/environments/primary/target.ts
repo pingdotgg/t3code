@@ -1,9 +1,11 @@
 import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
-import type { KnownEnvironment } from "@t3tools/client-runtime";
 
 export interface PrimaryEnvironmentTarget {
-  readonly source: KnownEnvironment["source"];
-  readonly target: KnownEnvironment["target"];
+  readonly source: "configured" | "window-origin" | "desktop-managed";
+  readonly target: {
+    readonly httpBaseUrl: string;
+    readonly wsBaseUrl: string;
+  };
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);

@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -66,6 +67,13 @@ interface ActiveConnector {
   readonly scope: Scope.Closeable;
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
+}
+
+export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
+  if (/\bRegistered tunnel connection\b/iu.test(line)) {
+    return "connected";
+  }
+  return /\b(?:ERR|WRN)\b/u.test(line) ? "warning" : "debug";
 }
 
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
@@ -141,6 +149,39 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
+  const observeConnectorOutput = (connector: ActiveConnector) =>
+    connector.child.all.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.map((line) => line.trim()),
+      Stream.filter((line) => line.length > 0),
+      Stream.runForEach((line) => {
+        const output = line.replaceAll(connector.config.connectorToken, "<redacted>");
+        const attributes = {
+          pid: Number(connector.child.pid),
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+          output,
+        };
+        switch (classifyRelayClientOutput(line)) {
+          case "connected":
+            return Effect.logInfo("Relay client tunnel connection registered", attributes);
+          case "warning":
+            return Effect.logWarning("Relay client reported a transport warning", attributes);
+          case "debug":
+            return Effect.logDebug("Relay client output", attributes);
+        }
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Relay client output observer failed", {
+          cause,
+          pid: Number(connector.child.pid),
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+        }),
+      ),
+    );
+
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
     if (!config || config.providerKind !== "cloudflare_tunnel") {
       yield* stopActive;
@@ -190,14 +231,15 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
             TUNNEL_TOKEN: config.connectorToken,
           },
           shell: false,
-          stderr: "ignore",
-          stdout: "ignore",
+          stderr: "pipe",
+          stdout: "pipe",
         }),
       )
       .pipe(
         Effect.provideService(Scope.Scope, connectorScope),
-        Effect.tap(() =>
-          Effect.logInfo("Relay client started", {
+        Effect.tap((child) =>
+          Effect.logInfo("Relay client process started; waiting for tunnel connection", {
+            pid: Number(child.pid),
             tunnelId: config.tunnelId,
             tunnelName: config.tunnelName,
           }),
@@ -232,6 +274,7 @@ export const makeCloudManagedEndpointRuntime = Effect.gen(function* () {
         config,
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
+      yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
       return {
         status: "running",

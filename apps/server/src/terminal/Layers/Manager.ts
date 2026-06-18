@@ -5,6 +5,7 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
+  type TerminalResizeInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
@@ -2325,21 +2326,24 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       yield* Effect.sync(() => process.write(input.data));
     });
 
-    const resize: TerminalManagerShape["resize"] = Effect.fn("terminal.resize")(function* (input) {
-      const terminalId = input.terminalId;
-      const session = yield* requireSession(input.threadId, terminalId);
-      const process = session.process;
-      if (!process || session.status !== "running") {
-        return yield* new TerminalNotRunningError({
-          threadId: input.threadId,
-          terminalId,
-        });
+    const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
+      const session = yield* getSession(input.threadId, input.terminalId);
+      // ResizeObserver traffic can already be in flight when the UI closes the session.
+      if (Option.isNone(session)) {
+        return;
       }
-      session.cols = input.cols;
-      session.rows = input.rows;
-      session.updatedAt = yield* nowIso;
+      const process = session.value.process;
+      if (!process || session.value.status !== "running") {
+        return;
+      }
+      session.value.cols = input.cols;
+      session.value.rows = input.rows;
+      session.value.updatedAt = yield* nowIso;
       yield* Effect.sync(() => process.resize(input.cols, input.rows));
     });
+
+    const resize: TerminalManagerShape["resize"] = (input) =>
+      withThreadLock(input.threadId, resizeLocked(input));
 
     const clear: TerminalManagerShape["clear"] = (input) =>
       withThreadLock(

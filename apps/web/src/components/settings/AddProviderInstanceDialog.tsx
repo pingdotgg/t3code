@@ -2,7 +2,7 @@
 
 import { CheckIcon } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
@@ -115,14 +115,13 @@ interface AddProviderInstanceDialogProps {
 
 export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
-  const [instanceId, setInstanceId] = useState("");
-  const [instanceIdDirty, setInstanceIdDirty] = useState(false);
+  const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
@@ -135,28 +134,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     [settings.providerInstances],
   );
 
-  // Reset the form every time the dialog opens so each creation starts
-  // from a clean slate.
-  useEffect(() => {
-    if (!open) return;
-    setDriver(DEFAULT_DRIVER_KIND);
-    setLabel("");
-    setAccentColor("");
-    setInstanceId("");
-    setWizardStep(0);
-    setInstanceIdDirty(false);
-    setConfigByDriver({});
-    setHasAttemptedSubmit(false);
-  }, [open]);
-
-  // Auto-derive the instance id from driver + label until the user types
-  // in the Instance ID field directly (after which they own its value).
-  useEffect(() => {
-    if (instanceIdDirty) return;
-    setInstanceId(deriveInstanceId(driver, label));
-  }, [driver, label, instanceIdDirty]);
-
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
+  const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
   const driverSettingsFields = useMemo(
     () => deriveProviderSettingsFields(driverOption),
     [driverOption],
@@ -379,8 +358,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   placeholder={`${driver}_work`}
                   value={instanceId}
                   onChange={(event) => {
-                    setInstanceIdDirty(true);
-                    setInstanceId(event.target.value);
+                    setInstanceIdOverride(event.target.value);
                   }}
                   aria-invalid={showInstanceIdError}
                 />

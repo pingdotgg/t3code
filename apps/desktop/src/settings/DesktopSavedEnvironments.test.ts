@@ -289,7 +289,7 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("treats malformed saved environment documents as empty", () =>
+  it.effect("surfaces malformed saved environment documents", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -298,10 +298,15 @@ describe("DesktopSavedEnvironments", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
 
-        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
-        assert.isTrue(
-          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+        const registryError = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
+        assert.instanceOf(
+          registryError,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError,
         );
+        const secretError = yield* savedEnvironments
+          .getSecret(savedRegistryRecord.environmentId)
+          .pipe(Effect.flip);
+        assert.instanceOf(secretError, DesktopSavedEnvironments.DesktopSavedEnvironmentsReadError);
       }),
     ),
   );

@@ -1,11 +1,7 @@
 import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { isElectron } from "../../env";
-import {
-  setDesktopUpdateStateQueryData,
-  useDesktopUpdateState,
-} from "../../lib/desktopUpdateReactQuery";
+import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   getArm64IntelBuildWarningDescription,
@@ -22,8 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function SidebarUpdatePill() {
-  const queryClient = useQueryClient();
-  const state = useDesktopUpdateState().data ?? null;
+  const state = useDesktopUpdateState();
   const [dismissed, setDismissed] = useState(false);
 
   const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
@@ -44,7 +39,6 @@ export function SidebarUpdatePill() {
       void bridge
         .downloadUpdate()
         .then((result) => {
-          setDesktopUpdateStateQueryData(queryClient, result.state);
           if (result.completed) {
             toastManager.add({
               type: "success",
@@ -81,7 +75,6 @@ export function SidebarUpdatePill() {
       void bridge
         .installUpdate()
         .then((result) => {
-          setDesktopUpdateStateQueryData(queryClient, result.state);
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
@@ -103,7 +96,7 @@ export function SidebarUpdatePill() {
           );
         });
     }
-  }, [action, disabled, queryClient, state]);
+  }, [action, disabled, state]);
 
   if (!visible && !showArm64Warning) return null;
 

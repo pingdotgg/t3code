@@ -1,12 +1,12 @@
 import type { StatusTone } from "../../components/StatusPill";
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
-export function threadSortValue(thread: EnvironmentScopedThreadShell): number {
+export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
   return Number.isNaN(candidate) ? 0 : candidate;
 }
 
-export function threadStatusTone(thread: EnvironmentScopedThreadShell): StatusTone {
+export function threadStatusTone(thread: EnvironmentThreadShell): StatusTone {
   const status = thread.session?.status;
   if (status === "running") {
     return {
@@ -41,13 +41,4 @@ export function threadStatusTone(thread: EnvironmentScopedThreadShell): StatusTo
     pillClassName: "bg-neutral-500/10 dark:bg-neutral-500/16",
     textClassName: "text-neutral-600 dark:text-neutral-300",
   };
-}
-
-export function messageImageUrl(httpBaseUrl: string | null, attachmentId: string): string | null {
-  if (!httpBaseUrl) {
-    return null;
-  }
-
-  const url = new URL(`/attachments/${encodeURIComponent(attachmentId)}`, httpBaseUrl);
-  return url.toString();
 }

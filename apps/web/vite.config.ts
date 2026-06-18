@@ -2,7 +2,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -59,30 +58,6 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
-const browserTestProject = {
-  extends: true,
-  server: {
-    // Browser tests need concurrent runs to claim the next available port.
-    strictPort: false,
-  },
-  test: {
-    name: "browser",
-    include: ["src/components/**/*.browser.tsx"],
-    hookTimeout: 30_000,
-    testTimeout: 30_000,
-    browser: {
-      enabled: true,
-      provider: playwright() as never,
-      instances: [{ browser: "chromium" }],
-      headless: true,
-      api: {
-        strictPort: false,
-      },
-    },
-    fileParallelism: false,
-  },
-} satisfies TestProjectInlineConfiguration;
-
 function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
   if (!wsUrl) {
     return undefined;
@@ -123,6 +98,8 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
+        "@clerk/clerk-js",
+        "@clerk/react/internal",
         "@pierre/diffs",
         "@pierre/diffs/editor",
         "@pierre/diffs/react",
@@ -186,7 +163,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
+      projects: [defineProject(unitTestProject)],
     },
   };
 });

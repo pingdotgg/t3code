@@ -9,8 +9,8 @@ describe("ChangedFilesTree", () => {
     {
       name: "a compacted single-chain directory",
       files: [
-        { path: "apps/web/src/index.ts", additions: 2, deletions: 1 },
-        { path: "apps/web/src/main.ts", additions: 3, deletions: 0 },
+        { path: "apps/web/src/index.ts", kind: "modified", additions: 2, deletions: 1 },
+        { path: "apps/web/src/main.ts", kind: "modified", additions: 3, deletions: 0 },
       ],
       visibleLabels: ["apps/web/src"],
       hiddenLabels: ["index.ts", "main.ts"],
@@ -18,8 +18,18 @@ describe("ChangedFilesTree", () => {
     {
       name: "a branch point after a compacted prefix",
       files: [
-        { path: "apps/server/src/git/Layers/GitCore.ts", additions: 4, deletions: 3 },
-        { path: "apps/server/src/provider/Layers/CodexAdapter.ts", additions: 7, deletions: 2 },
+        {
+          path: "apps/server/src/git/Layers/GitCore.ts",
+          kind: "modified",
+          additions: 4,
+          deletions: 3,
+        },
+        {
+          path: "apps/server/src/provider/Layers/CodexAdapter.ts",
+          kind: "modified",
+          additions: 7,
+          deletions: 2,
+        },
       ],
       visibleLabels: ["apps/server/src"],
       hiddenLabels: ["git", "provider", "GitCore.ts", "CodexAdapter.ts"],
@@ -27,9 +37,14 @@ describe("ChangedFilesTree", () => {
     {
       name: "mixed root files and nested compacted directories",
       files: [
-        { path: "README.md", additions: 1, deletions: 0 },
-        { path: "packages/shared/src/git.ts", additions: 8, deletions: 2 },
-        { path: "packages/contracts/src/orchestration.ts", additions: 13, deletions: 3 },
+        { path: "README.md", kind: "modified", additions: 1, deletions: 0 },
+        { path: "packages/shared/src/git.ts", kind: "modified", additions: 8, deletions: 2 },
+        {
+          path: "packages/contracts/src/orchestration.ts",
+          kind: "modified",
+          additions: 13,
+          deletions: 3,
+        },
       ],
       visibleLabels: ["README.md", "packages"],
       hiddenLabels: ["shared/src", "contracts/src", "git.ts", "orchestration.ts"],
@@ -60,16 +75,26 @@ describe("ChangedFilesTree", () => {
     {
       name: "a compacted single-chain directory",
       files: [
-        { path: "apps/web/src/index.ts", additions: 2, deletions: 1 },
-        { path: "apps/web/src/main.ts", additions: 3, deletions: 0 },
+        { path: "apps/web/src/index.ts", kind: "modified", additions: 2, deletions: 1 },
+        { path: "apps/web/src/main.ts", kind: "modified", additions: 3, deletions: 0 },
       ],
       visibleLabels: ["apps/web/src", "index.ts", "main.ts"],
     },
     {
       name: "a branch point after a compacted prefix",
       files: [
-        { path: "apps/server/src/git/Layers/GitCore.ts", additions: 4, deletions: 3 },
-        { path: "apps/server/src/provider/Layers/CodexAdapter.ts", additions: 7, deletions: 2 },
+        {
+          path: "apps/server/src/git/Layers/GitCore.ts",
+          kind: "modified",
+          additions: 4,
+          deletions: 3,
+        },
+        {
+          path: "apps/server/src/provider/Layers/CodexAdapter.ts",
+          kind: "modified",
+          additions: 7,
+          deletions: 2,
+        },
       ],
       visibleLabels: [
         "apps/server/src",
@@ -82,9 +107,14 @@ describe("ChangedFilesTree", () => {
     {
       name: "mixed root files and nested compacted directories",
       files: [
-        { path: "README.md", additions: 1, deletions: 0 },
-        { path: "packages/shared/src/git.ts", additions: 8, deletions: 2 },
-        { path: "packages/contracts/src/orchestration.ts", additions: 13, deletions: 3 },
+        { path: "README.md", kind: "modified", additions: 1, deletions: 0 },
+        { path: "packages/shared/src/git.ts", kind: "modified", additions: 8, deletions: 2 },
+        {
+          path: "packages/contracts/src/orchestration.ts",
+          kind: "modified",
+          additions: 13,
+          deletions: 3,
+        },
       ],
       visibleLabels: [
         "README.md",

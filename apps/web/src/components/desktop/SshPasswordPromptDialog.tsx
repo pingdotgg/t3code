@@ -30,14 +30,7 @@ function getPromptErrorMessage(error: unknown): string {
 
 export function SshPasswordPromptDialog() {
   const [queue, setQueue] = useState<readonly DesktopSshPasswordPromptRequest[]>([]);
-  const [password, setPassword] = useState("");
-  const [isResponding, setIsResponding] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [responseError, setResponseError] = useState<string | null>(null);
   const currentRequest = queue[0] ?? null;
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const isRespondingRef = useRef(false);
-  const formId = useId();
 
   useEffect(() => {
     const bridge = window.desktopBridge;
@@ -50,14 +43,39 @@ export function SshPasswordPromptDialog() {
     });
   }, []);
 
-  useEffect(() => {
-    setPassword("");
-    setResponseError(null);
-    if (!currentRequest) {
-      return;
-    }
+  if (!currentRequest) {
+    return null;
+  }
 
-    setNow(Date.now());
+  return (
+    <ActiveSshPasswordPrompt
+      key={currentRequest.requestId}
+      request={currentRequest}
+      onRemove={(requestId) => {
+        setQueue((currentQueue) =>
+          currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
+        );
+      }}
+    />
+  );
+}
+
+function ActiveSshPasswordPrompt({
+  request,
+  onRemove,
+}: {
+  readonly request: DesktopSshPasswordPromptRequest;
+  readonly onRemove: (requestId: string) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [isResponding, setIsResponding] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [responseError, setResponseError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const isRespondingRef = useRef(false);
+  const formId = useId();
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
@@ -65,48 +83,33 @@ export function SshPasswordPromptDialog() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [currentRequest]);
+  }, []);
 
   useEffect(() => {
-    if (!currentRequest) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
       setNow(Date.now());
     }, 1_000);
     return () => {
       window.clearInterval(interval);
     };
-  }, [currentRequest]);
+  }, []);
 
-  const expiresAtMs = currentRequest ? Date.parse(currentRequest.expiresAt) : Number.NaN;
+  const expiresAtMs = Date.parse(request.expiresAt);
   const remainingMs = Number.isFinite(expiresAtMs) ? Math.max(0, expiresAtMs - now) : null;
   const isExpired = remainingMs !== null && remainingMs <= 0;
   const remainingSeconds = remainingMs === null ? null : Math.ceil(remainingMs / 1_000);
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
-
-  useEffect(() => {
-    if (isExpired) {
-      setResponseError("This SSH password prompt expired. Try connecting again.");
-    }
-  }, [isExpired]);
-
-  const removeCurrentPrompt = (requestId: string) => {
-    setQueue((currentQueue) =>
-      currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
-    );
-    setPassword("");
-    setResponseError(null);
-  };
+  const visibleResponseError = isExpired
+    ? "This SSH password prompt expired. Try connecting again."
+    : responseError;
 
   const respond = async (nextPassword: string | null) => {
-    if (!currentRequest || isRespondingRef.current) {
+    if (isRespondingRef.current) {
       return;
     }
 
-    const requestId = currentRequest.requestId;
+    const requestId = request.requestId;
     if (nextPassword !== null && isExpired) {
       setResponseError("This SSH password prompt expired. Try connecting again.");
       return;
@@ -117,10 +120,10 @@ export function SshPasswordPromptDialog() {
     setResponseError(null);
     try {
       await window.desktopBridge?.resolveSshPasswordPrompt(requestId, nextPassword);
-      removeCurrentPrompt(requestId);
+      onRemove(requestId);
     } catch (error) {
       if (nextPassword === null) {
-        removeCurrentPrompt(requestId);
+        onRemove(requestId);
       } else {
         setResponseError(getPromptErrorMessage(error));
       }
@@ -131,9 +134,7 @@ export function SshPasswordPromptDialog() {
   };
 
   const dismissExpiredPrompt = () => {
-    if (currentRequest) {
-      removeCurrentPrompt(currentRequest.requestId);
-    }
+    onRemove(request.requestId);
   };
 
   const cancelPrompt = () => {
@@ -144,11 +145,11 @@ export function SshPasswordPromptDialog() {
     void respond(null);
   };
 
-  const target = currentRequest ? describeSshTarget(currentRequest) : null;
+  const target = describeSshTarget(request);
 
   return (
     <Dialog
-      open={currentRequest !== null}
+      open
       onOpenChange={(open) => {
         if (!open) {
           cancelPrompt();
@@ -159,9 +160,8 @@ export function SshPasswordPromptDialog() {
         <DialogHeader>
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
-            T3 needs your SSH password to connect to{" "}
-            {target ? <code>{target}</code> : "the remote host"}. The password is passed to the
-            local SSH process for this connection attempt and is not saved by T3 Code.
+            T3 needs your SSH password to connect to <code>{target}</code>. The password is passed
+            to the local SSH process for this connection attempt and is not saved by T3 Code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3" scrollFade={false}>
@@ -175,7 +175,7 @@ export function SshPasswordPromptDialog() {
           >
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">{currentRequest?.prompt}</p>
+                <p className="text-sm font-medium text-foreground">{request.prompt}</p>
                 {remainingLabel ? (
                   <span
                     className={
@@ -198,8 +198,8 @@ export function SshPasswordPromptDialog() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
-            {responseError ? (
-              <p className="text-sm text-destructive">{responseError}</p>
+            {visibleResponseError ? (
+              <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 Use SSH keys to avoid repeated password prompts on new SSH sessions.

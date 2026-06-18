@@ -8,9 +8,7 @@
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsgo --noEmit",
-    "test": "vp test run --passWithNoTests --project unit",
-    "test:browser": "vp test run --project browser",
-    "test:browser:install": "playwright install --with-deps chromium"
+    "test": "vp test run --passWithNoTests --project unit"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -32,7 +30,6 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
-    "@tanstack/react-query": "^5.90.0",
     "@tanstack/react-router": "^1.160.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
@@ -64,10 +61,8 @@
     "@vitejs/plugin-react": "^6.0.0",
     "babel-plugin-react-compiler": "1.0.0",
     "msw": "2.12.11",
-    "playwright": "^1.58.2",
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
-    "vite-plus": "catalog:",
-    "vitest-browser-react": "^2.0.5"
+    "vite-plus": "catalog:"
   }
 }

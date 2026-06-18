@@ -1,8 +1,8 @@
 import {
-  managedRelayClientLayer,
+  managedRelayClientLayer as makeManagedRelayClientLayer,
   ManagedRelayDpopSigner,
   ManagedRelayDpopSignerError,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,7 @@ import {
   type BrowserDpopKey,
 } from "./dpop";
 
-export const webRelayDpopSignerLayer = Layer.effect(
+export const relayDpopSignerLayer = Layer.effect(
   ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -39,24 +39,28 @@ export const webRelayDpopSignerLayer = Layer.effect(
         return generated;
       }),
     );
-    const signerError = (cause: unknown) => new ManagedRelayDpopSignerError({ cause });
+
     return ManagedRelayDpopSigner.of({
       thumbprint: loadOrCreateBrowserDpopKey.pipe(
         Effect.map((proofKey) => proofKey.thumbprint),
-        Effect.mapError(signerError),
+        Effect.mapError((cause) => new ManagedRelayDpopSignerError({ cause })),
+        Effect.withSpan("web.managedRelayDpopSigner.loadThumbprint"),
       ),
-      createProof: (input) =>
-        loadOrCreateBrowserDpopKey.pipe(
-          Effect.flatMap((proofKey) => createBrowserDpopProof({ ...input, proofKey })),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.map((proof) => proof.proof),
-          Effect.mapError(signerError),
-        ),
+      createProof: Effect.fn("web.managedRelayDpopSigner.createProof")(
+        function* (input) {
+          const proofKey = yield* loadOrCreateBrowserDpopKey;
+          return yield* createBrowserDpopProof({ ...input, proofKey }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.map((proof) => proof.proof),
+          );
+        },
+        Effect.mapError((cause) => new ManagedRelayDpopSignerError({ cause })),
+      ),
     });
   }),
 );
 
-export const webManagedRelayClientLayer = (relayUrl: string) =>
-  managedRelayClientLayer({ relayUrl, clientId: RelayWebClientId }).pipe(
-    Layer.provideMerge(webRelayDpopSignerLayer),
+export const managedRelayClientLayer = (relayUrl: string) =>
+  makeManagedRelayClientLayer({ relayUrl, clientId: RelayWebClientId }).pipe(
+    Layer.provideMerge(relayDpopSignerLayer),
   );

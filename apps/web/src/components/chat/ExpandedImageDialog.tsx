@@ -9,24 +9,14 @@ interface ExpandedImageDialogProps {
 }
 
 export const ExpandedImageDialog = memo(function ExpandedImageDialog({
-  preview: initialPreview,
+  preview,
   onClose,
 }: ExpandedImageDialogProps) {
-  const [preview, setPreview] = useState(initialPreview);
-
-  // Sync when the parent hands us a new preview reference.
-  useEffect(() => {
-    setPreview(initialPreview);
-  }, [initialPreview]);
+  const [imageOffset, setImageOffset] = useState(0);
+  const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
 
   const navigateImage = useCallback((direction: -1 | 1) => {
-    setPreview((existing) => {
-      if (existing.images.length <= 1) return existing;
-      const nextIndex =
-        (existing.index + direction + existing.images.length) % existing.images.length;
-      if (nextIndex === existing.index) return existing;
-      return { ...existing, index: nextIndex };
-    });
+    setImageOffset((current) => current + direction);
   }, []);
 
   useEffect(() => {
@@ -53,7 +43,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [navigateImage, onClose, preview.images.length]);
 
-  const item = preview.images[preview.index];
+  const item = preview.images[index];
   if (!item) return null;
 
   return (
@@ -100,7 +90,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         />
         <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
           {item.name}
-          {preview.images.length > 1 ? ` (${preview.index + 1}/${preview.images.length})` : ""}
+          {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
         </p>
       </div>
       {preview.images.length > 1 && (

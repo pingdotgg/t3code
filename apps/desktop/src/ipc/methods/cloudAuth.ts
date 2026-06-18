@@ -59,7 +59,7 @@ function executeCloudAuthFetch(url: URL, input: typeof DesktopCloudAuthFetchInpu
     const method = (input.method ?? "GET") as "GET" | "POST";
     const headers = new Headers(input.headers);
     const response = yield* HttpClientRequest.make(method)(url).pipe(
-      HttpClientRequest.setHeaders(headers),
+      HttpClientRequest.setHeaders(Object.fromEntries(headers.entries())),
       input.body === undefined
         ? identity
         : HttpClientRequest.bodyText(input.body, headers.get("content-type") ?? undefined),

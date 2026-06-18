@@ -4,7 +4,7 @@ import type { Thread } from "../types";
 
 export type ThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
   latestUserMessageAt?: string | null;
-  messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
+  messages?: ReadonlyArray<Pick<Thread["messages"][number], "createdAt" | "role">>;
 };
 
 export function toSortableTimestamp(iso: string | undefined): number | null {

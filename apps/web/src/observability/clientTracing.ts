@@ -6,6 +6,7 @@ import * as Tracer from "effect/Tracer";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
+import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
@@ -78,8 +79,8 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
   const runtime = ManagedRuntime.make(delegateRuntimeLayer);
   const scope = runtime.runSync(Scope.make());
 
-  try {
-    const delegate = await runtime.runPromise(
+  const delegateResult = await settleAsyncResult(() =>
+    runtime.runPromiseExit(
       Scope.provide(scope)(
         OtlpTracer.make({
           url: otlpTracesUrl,
@@ -87,26 +88,28 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
           resource: CLIENT_TRACING_RESOURCE,
         }),
       ),
-    );
-
-    if (generation !== configurationGeneration) {
-      await disposeTracerRuntime(runtime, scope);
-      return;
-    }
-
-    activeDelegate = delegate;
-    activeRuntime = runtime;
-    activeScope = scope;
-  } catch (error) {
+    ),
+  );
+  if (delegateResult._tag === "Failure") {
     await disposeTracerRuntime(runtime, scope);
 
     if (generation === configurationGeneration) {
       console.warn("Failed to configure client tracing exporter", {
-        error: formatError(error),
+        error: formatError(squashAtomCommandFailure(delegateResult)),
         otlpTracesUrl,
       });
     }
+    return;
   }
+
+  if (generation !== configurationGeneration) {
+    await disposeTracerRuntime(runtime, scope);
+    return;
+  }
+
+  activeDelegate = delegateResult.value;
+  activeRuntime = runtime;
+  activeScope = scope;
 }
 
 async function disposeTracerRuntime(
@@ -117,12 +120,8 @@ async function disposeTracerRuntime(
     return;
   }
 
-  await runtime
-    .runPromise(Scope.close(scope, Exit.void))
-    .catch(() => undefined)
-    .finally(() => {
-      runtime.dispose();
-    });
+  await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
+  runtime.dispose();
 }
 
 function formatError(error: unknown): string {

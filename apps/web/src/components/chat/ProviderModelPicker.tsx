@@ -17,7 +17,6 @@ import {
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
-import { setModelPickerOpen } from "../../modelPickerOpenState";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
@@ -78,13 +77,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       setUncontrolledIsMenuOpen(open);
     }
   };
-
-  useEffect(() => {
-    setModelPickerOpen(isMenuOpen);
-    return () => {
-      setModelPickerOpen(false);
-    };
-  }, [isMenuOpen]);
 
   useEffect(() => {
     if (!isMenuOpen) {

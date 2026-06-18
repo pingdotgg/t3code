@@ -16,10 +16,8 @@ import { useResolveClassNames } from "uniwind";
 
 import { LoadingScreen } from "../components/LoadingScreen";
 
-import {
-  useRemoteEnvironmentBootstrap,
-  useRemoteEnvironmentState,
-} from "../state/use-remote-environment-registry";
+import { useWorkspaceState } from "../state/workspace";
+import { useThreadOutboxDrain } from "../state/use-thread-outbox-drain";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
 import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
@@ -42,12 +40,13 @@ function AppNavigator() {
 }
 
 function AppNavigatorContent() {
-  const { isLoadingSavedConnection } = useRemoteEnvironmentState();
+  const { state } = useWorkspaceState();
   const { collapse, isExpanded } = useClerkSettingsSheetDetent();
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
   const sheetStyle = useResolveClassNames("bg-sheet");
   useAgentNotificationNavigation();
+  useThreadOutboxDrain();
 
   const handleSettingsTransitionEnd = useCallback(
     (event: { data: { closing: boolean } }) => {
@@ -81,7 +80,7 @@ function AppNavigatorContent() {
     sheetAllowedDetents: isExpanded ? [0.92] : [0.7],
   };
 
-  if (isLoadingSavedConnection) {
+  if (state.isLoadingConnections) {
     return <LoadingScreen message="Loading remote workspace…" />;
   }
 
@@ -129,8 +128,6 @@ export default function RootLayout() {
     DMSans_500Medium,
     DMSans_700Bold,
   });
-  useRemoteEnvironmentBootstrap();
-
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>

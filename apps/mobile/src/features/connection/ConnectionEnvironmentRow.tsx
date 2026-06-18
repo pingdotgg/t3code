@@ -1,31 +1,26 @@
 import { SymbolView } from "expo-symbols";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { cn } from "../../lib/cn";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
-  if (environment.connectionError) {
-    return null;
-  }
-
-  switch (environment.connectionState) {
-    case "ready":
-      return "Connected";
-    case "connecting":
-      return "Connecting";
-    case "reconnecting":
-      return "Reconnecting";
-    case "disconnected":
-      return null;
-    case "idle":
-      return null;
-  }
+  return connectionStatusText({
+    phase: environment.connectionState,
+    error: environment.connectionError,
+    traceId: environment.connectionErrorTraceId,
+  });
 }
 
 export function ConnectionEnvironmentRow(props: {
@@ -37,7 +32,7 @@ export function ConnectionEnvironmentRow(props: {
   readonly onUpdate: (
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
-  ) => void;
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
@@ -47,13 +42,25 @@ export function ConnectionEnvironmentRow(props: {
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const statusLabel = connectionStatusLabel(props.environment);
-
-  const handleSave = useCallback(() => {
-    props.onUpdate(props.environment.environmentId, {
+  const statusTraceId = props.environment.connectionErrorTraceId;
+  const hasConnectionFailure = props.environment.connectionError !== null;
+  const isRetrying =
+    props.environment.connectionState === "connecting" ||
+    props.environment.connectionState === "reconnecting";
+  const handleSave = useCallback(async () => {
+    const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
     });
-    props.onToggle();
+    if (AsyncResult.isSuccess(result)) {
+      props.onToggle();
+      return;
+    }
+    const error = Cause.squash(result.cause);
+    Alert.alert(
+      "Could not update environment",
+      error instanceof Error ? error.message : "The environment could not be updated.",
+    );
   }, [label, url, props]);
 
   return (
@@ -64,10 +71,7 @@ export function ConnectionEnvironmentRow(props: {
       >
         <ConnectionStatusDot
           state={props.environment.connectionState}
-          pulse={
-            props.environment.connectionState === "connecting" ||
-            props.environment.connectionState === "reconnecting"
-          }
+          pulse={isRetrying}
           size={8}
         />
 
@@ -82,16 +86,35 @@ export function ConnectionEnvironmentRow(props: {
             {props.environment.displayUrl}
           </Text>
           {statusLabel ? (
-            <Text className="text-[12px] leading-[16px] text-foreground-muted" numberOfLines={1}>
-              {statusLabel}
-            </Text>
-          ) : null}
-          {props.environment.connectionError ? (
             <Text
-              className="text-[12px] leading-[16px] text-rose-500 dark:text-rose-400"
-              numberOfLines={2}
+              className={cn(
+                "text-[12px] leading-[16px]",
+                hasConnectionFailure ? "text-rose-500 dark:text-rose-400" : "text-foreground-muted",
+              )}
+              numberOfLines={props.expanded ? undefined : 1}
+              selectable={props.expanded}
             >
-              {props.environment.connectionError}
+              {statusLabel}
+              {statusTraceId ? (
+                <>
+                  {" Trace ID: "}
+                  <Text
+                    accessibilityHint="Copies the trace ID"
+                    accessibilityRole="button"
+                    className="underline"
+                    onLongPress={(event) => {
+                      event.stopPropagation();
+                      copyTextWithHaptic(statusTraceId);
+                    }}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                    }}
+                    style={{ textDecorationStyle: "dotted" }}
+                  >
+                    {statusTraceId}
+                  </Text>
+                </>
+              ) : null}
             </Text>
           ) : null}
         </View>

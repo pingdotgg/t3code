@@ -2,17 +2,20 @@ import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Text as RNText, View } from "react-native";
 
+import { useProjects, useThreadShells } from "../state/entities";
+import { useWorkspaceState } from "../state/workspace";
 import { buildThreadRoutePath } from "../lib/routes";
-import { useRemoteCatalog } from "../state/use-remote-catalog";
-import { useRemoteEnvironmentState } from "../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../state/use-remote-environment-registry";
 import { HomeScreen } from "../features/home/HomeScreen";
 import { useThemeColor } from "../lib/useThemeColor";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export default function HomeRouteScreen() {
-  const { projects, state: catalogState, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { state: catalogState } = useWorkspaceState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -32,8 +35,12 @@ export default function HomeRouteScreen() {
           headerTitle: "",
           headerSearchBarOptions: {
             placeholder: "Search threads",
+            hideNavigationBar: false,
             onChangeText: (event) => {
               setSearchQuery(event.nativeEvent.text);
+            },
+            onCancelButtonPress: () => {
+              setSearchQuery("");
             },
             allowToolbarIntegration: true,
           },
@@ -104,6 +111,7 @@ export default function HomeRouteScreen() {
         savedConnectionsById={savedConnectionsById}
         searchQuery={searchQuery}
         onAddConnection={() => router.push("/connections/new")}
+        onOpenEnvironments={() => router.push("/settings/environments")}
         onSelectThread={(thread) => {
           router.push(buildThreadRoutePath(thread));
         }}

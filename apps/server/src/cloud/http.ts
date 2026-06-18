@@ -48,7 +48,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse, HttpTraceContext } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -77,6 +77,7 @@ import { relayUrlConfig } from "./publicConfig.ts";
 import * as CliState from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import { traceRelayRequest } from "./traceRelayRequest.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -110,19 +111,6 @@ const requireRelayUrl = relayUrlConfig.pipe(
       }),
   ),
 );
-
-export const traceRelayBrokerHandler = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | HttpServerRequest.HttpServerRequest> =>
-  HttpServerRequest.HttpServerRequest.pipe(
-    Effect.flatMap((request) =>
-      Option.match(HttpTraceContext.fromHeaders(request.headers), {
-        onNone: () => effect,
-        onSome: (parent) => effect.pipe(Effect.withParentSpan(parent)),
-      }),
-    ),
-    withRelayClientTracing,
-  );
 
 function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -953,7 +941,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>
-        traceRelayBrokerHandler(cloudMintCredentialHandler(dependencies, payload)),
+        traceRelayRequest(cloudMintCredentialHandler(dependencies, payload)),
       );
   }),
 );

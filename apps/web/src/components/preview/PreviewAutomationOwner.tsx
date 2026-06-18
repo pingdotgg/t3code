@@ -1,6 +1,6 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
@@ -11,17 +11,39 @@ import type {
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useId, useRef } from "react";
 
-import { ensureEnvironmentApi } from "~/environmentApi";
-import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  readThreadPreviewState,
+  subscribeThreadPreviewState,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
-import {
-  startBrowserRecording,
-  stopBrowserRecording,
-  useBrowserRecordingStore,
-} from "~/browser/browserRecording";
+import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
+import { previewEnvironment } from "~/state/preview";
+import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentConnectionState } from "~/state/environments";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
+
+export function observeAutomationOwnerConnectedGeneration(
+  previousGeneration: number | null,
+  connectedGeneration: number | null,
+): {
+  readonly nextGeneration: number | null;
+  readonly shouldReport: boolean;
+} {
+  if (connectedGeneration === null) {
+    return {
+      nextGeneration: previousGeneration,
+      shouldReport: false,
+    };
+  }
+  return {
+    nextGeneration: connectedGeneration,
+    shouldReport: previousGeneration !== null && previousGeneration !== connectedGeneration,
+  };
+}
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -29,7 +51,7 @@ const waitForDesktopOverlay = async (
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, threadRef);
+    const state = readThreadPreviewState(threadRef);
     const tabId = state.snapshot?.tabId;
     if (tabId && state.desktopOverlay && previewBridge) {
       const status = await previewBridge.automation.status(tabId);
@@ -70,7 +92,7 @@ const currentStatus = async (
   threadRef: ScopedThreadRef,
   visible: boolean,
 ): Promise<PreviewAutomationStatus> => {
-  const state = selectThreadPreviewState(usePreviewStateStore.getState().byThreadKey, threadRef);
+  const state = readThreadPreviewState(threadRef);
   const tabId = state.snapshot?.tabId ?? null;
   if (tabId && previewBridge && state.desktopOverlay) {
     const status = await previewBridge.automation.status(tabId);
@@ -113,7 +135,32 @@ export function PreviewAutomationOwner(props: {
 }) {
   const { threadRef, visible } = props;
   const automationClientId = useId();
+  const automationRequests = useEnvironmentQuery(
+    previewEnvironment.automationRequests({
+      environmentId: threadRef.environmentId,
+      input: { clientId: automationClientId },
+    }),
+  );
+  const connectionState = useEnvironmentConnectionState(threadRef.environmentId).data;
+  const connectedGeneration =
+    connectionState?.phase === "connected" ? connectionState.generation : null;
+  const open = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
+  const respondToAutomation = useAtomCommand(
+    previewEnvironment.respondToAutomation,
+    "preview automation response",
+  );
+  const reportAutomationOwner = useAtomCommand(
+    previewEnvironment.reportAutomationOwner,
+    "preview automation owner report",
+  );
+  const clearAutomationOwner = useAtomCommand(
+    previewEnvironment.clearAutomationOwner,
+    "preview automation owner clear",
+  );
   const ownerStateRef = useRef({ threadRef, visible });
+  const connectedGenerationRef = useRef<number | null>(null);
   const handlerRef = useRef<(request: PreviewAutomationRequest) => Promise<unknown>>(
     async () => undefined,
   );
@@ -128,11 +175,7 @@ export function PreviewAutomationOwner(props: {
         error.name = "PreviewAutomationUnavailableError";
         throw error;
       }
-      const api = ensureEnvironmentApi(threadRef.environmentId);
-      const state = selectThreadPreviewState(
-        usePreviewStateStore.getState().byThreadKey,
-        threadRef,
-      );
+      const state = readThreadPreviewState(threadRef);
       const tabId = request.tabId ?? state.snapshot?.tabId ?? null;
       switch (request.operation) {
         case "status":
@@ -142,11 +185,18 @@ export function PreviewAutomationOwner(props: {
           let activeTabId =
             (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
           if (!activeTabId) {
-            const snapshot = await api.preview.open({
-              threadId: threadRef.threadId,
-              ...(input.url ? { url: input.url } : {}),
+            const result = await open({
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                ...(input.url ? { url: input.url } : {}),
+              },
             });
-            usePreviewStateStore.getState().applyServerSnapshot(threadRef, snapshot);
+            if (result._tag === "Failure") {
+              throw squashAtomCommandFailure(result);
+            }
+            const snapshot = result.value;
+            applyPreviewServerSnapshot(threadRef, snapshot);
             activeTabId = snapshot.tabId;
           } else if (input.url && previewBridge) {
             await previewBridge.navigate(activeTabId, input.url);
@@ -213,11 +263,11 @@ export function PreviewAutomationOwner(props: {
           );
         case "recordingStart": {
           if (!tabId) throw new Error("Preview tab is not initialized.");
-          await startBrowserRecording(tabId);
+          const startedAt = await startBrowserRecording(tabId);
           return {
             tabId,
             recording: true,
-            startedAt: useBrowserRecordingStore.getState().startedAt,
+            startedAt,
           };
         }
         case "recordingStop": {
@@ -228,84 +278,93 @@ export function PreviewAutomationOwner(props: {
         }
       }
     },
-    [threadRef, visible],
+    [open, threadRef, visible],
   );
   useEffect(() => {
     handlerRef.current = handleRequest;
   }, [handleRequest]);
 
   useEffect(() => {
-    const api = ensureEnvironmentApi(threadRef.environmentId);
-    return api.preview.automation.connect(
-      { clientId: automationClientId },
-      (request) => {
-        void handlerRef.current(request).then(
-          (result) =>
-            api.preview.automation.respond({
-              requestId: request.requestId,
-              ok: true,
-              ...(result === undefined ? {} : { result }),
-            }),
-          (error) =>
-            api.preview.automation.respond({
-              requestId: request.requestId,
-              ok: false,
-              error: serializeError(error),
-            }),
-        );
-      },
-      {
-        onResubscribe: () => {
-          const ownerState = ownerStateRef.current;
-          const state = selectThreadPreviewState(
-            usePreviewStateStore.getState().byThreadKey,
-            ownerState.threadRef,
-          );
-          void api.preview.automation.reportOwner({
-            clientId: automationClientId,
-            environmentId: ownerState.threadRef.environmentId,
-            threadId: ownerState.threadRef.threadId,
-            tabId: state.snapshot?.tabId ?? null,
-            visible: ownerState.visible,
-            supportsAutomation: Boolean(previewBridge?.automation),
-            focusedAt: new Date().toISOString(),
-          });
-        },
-      },
+    const request = automationRequests.data;
+    if (!request) return;
+    void handlerRef.current(request).then(
+      (result) =>
+        respondToAutomation({
+          environmentId: threadRef.environmentId,
+          input: {
+            requestId: request.requestId,
+            ok: true,
+            ...(result === undefined ? {} : { result }),
+          },
+        }),
+      (error) =>
+        respondToAutomation({
+          environmentId: threadRef.environmentId,
+          input: {
+            requestId: request.requestId,
+            ok: false,
+            error: serializeError(error),
+          },
+        }),
     );
-  }, [automationClientId, threadRef.environmentId]);
+  }, [automationRequests.data, respondToAutomation, threadRef.environmentId]);
 
   useEffect(() => {
-    const api = ensureEnvironmentApi(threadRef.environmentId);
-    const report = () => {
-      const state = selectThreadPreviewState(
-        usePreviewStateStore.getState().byThreadKey,
-        threadRef,
-      );
-      void api.preview.automation.reportOwner({
+    const observation = observeAutomationOwnerConnectedGeneration(
+      connectedGenerationRef.current,
+      connectedGeneration,
+    );
+    connectedGenerationRef.current = observation.nextGeneration;
+    if (!observation.shouldReport) return;
+
+    const ownerState = ownerStateRef.current;
+    const state = readThreadPreviewState(ownerState.threadRef);
+    void reportAutomationOwner({
+      environmentId: ownerState.threadRef.environmentId,
+      input: {
         clientId: automationClientId,
-        environmentId: threadRef.environmentId,
-        threadId: threadRef.threadId,
+        environmentId: ownerState.threadRef.environmentId,
+        threadId: ownerState.threadRef.threadId,
         tabId: state.snapshot?.tabId ?? null,
-        visible,
+        visible: ownerState.visible,
         supportsAutomation: Boolean(previewBridge?.automation),
         focusedAt: new Date().toISOString(),
+      },
+    });
+  }, [automationClientId, connectedGeneration, reportAutomationOwner]);
+
+  useEffect(() => {
+    const report = () => {
+      const state = readThreadPreviewState(threadRef);
+      void reportAutomationOwner({
+        environmentId: threadRef.environmentId,
+        input: {
+          clientId: automationClientId,
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          tabId: state.snapshot?.tabId ?? null,
+          visible,
+          supportsAutomation: Boolean(previewBridge?.automation),
+          focusedAt: new Date().toISOString(),
+        },
       });
     };
     report();
     window.addEventListener("focus", report);
-    const unsubscribe = usePreviewStateStore.subscribe((state, previous) => {
-      const key = scopedThreadKey(threadRef);
-      if (state.byThreadKey[key]?.snapshot?.tabId !== previous.byThreadKey[key]?.snapshot?.tabId) {
+    const unsubscribe = subscribeThreadPreviewState(threadRef, (state, previous) => {
+      if (state.snapshot?.tabId !== previous.snapshot?.tabId) {
         report();
       }
     });
     return () => {
       window.removeEventListener("focus", report);
       unsubscribe();
-      void api.preview.automation.clearOwner({ clientId: automationClientId });
+      void clearAutomationOwner({
+        environmentId: threadRef.environmentId,
+        input: { clientId: automationClientId },
+      });
     };
-  }, [automationClientId, threadRef, visible]);
+  }, [automationClientId, clearAutomationOwner, reportAutomationOwner, threadRef, visible]);
 
   return null;
 }
