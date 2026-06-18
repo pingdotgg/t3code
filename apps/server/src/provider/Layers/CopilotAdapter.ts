@@ -107,10 +107,8 @@ type PlanStep = {
 };
 
 interface CopilotTaskState {
-  readonly id: string;
   description: string;
   status: CopilotTaskStatus;
-  taskType: string | undefined;
 }
 
 export interface CopilotAdapterLiveOptions {
@@ -909,13 +907,6 @@ function truncateSingleLine(value: string, max = 120): string {
   return `${singleLine.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
 }
 
-function startedToolDetail(toolMeta: ToolMeta | undefined): string | undefined {
-  if (toolMeta?.itemType === "command_execution") {
-    return trimOrUndefined(toolMeta.command);
-  }
-  return undefined;
-}
-
 function normalizedToolCompletionDetail(
   toolMeta: ToolMeta | undefined,
   detail: string | undefined,
@@ -1618,8 +1609,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context: CopilotSessionContext,
     pending: PendingPermissionBinding,
     data: SessionPermissionRequestedEvent["data"],
-  ): Effect.Effect<void> =>
-    emit({
+  ): Effect.Effect<void> => {
+    const detail = permissionDetail(data.permissionRequest);
+    return emit({
       ...createBaseEvent({
         threadId: context.threadId,
         turnId: pending.turnId,
@@ -1638,12 +1630,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       type: "request.opened",
       payload: {
         requestType: pending.requestType,
-        ...(permissionDetail(data.permissionRequest)
-          ? { detail: permissionDetail(data.permissionRequest) }
-          : {}),
+        ...(detail ? { detail } : {}),
         args: data.permissionRequest,
       },
     });
+  };
 
   const emitPermissionRequestResolved = (
     context: CopilotSessionContext,
@@ -1841,6 +1832,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const completedStatus = completedCopilotTaskStatus(task.status);
         if (completedStatus && previous?.status !== task.status) {
+          const summary = copilotTaskCompletionSummary(task);
           yield* emit({
             ...createBaseEvent({
               threadId: context.threadId,
@@ -1851,17 +1843,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             payload: {
               taskId: runtimeTaskId,
               status: completedStatus,
-              ...(copilotTaskCompletionSummary(task)
-                ? { summary: copilotTaskCompletionSummary(task) }
-                : {}),
+              ...(summary ? { summary } : {}),
             },
           });
         }
         context.copilotTasks.set(taskId, {
-          id: taskId,
           description,
           status: task.status,
-          taskType,
         });
       }
       const plan = planStepsFromCopilotTasks(taskList.tasks);
@@ -2540,7 +2528,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             itemType,
             status: "inProgress",
             title: toolLifecycleTitle(toolMeta),
-            ...(startedToolDetail(toolMeta) ? { detail: startedToolDetail(toolMeta) } : {}),
+            ...(toolMeta.itemType === "command_execution" && toolMeta.command
+              ? { detail: toolMeta.command }
+              : {}),
             data: toolLifecycleData({
               toolCallId: event.data.toolCallId,
               toolMeta,
