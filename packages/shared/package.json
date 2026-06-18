@@ -67,10 +67,6 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
-    "./providerToolClassification": {
-      "types": "./src/providerToolClassification.ts",
-      "import": "./src/providerToolClassification.ts"
-    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
