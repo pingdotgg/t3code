@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -33,6 +33,19 @@ function normalizeTestError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
+function isStreamingAssistantEvent(event: OrchestrationV2DomainEvent): boolean {
+  switch (event.type) {
+    case "node.updated":
+      return event.payload.kind === "assistant_message" && event.payload.status === "running";
+    case "message.updated":
+      return event.payload.role === "assistant" && event.payload.streaming;
+    case "turn-item.updated":
+      return event.payload.type === "assistant_message" && event.payload.streaming;
+    default:
+      return false;
+  }
+}
+
 const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   Transcript extends ProviderReplayTranscript,
   Error,
@@ -41,6 +54,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   readonly buildInput: () => OrchestratorFixtureInput;
   readonly provider: ProviderOrchestratorReplayVariant;
   readonly harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>;
+  readonly enableAssistantStreaming?: boolean;
 }) {
   const rawTranscript = yield* readTranscript(input.provider.transcriptFile);
   const transcript = yield* input.harness.decodeTranscript(rawTranscript);
@@ -62,23 +76,31 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     },
   };
 
-  const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness).pipe(
-    provideDeterministicTestRuntime,
-  );
+  const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness, {
+    enableAssistantStreaming: input.enableAssistantStreaming ?? false,
+  }).pipe(provideDeterministicTestRuntime);
 
   input.provider.assertOutput(result, transcript);
+  if (input.enableAssistantStreaming !== true) {
+    assert.isFalse(
+      result.domainEvents.some(isStreamingAssistantEvent),
+      "buffered delivery must not persist streaming assistant artifacts",
+    );
+  }
   const projectionThreadId = materialized.projectionThreadIds[0];
   assert.isDefined(projectionThreadId);
   const projection = result.projections.get(projectionThreadId);
   assert.isDefined(projection);
   const latestRun = projection.runs.at(-1);
   assert.deepEqual(latestRun?.modelSelection, input.provider.modelSelection);
+  return result;
 });
 
 function runFixtureProviderWithRegisteredHarness(input: {
   readonly fixtureName: string;
   readonly buildInput: () => OrchestratorFixtureInput;
   readonly provider: ProviderOrchestratorReplayVariant;
+  readonly enableAssistantStreaming?: boolean;
 }) {
   switch (input.provider.provider) {
     case "codex":
@@ -130,6 +152,32 @@ describe("orchestrator replay fixtures", () => {
         fixtureName: "message_steering",
         buildInput: messageRestartInput,
         provider: cursorSteeringProvider,
+      }),
+    );
+  }
+
+  const simpleFixture = ORCHESTRATOR_REPLAY_FIXTURES.find((fixture) => fixture.name === "simple");
+  const simpleCursorProvider = simpleFixture?.providers.find(
+    (provider) => provider.provider === "cursor",
+  );
+  if (simpleFixture !== undefined && simpleCursorProvider !== undefined) {
+    it.effect("streams Cursor assistant artifacts only when streaming is enabled", () =>
+      Effect.gen(function* () {
+        const result = yield* runFixtureProviderWithRegisteredHarness({
+          fixtureName: "simple-cursor-streaming",
+          buildInput: simpleFixture.buildInput,
+          provider: simpleCursorProvider,
+          enableAssistantStreaming: true,
+        });
+
+        assert.deepEqual(
+          Array.from(
+            new Set(
+              result.domainEvents.filter(isStreamingAssistantEvent).map((event) => event.type),
+            ),
+          ).toSorted(),
+          ["message.updated", "node.updated", "turn-item.updated"],
+        );
       }),
     );
   }
