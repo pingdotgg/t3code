@@ -21,10 +21,12 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { ServerSettingsService } from "../serverSettings.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
 import type {
+  ProviderAdapterV2Event,
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
@@ -97,13 +99,37 @@ export class RunExecutionServiceV2 extends Context.Service<
   RunExecutionServiceV2Shape
 >()("t3/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
 
+export function shouldDeliverProviderEvent(
+  event: ProviderAdapterV2Event,
+  assistantStreamingEnabled: boolean,
+): boolean {
+  if (assistantStreamingEnabled) {
+    return true;
+  }
+
+  switch (event.type) {
+    case "node.updated":
+      return event.node.kind !== "assistant_message" || event.node.status !== "running";
+    case "message.updated":
+      return event.message.role !== "assistant" || !event.message.streaming;
+    case "turn_item.updated":
+      return event.turnItem.type !== "assistant_message" || !event.turnItem.streaming;
+    default:
+      return true;
+  }
+}
+
 /**
  * IMPLEMENTATIONS
  */
 export const layer: Layer.Layer<
   RunExecutionServiceV2,
   never,
-  CheckpointServiceV2 | EventSinkV2 | IdAllocatorV2 | ProviderEventIngestorV2
+  | CheckpointServiceV2
+  | EventSinkV2
+  | IdAllocatorV2
+  | ProviderEventIngestorV2
+  | ServerSettingsService
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -111,6 +137,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSinkV2;
     const idAllocator = yield* IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestorV2;
+    const serverSettings = yield* ServerSettingsService;
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -286,6 +313,17 @@ export const layer: Layer.Layer<
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
         Effect.gen(function* () {
+          const assistantStreamingEnabled = yield* serverSettings.getSettings.pipe(
+            Effect.map((settings) => settings.enableAssistantStreaming),
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+            ),
+          );
           const terminalStatus = yield* Ref.make<Extract<
             OrchestrationV2Run["status"],
             "completed" | "interrupted" | "failed" | "cancelled"
@@ -295,13 +333,15 @@ export const layer: Layer.Layer<
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
               Effect.gen(function* () {
-                yield* providerEventIngestor.ingestNormalized({
-                  providerSessionId: input.providerSessionId,
-                  threadId: input.run.threadId,
-                  runId: input.run.id,
-                  nodeId: input.rootNode.id,
-                  event,
-                });
+                if (shouldDeliverProviderEvent(event, assistantStreamingEnabled)) {
+                  yield* providerEventIngestor.ingestNormalized({
+                    providerSessionId: input.providerSessionId,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    event,
+                  });
+                }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id) {
                     yield* Ref.set(latestProviderThread, event.providerThread);

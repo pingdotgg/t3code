@@ -28,8 +28,19 @@ export function assertToolCallReadOnlyCursorOutput(
   assertAssistantTextIncludes(projection, "read only tool fixture complete");
   assertRuntimeRequestCounts(projection, { total: 0 });
 
+  const assistantMessages = projection.turnItems.filter(
+    (item) => item.type === "assistant_message",
+  );
+  assert.deepEqual(
+    assistantMessages.map((item) => item.text),
+    ["Reading both files now.\n", "read only tool fixture complete"],
+    "Cursor progress text and the final response must be separate messages",
+  );
+
   const fileSearches = projection.turnItems.filter((item) => item.type === "file_search");
   assert.lengthOf(fileSearches, 2);
+  assert.isBelow(assistantMessages[0]?.ordinal ?? Infinity, fileSearches[0]?.ordinal ?? -Infinity);
+  assert.isBelow(fileSearches[1]?.ordinal ?? Infinity, assistantMessages[1]?.ordinal ?? -Infinity);
   assert.isTrue(
     fileSearches.some((item) =>
       JSON.stringify(item.results ?? []).includes("cursor-read-only-fixture"),
