@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
+  type ContextMenuStyle,
   type DesktopUpdateChannel,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -100,6 +101,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const CONTEXT_MENU_STYLE_LABELS = {
+  default: "Default",
+  native: "Native",
+  custom: "Custom",
+} as const satisfies Record<ContextMenuStyle, string>;
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -395,6 +402,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.contextMenuStyle !== DEFAULT_UNIFIED_SETTINGS.contextMenuStyle
+        ? ["Context menu style"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -434,6 +444,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.contextMenuStyle,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
       settings.diffWordWrap,
@@ -458,6 +469,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      contextMenuStyle: DEFAULT_UNIFIED_SETTINGS.contextMenuStyle,
       diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -588,6 +600,48 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Context menus"
+          description="Default uses native desktop menus on macOS and custom menus elsewhere."
+          resetAction={
+            settings.contextMenuStyle !== DEFAULT_UNIFIED_SETTINGS.contextMenuStyle ? (
+              <SettingResetButton
+                label="context menu style"
+                onClick={() =>
+                  updateSettings({
+                    contextMenuStyle: DEFAULT_UNIFIED_SETTINGS.contextMenuStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.contextMenuStyle}
+              onValueChange={(value) => {
+                if (value === "default" || value === "native" || value === "custom") {
+                  updateSettings({ contextMenuStyle: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Context menu style">
+                <SelectValue>{CONTEXT_MENU_STYLE_LABELS[settings.contextMenuStyle]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="default">
+                  {CONTEXT_MENU_STYLE_LABELS.default}
+                </SelectItem>
+                <SelectItem hideIndicator value="native">
+                  {CONTEXT_MENU_STYLE_LABELS.native}
+                </SelectItem>
+                <SelectItem hideIndicator value="custom">
+                  {CONTEXT_MENU_STYLE_LABELS.custom}
                 </SelectItem>
               </SelectPopup>
             </Select>
