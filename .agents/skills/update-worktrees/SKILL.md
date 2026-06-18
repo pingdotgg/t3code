@@ -7,7 +7,7 @@ Study @CUSTOMIZED.md. Assume the `main` branch of the `upstream` remote has been
 
 The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches.
 
-To achieve this goal, your task is to instruct new five-high subagents, one for each worktree, to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
+To achieve this goal, your task is to instruct new <five-high> subagents, one for each worktree, to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
 
 Each subagent should know about their own branch's customizations; provide them directly with details taken from CUSTOMIZED.md as that particular file does not exist in each individual branch, including the name of the corresponding md file in their own branch to study if there is one.
 
