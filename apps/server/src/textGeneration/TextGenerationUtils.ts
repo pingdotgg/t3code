@@ -1,6 +1,13 @@
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import type {
+  BranchNameGenerationResult,
+  CommitMessageGenerationResult,
+  PrContentGenerationResult,
+  ThreadTitleGenerationResult,
+} from "./TextGeneration.ts";
+
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
@@ -61,6 +68,53 @@ export function sanitizeThreadTitle(raw: string): string {
   }
 
   return `${normalized.slice(0, 47).trimEnd()}...`;
+}
+
+type BranchSanitizer = (raw: string) => string;
+
+export function makeCommitMessageGenerationResult(input: {
+  readonly generated: {
+    readonly subject: string;
+    readonly body: string;
+    readonly branch?: unknown;
+  };
+  readonly includeBranch: boolean;
+  readonly sanitizeBranch: BranchSanitizer;
+}): CommitMessageGenerationResult {
+  return {
+    subject: sanitizeCommitSubject(input.generated.subject),
+    body: input.generated.body.trim(),
+    ...(input.includeBranch && typeof input.generated.branch === "string"
+      ? { branch: input.sanitizeBranch(input.generated.branch) }
+      : {}),
+  };
+}
+
+export function makePrContentGenerationResult(input: {
+  readonly title: string;
+  readonly body: string;
+}): PrContentGenerationResult {
+  return {
+    title: sanitizePrTitle(input.title),
+    body: input.body.trim(),
+  };
+}
+
+export function makeBranchNameGenerationResult(
+  input: { readonly branch: string },
+  sanitizeBranch: BranchSanitizer,
+): BranchNameGenerationResult {
+  return {
+    branch: sanitizeBranch(input.branch),
+  };
+}
+
+export function makeThreadTitleGenerationResult(input: {
+  readonly title: string;
+}): ThreadTitleGenerationResult {
+  return {
+    title: sanitizeThreadTitle(input.title),
+  };
 }
 
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */

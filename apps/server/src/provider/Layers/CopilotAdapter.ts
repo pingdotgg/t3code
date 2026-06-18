@@ -50,6 +50,14 @@ import {
   classifyCopilotToolItemType,
   isReadOnlyCopilotToolName,
 } from "./CopilotToolClassification.ts";
+import {
+  commandLooksLikeCopilotPatchEdit,
+  extractCopilotApplyPatchEdit,
+  hasCopilotApplyPatchEdit,
+  hasPatchHeaderShape,
+  hasUnifiedDiffShape,
+  stripCopilotShellCompletionControlLines,
+} from "./CopilotPatchDetection.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("copilot");
@@ -64,6 +72,8 @@ type CopilotUserInputResponse = Awaited<
   ReturnType<NonNullable<SessionConfig["onUserInputRequest"]>>
 >;
 type SessionPermissionRequestedEvent = Extract<SessionEvent, { type: "permission.requested" }>;
+type SessionStartedEvent = Extract<SessionEvent, { type: "session.start" }>;
+type SessionResumedEvent = Extract<SessionEvent, { type: "session.resume" }>;
 type SessionUserInputRequestedEvent = Extract<SessionEvent, { type: "user_input.requested" }>;
 type SessionUserInputCompletedEvent = Extract<SessionEvent, { type: "user_input.completed" }>;
 type SessionPermissionRequest = SessionPermissionRequestedEvent["data"]["permissionRequest"];
@@ -338,14 +348,6 @@ function appendTurnItem(
     return;
   }
   ensureTurnSnapshot(context, turnId).items.push(item);
-}
-
-function assistantItemIdsForContext(context: CopilotSessionContext): Map<TurnId, string> {
-  const mutable = context as CopilotSessionContext & {
-    assistantItemIdByTurnId?: Map<TurnId, string>;
-  };
-  mutable.assistantItemIdByTurnId ??= new Map();
-  return mutable.assistantItemIdByTurnId;
 }
 
 function processError(
@@ -682,71 +684,6 @@ function isApplyPatchTool(toolName: string | undefined): boolean {
   return toolName?.toLowerCase().replace(/[\s_-]+/g, "") === "applypatch";
 }
 
-function commandLooksLikePatchEdit(command: string | undefined): boolean {
-  if (!command) {
-    return false;
-  }
-  return /(?:^|\s)apply_patch(?:\s|$)/u.test(command) || command.includes("*** Begin Patch");
-}
-
-function hasApplyPatchEdit(detail: string): boolean {
-  return extractApplyPatchEdit(detail) !== undefined;
-}
-
-function extractApplyPatchEdit(detail: string | undefined): string | undefined {
-  const normalized = trimOrUndefined(detail?.replace(/\r\n/g, "\n"));
-  if (!normalized) {
-    return undefined;
-  }
-  const beginIndex = normalized.indexOf("*** Begin Patch");
-  if (beginIndex < 0) {
-    return undefined;
-  }
-  const lines = normalized.slice(beginIndex).split("\n");
-  if (lines[0]?.trim() !== "*** Begin Patch") {
-    return undefined;
-  }
-  const patchLines: Array<string> = [];
-  for (const line of lines) {
-    patchLines.push(line);
-    if (line.trim() === "*** End Patch") {
-      break;
-    }
-  }
-  if (patchLines.at(-1)?.trim() !== "*** End Patch") {
-    return undefined;
-  }
-  const patch = patchLines.join("\n").trim();
-  return patch.includes("\n*** Update File: ") ||
-    patch.includes("\n*** Add File: ") ||
-    patch.includes("\n*** Delete File: ") ||
-    patch.includes("\n*** Move to: ")
-    ? patch
-    : undefined;
-}
-
-const SHELL_COMPLETION_CONTROL_LINE_PATTERN = /^<shellId: [^>]+ completed with exit code \d+>$/;
-
-function stripShellCompletionControlLines(detail: string): string {
-  return detail
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .filter((line) => !SHELL_COMPLETION_CONTROL_LINE_PATTERN.test(line.trim()))
-    .join("\n")
-    .trim();
-}
-
-function hasUnifiedDiffShape(detail: string): boolean {
-  return (
-    detail.includes("diff --git ") ||
-    /(?:^|\n)--- [^\n]+\n\+\+\+ [^\n]+\n@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/u.test(detail)
-  );
-}
-
-function hasPatchHeaderShape(detail: string): boolean {
-  return /(?:^|\n)--- [^\n]+\n\+\+\+ [^\n]+/u.test(detail);
-}
-
 function completedToolDiffText(
   toolMeta: ToolMeta | undefined,
   detail: string | undefined,
@@ -756,7 +693,7 @@ function completedToolDiffText(
     return undefined;
   }
   const applyPatchDiff =
-    extractApplyPatchEdit(normalized) ?? extractApplyPatchEdit(toolMeta?.command);
+    extractCopilotApplyPatchEdit(normalized) ?? extractCopilotApplyPatchEdit(toolMeta?.command);
   if (isApplyPatchTool(toolMeta?.toolName)) {
     return applyPatchDiff;
   }
@@ -766,7 +703,7 @@ function completedToolDiffText(
   if (toolMeta?.itemType !== "command_execution" && toolMeta?.itemType !== "file_change") {
     return undefined;
   }
-  const diffCandidate = stripShellCompletionControlLines(normalized);
+  const diffCandidate = stripCopilotShellCompletionControlLines(normalized);
   if (!hasUnifiedDiffShape(diffCandidate)) {
     return undefined;
   }
@@ -957,7 +894,7 @@ function toolLifecycleTitle(toolMeta: ToolMeta | undefined): string {
     return command ? `Ran command: ${truncateSingleLine(command, 96)}` : "Ran command";
   }
   if (toolMeta?.itemType === "file_change") {
-    return isApplyPatchTool(toolMeta.toolName) || commandLooksLikePatchEdit(toolMeta.command)
+    return isApplyPatchTool(toolMeta.toolName) || commandLooksLikeCopilotPatchEdit(toolMeta.command)
       ? "Applied patch"
       : (toolMeta.toolName ?? "Updated files");
   }
@@ -988,7 +925,7 @@ function normalizedToolCompletionDetail(
     return undefined;
   }
   if (toolMeta?.itemType === "command_execution") {
-    const withoutControlLines = stripShellCompletionControlLines(normalized);
+    const withoutControlLines = stripCopilotShellCompletionControlLines(normalized);
     return trimOrUndefined(withoutControlLines);
   }
   return normalized;
@@ -1558,7 +1495,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     const hasParsedFiles = parseTurnDiffFilesFromUnifiedDiff(normalizedDiff).length > 0;
     if (
       !hasParsedFiles &&
-      !hasApplyPatchEdit(normalizedDiff) &&
+      !hasCopilotApplyPatchEdit(normalizedDiff) &&
       !hasUnifiedDiffShape(normalizedDiff) &&
       !hasPatchHeaderShape(normalizedDiff)
     ) {
@@ -1616,7 +1553,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
     if (input.itemType === "assistant_message" && input.streamKind === "assistant_text") {
       input.context.turnIdsWithAssistantText.add(input.turnId);
-      assistantItemIdsForContext(input.context).set(input.turnId, input.itemId);
+      input.context.assistantItemIdByTurnId.set(input.turnId, input.itemId);
     }
     await emitAsync({
       ...createBaseEvent({
@@ -1673,7 +1610,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       messageId: itemId,
       content,
     });
-    assistantItemIdsForContext(context).set(turnId, itemId);
+    context.assistantItemIdByTurnId.set(turnId, itemId);
     context.turnIdsWithAssistantText.add(turnId);
   };
 
@@ -2051,118 +1988,90 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       });
     });
 
+  const emitSessionReadyEvents = async (input: {
+    readonly context: CopilotSessionContext;
+    readonly event: SessionStartedEvent | SessionResumedEvent;
+    readonly sessionId: string;
+    readonly message: string;
+    readonly stateReason: string;
+  }): Promise<void> => {
+    const resumeCursor = toCopilotResumeCursor(input.sessionId);
+    updateProviderSession(input.context, {
+      status: "ready",
+      model: trimOrUndefined(input.event.data.selectedModel) ?? input.context.session.model,
+      ...(input.event.data.context?.cwd ? { cwd: input.event.data.context.cwd } : {}),
+      resumeCursor,
+    });
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        raw: input.event,
+      }),
+      type: "session.started",
+      payload: {
+        message: input.message,
+        resume: resumeCursor,
+      },
+    });
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        raw: input.event,
+      }),
+      type: "session.configured",
+      payload: {
+        config: {
+          model: input.event.data.selectedModel ?? null,
+          reasoningEffort: input.event.data.reasoningEffort ?? null,
+          cwd: input.event.data.context?.cwd ?? input.context.cwd,
+        },
+      },
+    });
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        raw: input.event,
+      }),
+      type: "session.state.changed",
+      payload: {
+        state: "ready",
+        reason: input.stateReason,
+      },
+    });
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        raw: input.event,
+      }),
+      type: "thread.started",
+      payload: {
+        providerThreadId: input.sessionId,
+      },
+    });
+  };
+
   const handleSdkEvent = async (
     context: CopilotSessionContext,
     event: SessionEvent,
   ): Promise<void> => {
     switch (event.type) {
       case "session.start": {
-        updateProviderSession(context, {
-          status: "ready",
-          model: trimOrUndefined(event.data.selectedModel) ?? context.session.model,
-          ...(event.data.context?.cwd ? { cwd: event.data.context.cwd } : {}),
-          resumeCursor: toCopilotResumeCursor(event.data.sessionId),
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.started",
-          payload: {
-            message: "Copilot session started.",
-            resume: toCopilotResumeCursor(event.data.sessionId),
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.configured",
-          payload: {
-            config: {
-              model: event.data.selectedModel ?? null,
-              reasoningEffort: event.data.reasoningEffort ?? null,
-              cwd: event.data.context?.cwd ?? context.cwd,
-            },
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.state.changed",
-          payload: {
-            state: "ready",
-            reason: "Copilot session ready",
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "thread.started",
-          payload: {
-            providerThreadId: event.data.sessionId,
-          },
+        await emitSessionReadyEvents({
+          context,
+          event,
+          sessionId: event.data.sessionId,
+          message: "Copilot session started.",
+          stateReason: "Copilot session ready",
         });
         return;
       }
       case "session.resume": {
-        updateProviderSession(context, {
-          status: "ready",
-          model: trimOrUndefined(event.data.selectedModel) ?? context.session.model,
-          ...(event.data.context?.cwd ? { cwd: event.data.context.cwd } : {}),
-          resumeCursor: toCopilotResumeCursor(context.sdkSession.sessionId),
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.started",
-          payload: {
-            message: "Copilot session resumed.",
-            resume: toCopilotResumeCursor(context.sdkSession.sessionId),
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.configured",
-          payload: {
-            config: {
-              model: event.data.selectedModel ?? null,
-              reasoningEffort: event.data.reasoningEffort ?? null,
-              cwd: event.data.context?.cwd ?? context.cwd,
-            },
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "session.state.changed",
-          payload: {
-            state: "ready",
-            reason: "Copilot session resumed",
-          },
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "thread.started",
-          payload: {
-            providerThreadId: context.sdkSession.sessionId,
-          },
+        await emitSessionReadyEvents({
+          context,
+          event,
+          sessionId: context.sdkSession.sessionId,
+          message: "Copilot session resumed.",
+          stateReason: "Copilot session resumed",
         });
         return;
       }
@@ -2431,7 +2340,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
-        assistantItemIdsForContext(context).set(turnId, itemId);
+        context.assistantItemIdByTurnId.set(turnId, itemId);
         await emitTextDelta({
           context,
           turnId,
@@ -2456,7 +2365,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
-        assistantItemIdsForContext(context).set(turnId, itemId);
+        context.assistantItemIdByTurnId.set(turnId, itemId);
         await emitTextDelta({
           context,
           turnId,
