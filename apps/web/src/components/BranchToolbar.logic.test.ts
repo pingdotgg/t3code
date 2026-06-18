@@ -82,6 +82,29 @@ describe("resolveBranchToolbarValue", () => {
       }),
     ).toBe("main");
   });
+
+  it("falls back to the thread branch while local status is still loading", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: null,
+      }),
+    ).toBe("feature/base");
+  });
+
+  it("does not cling to a deleted thread branch when the checkout is detached", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "throwaway/repro-error",
+        currentGitBranch: null,
+        isDetachedCheckout: true,
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("resolveEnvironmentOptionLabel", () => {

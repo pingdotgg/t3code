@@ -16,7 +16,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
-import { useVcsStatus } from "../lib/vcsStatusState";
+import { refreshVcsStatus, useVcsStatus } from "../lib/vcsStatusState";
 import { useVcsRefs, vcsRefManager } from "../lib/vcsRefState";
 import { newCommandId } from "../lib/utils";
 import { cn } from "../lib/utils";
@@ -220,6 +220,11 @@ export function BranchToolbarBranchSelector({
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  // Git reports an in-repo checkout with no branch (detached HEAD) — e.g. the
+  // thread's branch was deleted externally. Only trust this once status data has
+  // loaded, so we don't flash "Select ref" while the initial status is pending.
+  const isDetachedCheckout =
+    branchStatusQuery.data?.isRepo === true && (branchStatusQuery.data?.refName ?? null) === null;
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(branchStatusQuery.data?.sourceControlProvider),
     [branchStatusQuery.data?.sourceControlProvider],
@@ -230,6 +235,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
+    isDetachedCheckout,
   });
   const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
@@ -299,6 +305,7 @@ export function BranchToolbarBranchSelector({
       await vcsRefManager
         .load(branchRefTarget, undefined, { limit: 100, preserveLoadedRefs: true })
         .catch(() => undefined);
+      void refreshVcsStatus({ environmentId, cwd: branchCwd });
     });
   };
 
@@ -413,11 +420,15 @@ export function BranchToolbarBranchSelector({
         setBranchQuery("");
         return;
       }
+      // Reload refs AND status together: opening the picker is the moment to
+      // reconcile with reality, including branch changes made outside the app
+      // (the status stream has no .git watcher, so it won't push those on its own).
       void vcsRefManager
         .load(branchRefTarget, undefined, { limit: 100, preserveLoadedRefs: true })
         .catch(() => undefined);
+      void refreshVcsStatus({ environmentId, cwd: branchCwd });
     },
-    [branchRefTarget],
+    [branchCwd, branchRefTarget, environmentId],
   );
 
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);

@@ -89,10 +89,21 @@ export function resolveBranchToolbarValue(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  /**
+   * True when git authoritatively reports the checkout is on no branch
+   * (detached HEAD) — e.g. the thread's branch was deleted out from under us.
+   * In that case the local-mode trigger must reflect reality instead of
+   * clinging to the now-dangling thread branch.
+   */
+  isDetachedCheckout?: boolean;
 }): string | null {
-  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch, isDetachedCheckout } =
+    input;
   if (envMode === "worktree" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
+  }
+  if (isDetachedCheckout) {
+    return currentGitBranch;
   }
   return currentGitBranch ?? activeThreadBranch;
 }
