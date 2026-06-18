@@ -360,6 +360,57 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("settles the active turn when completion omits turn id", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-missing-completion-id"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-missing-completion-id"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-missing-completion-id",
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-missing-completion-id"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-missing-completion-id"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.latestTurn?.turnId === "turn-missing-completion-id" &&
+        entry.latestTurn?.state === "completed",
+    );
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.latestTurn?.state).toBe("completed");
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";

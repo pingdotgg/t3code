@@ -266,6 +266,62 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
   ),
 );
 
+it.live(
+  "settles session when turn completion arrives without turn id but provider is already settled",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        yield* seedProjectAndThread(harness);
+
+        const turnResponse: TestTurnResponse = {
+          events: [
+            {
+              type: "turn.started",
+              ...runtimeBase("evt-missing-turn-id-1", "2026-02-24T10:00:10.000Z"),
+              threadId: THREAD_ID,
+              turnId: FIXTURE_TURN_ID,
+            },
+            {
+              type: "message.delta",
+              ...runtimeBase("evt-missing-turn-id-2", "2026-02-24T10:00:10.050Z"),
+              threadId: THREAD_ID,
+              turnId: FIXTURE_TURN_ID,
+              delta: "Completion without turn id should still settle.\n",
+            },
+            {
+              type: "turn.completed",
+              ...runtimeBase("evt-missing-turn-id-3", "2026-02-24T10:00:10.100Z"),
+              threadId: THREAD_ID,
+              status: "completed",
+            },
+          ],
+        };
+
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession(turnResponse);
+        yield* startTurn({
+          harness,
+          commandId: "cmd-turn-start-missing-turn-id-completion",
+          messageId: "msg-user-missing-turn-id-completion",
+          text: "Trigger missing completion turn id",
+        });
+
+        const thread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) =>
+            entry.session?.status === "ready" &&
+            entry.latestTurn?.state === "completed" &&
+            entry.messages.some(
+              (message) =>
+                message.role === "assistant" &&
+                message.text === "Completion without turn id should still settle.\n",
+            ),
+        );
+        assert.equal(thread.session?.status, "ready");
+        assert.equal(thread.latestTurn?.state, "completed");
+      }),
+    ),
+);
+
 it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
   "keeps the same Codex provider thread across runtime mode switches",
   () =>
