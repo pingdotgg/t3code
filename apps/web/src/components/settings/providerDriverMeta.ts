@@ -54,6 +54,7 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     value: ProviderDriverKind.make("copilot"),
     label: "GitHub Copilot",
     icon: GithubCopilotIcon,
+    badgeLabel: "Early Access",
     settingsSchema: CopilotSettings,
   },
   {
