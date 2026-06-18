@@ -15,7 +15,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
-import * as TextGeneration from "./TextGeneration.ts";
+import { type BranchNameGenerationInput, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -23,10 +23,11 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
+  makeBranchNameGenerationResult,
+  makeCommitMessageGenerationResult,
+  makePrContentGenerationResult,
+  makeThreadTitleGenerationResult,
   normalizeCliError,
-  sanitizeCommitSubject,
-  sanitizePrTitle,
-  sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -117,7 +118,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle",
-    attachments: TextGeneration.BranchNameGenerationInput["attachments"],
+    attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
       return { imagePaths: [] };
@@ -295,110 +296,104 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     }).pipe(Effect.ensuring(cleanup));
   });
 
-  const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
-    Effect.fn("CodexTextGeneration.generateCommitMessage")(function* (input) {
-      const { prompt, outputSchema } = buildCommitMessagePrompt({
-        branch: input.branch,
-        stagedSummary: input.stagedSummary,
-        stagedPatch: input.stagedPatch,
-        includeBranch: input.includeBranch === true,
-      });
-
-      const generated = yield* runCodexJson({
-        operation: "generateCommitMessage",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        subject: sanitizeCommitSubject(generated.subject),
-        body: generated.body.trim(),
-        ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
-          : {}),
-      };
+  const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = Effect.fn(
+    "CodexTextGeneration.generateCommitMessage",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildCommitMessagePrompt({
+      branch: input.branch,
+      stagedSummary: input.stagedSummary,
+      stagedPatch: input.stagedPatch,
+      includeBranch: input.includeBranch === true,
     });
 
-  const generatePrContent: TextGeneration.TextGeneration["Service"]["generatePrContent"] =
-    Effect.fn("CodexTextGeneration.generatePrContent")(function* (input) {
-      const { prompt, outputSchema } = buildPrContentPrompt({
-        baseBranch: input.baseBranch,
-        headBranch: input.headBranch,
-        commitSummary: input.commitSummary,
-        diffSummary: input.diffSummary,
-        diffPatch: input.diffPatch,
-      });
-
-      const generated = yield* runCodexJson({
-        operation: "generatePrContent",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        title: sanitizePrTitle(generated.title),
-        body: generated.body.trim(),
-      };
+    const generated = yield* runCodexJson({
+      operation: "generateCommitMessage",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
     });
 
-  const generateBranchName: TextGeneration.TextGeneration["Service"]["generateBranchName"] =
-    Effect.fn("CodexTextGeneration.generateBranchName")(function* (input) {
-      const { imagePaths } = yield* materializeImageAttachments(
-        "generateBranchName",
-        input.attachments,
-      );
-      const { prompt, outputSchema } = buildBranchNamePrompt({
-        message: input.message,
-        attachments: input.attachments,
-      });
+    return makeCommitMessageGenerationResult({
+      generated,
+      includeBranch: input.includeBranch === true,
+      sanitizeBranch: sanitizeFeatureBranchName,
+    });
+  });
 
-      const generated = yield* runCodexJson({
-        operation: "generateBranchName",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        imagePaths,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        branch: sanitizeBranchFragment(generated.branch),
-      };
+  const generatePrContent: TextGenerationShape["generatePrContent"] = Effect.fn(
+    "CodexTextGeneration.generatePrContent",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildPrContentPrompt({
+      baseBranch: input.baseBranch,
+      headBranch: input.headBranch,
+      commitSummary: input.commitSummary,
+      diffSummary: input.diffSummary,
+      diffPatch: input.diffPatch,
     });
 
-  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
-    Effect.fn("CodexTextGeneration.generateThreadTitle")(function* (input) {
-      const { imagePaths } = yield* materializeImageAttachments(
-        "generateThreadTitle",
-        input.attachments,
-      );
-      const { prompt, outputSchema } = buildThreadTitlePrompt({
-        message: input.message,
-        attachments: input.attachments,
-      });
-
-      const generated = yield* runCodexJson({
-        operation: "generateThreadTitle",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        imagePaths,
-        modelSelection: input.modelSelection,
-      });
-
-      return {
-        title: sanitizeThreadTitle(generated.title),
-      } satisfies TextGeneration.ThreadTitleGenerationResult;
+    const generated = yield* runCodexJson({
+      operation: "generatePrContent",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
     });
 
+    return makePrContentGenerationResult(generated);
+  });
+
+  const generateBranchName: TextGenerationShape["generateBranchName"] = Effect.fn(
+    "CodexTextGeneration.generateBranchName",
+  )(function* (input) {
+    const { imagePaths } = yield* materializeImageAttachments(
+      "generateBranchName",
+      input.attachments,
+    );
+    const { prompt, outputSchema } = buildBranchNamePrompt({
+      message: input.message,
+      attachments: input.attachments,
+    });
+
+    const generated = yield* runCodexJson({
+      operation: "generateBranchName",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      imagePaths,
+      modelSelection: input.modelSelection,
+    });
+
+    return makeBranchNameGenerationResult(generated, sanitizeBranchFragment);
+  });
+
+  const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
+    "CodexTextGeneration.generateThreadTitle",
+  )(function* (input) {
+    const { imagePaths } = yield* materializeImageAttachments(
+      "generateThreadTitle",
+      input.attachments,
+    );
+    const { prompt, outputSchema } = buildThreadTitlePrompt({
+      message: input.message,
+      attachments: input.attachments,
+    });
+
+    const generated = yield* runCodexJson({
+      operation: "generateThreadTitle",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      imagePaths,
+      modelSelection: input.modelSelection,
+    });
+
+    return makeThreadTitleGenerationResult(generated);
+  });
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGeneration.TextGeneration["Service"];
+  } satisfies TextGenerationShape;
 });
