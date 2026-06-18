@@ -30,6 +30,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { useMarkFirstSeenCompletedThreadsUnread } from "../hooks/useMarkFirstSeenCompletedThreadsUnread";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -317,6 +318,8 @@ function AuthenticatedTracingBootstrap() {
 }
 
 function EventRouter() {
+  useMarkFirstSeenCompletedThreadsUnread();
+
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
