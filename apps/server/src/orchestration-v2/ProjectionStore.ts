@@ -29,6 +29,10 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import {
+  isOrchestrationV2SupersededInterrupt,
+  isOrchestrationV2TurnItemVisible,
+} from "@t3tools/shared/orchestrationV2Timeline";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -167,10 +171,10 @@ export function applyToProjection(
       });
     case "run-attempt.created":
     case "run-attempt.updated":
-      return {
+      return withLocalVisibleTurnItems({
         ...base,
         attempts: upsertById(base.attempts, event.payload),
-      };
+      });
     case "node.updated":
       return {
         ...base,
@@ -423,18 +427,17 @@ function sortMessagesByTurnItemOrder(
   });
 }
 
-function rolledBackRunIds(projection: OrchestrationV2ThreadProjection): ReadonlySet<RunId> {
-  return new Set(
-    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
-  );
-}
-
 function activeLocalTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): Array<OrchestrationV2ProjectedTurnItem> {
-  const rolledBack = rolledBackRunIds(projection);
   return projection.turnItems
-    .filter((item) => item.runId === null || !rolledBack.has(item.runId))
+    .filter((item) =>
+      isOrchestrationV2TurnItemVisible({
+        item,
+        runs: projection.runs,
+        attempts: projection.attempts,
+      }),
+    )
     .map((item, position) => ({
       position,
       visibility: "local" as const,
@@ -524,6 +527,14 @@ function visibleTurnItemsThroughRun(input: {
     }));
   const localPrefix = inheritedVisibleTurnItemsFromLocalItems(
     input.sourceProjection.turnItems.filter((item) => {
+      if (
+        isOrchestrationV2SupersededInterrupt({
+          item,
+          attempts: input.sourceProjection.attempts,
+        })
+      ) {
+        return false;
+      }
       if (item.runId === null) {
         return false;
       }

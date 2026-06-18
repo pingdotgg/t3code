@@ -21,6 +21,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 import { createFileRoute } from "@tanstack/react-router";
 import { GitMergeIcon } from "lucide-react";
 import type { CSSProperties, DragEvent, ReactNode } from "react";
@@ -29,7 +30,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 import { useSettings } from "../hooks/useSettings";
-import { removeAndRenumberTimelineItem } from "../lib/orchestrationV2Timeline";
+import {
+  removeAndRenumberTimelineItem,
+  upsertTimelineItemAtStablePosition,
+} from "../lib/orchestrationV2Timeline";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
 import {
@@ -473,48 +477,31 @@ function upsertVisibleTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  const existingIndex = projection.visibleTurnItems.findIndex(
-    (row) => row.sourceItemId === item.id,
-  );
-  if (existingIndex === -1) {
-    return [
-      ...projection.visibleTurnItems,
-      {
-        position: projection.visibleTurnItems.length,
-        visibility: "local",
-        sourceThreadId: item.threadId,
-        sourceItemId: item.id,
-        item,
-      },
-    ];
-  }
-  return projection.visibleTurnItems.map((row, index) =>
-    index === existingIndex ? { ...row, item } : row,
-  );
-}
-
-function rolledBackRunIds(projection: OrchestrationV2ThreadProjection): ReadonlySet<RunId> {
-  return new Set(
-    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
-  );
+  return upsertTimelineItemAtStablePosition(projection.visibleTurnItems, {
+    position: projection.visibleTurnItems.length,
+    visibility: "local" as const,
+    sourceThreadId: item.threadId,
+    sourceItemId: item.id,
+    item,
+  });
 }
 
 function shouldShowLocalTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
 ): boolean {
-  return item.runId === null || !rolledBackRunIds(projection).has(item.runId);
+  return isOrchestrationV2TurnItemVisible({
+    item,
+    runs: projection.runs,
+    attempts: projection.attempts,
+  });
 }
 
 function activeVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  const rolledBack = rolledBackRunIds(projection);
   return projection.visibleTurnItems
-    .filter(
-      (row) =>
-        row.visibility !== "local" || row.item.runId === null || !rolledBack.has(row.item.runId),
-    )
+    .filter((row) => row.visibility !== "local" || shouldShowLocalTurnItem(projection, row.item))
     .map((row, position) => ({
       position,
       visibility: row.visibility,
@@ -552,11 +539,16 @@ function applyStreamEventToProjection(
       };
     }
     case "run-attempt.created":
-    case "run-attempt.updated":
-      return {
+    case "run-attempt.updated": {
+      const nextProjection = {
         ...base,
         attempts: upsertProjectionEntity(base.attempts, event.payload),
       };
+      return {
+        ...nextProjection,
+        visibleTurnItems: activeVisibleTurnItems(nextProjection),
+      };
+    }
     case "node.updated":
       return {
         ...base,
@@ -602,18 +594,15 @@ function applyStreamEventToProjection(
         ...base,
         turnItems: upsertProjectionEntity(base.turnItems, event.payload),
       };
-      const withoutStaleItem = {
+      const visibleProjection = {
         ...nextProjection,
-        visibleTurnItems: removeAndRenumberTimelineItem(
-          activeVisibleTurnItems(nextProjection),
-          event.payload.id,
-        ),
+        visibleTurnItems: activeVisibleTurnItems(nextProjection),
       };
       return {
         ...nextProjection,
         visibleTurnItems: shouldShowLocalTurnItem(nextProjection, event.payload)
-          ? upsertVisibleTurnItem(withoutStaleItem, event.payload)
-          : withoutStaleItem.visibleTurnItems,
+          ? upsertVisibleTurnItem(visibleProjection, event.payload)
+          : removeAndRenumberTimelineItem(visibleProjection.visibleTurnItems, event.payload.id),
       };
     }
     case "checkpoint-scope.created":
@@ -2893,6 +2882,16 @@ function buildChatScenes(
   activeRunIds: ReadonlySet<RunId>,
 ): ReadonlyArray<ChatScene> {
   const scenes: Array<ChatScene> = [];
+  const finalAssistantItemIdByRun = new Map<RunId, OrchestrationV2TurnItem["id"]>();
+  for (const row of rows) {
+    if (
+      row.kind !== "fork-marker" &&
+      row.item.type === "assistant_message" &&
+      row.item.runId !== null
+    ) {
+      finalAssistantItemIdByRun.set(row.item.runId, row.item.id);
+    }
+  }
   let currentLog: Array<OrchestrationV2TurnItem> = [];
   let currentLogKey: string | null = null;
   let workStartMs: number | null = null;
@@ -2944,7 +2943,13 @@ function buildChatScenes(
       // belongs to is still active, the turn isn't over (more work may follow)
       // and the live WorkingIndicator is what should be visible instead.
       const runStillActive = item.runId !== null && activeRunIds.has(item.runId);
-      const turnSettled = !item.streaming && item.status === "completed" && !runStillActive;
+      const isFinalAssistantMessage =
+        item.runId === null || finalAssistantItemIdByRun.get(item.runId) === item.id;
+      const turnSettled =
+        isFinalAssistantMessage &&
+        !item.streaming &&
+        item.status === "completed" &&
+        !runStillActive;
       if (pendingResponse && turnSettled) {
         const assistantStart = itemStartMs(item);
         const duration =
