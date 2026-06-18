@@ -178,8 +178,19 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 export function resolveSendEnvMode(input: {
   requestedEnvMode: DraftThreadEnvMode;
   isGitRepo: boolean;
+  /**
+   * Current branch name.
+   * - `null` → empty repo with no commits (fall back to local for worktree mode).
+   * - `undefined` → git status query still loading (keep requested mode).
+   */
+  branch?: string | null | undefined;
 }): DraftThreadEnvMode {
-  return input.isGitRepo ? input.requestedEnvMode : "local";
+  if (!input.isGitRepo) return "local";
+  // Empty repos (git init, no commits) report isRepo=true but branch=null.
+  // Worktree mode requires at least one commit, so fall back to local.
+  // undefined means the query is still loading — don't downgrade yet.
+  if (input.requestedEnvMode === "worktree" && input.branch === null) return "local";
+  return input.requestedEnvMode;
 }
 
 export function cloneComposerImageForRetry(

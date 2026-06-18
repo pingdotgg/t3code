@@ -185,13 +185,31 @@ describe("getStartedThreadModelChangeBlockReason", () => {
 });
 
 describe("resolveSendEnvMode", () => {
-  it("keeps worktree mode for git repositories", () => {
-    expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
+  it("keeps worktree mode for git repositories with a branch", () => {
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true, branch: "main" }),
+    ).toBe("worktree");
   });
 
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
+  });
+
+  it("falls back to local mode for empty repos with no branch (no commits)", () => {
+    expect(
+      resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true, branch: null }),
+    ).toBe("local");
+  });
+
+  it("keeps local mode for empty repos when local was requested", () => {
+    expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: true, branch: null })).toBe(
+      "local",
+    );
+  });
+
+  it("keeps worktree mode when branch is not provided (backward compat)", () => {
+    expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
   });
 });
 
