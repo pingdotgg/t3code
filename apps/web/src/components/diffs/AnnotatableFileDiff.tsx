@@ -210,7 +210,7 @@ export function AnnotatableFileDiff({
   return (
     <FileDiff<DiffCommentAnnotationGroup>
       fileDiff={fileDiff}
-      renderHeaderMetadata={renderHeaderMetadata}
+      renderHeaderMetadata={(metadataFileDiff) => renderHeaderMetadata?.(metadataFileDiff)}
       renderHeaderPrefix={renderHeaderPrefix}
       options={{
         ...options,
