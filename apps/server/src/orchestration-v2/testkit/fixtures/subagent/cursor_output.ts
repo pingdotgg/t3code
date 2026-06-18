@@ -36,6 +36,23 @@ export function assertCursorSubagentOutput(
   assertAssistantTextIncludes(projection, "cursor-read-only-fixture");
   assertAssistantTextIncludes(projection, "ES2022");
 
+  const lifecycleItems = projection.turnItems.filter(
+    (item) =>
+      item.type === "reasoning" || item.type === "assistant_message" || item.type === "subagent",
+  );
+  assert.deepEqual(
+    lifecycleItems.map((item) => item.type),
+    ["reasoning", "assistant_message", "subagent", "subagent", "assistant_message"],
+    "Cursor progress, subagents, and the final response must retain provider order",
+  );
+  const assistantMessages = lifecycleItems.filter((item) => item.type === "assistant_message");
+  assert.lengthOf(assistantMessages, 2);
+  assert.equal(
+    assistantMessages[0]?.text,
+    "Spawning two subagents in parallel to read `package.json` and `tsconfig.json`.\n",
+  );
+  assert.include(assistantMessages[1]?.text ?? "", "Both subagents finished.");
+
   assert.lengthOf(projection.subagents, 2);
   assert.lengthOf(result.shellSnapshot.threads, 3);
   assert.deepEqual(

@@ -778,6 +778,17 @@ interface ActiveCursorSubagent {
   resultProjected: boolean;
 }
 
+interface ActiveCursorTextSegment {
+  readonly nativeItemId: string;
+  readonly startedAt: DateTime.Utc;
+  text: string;
+}
+
+interface ActiveCursorTextStream {
+  current: ActiveCursorTextSegment | null;
+  nextSegment: number;
+}
+
 interface ActiveCursorTurn {
   readonly input: ProviderAdapterV2TurnInput;
   readonly run: CursorAgentSdkRun;
@@ -786,14 +797,8 @@ interface ActiveCursorTurn {
   readonly completed: Deferred.Deferred<void, never>;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly subagents: Map<string, ActiveCursorSubagent>;
-  readonly assistant: {
-    readonly nativeItemId: string;
-    text: string;
-  };
-  readonly reasoning: {
-    readonly nativeItemId: string;
-    text: string;
-  };
+  readonly assistant: ActiveCursorTextStream;
+  readonly reasoning: ActiveCursorTextStream;
   interrupted: boolean;
   finalized: boolean;
 }
@@ -900,26 +905,27 @@ export function makeCursorAdapterV2(
           context: ActiveCursorTurn,
           completed: boolean,
         ) {
-          if (context.assistant.text.length === 0) {
+          const segment = context.assistant.current;
+          if (segment === null || segment.text.length === 0) {
             return;
           }
           const now = yield* DateTime.now;
-          const ordinal = yield* resolveItemOrdinal(context, context.assistant.nativeItemId);
+          const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             provider: CURSOR_PROVIDER,
-            nativeItemId: context.assistant.nativeItemId,
+            nativeItemId: segment.nativeItemId,
           });
           const messageId = idAllocator.derive.messageFromProviderItem({
             provider: CURSOR_PROVIDER,
-            nativeItemId: context.assistant.nativeItemId,
+            nativeItemId: segment.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
             provider: CURSOR_PROVIDER,
-            nativeItemId: context.assistant.nativeItemId,
+            nativeItemId: segment.nativeItemId,
           });
           const nativeItemRef = {
             provider: CURSOR_PROVIDER,
-            nativeId: context.assistant.nativeItemId,
+            nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
           yield* emitProviderEvent({
@@ -939,7 +945,7 @@ export function makeCursorAdapterV2(
               nativeItemRef,
               runtimeRequestId: null,
               checkpointScopeId: null,
-              startedAt: context.startedAt,
+              startedAt: segment.startedAt,
               completedAt: completed ? now : null,
             },
           });
@@ -952,10 +958,10 @@ export function makeCursorAdapterV2(
               runId: context.input.runId,
               nodeId,
               role: "assistant",
-              text: context.assistant.text,
+              text: segment.text,
               attachments: [],
               streaming: !completed,
-              createdAt: context.startedAt,
+              createdAt: segment.startedAt,
               updatedAt: now,
             },
           });
@@ -974,12 +980,12 @@ export function makeCursorAdapterV2(
               ordinal,
               status: completed ? "completed" : "running",
               title: null,
-              startedAt: context.startedAt,
+              startedAt: segment.startedAt,
               completedAt: completed ? now : null,
               updatedAt: now,
               type: "assistant_message",
               messageId,
-              text: context.assistant.text,
+              text: segment.text,
               streaming: !completed,
             },
           });
@@ -989,22 +995,23 @@ export function makeCursorAdapterV2(
           context: ActiveCursorTurn,
           completed: boolean,
         ) {
-          if (context.reasoning.text.length === 0) {
+          const segment = context.reasoning.current;
+          if (segment === null || segment.text.length === 0) {
             return;
           }
           const now = yield* DateTime.now;
-          const ordinal = yield* resolveItemOrdinal(context, context.reasoning.nativeItemId);
+          const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             provider: CURSOR_PROVIDER,
-            nativeItemId: context.reasoning.nativeItemId,
+            nativeItemId: segment.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
             provider: CURSOR_PROVIDER,
-            nativeItemId: context.reasoning.nativeItemId,
+            nativeItemId: segment.nativeItemId,
           });
           const nativeItemRef = {
             provider: CURSOR_PROVIDER,
-            nativeId: context.reasoning.nativeItemId,
+            nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
           yield* emitProviderEvent({
@@ -1024,7 +1031,7 @@ export function makeCursorAdapterV2(
               nativeItemRef,
               runtimeRequestId: null,
               checkpointScopeId: null,
-              startedAt: context.startedAt,
+              startedAt: segment.startedAt,
               completedAt: completed ? now : null,
             },
           });
@@ -1043,14 +1050,47 @@ export function makeCursorAdapterV2(
               ordinal,
               status: completed ? "completed" : "running",
               title: null,
-              startedAt: context.startedAt,
+              startedAt: segment.startedAt,
               completedAt: completed ? now : null,
               updatedAt: now,
               type: "reasoning",
-              text: context.reasoning.text,
+              text: segment.text,
               streaming: !completed,
             },
           });
+        });
+
+        const appendTextSegment = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveCursorTurn;
+          readonly stream: ActiveCursorTextStream;
+          readonly kind: "assistant" | "reasoning";
+          readonly text: string;
+        }) {
+          if (input.stream.current === null) {
+            input.stream.nextSegment += 1;
+            input.stream.current = {
+              nativeItemId: `${input.kind}:${input.context.run.runId}:${input.stream.nextSegment}`,
+              startedAt: yield* DateTime.now,
+              text: "",
+            };
+          }
+          input.stream.current.text += input.text;
+        });
+
+        const completeAssistant = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
+          if (context.assistant.current === null) {
+            return;
+          }
+          yield* emitAssistant(context, true);
+          context.assistant.current = null;
+        });
+
+        const completeReasoning = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
+          if (context.reasoning.current === null) {
+            return;
+          }
+          yield* emitReasoning(context, true);
+          context.reasoning.current = null;
         });
 
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
@@ -1759,20 +1799,39 @@ export function makeCursorAdapterV2(
           }
           switch (update.type) {
             case "text-delta":
-              context.assistant.text += update.text;
+              yield* completeReasoning(context);
+              yield* appendTextSegment({
+                context,
+                stream: context.assistant,
+                kind: "assistant",
+                text: update.text,
+              });
               yield* emitAssistant(context, false);
               return;
             case "thinking-delta":
-              context.reasoning.text += update.text;
+              yield* completeAssistant(context);
+              yield* appendTextSegment({
+                context,
+                stream: context.reasoning,
+                kind: "reasoning",
+                text: update.text,
+              });
               yield* emitReasoning(context, false);
               return;
             case "thinking-completed":
-              yield* emitReasoning(context, true);
+              yield* completeReasoning(context);
               return;
             case "tool-call-started":
             case "partial-tool-call":
             case "tool-call-completed":
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
               yield* handleToolUpdate(context, update);
+              return;
+            case "step-completed":
+            case "turn-ended":
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
               return;
             case "shell-output-delta": {
               const shell = Array.from(context.tools.values())
@@ -1826,8 +1885,8 @@ export function makeCursorAdapterV2(
             yield* emitToolArtifacts({ active: tool, completed: true });
           }
           input.context.tools.clear();
-          yield* emitReasoning(input.context, true);
-          yield* emitAssistant(input.context, true);
+          yield* completeReasoning(input.context);
+          yield* completeAssistant(input.context);
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             provider: CURSOR_PROVIDER,
@@ -2022,12 +2081,12 @@ export function makeCursorAdapterV2(
               tools: new Map(),
               subagents: new Map(),
               assistant: {
-                nativeItemId: `assistant:${sdkRun.runId}`,
-                text: "",
+                current: null,
+                nextSegment: 0,
               },
               reasoning: {
-                nativeItemId: `reasoning:${sdkRun.runId}`,
-                text: "",
+                current: null,
+                nextSegment: 0,
               },
               interrupted: false,
               finalized: false,
@@ -2061,11 +2120,16 @@ export function makeCursorAdapterV2(
                 Effect.gen(function* () {
                   if (
                     context !== null &&
-                    context.assistant.text.length === 0 &&
+                    context.assistant.nextSegment === 0 &&
                     result.result !== undefined &&
                     result.result.length > 0
                   ) {
-                    context.assistant.text = result.result;
+                    yield* appendTextSegment({
+                      context,
+                      stream: context.assistant,
+                      kind: "assistant",
+                      text: result.result,
+                    });
                   }
                   if (context !== null) {
                     yield* finalizeTurn({
