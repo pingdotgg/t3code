@@ -1,4 +1,5 @@
 import {
+  IconBrowser,
   IconFolder,
   IconGitCompare,
   IconListCheck,
@@ -28,6 +29,11 @@ const KIND_META: Record<PanelContentKind, KindMeta> = {
     description: "Start an interactive shell",
     Icon: (props) => <IconTerminal2 {...props} />,
   },
+  browser: {
+    label: "Browser",
+    description: "Preview a local web app",
+    Icon: (props) => <IconBrowser {...props} />,
+  },
   diff: {
     label: "Diff",
     description: "View code changes",
@@ -53,11 +59,18 @@ const KIND_META: Record<PanelContentKind, KindMeta> = {
 };
 
 // Order shown in the launcher and the (+) add menu.
-const KIND_ORDER: ReadonlyArray<PanelContentKind> = ["terminal", "diff", "tasks", "chat", "files"];
+const KIND_ORDER: ReadonlyArray<PanelContentKind> = [
+  "terminal",
+  "browser",
+  "diff",
+  "tasks",
+  "chat",
+  "files",
+];
 
 // Kinds limited to one tab per slot; adding again just refocuses the existing
 // tab, so they are hidden from the add menu once present.
-const SINGLETON_KINDS: ReadonlySet<PanelContentKind> = new Set(["diff", "tasks"]);
+const SINGLETON_KINDS: ReadonlySet<PanelContentKind> = new Set(["browser", "diff", "tasks"]);
 
 function tabTitle(tab: PanelTab, terminalLabel?: string): string {
   if (tab.kind === "terminal") {
@@ -86,7 +99,7 @@ export function DockSlot(props: {
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onClose: () => void;
-  renderTab: (tab: PanelTab) => ReactNode;
+  renderTab: (tab: PanelTab, visible: boolean) => ReactNode;
   hideTabBar?: boolean;
   reserveToggleSpace?: boolean;
   reserveLeadingInset?: boolean;
@@ -156,7 +169,7 @@ export function DockSlot(props: {
               tab.id === activeTabId ? "" : "hidden",
             )}
           >
-            {renderTab(tab)}
+            {renderTab(tab, tab.id === activeTabId)}
           </div>
         ))}
       </div>

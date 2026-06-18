@@ -13,7 +13,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { selectThreadPanelLayout, usePanelLayoutStore } from "../panelLayoutStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -34,11 +34,12 @@ function ChatRouteGlobalShortcuts() {
   // The `previewOpen` shortcut-context flag here uses the store-only value;
   // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
   // which we invoke via the action bus to avoid duplicating the rule.
-  const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
-      : false,
-  );
+  const previewOpen = usePanelLayoutStore((state) => {
+    if (!routeThreadRef) return false;
+    const right = selectThreadPanelLayout(state.panelLayoutByThreadKey, routeThreadRef).right;
+    const activeTab = right.tabs.find((tab) => tab.id === right.activeTabId);
+    return right.open && activeTab?.kind === "browser";
+  });
   const appSettings = useSettings();
 
   useEffect(() => {

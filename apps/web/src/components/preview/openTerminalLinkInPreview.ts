@@ -1,8 +1,8 @@
 import type { EnvironmentApi, LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 
+import { usePanelLayoutStore } from "~/panelLayoutStore";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import { useRightPanelStore } from "~/rightPanelStore";
 
 interface OpenTerminalLinkInPreviewInput {
   readonly url: string;
@@ -57,7 +57,7 @@ export async function openTerminalLinkInPreview(
         threadId: input.threadRef.threadId,
         url: input.url,
       });
-      useRightPanelStore.getState().open(input.threadRef, "preview");
+      usePanelLayoutStore.getState().addTab(input.threadRef, "right", { kind: "browser" });
     } catch {
       input.fallbackToBrowser();
     }

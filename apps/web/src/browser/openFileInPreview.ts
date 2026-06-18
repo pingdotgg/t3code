@@ -2,8 +2,8 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { readEnvironmentApi } from "~/environmentApi";
 import { resolveAssetUrl } from "~/assets/assetUrls";
+import { usePanelLayoutStore } from "~/panelLayoutStore";
 import { isPreviewSupportedInRuntime, usePreviewStateStore } from "~/previewStateStore";
-import { useRightPanelStore } from "~/rightPanelStore";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -17,7 +17,7 @@ export async function openUrlInPreview(threadRef: ScopedThreadRef, url: string):
   const snapshot = await api.preview.open({ threadId: threadRef.threadId, url });
   usePreviewStateStore.getState().applyServerSnapshot(threadRef, snapshot);
   usePreviewStateStore.getState().rememberUrl(threadRef, url);
-  useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
+  usePanelLayoutStore.getState().addTab(threadRef, "right", { kind: "browser" });
 }
 
 export async function openFileInPreview(

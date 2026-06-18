@@ -23,6 +23,7 @@ import { DockSlot } from "../components/DockSlot";
 import DiffPanel from "../components/DiffPanel";
 import ThreadTerminalDrawer from "../components/ThreadTerminalDrawer";
 import PlanSidebar from "../components/PlanSidebar";
+import { PreviewPanel } from "../components/preview/PreviewPanel";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import type { ActivePlanState, LatestProposedPlanState } from "../session-logic";
 
@@ -150,6 +151,29 @@ export function useThreadDockPanels(input: DockPanelInput) {
     addTab(input.threadRef, "right", { kind: "tasks" });
   }, [addTab, input.threadRef]);
 
+  const toggleBrowser = useCallback(() => {
+    if (!input.threadRef) return;
+    const existing = layout.right.tabs.find((tab) => tab.kind === "browser");
+    if (!existing) {
+      addTab(input.threadRef, "right", { kind: "browser" });
+      return;
+    }
+    if (layout.right.open && layout.right.activeTabId === existing.id) {
+      setSlotOpen(input.threadRef, "right", false);
+      return;
+    }
+    setActiveTab(input.threadRef, "right", existing.id);
+    setSlotOpen(input.threadRef, "right", true);
+  }, [
+    addTab,
+    input.threadRef,
+    layout.right.activeTabId,
+    layout.right.open,
+    layout.right.tabs,
+    setActiveTab,
+    setSlotOpen,
+  ]);
+
   const closeTerminal = useCallback(
     (terminalId: string) => {
       if (!input.threadRef || !input.threadId) return;
@@ -162,8 +186,11 @@ export function useThreadDockPanels(input: DockPanelInput) {
   );
 
   const renderTab = useCallback(
-    (tab: PanelTab) => {
-      if (!input.threadRef || !input.threadId || !input.project) return null;
+    (tab: PanelTab, visible: boolean) => {
+      if (!input.threadRef || !input.threadId) return null;
+      if (tab.kind === "browser") {
+        return <PreviewPanel mode="embedded" threadRef={input.threadRef} visible={visible} />;
+      }
       if (tab.kind === "diff") {
         return <DiffPanel mode="inline" />;
       }
@@ -184,6 +211,7 @@ export function useThreadDockPanels(input: DockPanelInput) {
         );
       }
       if (tab.kind === "terminal") {
+        if (!input.project) return null;
         const terminalId = tab.terminalId ?? terminalUiState.activeTerminalId;
         const terminalIds = terminalId ? [terminalId] : [];
         return (
@@ -193,7 +221,7 @@ export function useThreadDockPanels(input: DockPanelInput) {
             threadId={input.threadId}
             cwd={input.worktreePath ?? input.project.cwd}
             worktreePath={input.worktreePath}
-            visible
+            visible={visible}
             height={terminalUiState.terminalHeight}
             terminalIds={terminalIds}
             activeTerminalId={terminalId}
@@ -255,6 +283,7 @@ export function useThreadDockPanels(input: DockPanelInput) {
           terminalLabelByTabId={terminalLabelByTabId}
           isKindAvailable={(kind) =>
             kind === "terminal" ||
+            kind === "browser" ||
             kind === "tasks" ||
             (kind === "diff" && input.isServerThread && input.project !== null)
           }
@@ -296,6 +325,7 @@ export function useThreadDockPanels(input: DockPanelInput) {
     addTerminal,
     toggleTerminal,
     toggleDiff,
+    toggleBrowser,
     toggleRightDock,
     openTasks,
     renderSlot,

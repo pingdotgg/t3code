@@ -135,6 +135,7 @@ import { BottomDock } from "./BottomDock";
 import { useThreadDockPanels } from "../hooks/useThreadDockPanels";
 import { toggleProjectSidebar } from "../projectSidebarToggleStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../terminalSessionState";
+import { subscribePreviewAction } from "./preview/previewActionBus";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1806,6 +1807,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const toggleTerminalVisibility = dockPanels.toggleTerminal;
   const onToggleDiff = dockPanels.toggleDiff;
+  const toggleBrowser = dockPanels.toggleBrowser;
   const toggleRightDock = dockPanels.toggleRightDock;
   const openTasks = dockPanels.openTasks;
   const [rightDockExpanded, setRightDockExpanded] = useState(false);
@@ -1829,6 +1831,13 @@ export default function ChatView(props: ChatViewProps) {
   const toggleRightDockExpanded = useCallback(() => {
     setRightDockExpanded((value) => !value);
   }, []);
+  useEffect(() => {
+    return subscribePreviewAction((action) => {
+      if (action === "toggle-panel") {
+        toggleBrowser();
+      }
+    });
+  }, [toggleBrowser]);
   // Memoized so the Sidebar's resize options keep a stable identity across
   // renders. A fresh object each render would re-run the rail's stored-width
   // restore effect, which clobbers the expanded full-width on every re-render
