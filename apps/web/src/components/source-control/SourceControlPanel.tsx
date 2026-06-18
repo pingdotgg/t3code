@@ -854,7 +854,7 @@ function uniquePaths(paths: readonly string[]): string[] {
   return [...new Set(paths.filter((path) => path.length > 0))];
 }
 
-function discardPathsForFile(file: Pick<VcsPanelFileChange, "path" | "originalPath">): string[] {
+function operationPathsForFile(file: Pick<VcsPanelFileChange, "path" | "originalPath">): string[] {
   return uniquePaths(file.originalPath ? [file.path, file.originalPath] : [file.path]);
 }
 
@@ -1167,10 +1167,19 @@ export function SourceControlPanel({
     [changedFiles, selectedChangePaths],
   );
   const selectedChangePathList = useMemo(
-    () => selectedChangedFiles.map((file) => file.path),
+    () => uniquePaths(selectedChangedFiles.flatMap((file) => operationPathsForFile(file))),
     [selectedChangedFiles],
   );
   const selectedChangeStats = useMemo(() => sumFiles(selectedChangedFiles), [selectedChangedFiles]);
+  const workingFileListExtraData = useMemo(
+    () => ({
+      expandedFileDiffs,
+      fileDiffsByKey,
+      runningActions,
+      selectedChangePaths,
+    }),
+    [expandedFileDiffs, fileDiffsByKey, runningActions, selectedChangePaths],
+  );
   const allChangedFilesSelected =
     changedFiles.length > 0 && selectedChangedFiles.length === changedFiles.length;
   const noChangedFilesSelected = selectedChangedFiles.length === 0;
@@ -1927,12 +1936,12 @@ export function SourceControlPanel({
         const stagedPaths = uniquePaths(
           selectedChangedFiles
             .filter((file) => file.hasStagedChanges)
-            .flatMap((file) => discardPathsForFile(file)),
+            .flatMap((file) => operationPathsForFile(file)),
         );
         const unstagedPaths = uniquePaths(
           selectedChangedFiles
             .filter((file) => file.hasUnstagedChanges)
-            .flatMap((file) => discardPathsForFile(file)),
+            .flatMap((file) => operationPathsForFile(file)),
         );
         await runAction("changes-discard-selected", async () => {
           if (!api) return;
@@ -2290,7 +2299,7 @@ export function SourceControlPanel({
         if (!(await confirm(`Discard changes in ${file.path}?`))) return;
         await runAction(discardKey, async () => {
           if (!api) return;
-          const paths = discardPathsForFile(file);
+          const paths = operationPathsForFile(file);
           if (file.hasUnstagedChanges) {
             await api.vcs.discardFiles({ cwd, paths, staged: false });
           }
@@ -2803,7 +2812,7 @@ export function SourceControlPanel({
           )}
           <AttentionIcon kind={attention} />
           <span className="min-w-0 flex-1 truncate text-sm">{branch.name}</span>
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+          <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
             {hasUpstream && aheadCount === 0 && behindCount === 0 ? (
               <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
                 <SyncedIcon />
@@ -2986,7 +2995,7 @@ export function SourceControlPanel({
             <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
           )}
           <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+          <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
             {hasLocalBranch && !hasUpstream ? <CompactBadge>local</CompactBadge> : null}
             {current ? <CompactBadge>current</CompactBadge> : null}
             {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
@@ -3469,6 +3478,7 @@ export function SourceControlPanel({
               renderItem={renderWorkingFileItem}
               estimatedItemSize={WORKING_FILE_ROW_ESTIMATED_HEIGHT}
               drawDistance={WORKING_FILE_DRAW_DISTANCE}
+              extraData={workingFileListExtraData}
               className="scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain"
             />
           </div>

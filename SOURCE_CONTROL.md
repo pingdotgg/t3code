@@ -84,7 +84,7 @@ Commit selected and stash selected generate their messages by default. Holding S
 
 Branch sync actions such as push, pull, fetch, publish, and undo latest commit are intentionally not rendered on the `Working tree` row. They belong to branch rows, where the target branch is explicit.
 
-File rows are compact. They show a one-letter status indicator such as `A`, `D`, or `M`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Expanding a file row opens an inline diff for that file change in working-tree, commit, stash, branch, and compare file lists. The row actions are:
+File rows are compact. They show a one-letter status indicator such as `A`, `D`, `M`, or `R`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Expanding a file row opens an inline diff for that file change in working-tree, commit, stash, branch, and compare file lists. The row actions are:
 
 - Open file in the right-panel File surface.
 - Open in VS Code through the preferred editor or host bridge.
@@ -189,7 +189,7 @@ The panel routes all repository mutations through server-side RPC methods and re
 
 Non-current branch fetches are scoped to the selected branch. Operation busy state is keyed per action target so fetching one branch does not disable equivalent actions on other branches or remote entries.
 
-Discard operations split staged and unstaged portions explicitly and preserve rename source paths when needed. Server-side discard handling partitions tracked, untracked, HEAD-backed, and newly added paths before running Git restore/reset/clean commands, so mixed selections such as tracked edits plus untracked files do not cause one path class to prevent the rest of the selected discard from applying.
+Selected-file commit, stash, and discard operations preserve rename source paths when needed, so selecting an `R` row sends both the destination path and the original path to the Git operation. Discard operations also split staged and unstaged portions explicitly. Server-side discard handling partitions tracked, untracked, HEAD-backed, and newly added paths before running Git restore/reset/clean commands, so mixed selections such as tracked edits plus untracked files do not cause one path class to prevent the rest of the selected discard from applying.
 
 ## Error Handling
 
@@ -199,7 +199,7 @@ The panel keeps version-control actions server-authoritative across browser, des
 
 ## Validation
 
-The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including gitignored-file suppression.
+The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including gitignored-file suppression. Rename coverage includes committing an unstaged `R` row and undoing that commit, verifying that the panel returns to a single `R` row rather than separate `A` and `D` rows.
 
 Before considering source-control changes complete, run:
 
