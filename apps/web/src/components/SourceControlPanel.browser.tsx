@@ -567,7 +567,7 @@ describe("SourceControlPanel git action runner", () => {
       expect(document.body.textContent).toContain("Changes");
       expect(document.body.textContent).not.toContain("Unstaged Changes");
       expect(document.querySelector('[role="checkbox"]')).toBeNull();
-      expect(document.querySelectorAll('img[aria-hidden="true"]').length).toBeGreaterThanOrEqual(2);
+      expect(document.querySelectorAll("svg[data-pierre-icon]").length).toBeGreaterThanOrEqual(2);
     } finally {
       await screen.unmount();
       host.remove();

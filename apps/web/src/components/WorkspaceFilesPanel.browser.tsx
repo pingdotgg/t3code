@@ -399,7 +399,7 @@ describe("WorkspaceFilesPanel", () => {
       expect(srcDirectoryButton?.className).toContain("select-none");
       const readmeButton = document.querySelector<HTMLButtonElement>('button[title="README.md"]');
       const readmeRow = readmeButton?.parentElement;
-      expect(Math.round(readmeRow?.getBoundingClientRect().height ?? 0)).toBe(44);
+      expect(Math.round(readmeRow?.getBoundingClientRect().height ?? 0)).toBe(32);
       expect(getComputedStyle(readmeButton!).fontSize).toBe("16px");
       expect(readmeButton?.querySelector("svg,img")?.getAttribute("class")).toContain("size-5");
       srcDirectoryButton?.dispatchEvent(

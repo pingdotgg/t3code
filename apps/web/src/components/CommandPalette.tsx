@@ -80,6 +80,7 @@ import {
   selectSidebarThreadsAcrossEnvironments,
   useStore,
 } from "../store";
+import type { Project, SidebarThreadSummary } from "../types";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
@@ -325,6 +326,24 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return "An error occurred.";
+}
+
+function renderProjectFaviconIcon(project: Project): ReactNode {
+  return (
+    <ProjectFavicon
+      environmentId={project.environmentId}
+      cwd={project.cwd}
+      className={ITEM_ICON_CLASS}
+    />
+  );
+}
+
+function renderThreadLeadingStatus(thread: SidebarThreadSummary): ReactNode {
+  return <ThreadRowLeadingStatus thread={thread} />;
+}
+
+function renderThreadTrailingStatus(thread: SidebarThreadSummary): ReactNode {
+  return <ThreadRowTrailingStatus thread={thread} />;
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
@@ -646,13 +665,7 @@ function OpenCommandPaletteDialog() {
       buildProjectActionItems({
         projects,
         valuePrefix: "project",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.cwd}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: renderProjectFaviconIcon,
         runProject: openProjectFromSearch,
       }),
     [openProjectFromSearch, projects],
@@ -664,13 +677,7 @@ function OpenCommandPaletteDialog() {
         projects,
         valuePrefix: "new-thread-in",
         shortcutCommand: "chat.new",
-        icon: (project) => (
-          <ProjectFavicon
-            environmentId={project.environmentId}
-            cwd={project.cwd}
-            className={ITEM_ICON_CLASS}
-          />
-        ),
+        icon: renderProjectFaviconIcon,
         runProject: async (project) => {
           await startNewThreadInProjectFromContext(
             {
@@ -702,8 +709,8 @@ function OpenCommandPaletteDialog() {
         projectTitleById,
         sortOrder: settings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-        renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
-        renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+        renderLeadingContent: renderThreadLeadingStatus,
+        renderTrailingContent: renderThreadTrailingStatus,
         runThread: async (thread) => {
           await navigate({
             to: "/$environmentId/$threadId",

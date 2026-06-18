@@ -16,6 +16,7 @@ import React, {
   isValidElement,
   use,
   useCallback,
+  useContext,
   memo,
   useEffect,
   useMemo,
@@ -1239,6 +1240,234 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+type MarkdownFileLinkMeta = NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>;
+
+interface ChatMarkdownRenderContextValue {
+  readonly cwd: string | undefined;
+  readonly diffThemeName: DiffThemeName;
+  readonly environmentId: EnvironmentId | undefined;
+  readonly fileLinkParentSuffixByPath: ReadonlyMap<string, string>;
+  readonly isStreaming: boolean;
+  readonly markdownFileLinkMetaByHref: ReadonlyMap<string, MarkdownFileLinkMeta>;
+  readonly onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly resolvedTheme: MarkdownFileLinkProps["theme"];
+  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+}
+
+const ChatMarkdownRenderContext = React.createContext<ChatMarkdownRenderContextValue | null>(null);
+
+function useChatMarkdownRenderContext(): ChatMarkdownRenderContextValue {
+  const context = useContext(ChatMarkdownRenderContext);
+  if (!context) {
+    throw new Error("ChatMarkdown render context is missing.");
+  }
+  return context;
+}
+
+function ChatMarkdownParagraph({
+  node: _node,
+  children,
+  ...props
+}: React.ComponentProps<"p"> & { node?: unknown }): React.ReactElement {
+  const { skills } = useChatMarkdownRenderContext();
+  return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+}
+
+function ChatMarkdownListItem({
+  node: _node,
+  children,
+  ...props
+}: React.ComponentProps<"li"> & { node?: unknown }): React.ReactElement {
+  const { skills } = useChatMarkdownRenderContext();
+  return <li {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</li>;
+}
+
+function ChatMarkdownAnchor({
+  node,
+  href,
+  children,
+  ...props
+}: React.ComponentProps<"a"> & { node?: unknown }): React.ReactElement {
+  const {
+    cwd,
+    environmentId,
+    fileLinkParentSuffixByPath,
+    markdownFileLinkMetaByHref,
+    resolvedTheme,
+  } = useChatMarkdownRenderContext();
+  const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+  const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+  if (!fileLinkMeta) {
+    const faviconHost = resolveExternalLinkHost(href);
+    const isSameDocumentLink = href?.startsWith("#") ?? false;
+    const onClick = props.onClick;
+    const link = (
+      <a
+        {...props}
+        href={href}
+        target={isSameDocumentLink ? undefined : "_blank"}
+        rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
+        onClick={(event) => {
+          onClick?.(event);
+          if (isSameDocumentLink && href) {
+            handleMarkdownFragmentClick(event, href);
+          }
+        }}
+      >
+        {faviconHost ? (
+          <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
+            {children}
+          </MarkdownExternalLinkContent>
+        ) : (
+          children
+        )}
+      </a>
+    );
+    if (!faviconHost || !href) {
+      return link;
+    }
+    return (
+      <Tooltip>
+        <TooltipTrigger render={link} />
+        <TooltipPopup
+          side="top"
+          className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
+        >
+          {href}
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
+
+  const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+  const labelParts = [fileLinkMeta.basename];
+  if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
+    labelParts.push(parentSuffix);
+  }
+  if (fileLinkMeta.line) {
+    labelParts.push(
+      `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+    );
+  }
+
+  return (
+    <MarkdownFileLink
+      href={fileLinkMeta.targetPath}
+      targetPath={fileLinkMeta.targetPath}
+      iconPath={fileLinkMeta.filePath}
+      displayPath={fileLinkMeta.displayPath}
+      workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
+      label={labelParts.join(" · ")}
+      copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
+      theme={resolvedTheme}
+      cwd={cwd}
+      environmentId={environmentId}
+      className={props.className}
+    />
+  );
+}
+
+function ChatMarkdownImage({
+  node: _node,
+  src,
+  alt,
+}: React.ComponentProps<"img"> & { node?: unknown }): React.ReactElement | null {
+  const { cwd, environmentId, onImageExpand } = useChatMarkdownRenderContext();
+  const image = resolveMarkdownImagePreview({
+    src,
+    alt,
+    cwd,
+    environmentId,
+  });
+  if (!image) {
+    return null;
+  }
+
+  const preview = {
+    images: [{ src: image.src, name: image.name }],
+    index: 0,
+  } satisfies ExpandedImagePreview;
+
+  return (
+    <button
+      type="button"
+      className="chat-markdown-image-button"
+      aria-label={`Preview ${image.name}`}
+      onClick={() => onImageExpand?.(preview)}
+    >
+      <img src={image.src} alt={alt ?? image.name} className="chat-markdown-image" loading="lazy" />
+    </button>
+  );
+}
+
+function ChatMarkdownTable({
+  node: _node,
+  ...props
+}: React.ComponentProps<"table"> & { node?: unknown }): React.ReactElement {
+  return <MarkdownTable {...props} />;
+}
+
+function ChatMarkdownDetails({
+  node: _node,
+  children,
+  open: detailsOpen,
+}: React.ComponentProps<"details"> & { node?: unknown }): React.ReactElement {
+  return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
+}
+
+function ChatMarkdownPre({
+  node,
+  children,
+  ...props
+}: React.ComponentProps<"pre"> & { node?: unknown }): React.ReactElement {
+  const { diffThemeName, isStreaming, resolvedTheme } = useChatMarkdownRenderContext();
+  const codeBlock = extractCodeBlock(children);
+  if (!codeBlock) {
+    return (
+      <pre {...props} {...{ [MOBILE_EDGE_SWIPE_BLOCK_ATTRIBUTE]: "true" }}>
+        {children}
+      </pre>
+    );
+  }
+
+  const stableFallback = (
+    <StableCodeBlockFallback code={codeBlock.code} themeName={diffThemeName} />
+  );
+  const language = extractFenceLanguage(codeBlock.className);
+  const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+
+  return (
+    <MarkdownCodeBlock
+      code={codeBlock.code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={resolvedTheme}
+    >
+      <CodeHighlightErrorBoundary fallback={stableFallback}>
+        <Suspense fallback={stableFallback}>
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </CodeHighlightErrorBoundary>
+    </MarkdownCodeBlock>
+  );
+}
+
+const CHAT_MARKDOWN_COMPONENTS = {
+  p: ChatMarkdownParagraph,
+  li: ChatMarkdownListItem,
+  a: ChatMarkdownAnchor,
+  img: ChatMarkdownImage,
+  code: MarkdownInlineCode,
+  table: ChatMarkdownTable,
+  details: ChatMarkdownDetails,
+  pre: ChatMarkdownPre,
+} satisfies Components;
+
 function ChatMarkdown({
   text,
   cwd,
@@ -1252,10 +1481,7 @@ function ChatMarkdown({
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
-    const metaByHref = new Map<
-      string,
-      NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
-    >();
+    const metaByHref = new Map<string, MarkdownFileLinkMeta>();
     for (const href of extractMarkdownLinkHrefs(text)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
@@ -1284,170 +1510,26 @@ function ChatMarkdown({
     event.clipboardData.setData("text/plain", payload.text);
     event.clipboardData.setData("text/html", payload.html);
   }, []);
-  const markdownComponents = useMemo<Components>(
+  const renderContext = useMemo<ChatMarkdownRenderContextValue>(
     () => ({
-      p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
-      },
-      li({ node: _node, children, ...props }) {
-        return <li {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</li>;
-      },
-      a({ node, href, children, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
-        if (!fileLinkMeta) {
-          const faviconHost = resolveExternalLinkHost(href);
-          const isSameDocumentLink = href?.startsWith("#") ?? false;
-          const onClick = props.onClick;
-          const link = (
-            <a
-              {...props}
-              href={href}
-              target={isSameDocumentLink ? undefined : "_blank"}
-              rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
-              onClick={(event) => {
-                onClick?.(event);
-                if (isSameDocumentLink && href) {
-                  handleMarkdownFragmentClick(event, href);
-                }
-              }}
-            >
-              {faviconHost ? (
-                <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
-                  {children}
-                </MarkdownExternalLinkContent>
-              ) : (
-                children
-              )}
-            </a>
-          );
-          if (!faviconHost || !href) {
-            return link;
-          }
-          return (
-            <Tooltip>
-              <TooltipTrigger render={link} />
-              <TooltipPopup
-                side="top"
-                className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
-              >
-                {href}
-              </TooltipPopup>
-            </Tooltip>
-          );
-        }
-
-        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
-        const labelParts = [fileLinkMeta.basename];
-        if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-          labelParts.push(parentSuffix);
-        }
-        if (fileLinkMeta.line) {
-          labelParts.push(
-            `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-          );
-        }
-
-        return (
-          <MarkdownFileLink
-            href={fileLinkMeta.targetPath}
-            targetPath={fileLinkMeta.targetPath}
-            iconPath={fileLinkMeta.filePath}
-            displayPath={fileLinkMeta.displayPath}
-            workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
-            label={labelParts.join(" · ")}
-            copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
-            theme={resolvedTheme}
-            cwd={cwd}
-            environmentId={environmentId}
-            className={props.className}
-          />
-        );
-      },
-      img({ node: _node, src, alt }) {
-        const image = resolveMarkdownImagePreview({
-          src,
-          alt,
-          cwd,
-          environmentId,
-        });
-        if (!image) {
-          return null;
-        }
-
-        const preview = {
-          images: [{ src: image.src, name: image.name }],
-          index: 0,
-        } satisfies ExpandedImagePreview;
-
-        return (
-          <button
-            type="button"
-            className="chat-markdown-image-button"
-            aria-label={`Preview ${image.name}`}
-            onClick={() => onImageExpand?.(preview)}
-          >
-            <img
-              src={image.src}
-              alt={alt ?? image.name}
-              className="chat-markdown-image"
-              loading="lazy"
-            />
-          </button>
-        );
-      },
-      code: MarkdownInlineCode,
-      table({ node: _node, ...props }) {
-        return <MarkdownTable {...props} />;
-      },
-      details({ node: _node, children, open: detailsOpen }) {
-        return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
-      },
-      pre({ node, children, ...props }) {
-        const codeBlock = extractCodeBlock(children);
-        if (!codeBlock) {
-          return (
-            <pre {...props} {...{ [MOBILE_EDGE_SWIPE_BLOCK_ATTRIBUTE]: "true" }}>
-              {children}
-            </pre>
-          );
-        }
-
-        const stableFallback = (
-          <StableCodeBlockFallback code={codeBlock.code} themeName={diffThemeName} />
-        );
-        const language = extractFenceLanguage(codeBlock.className);
-        const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
-
-        return (
-          <MarkdownCodeBlock
-            code={codeBlock.code}
-            language={language}
-            fenceTitle={fenceTitle}
-            theme={resolvedTheme}
-          >
-            <CodeHighlightErrorBoundary fallback={stableFallback}>
-              <Suspense fallback={stableFallback}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </CodeHighlightErrorBoundary>
-          </MarkdownCodeBlock>
-        );
-      },
-    }),
-    [
+      cwd,
       diffThemeName,
-      fileLinkParentSuffixByPath,
       environmentId,
+      fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
       onImageExpand,
+      resolvedTheme,
+      skills,
+    }),
+    [
       cwd,
+      diffThemeName,
+      environmentId,
+      fileLinkParentSuffixByPath,
+      isStreaming,
+      markdownFileLinkMetaByHref,
+      onImageExpand,
       resolvedTheme,
       skills,
     ],
@@ -1461,18 +1543,20 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks
-            ? [remarkGfm, remarkBreaks, remarkPreserveCodeMeta]
-            : [remarkGfm, remarkPreserveCodeMeta]
-        }
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      <ChatMarkdownRenderContext.Provider value={renderContext}>
+        <ReactMarkdown
+          remarkPlugins={
+            lineBreaks
+              ? [remarkGfm, remarkBreaks, remarkPreserveCodeMeta]
+              : [remarkGfm, remarkPreserveCodeMeta]
+          }
+          rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}
+          components={CHAT_MARKDOWN_COMPONENTS}
+          urlTransform={markdownUrlTransform}
+        >
+          {text}
+        </ReactMarkdown>
+      </ChatMarkdownRenderContext.Provider>
     </div>
   );
 }

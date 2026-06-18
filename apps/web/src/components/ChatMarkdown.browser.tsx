@@ -415,13 +415,10 @@ describe("ChatMarkdown", () => {
     }
   });
 
-  it("restores a code block's horizontal scroll when the block is remounted", async () => {
+  it("preserves a code block's horizontal scroll when markdown props change", async () => {
     // Wide single line so the <pre> overflows its constrained container and is scrollable.
     const longLine = `const data = "${"x".repeat(400)}";`;
     const text = `\`\`\`ts\n${longLine}\n\`\`\``;
-    // Changing `cwd` recreates ChatMarkdown's `components` map, giving the inline `pre`
-    // renderer a new identity — react-markdown then remounts the whole code-block subtree,
-    // rebuilding the <pre> from scratch (the same thing that drops scroll in production).
     const renderUi = (cwd: string) => (
       <div style={{ width: 220, overflow: "hidden" }}>
         <ChatMarkdown text={text} cwd={cwd} />
@@ -448,11 +445,8 @@ describe("ChatMarkdown", () => {
 
       await screen.rerender(renderUi("/repo/other-project"));
 
-      // The block was genuinely remounted (new <pre> node) ...
       const preAfter = screen.container.querySelector<HTMLPreElement>(".chat-markdown-shiki pre");
       expect(preAfter).not.toBeNull();
-      expect(preAfter).not.toBe(preBefore);
-      // ... but its horizontal scroll position is restored.
       await vi.waitFor(() => {
         expect(
           screen.container.querySelector<HTMLPreElement>(".chat-markdown-shiki pre")?.scrollLeft,
