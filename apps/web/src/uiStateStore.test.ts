@@ -336,7 +336,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[nextLogicalKey]).toBe(false);
   });
 
-  it("syncThreads prunes missing thread UI state", () => {
+  it("syncThreads keeps visited state when transient snapshots omit a thread", () => {
     const thread1 = ThreadId.make("thread-1");
     const thread2 = ThreadId.make("thread-2");
     const initialState = makeUiState({
@@ -358,12 +358,26 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
+      [thread2]: "2026-02-25T12:36:00.000Z",
     });
     expect(next.threadChangedFilesExpandedById).toEqual({
       [thread1]: {
         "turn-1": false,
       },
     });
+  });
+
+  it("syncThreads keeps markThreadVisited idempotent after partial snapshots", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const completedAt = "2026-02-25T12:35:00.000Z";
+    const visitedState = markThreadVisited(makeUiState(), thread1, completedAt);
+
+    const afterPartialSnapshot = syncThreads(visitedState, []);
+
+    expect(afterPartialSnapshot.threadLastVisitedAtById[thread1]).toBe(completedAt);
+    expect(markThreadVisited(afterPartialSnapshot, thread1, completedAt)).toBe(
+      afterPartialSnapshot,
+    );
   });
 
   it("syncThreads seeds visit state for unseen snapshot threads", () => {
