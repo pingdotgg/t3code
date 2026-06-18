@@ -50,6 +50,7 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly suppressSessionUpdatesUntilPrompt?: boolean;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -171,6 +172,9 @@ const makeAcpSessionRuntime = (
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const suppressSessionUpdatesRef = yield* Ref.make(
+      options.suppressSessionUpdatesUntilPrompt === true,
+    );
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
@@ -249,6 +253,7 @@ const makeAcpSessionRuntime = (
         modeStateRef,
         toolCallsRef,
         assistantSegmentRef,
+        suppressSessionUpdatesRef,
         params: notification,
       }),
     );
@@ -518,10 +523,13 @@ const makeAcpSessionRuntime = (
               sessionId: started.sessionId,
               ...payload,
             } satisfies EffectAcpSchema.PromptRequest;
-            return closeActiveAssistantSegment({
-              queue: eventQueue,
-              assistantSegmentRef,
-            }).pipe(
+            return Ref.set(suppressSessionUpdatesRef, false).pipe(
+              Effect.andThen(
+                closeActiveAssistantSegment({
+                  queue: eventQueue,
+                  assistantSegmentRef,
+                }),
+              ),
               Effect.andThen(
                 runLoggedRequest(
                   "session/prompt",
@@ -608,12 +616,14 @@ const handleSessionUpdate = ({
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
+  suppressSessionUpdatesRef,
   params,
 }: {
   readonly queue: Queue.Queue<AcpParsedSessionEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly suppressSessionUpdatesRef: Ref.Ref<boolean>;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -622,6 +632,9 @@ const handleSessionUpdate = ({
       yield* Ref.update(modeStateRef, (current) =>
         current === undefined ? current : updateModeState(current, parsed.modeId!),
       );
+    }
+    if (yield* Ref.get(suppressSessionUpdatesRef)) {
+      return;
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
@@ -671,6 +684,8 @@ const handleSessionUpdate = ({
       yield* Queue.offer(queue, event);
     }
   });
+
+export const handleSessionUpdateForTest = handleSessionUpdate;
 
 function updateModeState(modeState: AcpSessionModeState, nextModeId: string): AcpSessionModeState {
   const normalized = nextModeId.trim();
