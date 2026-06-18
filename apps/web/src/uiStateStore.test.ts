@@ -284,6 +284,27 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[project1]).toBe(false);
   });
 
+  it("syncProjects is a no-op when only cwd formatting changes", () => {
+    const projectKey = "env-local:c:\\work\\repo\\project";
+    const initialState = syncProjects(makeUiState(), [
+      {
+        key: projectKey,
+        logicalKey: projectKey,
+        cwd: "C:\\Work\\Repo\\Project\\",
+      },
+    ]);
+
+    const next = syncProjects(initialState, [
+      {
+        key: projectKey,
+        logicalKey: projectKey,
+        cwd: "c:/work/repo/project",
+      },
+    ]);
+
+    expect(next).toBe(initialState);
+  });
+
   it("syncProjects keys projectExpandedById by the logical key, not the physical key", () => {
     // In repository grouping mode, multiple physical projects (different
     // environments or different repo-relative paths) collapse into one
@@ -606,5 +627,31 @@ describe("uiStateStore persistence round-trip", () => {
     ]);
 
     expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
+  });
+
+  it("rehydrates collapsed projects when Windows cwd formatting changes across restart", () => {
+    const initialProject = {
+      key: "win-kA",
+      logicalKey: "win-kA",
+      cwd: "C:\\Work\\Repo\\Project\\",
+    };
+    const restartedProject = {
+      key: "win-kA",
+      logicalKey: "win-kA",
+      cwd: "c:/work/repo/project",
+    };
+
+    let state = syncProjects(makeUiState(), [initialProject]);
+    state = setProjectExpanded(state, initialProject.logicalKey, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+
+    const rehydrated = syncProjects(makeUiState(), [restartedProject]);
+
+    expect(rehydrated.projectExpandedById[restartedProject.logicalKey]).toBe(false);
   });
 });
