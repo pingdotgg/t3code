@@ -1,5 +1,7 @@
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
+import { commandLooksLikeCopilotPatchEdit } from "./CopilotPatchDetection.ts";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -41,13 +43,6 @@ function toolArgumentsLookLikeFileChange(arguments_: unknown): boolean {
   return hasFilePath && hasEditPayload;
 }
 
-function commandLooksLikeFileChange(command: string | undefined): boolean {
-  if (!command) {
-    return false;
-  }
-  return /(?:^|\s)apply_patch(?:\s|$)/u.test(command) || command.includes("*** Begin Patch");
-}
-
 function toolCommandLooksLikeFileChange(arguments_: unknown): boolean {
   if (!isRecord(arguments_)) {
     return false;
@@ -59,7 +54,7 @@ function toolCommandLooksLikeFileChange(arguments_: unknown): boolean {
     arguments_.commandText,
     isRecord(arguments_.input) ? arguments_.input.command : undefined,
   ];
-  return candidates.some((candidate) => commandLooksLikeFileChange(trimmedString(candidate)));
+  return candidates.some((candidate) => commandLooksLikeCopilotPatchEdit(trimmedString(candidate)));
 }
 
 export function isReadOnlyCopilotToolName(toolName: string): boolean {
