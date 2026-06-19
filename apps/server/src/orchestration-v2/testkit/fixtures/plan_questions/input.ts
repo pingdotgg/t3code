@@ -9,6 +9,7 @@ export function planQuestionsInput(): OrchestratorFixtureInput {
         type: "answer_next_user_input_request",
         answers: {
           schema_vs_ui_flexibility: "Strict schemas (Recommended)",
+          "question-0-schema-vs-flexibility": "Strict schemas",
         },
       },
     ],

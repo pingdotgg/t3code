@@ -7,6 +7,9 @@ import * as FileSystem from "effect/FileSystem";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { CursorOrchestratorReplayHarness } from "../Adapters/CursorAdapterV2.testkit.ts";
+import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
+import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
+import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
@@ -117,6 +120,21 @@ function runFixtureProviderWithRegisteredHarness(input: {
       return runFixtureProvider({
         ...input,
         harness: CursorOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "grok":
+      return runFixtureProvider({
+        ...input,
+        harness: GrokOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "acpRegistry":
+      return runFixtureProvider({
+        ...input,
+        harness: AcpRegistryOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "opencode":
+      return runFixtureProvider({
+        ...input,
+        harness: OpenCodeOrchestratorReplayHarness,
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     default:
       return Effect.die(
