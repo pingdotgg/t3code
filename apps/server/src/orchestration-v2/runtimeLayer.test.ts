@@ -49,6 +49,8 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
 
       const result = yield* orchestrator.dispatch({
         type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
         commandId: CommandId.make("runtime-layer-create"),
         threadId,
         projectId,
