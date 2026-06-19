@@ -56,7 +56,15 @@ async function main(): Promise<void> {
   const runtime = buildTuiRuntime(options);
   const client = makeTuiClient(runtime);
 
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  // Render on a transparent background so the user's terminal theme (and its own
+  // background colour) shows through instead of OpenTUI's opaque default.
+  const renderer = await createCliRenderer({ exitOnCtrlC: false, backgroundColor: "transparent" });
+
+  // Detect the terminal's actual palette + default fg/bg up front, so our indexed
+  // and default colour intents resolve to the user's real theme (not a fallback
+  // palette) even on truecolor terminals. Best-effort: themes that don't answer
+  // the OSC query just keep the conventional ANSI mapping.
+  await renderer.getPalette({ timeout: 250 }).catch(() => {});
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;

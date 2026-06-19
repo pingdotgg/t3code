@@ -7,7 +7,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import { RGBA, type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import * as React from "react";
 
@@ -42,9 +42,64 @@ const SCROLL_STEP = 8;
 /** Replay at most this many bytes of terminal history on attach (keeps it fast). */
 const TERMINAL_HISTORY_TAIL = 128 * 1024;
 
-/** Muted foreground used for hints, timestamps, and the "dim" affordance. */
-const DIM = "#7a7f87";
-const SELECTED_BG = "#1f2a3a";
+// ── Terminal-themed colours ──────────────────────────────────────────────────
+//
+// OpenTUI is a truecolor framebuffer renderer, but it can emit *indexed* and
+// *default* colour intents that the terminal renders with ITS OWN palette. We use
+// those exclusively so the UI borrows the user's theme (any dark/light scheme)
+// instead of hardcoding hex that fights their background:
+//   - `text`   → the terminal's default foreground (RGBA.defaultForeground)
+//   - `bg`     → the terminal's default background (used for inverse cells)
+//   - `dim`    → ANSI slot 8 ("bright black"), the theme's muted grey
+//   - `accent` → ANSI slot 6 (cyan)
+//   - status/role/border colours map their names to ANSI slots 0–15 via `ansi()`.
+// The renderer itself is created with a transparent background, so the terminal's
+// own backdrop shows through.
+
+const ANSI_INDEX: Record<string, number> = {
+  black: 0,
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  magenta: 5,
+  cyan: 6,
+  white: 7,
+  gray: 8,
+  grey: 8,
+  brightblack: 8,
+  brightred: 9,
+  brightgreen: 10,
+  brightyellow: 11,
+  brightblue: 12,
+  brightmagenta: 13,
+  brightcyan: 14,
+  brightwhite: 15,
+};
+
+/** Resolve a named colour to an indexed RGBA the terminal themes itself. */
+function ansi(name: string): RGBA {
+  const index = ANSI_INDEX[name.toLowerCase()];
+  return index === undefined ? RGBA.defaultForeground() : RGBA.fromIndex(index);
+}
+
+interface Palette {
+  readonly text: RGBA;
+  readonly bg: RGBA;
+  readonly dim: RGBA;
+  readonly accent: RGBA;
+  readonly selectedBg: RGBA;
+}
+
+const THEME: Palette = {
+  text: RGBA.defaultForeground(),
+  bg: RGBA.defaultBackground(),
+  dim: RGBA.fromIndex(8),
+  accent: RGBA.fromIndex(6),
+  selectedBg: RGBA.fromIndex(8),
+};
+
+const usePalette = (): Palette => THEME;
 
 // ── Row model ────────────────────────────────────────────────────────────────
 
@@ -310,17 +365,18 @@ function ProjectRow({
   readonly innerWidth: number;
   readonly onClick: () => void;
 }): React.ReactNode {
+  const palette = usePalette();
   const caret = row.expanded ? "▾" : "▸";
   const count = ` (${row.count})`;
   const dot = row.status ? ` ${row.status.glyph}` : "";
   const titleBudget = innerWidth - 3 - count.length - dot.length;
   return (
-    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
       <text>
-        <span fg={selected ? "cyan" : "blue"}>
-          {`${selected ? "›" : " "}${caret} ${padClip(row.title, titleBudget)}${count}`}
+        <span fg={selected ? palette.accent : palette.text}>
+          {`${selected ? "▌" : " "}${caret} ${padClip(row.title, titleBudget)}${count}`}
         </span>
-        {row.status ? <span fg={row.status.color}>{dot}</span> : null}
+        {row.status ? <span fg={ansi(row.status.color)}>{dot}</span> : null}
       </text>
     </box>
   );
@@ -337,15 +393,17 @@ function ThreadRow({
   readonly innerWidth: number;
   readonly onClick: () => void;
 }): React.ReactNode {
+  const palette = usePalette();
   const status = resolveThreadStatus(thread);
   const time = ` ${relativeTime(thread.updatedAt)}`;
-  const titleBudget = innerWidth - 6 - time.length;
+  const titleBudget = innerWidth - 4 - time.length;
   return (
-    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
       <text>
-        <span fg={status.color}>{`   ${selected ? "▶" : " "}${status.glyph} `}</span>
-        <span fg={selected ? "#ffffff" : "#cfd3da"}>{padClip(thread.title, titleBudget)}</span>
-        <span fg={DIM}>{time}</span>
+        <span fg={palette.accent}>{selected ? "▌ " : "  "}</span>
+        <span fg={ansi(status.color)}>{`${status.glyph} `}</span>
+        <span fg={palette.text}>{padClip(thread.title, titleBudget)}</span>
+        <span fg={palette.dim}>{time}</span>
       </text>
     </box>
   );
@@ -360,9 +418,10 @@ function MoreRow({
   readonly selected: boolean;
   readonly onClick: () => void;
 }): React.ReactNode {
+  const palette = usePalette();
   return (
-    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
-      <text fg={selected ? "cyan" : DIM}>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
+      <text fg={selected ? palette.accent : palette.dim}>
         {`   ${selected ? "▶" : " "}… show ${hiddenCount} more`}
       </text>
     </box>
@@ -386,6 +445,7 @@ function ThreadList({
   readonly height: number;
   readonly store: Store;
 }): React.ReactNode {
+  const palette = usePalette();
   const innerWidth = Math.max(8, width - 4);
   const activate = (row: Row) => {
     if (row.kind === "project") store.toggleProject(row.id);
@@ -399,16 +459,16 @@ function ThreadList({
       height={height}
       border
       borderStyle="rounded"
-      borderColor="gray"
+      borderColor={palette.dim}
       paddingLeft={1}
       paddingRight={1}
     >
       <text>
-        <span fg="cyan">Projects</span>
-        {moreAbove ? <span fg={DIM}>{"  ↑ more"}</span> : null}
+        <span fg={palette.accent}>Projects</span>
+        {moreAbove ? <span fg={palette.dim}>{"  ↑ more"}</span> : null}
       </text>
       {rows.length === 0 ? (
-        <text fg={DIM}>No projects yet. Press ^N.</text>
+        <text fg={palette.dim}>No projects yet. Press ^N.</text>
       ) : (
         rows.map((row) => {
           const selected = selectionEquals(selection, row);
@@ -444,7 +504,7 @@ function ThreadList({
           );
         })
       )}
-      {moreBelow ? <text fg={DIM}>{"  ↓ more"}</text> : null}
+      {moreBelow ? <text fg={palette.dim}>{"  ↓ more"}</text> : null}
     </box>
   );
 }
@@ -472,6 +532,7 @@ function ConversationView({
   readonly syntaxStyle: SyntaxStyle;
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
 }): React.ReactNode {
+  const palette = usePalette();
   const headerHeight = 1;
   const approvalHeight = approvals.length > 0 ? approvals.length + 2 : 0;
   const bodyHeight = Math.max(1, height - headerHeight - approvalHeight - 2);
@@ -483,11 +544,11 @@ function ConversationView({
         height={height}
         border
         borderStyle="rounded"
-        borderColor="gray"
+        borderColor={palette.dim}
         paddingLeft={1}
         paddingRight={1}
       >
-        <text fg={DIM}>
+        <text fg={palette.dim}>
           {projectHint
             ? `${projectHint} — Enter to expand, then ↑/↓ to pick a thread.`
             : "Select a thread to view its conversation."}
@@ -503,21 +564,21 @@ function ConversationView({
       height={height}
       border
       borderStyle="rounded"
-      borderColor="gray"
+      borderColor={palette.dim}
       paddingLeft={1}
       paddingRight={1}
     >
       <box flexDirection="row" width="100%">
         <box flexGrow={1}>
-          <text>
+          <text fg={palette.text}>
             <strong>{clip(detail.title, Math.max(8, width - 28))}</strong>
           </text>
         </box>
         <text>
-          <span fg={approvals.length > 0 ? "red" : sessionStatusColor(detail.session?.status)}>
+          <span fg={approvals.length > 0 ? ansi("red") : ansi(sessionStatusColor(detail.session?.status))}>
             {approvals.length > 0 ? "pending approval" : statusLabel(detail)}
           </span>
-          <span fg={DIM}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
+          <span fg={palette.dim}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
         </text>
       </box>
 
@@ -530,14 +591,18 @@ function ConversationView({
       >
         {detail.messages.map((message) => {
           const roleColor =
-            message.role === "user" ? "yellow" : message.role === "assistant" ? "cyan" : DIM;
+            message.role === "user"
+              ? ansi("yellow")
+              : message.role === "assistant"
+                ? palette.accent
+                : palette.dim;
           const who = message.role === "user" ? "you" : message.role;
           const body = message.text.trim().length > 0 ? message.text : "…";
           return (
             <box key={message.id} flexDirection="column" marginBottom={1}>
               <text>
                 <span fg={roleColor}>{who}</span>
-                {message.streaming ? <span fg={DIM}> ⟳</span> : null}
+                {message.streaming ? <span fg={palette.dim}> ⟳</span> : null}
               </text>
               <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
             </box>
@@ -546,16 +611,16 @@ function ConversationView({
       </scrollbox>
 
       {approvals.length > 0 ? (
-        <box flexDirection="column" border borderStyle="rounded" borderColor="red" paddingLeft={1} paddingRight={1}>
+        <box flexDirection="column" border borderStyle="rounded" borderColor={ansi("red")} paddingLeft={1} paddingRight={1}>
           <text>
-            <span fg="red">Approval required</span>
+            <span fg={ansi("red")}>Approval required</span>
           </text>
           {approvals.map((approval) => (
             <text key={approval.requestId}>
               {`${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`}
             </text>
           ))}
-          <text fg={DIM}>^A approve   ^R deny</text>
+          <text fg={palette.dim}>^A approve   ^R deny</text>
         </box>
       ) : null}
     </box>
@@ -574,14 +639,15 @@ interface TerminalInfo {
 
 /** Render one styled terminal segment, applying fg/bg + bold/underline/inverse. */
 function renderSegment(segment: TermSegment, key: number): React.ReactNode {
-  // Inverse swaps fg/bg so the cursor cell and reverse-video runs read correctly.
-  const fg = segment.inverse ? (segment.backgroundColor ?? "#000000") : segment.color;
-  const bg = segment.inverse ? (segment.color ?? "#c0c0c0") : segment.backgroundColor;
+  // Default cells inherit the terminal's own fg/bg; inverse swaps them so the
+  // cursor cell and reverse-video runs read correctly on any theme.
+  const fg = segment.inverse ? (segment.backgroundColor ?? THEME.bg) : (segment.color ?? THEME.text);
+  const bg = segment.inverse ? (segment.color ?? THEME.text) : segment.backgroundColor;
   let node: React.ReactNode = segment.text;
   if (segment.underline) node = <u>{node}</u>;
   if (segment.italic) node = <em>{node}</em>;
   if (segment.bold) node = <strong>{node}</strong>;
-  const style: { fg?: string; bg?: string } = {};
+  const style: { fg?: string | RGBA; bg?: string | RGBA } = {};
   if (fg) style.fg = fg;
   if (bg) style.bg = bg;
   return (
@@ -602,6 +668,7 @@ function TerminalPane({
   readonly cols: number;
   readonly rows: number;
 }): React.ReactNode {
+  const palette = usePalette();
   const safeCols = Math.max(2, cols);
   const safeRows = Math.max(2, rows);
   const termRef = React.useRef<XTerm | null>(null);
@@ -681,13 +748,13 @@ function TerminalPane({
       flexShrink={0}
       border
       borderStyle="rounded"
-      borderColor="yellow"
+      borderColor={ansi("yellow")}
       paddingLeft={1}
       paddingRight={1}
     >
       <text>
-        <span fg="yellow">{`Terminal · ${info.title}`}</span>
-        <span fg={DIM}>{"  ·  Ctrl+Q to return"}</span>
+        <span fg={ansi("yellow")}>{`Terminal · ${info.title}`}</span>
+        <span fg={palette.dim}>{"  ·  Ctrl+Q to return"}</span>
       </text>
       {frame.rows.map((segments, index) => (
         <text key={index}>
@@ -708,6 +775,7 @@ export function App({
   readonly onExit: () => void;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
+  const palette = usePalette();
   const store = React.useMemo(() => createStore(client), [client]);
   const syntaxStyle = React.useMemo(() => SyntaxStyle.create(), []);
   const state = React.useSyncExternalStore(store.subscribe, store.getState);
@@ -968,7 +1036,7 @@ export function App({
         <box flexDirection="column" flexShrink={0}>
           <TerminalPane client={client} info={activeTerminal} cols={termCols} rows={termRows} />
           <box paddingLeft={1} paddingRight={1} flexShrink={0}>
-            <text fg={DIM}>keys → shell · Ctrl+Q to return</text>
+            <text fg={palette.dim}>keys → shell · Ctrl+Q to return</text>
           </box>
         </box>
       ) : focus === "new" ? (
@@ -976,34 +1044,43 @@ export function App({
           flexDirection="column"
           border
           borderStyle="rounded"
-          borderColor="cyan"
+          borderColor={palette.accent}
           paddingLeft={1}
           paddingRight={1}
           flexShrink={0}
         >
           <text>
-            <span fg="cyan">new thread ▸ project: </span>
-            {projects[projectIndex]?.title ?? "(none)"}
-            <span fg={DIM}>{"  ↑/↓ change · Esc cancel"}</span>
+            <span fg={palette.accent}>new thread ▸ project: </span>
+            <span fg={palette.text}>{projects[projectIndex]?.title ?? "(none)"}</span>
+            <span fg={palette.dim}>{"  ↑/↓ change · Esc cancel"}</span>
           </text>
           <box flexDirection="row">
             <text>
-              <span fg="cyan">message ▸ </span>
+              <span fg={palette.accent}>message ▸ </span>
             </text>
-            <input value={draft} onChange={setDraft} focused placeholder="Describe the task…" flexGrow={1} />
+            <input
+              value={draft}
+              onChange={setDraft}
+              focused
+              placeholder="Describe the task…"
+              flexGrow={1}
+              textColor={palette.text}
+              cursorColor={palette.accent}
+              placeholderColor={palette.dim}
+            />
           </box>
         </box>
       ) : (
         <box
           border
           borderStyle="rounded"
-          borderColor="yellow"
+          borderColor={palette.accent}
           paddingLeft={1}
           paddingRight={1}
           flexShrink={0}
         >
           <text>
-            <span fg="yellow">{"› "}</span>
+            <span fg={palette.accent}>{"› "}</span>
           </text>
           <input
             value={reply}
@@ -1011,13 +1088,16 @@ export function App({
             focused
             placeholder={placeholder}
             flexGrow={1}
+            textColor={palette.text}
+            cursorColor={palette.accent}
+            placeholderColor={palette.dim}
           />
         </box>
       )}
 
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
-        <text fg={DIM}>{hint}</text>
-        <text fg={DIM}>{` ${state.status}`}</text>
+        <text fg={palette.dim}>{hint}</text>
+        <text fg={palette.dim}>{` ${state.status}`}</text>
       </box>
     </box>
   );
