@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
-    "lib": ["ESNext", "esnext.disposable"]
+    "lib": ["ESNext", "esnext.disposable"],
+    // `@t3tools/tui` exposes its JSX source as its public types; enabling jsx here
+    // lets tsgo parse that dependency's `.tsx` files (the server has no JSX of its own).
+    "jsx": "react-jsx"
   },
   "include": ["src", "vite.config.ts", "scripts", "integration", "../../scripts/lib"]
 }
