@@ -1060,7 +1060,7 @@ export function App({
             </text>
             <input
               value={draft}
-              onChange={setDraft}
+              onInput={setDraft}
               focused
               placeholder="Describe the task…"
               flexGrow={1}
@@ -1072,6 +1072,7 @@ export function App({
         </box>
       ) : (
         <box
+          flexDirection="row"
           border
           borderStyle="rounded"
           borderColor={palette.accent}
@@ -1084,7 +1085,7 @@ export function App({
           </text>
           <input
             value={reply}
-            onChange={setReply}
+            onInput={setReply}
             focused
             placeholder={placeholder}
             flexGrow={1}
