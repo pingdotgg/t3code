@@ -420,6 +420,7 @@ export const enrichGrokBuildSnapshot = (input: {
   readonly settings: GrokBuildSettings;
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
   readonly environment?: NodeJS.ProcessEnv;
@@ -437,22 +438,24 @@ export const enrichGrokBuildSnapshot = (input: {
       return;
     }
     const cliEnv = buildGrokCliProcessEnv(input.environment, envOverridesResult.success);
-    const updateCheck = yield* spawnAndCollect(
-      command,
-      ChildProcess.make(command, ["update", "--check", "--json"], {
-        env: cliEnv,
-        shell: process.platform === "win32",
-      }),
-    ).pipe(Effect.timeoutOption(GROK_UPDATE_CHECK_TIMEOUT_MS), Effect.result);
-
     let latestVersion: string | null = null;
-    if (updateCheck._tag === "Success" && Option.isSome(updateCheck.success)) {
-      const result = updateCheck.success.value;
-      if (result.code === 0) {
-        const decoded = yield* decodeGrokUpdateCheckResponse(result.stdout.trim() || "{}").pipe(
-          Effect.orElseSucceed(() => null),
-        );
-        latestVersion = decoded?.latestVersion?.trim() ?? null;
+    if (input.enableProviderUpdateChecks !== false) {
+      const updateCheck = yield* spawnAndCollect(
+        command,
+        ChildProcess.make(command, ["update", "--check", "--json"], {
+          env: cliEnv,
+          shell: process.platform === "win32",
+        }),
+      ).pipe(Effect.timeoutOption(GROK_UPDATE_CHECK_TIMEOUT_MS), Effect.result);
+
+      if (updateCheck._tag === "Success" && Option.isSome(updateCheck.success)) {
+        const result = updateCheck.success.value;
+        if (result.code === 0) {
+          const decoded = yield* decodeGrokUpdateCheckResponse(result.stdout.trim() || "{}").pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          latestVersion = decoded?.latestVersion?.trim() ?? null;
+        }
       }
     }
 

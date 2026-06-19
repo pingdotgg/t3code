@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Crypto from "effect/Crypto";
-import * as Stream from "effect/Stream";
 import * as Duration from "effect/Duration";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -28,8 +27,14 @@ import {
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokBuildTextGeneration } from "../../textGeneration/GrokBuildTextGeneration.ts";
 import { applyProviderAdapterCapabilities, type ServerProviderDraft } from "../providerSnapshot.ts";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "../providerUpdateSettings.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("grok-build");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
@@ -49,7 +54,8 @@ export type GrokBuildDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | ProviderEventLoggers
-  | ServerConfig;
+  | ServerConfig
+  | ServerSettingsService;
 
 export const GrokBuildDriver: ProviderDriver<GrokBuildSettings, GrokBuildDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -68,6 +74,7 @@ export const GrokBuildDriver: ProviderDriver<GrokBuildSettings, GrokBuildDriverE
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
 
@@ -104,19 +111,23 @@ export const GrokBuildDriver: ProviderDriver<GrokBuildSettings, GrokBuildDriverE
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-      const snapshot = yield* makeManagedServerProvider<GrokBuildSettings>({
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<GrokBuildSettings>
+      >({
         maintenanceCapabilities,
-        getSettings: Effect.succeed(effectiveConfig),
-        streamSettings: Stream.never,
-        haveSettingsChanged: () => false,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialGrokBuildProviderSnapshot(settings).pipe(Effect.map(stampIdentity)),
+          buildInitialGrokBuildProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichGrokBuildSnapshot({
-            settings,
+            settings: settings.provider,
             snapshot: currentSnapshot,
             maintenanceCapabilities,
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             publishSnapshot,
             stampIdentity,
             environment: processEnv,

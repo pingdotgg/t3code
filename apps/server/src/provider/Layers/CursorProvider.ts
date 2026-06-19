@@ -1109,6 +1109,7 @@ export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
   readonly httpClient: HttpClient.HttpClient;
@@ -1120,7 +1121,9 @@ export const enrichCursorSnapshot = (input: {
     return Effect.void;
   }
 
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities).pipe(
+  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+  }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) =>
       publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
