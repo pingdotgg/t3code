@@ -16,6 +16,13 @@ import * as React from "react";
 
 import { derivePendingApprovals, type PendingApproval } from "./approvals.ts";
 import { readTerminalFrame, type TermSegment } from "./terminalView.ts";
+import {
+  relativeTime,
+  resolveProjectStatus,
+  resolveThreadStatus,
+  sessionStatusColor,
+  type ThreadStatus,
+} from "./theme.ts";
 
 // @xterm/headless ships as CommonJS, so load it via createRequire (matching the
 // repo's node-pty pattern) rather than a named ESM import.
@@ -198,8 +205,7 @@ type Row =
       readonly id: string;
       readonly title: string;
       readonly count: number;
-      readonly running: number;
-      readonly approvals: number;
+      readonly status: ThreadStatus | null;
       readonly expanded: boolean;
     }
   | { readonly kind: "thread"; readonly id: string; readonly thread: OrchestrationThreadShell }
@@ -272,8 +278,7 @@ export function buildRows(
       id,
       title: projectTitles.get(id) ?? id,
       count: threads.length,
-      running: threads.filter((thread) => thread.session?.status === "running").length,
-      approvals: threads.filter((thread) => thread.hasPendingApprovals).length,
+      status: resolveProjectStatus(threads),
       expanded: isExpanded,
     });
     if (isExpanded) {
@@ -443,39 +448,59 @@ type AppSignal = { readonly type: "exit" };
 
 // ── Components ───────────────────────────────────────────────────────────────
 
+/** Truncate to `width` with a trailing ellipsis (Ink's flex truncate is brittle). */
+function clip(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length <= width) return text;
+  return `${text.slice(0, width - 1)}…`;
+}
+/** Truncate then right-pad so a fixed trailing segment sits at the right edge. */
+function padClip(text: string, width: number): string {
+  return clip(text, width).padEnd(Math.max(0, width));
+}
+
 const ProjectRow = React.memo(function ProjectRow({
   row,
   selected,
+  innerWidth,
 }: {
   readonly row: Extract<Row, { kind: "project" }>;
   readonly selected: boolean;
+  readonly innerWidth: number;
 }): React.ReactElement {
   const caret = row.expanded ? "▾" : "▸";
-  const badges =
-    (row.approvals > 0 ? ` ${row.approvals}!` : "") +
-    (row.running > 0 ? ` ●${row.running}` : "");
+  const color = selected ? "cyan" : "blue";
+  const count = ` (${row.count})`;
+  const dot = row.status ? ` ${row.status.glyph}` : "";
+  const titleBudget = innerWidth - 3 - count.length - dot.length; // lead "M C " = 3
   return h(
     Text,
-    { color: selected ? "cyan" : "blue", bold: true },
-    `${selected ? "›" : " "}${caret} ${row.title} (${row.count})`,
-    badges ? h(Text, { color: row.approvals > 0 ? "red" : "green" }, badges) : null,
+    { color, bold: true, wrap: "truncate-end" },
+    `${selected ? "›" : " "}${caret} `,
+    padClip(row.title, titleBudget),
+    count,
+    row.status ? h(Text, { color: row.status.color, bold: row.status.bold }, dot) : null,
   );
 });
 
 const ThreadRow = React.memo(function ThreadRow({
   thread,
   selected,
+  innerWidth,
 }: {
   readonly thread: OrchestrationThreadShell;
   readonly selected: boolean;
+  readonly innerWidth: number;
 }): React.ReactElement {
-  const running = thread.session?.status === "running";
-  const flag = thread.hasPendingApprovals ? "!" : running ? "●" : " ";
-  const color = thread.hasPendingApprovals ? "red" : running ? "green" : undefined;
+  const status = resolveThreadStatus(thread);
+  const time = ` ${relativeTime(thread.updatedAt)}`;
+  const titleBudget = innerWidth - 6 - time.length; // lead "   ▶● " = 6
   return h(
     Text,
-    { ...(selected ? { color: "green" as const } : color ? { color } : {}), bold: selected },
-    `   ${selected ? "▶" : " "}${flag} ${thread.title}`,
+    { wrap: "truncate-end" },
+    h(Text, { color: status.color, bold: status.bold }, `   ${selected ? "▶" : " "}${status.glyph} `),
+    h(Text, { ...(selected ? { color: "cyan" as const } : {}), bold: selected }, padClip(thread.title, titleBudget)),
+    h(Text, { dimColor: true }, time),
   );
 });
 
@@ -488,7 +513,7 @@ const MoreRow = React.memo(function MoreRow({
 }): React.ReactElement {
   return h(
     Text,
-    { color: selected ? "cyan" : "gray", dimColor: !selected, bold: selected },
+    { color: selected ? "cyan" : "gray", dimColor: !selected, bold: selected, wrap: "truncate-end" },
     `   ${selected ? "▶" : " "}… show ${hiddenCount} more`,
   );
 });
@@ -498,17 +523,20 @@ function ThreadList({
   selection,
   moreAbove,
   moreBelow,
+  width,
 }: {
   readonly rows: ReadonlyArray<Row>;
   readonly selection: Selection | null;
   readonly moreAbove: boolean;
   readonly moreBelow: boolean;
+  readonly width: number;
 }): React.ReactElement {
+  const innerWidth = Math.max(8, width - 4); // round border (2) + paddingX (2)
   return h(
     Box,
     {
       flexDirection: "column",
-      width: 34,
+      width,
       borderStyle: "round",
       borderColor: "gray",
       paddingX: 1,
@@ -528,6 +556,7 @@ function ThreadList({
               key: `p:${row.id}`,
               row,
               selected: selectionEquals(selection, row),
+              innerWidth,
             });
           }
           if (row.kind === "more") {
@@ -541,6 +570,7 @@ function ThreadList({
             key: `t:${row.id}`,
             thread: row.thread,
             selected: selectionEquals(selection, row),
+            innerWidth,
           });
         })),
     moreBelow ? h(Text, { dimColor: true }, "  ↓ more") : null,
@@ -685,10 +715,24 @@ function ThreadDetail({
       overflow: "hidden",
     },
     h(
-      Text,
-      { bold: true, wrap: "truncate-end" },
-      detail.title,
-      h(Text, { dimColor: true }, `  ·  ${statusLabel(detail)}  ·  ${detail.runtimeMode}`),
+      Box,
+      { flexDirection: "row", width: "100%" },
+      h(
+        Box,
+        { flexGrow: 1, flexShrink: 1, minWidth: 0, overflow: "hidden" },
+        h(Text, { bold: true, wrap: "truncate-end" }, detail.title),
+      ),
+      h(
+        Text,
+        null,
+        h(Text, { dimColor: true }, "  "),
+        h(
+          Text,
+          { color: approvals.length > 0 ? "red" : sessionStatusColor(detail.session?.status) },
+          approvals.length > 0 ? "pending approval" : statusLabel(detail),
+        ),
+        h(Text, { dimColor: true }, `  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`),
+      ),
     ),
     h(
       Box,
@@ -912,11 +956,15 @@ function App({
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
   // User-dragged drawer height (rows); null = default proportion of the screen.
   const [terminalHeight, setTerminalHeight] = React.useState<number | null>(null);
+  // Width of the thread-list pane (drag-resizable).
+  const [listWidth, setListWidth] = React.useState(LIST_PANE_WIDTH);
   const activeTerminalRef = React.useRef<TerminalInfo | null>(null);
   activeTerminalRef.current = activeTerminal;
   const closeTerminalRef = React.useRef<() => void>(() => {});
   closeTerminalRef.current = () => setActiveTerminal(null);
-  const dividerDragRef = React.useRef(false);
+  // Which divider (if any) is being dragged: the vertical list edge or the
+  // horizontal terminal-drawer top edge.
+  const dividerDragRef = React.useRef<"list" | "terminal" | null>(null);
 
   const projects = state.shell?.projects ?? [];
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
@@ -979,7 +1027,7 @@ function App({
 
   // Line-accurate conversation pagination: wrap every message to the pane width,
   // then scroll through the flat line list a precise window at a time.
-  const chatWidth = Math.max(20, size.columns - LIST_PANE_WIDTH - 6);
+  const chatWidth = Math.max(20, size.columns - listWidth - 6);
   const conversationLines = React.useMemo(
     () => (detail ? buildConversationLines(detail, chatWidth) : []),
     [detail, chatWidth],
@@ -1005,7 +1053,7 @@ function App({
   const onWheelRef = React.useRef<(direction: "up" | "down", column: number) => void>(() => {});
   onWheelRef.current = (direction, column) => {
     if (focus === "new") return;
-    const inList = column <= LIST_PANE_WIDTH + 1;
+    const inList = column <= listWidth + 1;
     if (inList) {
       // Move the list selection a few rows per notch.
       store.moveSelection(direction === "up" ? -2 : 2);
@@ -1018,7 +1066,7 @@ function App({
   const onClickRef = React.useRef<(column: number, row: number) => void>(() => {});
   onClickRef.current = (column, row) => {
     if (focus !== "compose") return;
-    if (column > LIST_PANE_WIDTH) return;
+    if (column > listWidth) return;
     const index = row - 3;
     const target = listRows[index];
     if (!target) return;
@@ -1026,26 +1074,37 @@ function App({
     else if (target.kind === "more") store.loadMore(target.id);
     else store.select({ kind: "thread", id: target.id });
   };
-  // Drag the terminal drawer's top border to resize its height. Returns whether
-  // the event belonged to the divider (so terminal mode knows not to forward it).
-  const dividerPressRef = React.useRef<(row: number) => boolean>(() => false);
-  dividerPressRef.current = (row) => {
+  // Drag a divider: the vertical list/conversation edge (by column) or the
+  // terminal drawer's top edge (by row). Returns whether the event belonged to a
+  // divider (so terminal mode knows not to forward it to the PTY).
+  const dividerPressRef = React.useRef<(column: number, row: number) => boolean>(() => false);
+  dividerPressRef.current = (column, row) => {
+    if (Math.abs(column - listWidth) <= 1) {
+      dividerDragRef.current = "list";
+      return true;
+    }
     if (activeTerminal && Math.abs(row - dividerRow) <= 1) {
-      dividerDragRef.current = true;
+      dividerDragRef.current = "terminal";
       return true;
     }
     return false;
   };
-  const dividerMoveRef = React.useRef<(row: number) => boolean>(() => false);
-  dividerMoveRef.current = (row) => {
-    if (!dividerDragRef.current) return false;
-    setTerminalHeight(Math.min(Math.max(size.rows - row, 6), Math.max(6, size.rows - 6)));
-    return true;
+  const dividerMoveRef = React.useRef<(column: number, row: number) => boolean>(() => false);
+  dividerMoveRef.current = (column, row) => {
+    if (dividerDragRef.current === "list") {
+      setListWidth(Math.min(Math.max(column, 22), Math.max(22, size.columns - 24)));
+      return true;
+    }
+    if (dividerDragRef.current === "terminal") {
+      setTerminalHeight(Math.min(Math.max(size.rows - row, 6), Math.max(6, size.rows - 6)));
+      return true;
+    }
+    return false;
   };
   const dividerReleaseRef = React.useRef<() => boolean>(() => false);
   dividerReleaseRef.current = () => {
-    if (!dividerDragRef.current) return false;
-    dividerDragRef.current = false;
+    if (dividerDragRef.current === null) return false;
+    dividerDragRef.current = null;
     return true;
   };
   React.useEffect(() => {
@@ -1061,15 +1120,15 @@ function App({
           closeTerminalRef.current();
           return;
         }
-        // Resizing the drawer takes priority; everything else goes to the PTY.
+        // Resizing a divider takes priority; everything else goes to the PTY.
         let handled = false;
         parseMouse(chunk, {
           onWheel: () => {},
-          onPress: (_column, row) => {
-            if (dividerPressRef.current(row)) handled = true;
+          onPress: (column, row) => {
+            if (dividerPressRef.current(column, row)) handled = true;
           },
-          onDrag: (_column, row) => {
-            if (dividerMoveRef.current(row)) handled = true;
+          onDrag: (column, row) => {
+            if (dividerMoveRef.current(column, row)) handled = true;
           },
           onRelease: () => {
             if (dividerReleaseRef.current()) handled = true;
@@ -1082,10 +1141,10 @@ function App({
       parseMouse(chunk, {
         onWheel: (direction, column) => onWheelRef.current(direction, column),
         onPress: (column, row) => {
-          if (!dividerPressRef.current(row)) onClickRef.current(column, row);
+          if (!dividerPressRef.current(column, row)) onClickRef.current(column, row);
         },
-        onDrag: (_column, row) => {
-          dividerMoveRef.current(row);
+        onDrag: (column, row) => {
+          dividerMoveRef.current(column, row);
         },
         onRelease: () => {
           dividerReleaseRef.current();
@@ -1334,7 +1393,13 @@ function App({
     activeTerminal
       ? { height: panesHeight, flexShrink: 0, overflow: "hidden" }
       : { flexGrow: 1, overflow: "hidden" },
-    h(ThreadList, { rows: listRows, selection: state.selection, moreAbove, moreBelow }),
+    h(ThreadList, {
+      rows: listRows,
+      selection: state.selection,
+      moreAbove,
+      moreBelow,
+      width: listWidth,
+    }),
     h(ThreadDetail, {
       detail,
       approvals,
