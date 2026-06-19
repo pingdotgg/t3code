@@ -44,6 +44,7 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import {
+  applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
@@ -495,7 +496,7 @@ export function GeneralSettingsPanel() {
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
   const gitModelInstanceEntries = sortProviderInstanceEntries(
-    deriveProviderInstanceEntries(serverProviders),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
   );
   const textGenInstanceEntry = gitModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenInstanceId,
