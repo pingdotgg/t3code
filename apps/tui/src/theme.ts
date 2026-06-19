@@ -1,3 +1,4 @@
+import { RGBA } from "@opentui/core";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 /**
@@ -160,3 +161,63 @@ export function relativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 }
+
+// ── Terminal-themed colours ──────────────────────────────────────────────────
+//
+// OpenTUI is a truecolor framebuffer renderer, but it can emit *indexed* and
+// *default* colour intents that the terminal renders with ITS OWN palette. We use
+// those exclusively so the UI borrows the user's theme (any dark/light scheme)
+// instead of hardcoding hex that fights their background:
+//   - `text`   → the terminal's default foreground (RGBA.defaultForeground)
+//   - `bg`     → the terminal's default background (used for inverse cells)
+//   - `dim`    → ANSI slot 8 ("bright black"), the theme's muted grey
+//   - `accent` → ANSI slot 6 (cyan)
+//   - status/role/border colours map their names to ANSI slots 0–15 via `ansi()`.
+// The renderer itself is created with a transparent background, so the terminal's
+// own backdrop shows through.
+
+const ANSI_INDEX: Record<string, number> = {
+  black: 0,
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  magenta: 5,
+  cyan: 6,
+  white: 7,
+  gray: 8,
+  grey: 8,
+  brightblack: 8,
+  brightred: 9,
+  brightgreen: 10,
+  brightyellow: 11,
+  brightblue: 12,
+  brightmagenta: 13,
+  brightcyan: 14,
+  brightwhite: 15,
+};
+
+/** Resolve a named colour to an indexed RGBA the terminal themes itself. */
+export function ansi(name: string): RGBA {
+  const index = ANSI_INDEX[name.toLowerCase()];
+  return index === undefined ? RGBA.defaultForeground() : RGBA.fromIndex(index);
+}
+
+export interface Palette {
+  readonly text: RGBA;
+  readonly bg: RGBA;
+  readonly dim: RGBA;
+  readonly accent: RGBA;
+  readonly selectedBg: RGBA;
+}
+
+export const THEME: Palette = {
+  text: RGBA.defaultForeground(),
+  bg: RGBA.defaultBackground(),
+  dim: RGBA.fromIndex(8),
+  accent: RGBA.fromIndex(6),
+  selectedBg: RGBA.fromIndex(8),
+};
+
+/** The active palette. Static today (indexed/default intents adapt on their own). */
+export const usePalette = (): Palette => THEME;

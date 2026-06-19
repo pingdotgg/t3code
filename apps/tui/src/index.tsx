@@ -1,7 +1,7 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 
-import { App } from "./app.tsx";
+import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 
 // This is the Bun entry point spawned by the Node `t3 tui` command. It receives
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   process.once("SIGINT", handleExit);
   process.once("SIGTERM", handleExit);
 
-  createRoot(renderer).render(<App client={client} onExit={handleExit} />);
+  createRoot(renderer).render(<ChatView client={client} onExit={handleExit} />);
 
   await done;
   // The renderer is already torn down (handleExit). Dispose the RPC runtime, then

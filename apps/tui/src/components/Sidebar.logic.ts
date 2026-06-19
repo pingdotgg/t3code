@@ -1,0 +1,113 @@
+import {
+  DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
+
+import type { OrchestrationShellSnapshot } from "../connection.ts";
+import { resolveProjectStatus, type ThreadStatus } from "../theme.ts";
+
+// Pure logic backing the Sidebar (mirrors apps/web/src/components/Sidebar.logic.ts):
+// the row model, selection identity, the preview/"show more" windowing, and the
+// flat row builder. No rendering, so it's trivially testable.
+
+export type Selection =
+  | { readonly kind: "project"; readonly id: string }
+  | { readonly kind: "thread"; readonly id: string }
+  | { readonly kind: "more"; readonly id: string };
+
+export type Row =
+  | {
+      readonly kind: "project";
+      readonly id: string;
+      readonly title: string;
+      readonly count: number;
+      readonly status: ThreadStatus | null;
+      readonly expanded: boolean;
+    }
+  | { readonly kind: "thread"; readonly id: string; readonly thread: OrchestrationThreadShell }
+  | { readonly kind: "more"; readonly id: string; readonly hiddenCount: number };
+
+export function selectionEquals(selection: Selection | null, row: Row): boolean {
+  return selection !== null && selection.kind === row.kind && selection.id === row.id;
+}
+
+/**
+ * Only the top {@link DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT} threads of a project
+ * render until its list is loaded in full — mirroring the web sidebar. The
+ * currently selected thread is always kept visible.
+ */
+export function visibleThreadsForProject(
+  threads: ReadonlyArray<OrchestrationThreadShell>,
+  loadedInFull: boolean,
+  selectedThreadId: string | null,
+): { readonly visible: OrchestrationThreadShell[]; readonly hidden: number } {
+  const limit = DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT;
+  if (loadedInFull || threads.length <= limit) {
+    return { visible: [...threads], hidden: 0 };
+  }
+  const preview = threads.slice(0, limit);
+  const selectedHidden =
+    selectedThreadId !== null &&
+    !preview.some((thread) => thread.id === selectedThreadId) &&
+    threads.some((thread) => thread.id === selectedThreadId);
+  if (!selectedHidden) {
+    return { visible: preview, hidden: threads.length - limit };
+  }
+  const selected = threads.find((thread) => thread.id === selectedThreadId);
+  return {
+    visible: selected ? [...preview, selected] : preview,
+    hidden: threads.length - limit - (selected ? 1 : 0),
+  };
+}
+
+/** Pure: build the visible rows from the snapshot + UI state. */
+export function buildRows(
+  shell: OrchestrationShellSnapshot | null,
+  expanded: ReadonlySet<string>,
+  loadedInFull: ReadonlySet<string>,
+  selectedThreadId: string | null,
+): Row[] {
+  if (!shell) return [];
+  const projectTitles = new Map<string, string>(
+    shell.projects.map((project) => [project.id, project.title]),
+  );
+  const byProject = new Map<string, OrchestrationThreadShell[]>();
+  for (const thread of shell.threads) {
+    const list = byProject.get(thread.projectId);
+    if (list) list.push(thread);
+    else byProject.set(thread.projectId, [thread]);
+  }
+
+  const orderedIds: string[] = [
+    ...shell.projects.map((project) => project.id as string).filter((id) => byProject.has(id)),
+    ...[...byProject.keys()].filter((id) => !projectTitles.has(id)),
+  ];
+
+  const rows: Row[] = [];
+  for (const id of orderedIds) {
+    const threads = byProject.get(id) ?? [];
+    const isExpanded = expanded.has(id);
+    rows.push({
+      kind: "project",
+      id,
+      title: projectTitles.get(id) ?? id,
+      count: threads.length,
+      status: resolveProjectStatus(threads),
+      expanded: isExpanded,
+    });
+    if (isExpanded) {
+      const { visible, hidden } = visibleThreadsForProject(
+        threads,
+        loadedInFull.has(id),
+        selectedThreadId,
+      );
+      for (const thread of visible) {
+        rows.push({ kind: "thread", id: thread.id, thread });
+      }
+      if (hidden > 0) {
+        rows.push({ kind: "more", id, hiddenCount: hidden });
+      }
+    }
+  }
+  return rows;
+}
