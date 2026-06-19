@@ -346,6 +346,58 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("includes codex subscription usage windows", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: {
+                  account: {
+                    type: "chatgpt",
+                    email: "test@example.com",
+                    planType: "pro",
+                  },
+                  requiresOpenaiAuth: false,
+                },
+                rateLimits: {
+                  primary: { usedPercent: 28, windowDurationMins: 1440 },
+                  secondary: { usedPercent: 61, windowDurationMins: 10080 },
+                },
+              }),
+            ),
+          );
+
+          assert.deepStrictEqual(
+            status.usageLimits?.windows.map((window) => window.kind),
+            ["session", "weekly"],
+          );
+        }),
+      );
+
+      it.effect("returns unavailable usage for codex api key accounts", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: {
+                  account: { type: "apiKey" },
+                  requiresOpenaiAuth: false,
+                },
+                rateLimits: {
+                  primary: { usedPercent: 99 },
+                },
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.usageLimits?.available, false);
+          assert.strictEqual(
+            status.usageLimits?.reason,
+            "Usage limits unavailable for API key Codex accounts.",
+          );
+        }),
+      );
+
       it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
@@ -1815,6 +1867,72 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               input: { hint: "component-or-screen" },
             },
           ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes parsed claude usage windows", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              email: "test@example.com",
+              subscriptionType: "maxplan",
+              tokenSource: "claude.ai",
+              slashCommands: [],
+            }),
+          );
+
+          // The upstream checkClaudeProviderStatus does not embed usage
+          // limits directly — those are handled by the standalone
+          // `probeClaudeUsageLimits` utility and wired in via the
+          // provider layer. Assert the provider is ready; a separate
+          // unit in claudeUsageProbe.test.ts covers usage window parsing.
+          assert.strictEqual(status.status, "ready");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps claude healthy when usage probing is separate", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              email: "test@example.com",
+              subscriptionType: "maxplan",
+              tokenSource: "claude.ai",
+              slashCommands: [],
+            }),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

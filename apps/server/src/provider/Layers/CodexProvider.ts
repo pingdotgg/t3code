@@ -21,8 +21,14 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
+import {
+  makeUnavailableUsageLimits,
+  makeUsageLimitsSnapshot,
+  type RawUsageWindowInput,
+} from "../providerUsageLimits.ts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -44,6 +50,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -357,23 +364,76 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimitsResponse] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      client.request("account/rateLimits/read", undefined).pipe(
+        // Rate limits are optional metadata and should not fail the whole provider probe.
+        Effect.catch(() => Effect.void),
+      ),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    ...(rateLimitsResponse?.rateLimits ? { rateLimits: rateLimitsResponse.rateLimits } : {}),
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 });
+
+const CODEX_PRIMARY_WINDOW_DURATION_MINS = 300; // ~5 hours (short / session window)
+const CODEX_SECONDARY_WINDOW_DURATION_MINS = 10080; // 7 days (weekly window)
+
+function resolveCodexManagedUsageLimits(
+  checkedAt: string,
+  rateLimitsSnapshot?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot | null,
+): ServerProviderUsageLimits {
+  if (!rateLimitsSnapshot) {
+    return makeUnavailableUsageLimits({
+      source: "codexAppServer",
+      checkedAt,
+      reason: "No Codex subscription quota windows reported.",
+    });
+  }
+
+  const windows: RawUsageWindowInput[] = [];
+
+  const addWindow = (
+    window?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null,
+    fallbackDurationMins?: number,
+    label?: string,
+  ) => {
+    if (!window) return;
+    const durationMins =
+      typeof window.windowDurationMins === "number"
+        ? window.windowDurationMins
+        : fallbackDurationMins;
+    windows.push({
+      label: label ?? "Quota",
+      usedPercent: window.usedPercent,
+      ...(typeof window.resetsAt === "number"
+        ? { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(window.resetsAt * 1000)) }
+        : {}),
+      ...(typeof durationMins === "number" ? { windowDurationMins: durationMins } : {}),
+    });
+  };
+
+  addWindow(rateLimitsSnapshot.primary, CODEX_PRIMARY_WINDOW_DURATION_MINS, "Session");
+  addWindow(rateLimitsSnapshot.secondary, CODEX_SECONDARY_WINDOW_DURATION_MINS, "Weekly");
+
+  return makeUsageLimitsSnapshot({
+    source: "codexAppServer",
+    checkedAt,
+    windows,
+    unavailableReason: "No Codex subscription quota windows reported.",
+  });
+}
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
   const models = new Set<string>();
@@ -552,6 +612,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const usageLimits =
+    snapshot.account.account?.type === "apiKey"
+      ? makeUnavailableUsageLimits({
+          source: "codexAppServer",
+          checkedAt,
+          reason: "Usage limits unavailable for API key Codex accounts.",
+        })
+      : resolveCodexManagedUsageLimits(checkedAt, snapshot.rateLimits);
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -565,6 +633,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      usageLimits,
     },
   });
 });

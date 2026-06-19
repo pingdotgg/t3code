@@ -16,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -32,6 +33,7 @@ import {
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -131,8 +133,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         instanceId,
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
+      const providerUsageState = Option.getOrUndefined(
+        yield* Effect.serviceOption(ProviderUsageState),
+      );
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkCursorProviderStatus(
+        effectiveConfig,
+        processEnv,
+        instanceId,
+        providerUsageState,
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
