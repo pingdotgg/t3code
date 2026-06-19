@@ -1,5 +1,5 @@
 import {
-  AntigravitySettings,
+  AcpRegistrySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
-  AntigravityIcon,
+  ACPRegistryIcon,
   ClaudeAI,
   CursorIcon,
   GrokIcon,
@@ -33,6 +33,8 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  /** Whether this driver has a built-in default instance backed by legacy settings. */
+  readonly hasDefaultInstance?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. Used to flag drivers that still ship under an
@@ -71,16 +73,18 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     settingsSchema: GrokSettings,
   },
   {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    icon: ACPRegistryIcon,
+    badgeLabel: "V2 Preview",
+    settingsSchema: AcpRegistrySettings,
+    hasDefaultInstance: false,
+  },
+  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
-  },
-  {
-    value: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    icon: AntigravityIcon,
-    settingsSchema: AntigravitySettings,
   },
 ];
 
