@@ -1,8 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -13,6 +15,7 @@ import {
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
   readTailscaleStatus,
+  TAILSCALE_STATUS_TIMEOUT,
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
@@ -29,6 +32,22 @@ function mockHandle(result: { stdout?: string; stderr?: string; code?: number })
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout ?? "")),
     stderr: Stream.make(encoder.encode(result.stderr ?? "")),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+}
+
+function neverFinishingMockHandle() {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -110,6 +129,29 @@ describe("tailscale", () => {
         tailnetIpv4Addresses: ["100.90.1.2"],
       });
     });
+  });
+
+  it.effect("times out tailscale status through TestClock", () => {
+    const layer = Layer.merge(
+      TestClock.layer(),
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle())),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(TAILSCALE_STATUS_TIMEOUT);
+      const error = yield* Fiber.join(fiber);
+
+      if (error._tag !== "TailscaleCommandError") {
+        assert.fail(`Expected TailscaleCommandError, received ${error._tag}.`);
+      }
+      assert.equal(error.message, "Tailscale status timed out.");
+      assert.equal(error.exitCode, null);
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("configures tailscale serve through the process spawner service", () => {
