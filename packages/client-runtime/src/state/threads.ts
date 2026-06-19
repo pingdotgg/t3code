@@ -21,6 +21,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
@@ -249,9 +250,14 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 ) {
   const family = Atom.family((key: string) => {
     const { environmentId, threadId } = parseThreadAtomKey(key);
-    return runtime.atom(threadStateChanges(environmentId, threadId), {
-      initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
-    });
+    return runtime
+      .atom(threadStateChanges(environmentId, threadId), {
+        initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
+      })
+      .pipe(
+        Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+        Atom.withLabel(`environment-thread-state:${key}`),
+      );
   });
 
   return {
