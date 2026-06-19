@@ -30,6 +30,15 @@ process.on("message", (raw: unknown) => {
   else entry.reject(new Error(message.error ?? "failed to mint socket url"));
 });
 
+// If the parent goes away mid-request, settle outstanding mints instead of
+// leaving them (and the reconnect loop that awaits them) hung forever.
+process.on("disconnect", () => {
+  for (const entry of pending.values()) {
+    entry.reject(new Error("t3 parent IPC channel closed"));
+  }
+  pending.clear();
+});
+
 const mintSocketUrl = (): Promise<string> =>
   new Promise<string>((resolve, reject) => {
     const send = process.send as ((message: unknown) => boolean) | undefined;
@@ -38,8 +47,28 @@ const mintSocketUrl = (): Promise<string> =>
       return;
     }
     const id = nextRequestId++;
-    pending.set(id, { resolve, reject });
-    send.call(process, { type: "mintSocketUrl", id });
+    const timer = setTimeout(() => {
+      if (pending.delete(id)) reject(new Error("timed out minting a websocket url"));
+    }, 10_000);
+    timer.unref?.();
+    pending.set(id, {
+      resolve: (url) => {
+        clearTimeout(timer);
+        resolve(url);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    try {
+      send.call(process, { type: "mintSocketUrl", id });
+    } catch (error) {
+      if (pending.delete(id)) {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
   });
 
 async function main(): Promise<void> {
@@ -60,35 +89,46 @@ async function main(): Promise<void> {
   // background colour) shows through instead of OpenTUI's opaque default.
   const renderer = await createCliRenderer({ exitOnCtrlC: false, backgroundColor: "transparent" });
 
-  // Detect the terminal's actual palette + default fg/bg up front, so our indexed
-  // and default colour intents resolve to the user's real theme (not a fallback
-  // palette) even on truecolor terminals. Best-effort: themes that don't answer
-  // the OSC query just keep the conventional ANSI mapping.
-  await renderer.getPalette({ timeout: 250 }).catch(() => {});
-  let resolveDone: () => void = () => {};
-  const done = new Promise<void>((resolve) => {
-    resolveDone = resolve;
-  });
-  let exiting = false;
-  const handleExit = () => {
-    if (exiting) return;
-    exiting = true;
+  try {
+    // Detect the terminal's actual palette + default fg/bg up front, so our indexed
+    // and default colour intents resolve to the user's real theme (not a fallback
+    // palette) even on truecolor terminals. Best-effort: themes that don't answer
+    // the OSC query just keep the conventional ANSI mapping.
+    await renderer.getPalette({ timeout: 250 }).catch(() => {});
+    let resolveDone: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    let exiting = false;
+    const handleExit = () => {
+      if (exiting) return;
+      exiting = true;
+      try {
+        renderer.destroy();
+      } catch {
+        // best effort — destroy restores the terminal
+      }
+      resolveDone();
+    };
+
+    // Raw mode usually delivers Ctrl+C as a keystroke (handled in <App/>), but some
+    // terminals/multiplexers send a real signal — handle both so one press quits.
+    process.once("SIGINT", handleExit);
+    process.once("SIGTERM", handleExit);
+
+    createRoot(renderer).render(<ChatView client={client} onExit={handleExit} />);
+
+    await done;
+  } catch (error) {
+    // Restore the terminal before the error propagates — otherwise it's left in
+    // raw/alt-screen mode with a garbled message.
     try {
       renderer.destroy();
     } catch {
-      // best effort — destroy restores the terminal
+      // best effort
     }
-    resolveDone();
-  };
-
-  // Raw mode usually delivers Ctrl+C as a keystroke (handled in <App/>), but some
-  // terminals/multiplexers send a real signal — handle both so one press quits.
-  process.once("SIGINT", handleExit);
-  process.once("SIGTERM", handleExit);
-
-  createRoot(renderer).render(<ChatView client={client} onExit={handleExit} />);
-
-  await done;
+    throw error;
+  }
   // The renderer is already torn down (handleExit). Dispose the RPC runtime, then
   // force-exit: the live WebSocket and the IPC channel to the parent would
   // otherwise keep Bun's event loop alive, so a single Ctrl+C wouldn't fully quit.

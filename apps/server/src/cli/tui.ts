@@ -121,37 +121,63 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
         ),
       );
 
-      const issued = yield* Effect.promise(() =>
-        authRuntime.runPromise(
-          Effect.gen(function* () {
-            const auth = yield* EnvironmentAuth.EnvironmentAuth;
-            return yield* auth.issueSession({
-              scopes: AuthStandardClientScopes,
-              subject: "t3-tui",
-              label: "T3 Code TUI",
-              ttl: Duration.days(30),
-            });
+      // Track the issued session so the ensuring below can revoke it and dispose
+      // the runtime even if issueSession itself fails — otherwise the runtime
+      // (and its DB/secret resources) would leak.
+      let issuedSession: EnvironmentAuth.IssuedBearerSession | null = null;
+
+      yield* Effect.gen(function* () {
+        const session = yield* Effect.promise(() =>
+          authRuntime.runPromise(
+            Effect.gen(function* () {
+              const auth = yield* EnvironmentAuth.EnvironmentAuth;
+              return yield* auth.issueSession({
+                scopes: AuthStandardClientScopes,
+                subject: "t3-tui",
+                label: "T3 Code TUI",
+                ttl: Duration.days(30),
+              });
+            }),
+          ),
+        );
+        issuedSession = session;
+
+        const mintSocketUrl = () =>
+          authRuntime.runPromise(
+            Effect.gen(function* () {
+              const auth = yield* EnvironmentAuth.EnvironmentAuth;
+              const result = yield* auth.issueWebSocketTicket({ sessionId: session.sessionId });
+              return buildSocketUrl(origin, result.ticket);
+            }),
+          );
+
+        yield* Effect.promise(() =>
+          runBunTui({
+            origin,
+            bearerToken: session.token,
+            logPath: `${config.serverRuntimeStatePath}.tui.log`,
+            mintSocketUrl,
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.promise(async () => {
+            const session = issuedSession;
+            if (session) {
+              // Best-effort: don't leave a 30-day session valid after the TUI quits.
+              await authRuntime
+                .runPromise(
+                  Effect.gen(function* () {
+                    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+                    yield* auth.revokeSession(session.sessionId);
+                  }),
+                )
+                .catch(() => {});
+            }
+            await authRuntime.dispose();
           }),
         ),
       );
-
-      const mintSocketUrl = () =>
-        authRuntime.runPromise(
-          Effect.gen(function* () {
-            const auth = yield* EnvironmentAuth.EnvironmentAuth;
-            const result = yield* auth.issueWebSocketTicket({ sessionId: issued.sessionId });
-            return buildSocketUrl(origin, result.ticket);
-          }),
-        );
-
-      yield* Effect.promise(() =>
-        runBunTui({
-          origin,
-          bearerToken: issued.token,
-          logPath: `${config.serverRuntimeStatePath}.tui.log`,
-          mintSocketUrl,
-        }),
-      ).pipe(Effect.ensuring(Effect.promise(() => authRuntime.dispose())));
     }),
   ),
 );
