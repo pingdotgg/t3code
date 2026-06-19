@@ -312,6 +312,8 @@ export function createThreadCommand(input: {
 }): OrchestrationV2Command {
   return {
     type: "thread.create",
+    createdBy: "user",
+    creationSource: "web",
     commandId: input.commandId,
     threadId: input.ids.threadId,
     projectId: input.ids.projectId,
@@ -338,6 +340,8 @@ export function dispatchMessageCommand(input: {
 }): OrchestrationV2Command {
   return {
     type: "message.dispatch",
+    createdBy: "user",
+    creationSource: "web",
     commandId: input.commandId,
     threadId: input.ids.threadId,
     messageId: input.messageId,
