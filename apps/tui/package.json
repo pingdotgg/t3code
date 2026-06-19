@@ -14,7 +14,7 @@
   "scripts": {
     "build": "bun build src/index.tsx --target bun --packages external --outfile dist/index.js",
     "typecheck": "tsgo --noEmit",
-    "test": "vp test run --passWithNoTests"
+    "test": "bun test"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
@@ -27,6 +27,7 @@
     "react": "19.2.6"
   },
   "devDependencies": {
+    "@types/bun": "1.3.14",
     "@types/node": "catalog:",
     "@types/react": "~19.2.14",
     "vite-plus": "catalog:"

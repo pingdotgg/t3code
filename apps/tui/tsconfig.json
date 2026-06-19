@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
+    "types": ["node", "bun"],
     "lib": ["ESNext", "esnext.disposable", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "jsxImportSource": "@opentui/react"
