@@ -1,10 +1,14 @@
+import { RGBA } from "@opentui/core";
 import type { IBufferCell, Terminal } from "@xterm/headless";
+
+/** A cell colour: a truecolor hex string, or an ANSI palette slot the terminal themes itself. */
+export type TermColor = string | RGBA;
 
 /** A run of same-styled characters on one terminal row. */
 export interface TermSegment {
   readonly text: string;
-  readonly color?: string;
-  readonly backgroundColor?: string;
+  readonly color?: TermColor;
+  readonly backgroundColor?: TermColor;
   readonly bold?: boolean;
   readonly dimColor?: boolean;
   readonly italic?: boolean;
@@ -17,39 +21,28 @@ export interface TermFrame {
   readonly cursor: { readonly x: number; readonly y: number };
 }
 
-// Standard xterm 256-colour palette as hex, precomputed once.
-const ANSI_256: string[] = (() => {
-  const base16 = [
-    "#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
-    "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
-  ];
-  const hex = (n: number) => n.toString(16).padStart(2, "0");
-  const rgb = (r: number, g: number, b: number) => `#${hex(r)}${hex(g)}${hex(b)}`;
-  const table: string[] = [...base16];
-  const levels = [0, 95, 135, 175, 215, 255];
-  for (let i = 0; i < 216; i++) {
-    table.push(rgb(levels[Math.floor(i / 36) % 6]!, levels[Math.floor(i / 6) % 6]!, levels[i % 6]!));
-  }
-  for (let i = 0; i < 24; i++) {
-    const v = 8 + i * 10;
-    table.push(rgb(v, v, v));
-  }
-  return table;
-})();
-
-function cellColor(cell: IBufferCell, foreground: boolean): string | undefined {
+function cellColor(cell: IBufferCell, foreground: boolean): TermColor | undefined {
   if (foreground ? cell.isFgDefault() : cell.isBgDefault()) return undefined;
   const value = foreground ? cell.getFgColor() : cell.getBgColor();
   if (foreground ? cell.isFgRGB() : cell.isBgRGB()) {
     return `#${(value & 0xffffff).toString(16).padStart(6, "0")}`;
   }
-  return ANSI_256[value];
+  // ANSI palette slot (0–255). Emit an indexed colour so the host terminal
+  // renders it with ITS OWN theme — matching the rest of the UI — instead of a
+  // baked-in palette that ignores the user's colours.
+  return RGBA.fromIndex(value);
+}
+
+/** Stable string key for a cell colour (used to coalesce same-styled runs). */
+function colorKey(color: TermColor | undefined): string {
+  if (color === undefined) return "";
+  return typeof color === "string" ? color : `idx${color.slot}`;
 }
 
 function styleKey(segment: TermSegment): string {
   return [
-    segment.color ?? "",
-    segment.backgroundColor ?? "",
+    colorKey(segment.color),
+    colorKey(segment.backgroundColor),
     segment.bold ? "b" : "",
     segment.dimColor ? "d" : "",
     segment.italic ? "i" : "",
