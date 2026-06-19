@@ -55,6 +55,23 @@ brew install --cask t3-code
 yay -S t3code-bin
 ```
 
+### Terminal UI (over SSH, no port forwarding)
+
+If you run a T3 Code server on a remote machine, you can monitor and drive its
+threads from a terminal UI that talks to the already-running local server — no
+port forwarding required:
+
+```bash
+ssh my-remote-box
+t3 tui            # or: npx t3@latest tui
+```
+
+The prompt is always ready: pick a thread with `↑`/`↓` and just start typing,
+then press `Enter` to send. The TUI also lets you approve/deny tool prompts
+(`^A`/`^R`), interrupt a running turn (`^G`), start new threads (`^N`), and
+attach to a thread's terminal (`^E` or `Alt+T`; `Ctrl-Q` detaches). Start a server first with
+`t3 serve` if one isn't already running.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.

@@ -11,6 +11,8 @@
     "dev:marketing": "vp run --filter @t3tools/marketing dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "start": "vp run --filter t3 start",
+    "tui": "node apps/server/src/bin.ts tui",
+    "tui:dev": "node apps/server/src/bin.ts tui --dev-url http://localhost:5733",
     "start:desktop": "vp run --filter @t3tools/desktop start",
     "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
