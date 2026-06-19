@@ -388,6 +388,8 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         yield* runtime.startTurn({
           appThread: {
+            createdBy: "user",
+            creationSource: "web",
             id: targetThreadId,
             projectId: ProjectId.make("project-claude-fork-target"),
             title: "Claude fork target",
@@ -420,6 +422,8 @@ describe("ClaudeAdapterV2 native fork", () => {
           rootNodeId: NodeId.make("node-claude-fork-target-root"),
           providerThread: forkedProviderThread,
           message: {
+            createdBy: "user",
+            creationSource: "web",
             messageId: MessageId.make("message-claude-fork-target"),
             text: "Respond with fork ok",
             attachments: [],

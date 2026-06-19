@@ -8,12 +8,22 @@ agent can use this endpoint to:
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
-- create one or more ordinary top-level T3 threads.
+- create one or more ordinary top-level T3 threads;
+- list and incrementally read project threads;
+- send or steer follow-up messages; and
+- wait for or interrupt ordinary thread runs.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
+
+`ThreadManagementService` is the shared server application boundary for V2
+WebSocket commands and MCP. It owns project-scoped lookup, listing, send-mode
+selection, durable send postconditions, wait polling, and interrupt selection;
+`OrchestratorV2` remains the lower-level command/event processor. Transport
+adapters only authenticate, resolve transport-specific inputs, and shape
+responses.
 
 ## Transport And Authentication
 
@@ -130,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes five orchestration tools.
+The server exposes eleven orchestration tools.
 
 ### `orchestrator_capabilities`
 
@@ -234,6 +244,64 @@ inherit the parent's project, branch, and worktree path, but they have no
 sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
 without a prompt remain idle.
 
+### `t3_thread_start`
+
+Creates one ordinary top-level thread and immediately dispatches its first
+prompt. It is the single-thread convenience form of `create_threads` and
+returns the created thread and run IDs. Use `clientRequestId` when a caller may
+retry the request.
+
+### `t3_thread_list`
+
+Lists durable thread shells in the calling thread's project, newest first.
+Callers can filter by title, run status, and whether app-owned sub-agent threads
+are included. Results are bounded and offset-paginated. Deleted threads and
+threads from other projects are never exposed.
+
+### `t3_thread_read`
+
+Reads a project-scoped thread's durable state, recent runs, and visible
+timeline. The default `messages` view returns user messages, assistant
+messages, and proposed plans. The `activity` view also returns summarized tool,
+reasoning, checkpoint, handoff, and runtime-request items. Large item text is
+bounded and reports whether it was truncated. `afterPosition` and
+`nextPosition` support incremental reads.
+
+Thread and message results include required `createdBy` and `creationSource`
+provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
+and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
+Actor and ingress are separate so agent-authored user-role messages remain
+distinguishable from human-authored messages.
+
+### `t3_thread_send`
+
+Sends a message to an ordinary or delegated thread in the calling project:
+
+- `auto` starts an idle thread, steers a fully active turn, or queues behind a
+  turn that is not yet steerable;
+- `queue` creates a separate follow-up run after active work;
+- `steer` requires a steerable active provider turn; and
+- `restart` requires an active provider turn and uses the orchestrator's
+  interrupt-and-restart path.
+
+The target runtime and interaction modes may not be broader than the caller's.
+Stable command and message IDs are derived from `clientRequestId` for
+idempotent retries.
+
+### `t3_thread_wait`
+
+Waits for a selected run to become `completed`, `failed`, `cancelled`,
+`interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
+time; an idle thread returns immediately. A timeout reports the latest durable
+status and does not cancel work.
+
+### `t3_thread_interrupt`
+
+Interrupts a selected active run through the normal V2 `run.interrupt` command.
+Without `runId`, it selects the newest interruptible run. A terminal run is
+returned unchanged, and a thread with no active provider turn returns
+`no_active_run`.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -243,6 +311,7 @@ directly.
 provider model
   -> MCP tools/call delegate_task
   -> authenticated OrchestratorMcpService
+  -> shared ThreadManagementService
   -> V2 delegated_task.request command
   -> child thread + child run
   -> parent app_owned subagent projection
@@ -273,6 +342,9 @@ falls back to a terminal-status message when no assistant text exists.
   mode. It may not escalate privileges.
 - A child interaction mode may stay equal to or narrow from `default` to
   `plan`. It may not escalate from `plan` to `default`.
+- General thread management is limited to the calling thread's project. Send
+  additionally enforces the same runtime and interaction privilege ceiling as
+  child creation.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
@@ -293,6 +365,10 @@ runtime_mode_escalation_denied
 interaction_mode_escalation_denied
 task_not_found
 task_not_cancellable
+thread_not_found
+run_not_found
+thread_not_sendable
+thread_not_interruptible
 invalid_request
 orchestration_error
 ```
@@ -327,6 +403,8 @@ Coverage includes:
 - async status polling;
 - cancellation;
 - batch ordinary-thread creation;
+- project-scoped thread listing and timeline reads;
+- ordinary-thread send, wait, steering, and interruption;
 - inheritance and per-thread provider overrides; and
 - idempotent retries.
 
