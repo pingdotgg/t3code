@@ -53,6 +53,10 @@ export function ChatView({
   const [draft, setDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
+  // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
+  const [terminalFocused, setTerminalFocused] = React.useState(false);
+  // User-set terminal-drawer height in rows; null = the default proportion.
+  const [terminalHeight, setTerminalHeight] = React.useState<number | null>(null);
   const [listWidth] = React.useState(LIST_PANE_WIDTH);
   const scrollRef = React.useRef<ScrollBoxRenderable | null>(null);
 
@@ -72,12 +76,15 @@ export function ChatView({
       ? (projects.find((project) => project.id === state.selection?.id)?.title ?? null)
       : null;
 
-  // Deterministic viewport heights.
+  // Deterministic viewport heights. The terminal drawer (when open) and the
+  // composer are both shown, so the top panes shrink to fit both.
   const composerHeight = focus === "new" ? 6 : 5;
+  const defaultTerminalHeight = Math.floor(height * 0.4);
+  const maxTerminalHeight = Math.max(6, height - composerHeight - 6);
   const terminalDrawerHeight = activeTerminal
-    ? Math.min(Math.max(Math.floor(height * 0.62), 6), Math.max(6, height - 6))
+    ? Math.min(Math.max(terminalHeight ?? defaultTerminalHeight, 6), maxTerminalHeight)
     : 0;
-  const bottomReserve = activeTerminal ? terminalDrawerHeight + 1 : composerHeight + 1;
+  const bottomReserve = terminalDrawerHeight + composerHeight + 1;
   const panesHeight = Math.max(4, height - bottomReserve);
   const listViewport = Math.max(1, panesHeight - 3);
   const termCols = Math.max(2, width - 4);
@@ -146,7 +153,14 @@ export function ChatView({
     setFocus("compose");
   };
 
-  const openTerminal = () => {
+  // ^E shows/hides the drawer (opening focuses it); ^P flips focus between the
+  // prompt and the terminal (so it gets you back to the terminal too).
+  const toggleTerminal = () => {
+    if (activeTerminal) {
+      setActiveTerminal(null);
+      setTerminalFocused(false);
+      return;
+    }
     if (!detail) return;
     const project = projects.find((p) => p.id === detail.projectId);
     const cwd = detail.worktreePath ?? project?.workspaceRoot ?? process.cwd();
@@ -157,10 +171,22 @@ export function ChatView({
       cwd,
       worktreePath: detail.worktreePath,
     });
+    setTerminalFocused(true);
+  };
+
+  const toggleFocus = () => {
+    if (activeTerminal) setTerminalFocused((focused) => !focused);
+  };
+
+  const resizeTerminal = (delta: number) => {
+    if (!activeTerminal) return;
+    setTerminalHeight((current) =>
+      Math.min(Math.max((current ?? defaultTerminalHeight) + delta, 6), maxTerminalHeight),
+    );
   };
 
   useKeyBindings({
-    mode: activeTerminal ? "terminal" : focus === "new" ? "new" : "compose",
+    mode: activeTerminal && terminalFocused ? "terminal" : focus === "new" ? "new" : "compose",
     onExit,
     onTerminalKey: (sequence) => {
       if (activeTerminal) {
@@ -169,7 +195,7 @@ export function ChatView({
           .catch(() => {});
       }
     },
-    onCloseTerminal: () => setActiveTerminal(null),
+    onToggleFocus: toggleFocus,
     onCancelNew: () => {
       setDraft("");
       setFocus("compose");
@@ -186,7 +212,9 @@ export function ChatView({
       setProjectIndex(0);
       setFocus("new");
     },
-    onOpenTerminal: openTerminal,
+    onToggleTerminal: toggleTerminal,
+    onGrowTerminal: () => resizeTerminal(2),
+    onShrinkTerminal: () => resizeTerminal(-2),
     onInterrupt: () => {
       if (!detail) return;
       void client.interrupt(detail.id).catch(() => {});
@@ -228,8 +256,9 @@ export function ChatView({
       ? "Enter to expand · ↑/↓ to move"
       : "Select a thread with ↑/↓";
 
-  const hint =
-    "↑/↓ threads · PgUp/PgDn scroll · Enter send · ^N new · ^E term · ^G stop · ^A/^R approve · ^O mode · ^C quit";
+  const hint = activeTerminal
+    ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
+    : "↑/↓ threads · PgUp/PgDn scroll · Enter send · ^N new · ^E term · ^G stop · ^A/^R approve · ^O mode · ^C quit";
 
   return (
     <box flexDirection="column" width={width} height={height}>
@@ -255,23 +284,25 @@ export function ChatView({
       </box>
 
       {activeTerminal ? (
-        <box flexDirection="column" flexShrink={0}>
-          <ThreadTerminalDrawer client={client} info={activeTerminal} cols={termCols} rows={termRows} />
-          <box paddingLeft={1} paddingRight={1} flexShrink={0}>
-            <text fg={palette.dim}>keys → shell · Ctrl+Q to return</text>
-          </box>
-        </box>
-      ) : (
-        <ChatComposer
-          mode={focus}
-          reply={reply}
-          draft={draft}
-          placeholder={placeholder}
-          projectName={projects[projectIndex]?.title ?? "(none)"}
-          onReplyInput={setReply}
-          onDraftInput={setDraft}
+        <ThreadTerminalDrawer
+          client={client}
+          info={activeTerminal}
+          cols={termCols}
+          rows={termRows}
+          focused={terminalFocused}
         />
-      )}
+      ) : null}
+
+      <ChatComposer
+        mode={focus}
+        reply={reply}
+        draft={draft}
+        placeholder={placeholder}
+        projectName={projects[projectIndex]?.title ?? "(none)"}
+        inputFocused={!terminalFocused}
+        onReplyInput={setReply}
+        onDraftInput={setDraft}
+      />
 
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
         <text fg={palette.dim}>{hint}</text>

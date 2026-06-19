@@ -4,8 +4,13 @@ import { usePalette } from "../theme.ts";
 
 // The prompt composer (mirrors apps/web/src/components/chat/ChatComposer.tsx). Two
 // modes: the always-ready reply field, and the new-thread dialog (project chosen
-// with ↑/↓ in ChatView, message typed here). Purely presentational — value/onInput
-// and the active project are owned by ChatView.
+// with ↑/↓ in ChatView, message typed here). Purely presentational.
+//
+// When `inputFocused` is false (the terminal pane holds focus) we render the
+// field as STATIC text instead of an <input> — OpenTUI doesn't reliably blur an
+// input when nothing else takes focus, so a mounted input would keep consuming
+// keystrokes that are meant for the terminal. Not mounting it guarantees a single
+// consumer.
 
 export const ChatComposer = React.memo(function ChatComposer({
   mode,
@@ -13,6 +18,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   draft,
   placeholder,
   projectName,
+  inputFocused,
   onReplyInput,
   onDraftInput,
 }: {
@@ -21,6 +27,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly draft: string;
   readonly placeholder: string;
   readonly projectName: string;
+  /** False when the terminal pane holds focus — render static text, not an input. */
+  readonly inputFocused: boolean;
   readonly onReplyInput: (value: string) => void;
   readonly onDraftInput: (value: string) => void;
 }): React.ReactNode {
@@ -49,7 +57,7 @@ export const ChatComposer = React.memo(function ChatComposer({
           <input
             value={draft}
             onInput={onDraftInput}
-            focused
+            focused={inputFocused}
             placeholder="Describe the task…"
             flexGrow={1}
             textColor={palette.text}
@@ -66,7 +74,7 @@ export const ChatComposer = React.memo(function ChatComposer({
       flexDirection="row"
       border
       borderStyle="rounded"
-      borderColor={palette.accent}
+      borderColor={inputFocused ? palette.accent : palette.dim}
       paddingLeft={1}
       paddingRight={1}
       flexShrink={0}
@@ -74,16 +82,26 @@ export const ChatComposer = React.memo(function ChatComposer({
       <text>
         <span fg={palette.accent}>{"› "}</span>
       </text>
-      <input
-        value={reply}
-        onInput={onReplyInput}
-        focused
-        placeholder={placeholder}
-        flexGrow={1}
-        textColor={palette.text}
-        cursorColor={palette.accent}
-        placeholderColor={palette.dim}
-      />
+      {inputFocused ? (
+        <input
+          value={reply}
+          onInput={onReplyInput}
+          focused
+          placeholder={placeholder}
+          flexGrow={1}
+          textColor={palette.text}
+          cursorColor={palette.accent}
+          placeholderColor={palette.dim}
+        />
+      ) : (
+        <text>
+          {reply.length > 0 ? (
+            <span fg={palette.text}>{reply}</span>
+          ) : (
+            <span fg={palette.dim}>^P to type a reply</span>
+          )}
+        </text>
+      )}
     </box>
   );
 });

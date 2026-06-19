@@ -56,11 +56,14 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   info,
   cols,
   rows,
+  focused,
 }: {
   readonly client: TuiClient;
   readonly info: TerminalInfo;
   readonly cols: number;
   readonly rows: number;
+  /** Whether keystrokes are routed to this terminal (drives the focus affordance). */
+  readonly focused: boolean;
 }): React.ReactNode {
   const palette = usePalette();
   const safeCols = Math.max(2, cols);
@@ -142,13 +145,15 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       flexShrink={0}
       border
       borderStyle="rounded"
-      borderColor={ansi("yellow")}
+      borderColor={focused ? palette.accent : palette.dim}
       paddingLeft={1}
       paddingRight={1}
     >
       <text>
-        <span fg={ansi("yellow")}>{`Terminal · ${info.title}`}</span>
-        <span fg={palette.dim}>{"  ·  Ctrl+Q to return"}</span>
+        <span fg={focused ? palette.accent : ansi("yellow")}>{`Terminal · ${info.title}`}</span>
+        <span fg={palette.dim}>
+          {focused ? "  ·  ^P prompt · ^E close · ^↑/^↓ resize" : "  ·  ^P focus · ^E close"}
+        </span>
       </text>
       {frame.rows.map((segments, index) => (
         <text key={index}>
