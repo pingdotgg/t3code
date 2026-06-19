@@ -49,6 +49,8 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
   messageId: MessageId,
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
+  createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
+  creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
 

@@ -99,6 +99,8 @@ describe.runIf(process.env.T3_ACP_REGISTRY_LIVE_ORCHESTRATOR === "1")(
 
           yield* orchestrator.dispatch({
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:acp-registry-live:create"),
             threadId,
             projectId,
@@ -114,6 +116,8 @@ describe.runIf(process.env.T3_ACP_REGISTRY_LIVE_ORCHESTRATOR === "1")(
           );
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:acp-registry-live:first"),
             threadId,
             messageId: MessageId.make("message:acp-registry-live:first"),
@@ -136,6 +140,8 @@ describe.runIf(process.env.T3_ACP_REGISTRY_LIVE_ORCHESTRATOR === "1")(
           yield* Console.log("First ACP turn completed; dispatching continuation prompt.");
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:acp-registry-live:second"),
             threadId,
             messageId: MessageId.make("message:acp-registry-live:second"),

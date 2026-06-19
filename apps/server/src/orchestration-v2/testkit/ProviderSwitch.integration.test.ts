@@ -259,6 +259,8 @@ describe("orchestration v2 provider switching", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:provider-switch:create"),
             threadId,
             projectId,
@@ -271,6 +273,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:provider-switch:codex"),
             threadId,
             messageId: MessageId.make("message:provider-switch:codex"),
@@ -281,6 +285,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:provider-switch:claude"),
             threadId,
             messageId: MessageId.make("message:provider-switch:claude"),
@@ -291,6 +297,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:provider-switch:return"),
             threadId,
             messageId: MessageId.make("message:provider-switch:return"),
@@ -417,6 +425,8 @@ describe("orchestration v2 provider switching", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-fork:create"),
             threadId: sourceThreadId,
             projectId,
@@ -429,6 +439,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-fork:source"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cross-provider-fork:source"),
@@ -439,6 +451,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-fork:fork"),
             sourceThreadId,
             targetThreadId,
@@ -447,6 +461,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-fork:target"),
             threadId: targetThreadId,
             messageId: MessageId.make("message:cross-provider-fork:target"),
@@ -545,6 +561,8 @@ describe("orchestration v2 provider switching", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-portable-fork:create"),
             threadId: sourceThreadId,
             projectId,
@@ -557,6 +575,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-portable-fork:source"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cursor-portable-fork:source"),
@@ -567,6 +587,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-portable-fork:fork"),
             sourceThreadId,
             targetThreadId,
@@ -575,6 +597,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-portable-fork:target"),
             threadId: targetThreadId,
             messageId: MessageId.make("message:cursor-portable-fork:target"),
@@ -683,6 +707,8 @@ describe("orchestration v2 provider switching", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:create"),
             threadId: sourceThreadId,
             projectId,
@@ -695,6 +721,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:first-source"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cross-provider-merge:first-source"),
@@ -705,6 +733,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:second-source"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cross-provider-merge:second-source"),
@@ -715,6 +745,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:fork"),
             sourceThreadId,
             targetThreadId: forkThreadId,
@@ -723,6 +755,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:fork-turn"),
             threadId: forkThreadId,
             messageId: MessageId.make("message:cross-provider-merge:fork-turn"),
@@ -733,6 +767,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "thread.merge_back",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:merge"),
             sourceThreadId: forkThreadId,
             targetThreadId: sourceThreadId,
@@ -740,6 +776,8 @@ describe("orchestration v2 provider switching", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cross-provider-merge:consume"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cross-provider-merge:consume"),

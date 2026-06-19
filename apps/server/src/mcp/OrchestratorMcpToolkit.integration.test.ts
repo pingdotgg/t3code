@@ -10,8 +10,14 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   OrchestratorMcpCreateThreadsResult,
+  OrchestratorMcpCreatedThread,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpTaskCancelResult,
+  OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadListResult,
+  OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadSendResult,
+  OrchestratorMcpThreadWaitResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -34,6 +40,7 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
+import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
@@ -60,8 +67,16 @@ const cancellationPrompt = "Remain active until the parent cancels this delegate
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
+const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
+const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
+  OrchestratorMcpThreadInterruptResult,
+);
+const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
+const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
+const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -364,6 +379,10 @@ describe("orchestrator MCP toolkit", () => {
             },
             registryLayer,
           );
+          const orchestrationLayer = Layer.merge(
+            orchestratorLayer,
+            threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+          );
           const providerRegistryLayer = makeProviderRegistryLayer([
             makeProviderSnapshot({
               instanceId: codexInstanceId,
@@ -383,7 +402,7 @@ describe("orchestrator MCP toolkit", () => {
           ]);
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
-            Layer.provideMerge(orchestratorLayer),
+            Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(NodeServices.layer),
           );
@@ -393,6 +412,8 @@ describe("orchestrator MCP toolkit", () => {
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
               type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command:mcp-parent:create"),
               threadId: parentThreadId,
               projectId,
@@ -405,6 +426,8 @@ describe("orchestrator MCP toolkit", () => {
             });
             yield* orchestrator.dispatch({
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command:mcp-parent:start"),
               threadId: parentThreadId,
               messageId: MessageId.make("message:mcp-parent:start"),
@@ -453,6 +476,19 @@ describe("orchestrator MCP toolkit", () => {
               ({ tool }) => tool.name === "create_threads",
             );
             expect(createThreadsTool?.tool.annotations?.destructiveHint).toBe(true);
+            const threadListTool = server.tools.find(({ tool }) => tool.name === "t3_thread_list");
+            expect(threadListTool?.tool.annotations?.readOnlyHint).toBe(true);
+            expect(threadListTool?.tool.annotations?.idempotentHint).toBe(true);
+            const threadReadTool = server.tools.find(({ tool }) => tool.name === "t3_thread_read");
+            expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(true);
+            const threadSendTool = server.tools.find(({ tool }) => tool.name === "t3_thread_send");
+            expect(threadSendTool?.tool.annotations?.destructiveHint).toBe(true);
+            const threadWaitTool = server.tools.find(({ tool }) => tool.name === "t3_thread_wait");
+            expect(threadWaitTool?.tool.annotations?.readOnlyHint).toBe(true);
+            const threadInterruptTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_interrupt",
+            );
+            expect(threadInterruptTool?.tool.annotations?.destructiveHint).toBe(true);
 
             const capabilities = yield* invoke("orchestrator_capabilities", {});
             expect(capabilities.isError).toBe(false);
@@ -464,6 +500,8 @@ describe("orchestrator MCP toolkit", () => {
                 asyncPolling: true,
                 cancellation: true,
                 batchThreadCreation: true,
+                threadManagement: true,
+                incrementalThreadRead: true,
               },
               providers: expect.arrayContaining([
                 expect.objectContaining({
@@ -472,7 +510,7 @@ describe("orchestrator MCP toolkit", () => {
                 }),
                 expect.objectContaining({
                   providerInstanceId: "opencode",
-                  canRunChildTask: false,
+                  canRunChildTask: true,
                 }),
               ]),
             });
@@ -526,6 +564,10 @@ describe("orchestrator MCP toolkit", () => {
               parentThreadId,
               relationshipToParent: "subagent",
               rootThreadId: parentThreadId,
+            });
+            expect(child.thread).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
             });
             expect(child.thread.modelSelection).toEqual(claudeSelection);
             expect(
@@ -645,10 +687,14 @@ describe("orchestrator MCP toolkit", () => {
             const promptedThread = created.threads[1]!;
             expect(emptyThread).toMatchObject({
               status: "idle",
+              createdBy: "agent",
+              creationSource: "mcp",
               providerInstanceId: codexInstanceId,
               model: codexModel,
             });
             expect(promptedThread).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
               providerInstanceId: claudeInstanceId,
               model: claudeModel,
             });
@@ -657,6 +703,10 @@ describe("orchestrator MCP toolkit", () => {
               parentThreadId: null,
               relationshipToParent: null,
               rootThreadId: emptyThread.threadId,
+            });
+            expect(emptyProjection.thread).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
             });
             expect(emptyProjection.thread.forkedFrom).toBeNull();
             expect(emptyProjection.runs).toEqual([]);
@@ -679,6 +729,196 @@ describe("orchestrator MCP toolkit", () => {
             expect(repeatedCreated.threads.map((thread) => thread.threadId)).toEqual(
               created.threads.map((thread) => thread.threadId),
             );
+
+            const promptedReadCall = yield* invoke("t3_thread_read", {
+              threadId: promptedThread.threadId,
+              limit: 1,
+            });
+            const promptedRead = yield* decodeThreadReadResult(
+              promptedReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(promptedRead.thread.status).toBe("completed");
+            expect(promptedRead.thread).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            expect(promptedRead.items.map((item) => item.type)).toEqual(["user_message"]);
+            expect(promptedRead.items[0]).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            expect(promptedRead.hasMore).toBe(true);
+            const promptedReadNextCall = yield* invoke("t3_thread_read", {
+              threadId: promptedThread.threadId,
+              afterPosition: promptedRead.nextPosition,
+              limit: 1,
+            });
+            const promptedReadNext = yield* decodeThreadReadResult(
+              promptedReadNextCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(promptedReadNext.items.map((item) => item.type)).toEqual(["assistant_message"]);
+            expect(promptedReadNext.items[0]?.text).toBe(
+              `Claude completed: ${createdThreadPrompt}`,
+            );
+
+            const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";
+            const sendCall = yield* invoke("t3_thread_send", {
+              threadId: emptyThread.threadId,
+              message: ordinaryLoopPrompt,
+              clientRequestId: "ordinary-loop-send-1",
+            });
+            const sent = yield* decodeThreadSendResult(sendCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(sent.delivery).toBe("started");
+            const waitCall = yield* invoke("t3_thread_wait", {
+              threadId: emptyThread.threadId,
+              runId: sent.runId,
+              timeoutMs: 10_000,
+            });
+            const waited = yield* decodeThreadWaitResult(waitCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(waited).toMatchObject({
+              runId: sent.runId,
+              status: "completed",
+              timedOut: false,
+            });
+            const repeatedSendCall = yield* invoke("t3_thread_send", {
+              threadId: emptyThread.threadId,
+              message: ordinaryLoopPrompt,
+              clientRequestId: "ordinary-loop-send-1",
+            });
+            const repeatedSend = yield* decodeThreadSendResult(
+              repeatedSendCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedSend.runId).toBe(sent.runId);
+            expect(
+              (yield* orchestrator.getThreadProjection(emptyThread.threadId)).runs,
+            ).toHaveLength(1);
+
+            const activeThreadCall = yield* invoke("t3_thread_start", {
+              prompt: cancellationPrompt,
+              title: "Managed active thread",
+              clientRequestId: "managed-active-thread-1",
+            });
+            const activeThread = yield* decodeCreatedThread(
+              activeThreadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            const activeProjection = yield* waitForProjection(
+              orchestrator,
+              activeThread.threadId,
+              (projection) =>
+                projection.runs.some((run) => run.status === "running") &&
+                projection.providerTurns.some((turn) => turn.status === "running"),
+            );
+            const activeRun = activeProjection.runs[0]!;
+            const activeTimeoutCall = yield* invoke("t3_thread_wait", {
+              threadId: activeThread.threadId,
+              runId: activeRun.id,
+              timeoutMs: 1,
+            });
+            const activeTimeout = yield* decodeThreadWaitResult(
+              activeTimeoutCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(activeTimeout).toMatchObject({
+              runId: activeRun.id,
+              status: "running",
+              timedOut: true,
+            });
+            const steerCall = yield* invoke("t3_thread_send", {
+              threadId: activeThread.threadId,
+              message: "Include the latest parent guidance before finishing.",
+              mode: "steer",
+              clientRequestId: "managed-active-steer-1",
+            });
+            const steered = yield* decodeThreadSendResult(steerCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(steered).toMatchObject({
+              runId: activeRun.id,
+              delivery: "steered",
+            });
+            const interruptCall = yield* invoke("t3_thread_interrupt", {
+              threadId: activeThread.threadId,
+              reason: "The orchestration loop has enough evidence.",
+              clientRequestId: "managed-active-interrupt-1",
+            });
+            const interrupted = yield* decodeThreadInterruptResult(
+              interruptCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(interrupted).toMatchObject({
+              runId: activeRun.id,
+              status: "interrupt_requested",
+            });
+            const interruptedWaitCall = yield* invoke("t3_thread_wait", {
+              threadId: activeThread.threadId,
+              runId: activeRun.id,
+              timeoutMs: 10_000,
+            });
+            const interruptedWait = yield* decodeThreadWaitResult(
+              interruptedWaitCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(interruptedWait.status).toBe("interrupted");
+            const repeatedInterruptCall = yield* invoke("t3_thread_interrupt", {
+              threadId: activeThread.threadId,
+              runId: activeRun.id,
+            });
+            const repeatedInterrupt = yield* decodeThreadInterruptResult(
+              repeatedInterruptCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedInterrupt.status).toBe("interrupted");
+
+            const foreignThreadId = ThreadId.make("thread:mcp-foreign-project");
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-foreign-project:create"),
+              threadId: foreignThreadId,
+              projectId: ProjectId.make("project:mcp-foreign"),
+              title: "Foreign project thread",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const foreignReadCall = yield* invoke("t3_thread_read", {
+              threadId: foreignThreadId,
+            });
+            expect(foreignReadCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+            });
+            const listCall = yield* invoke("t3_thread_list", {
+              includeSubagents: false,
+              limit: 100,
+            });
+            const listed = yield* decodeThreadListResult(listCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(listed.projectId).toBe(projectId);
+            expect(listed.threads.map((thread) => thread.threadId)).toEqual(
+              expect.arrayContaining([
+                parentThreadId,
+                emptyThread.threadId,
+                promptedThread.threadId,
+                activeThread.threadId,
+              ]),
+            );
+            expect(
+              listed.threads.find((thread) => thread.threadId === emptyThread.threadId),
+            ).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            expect(listed.threads.some((thread) => thread.threadId === foreignThreadId)).toBe(
+              false,
+            );
+            expect(
+              listed.threads.some((thread) => thread.relationshipToParent === "subagent"),
+            ).toBe(false);
           }).pipe(Effect.provide(testLayer));
         }),
       ),

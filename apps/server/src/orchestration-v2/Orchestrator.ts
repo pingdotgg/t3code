@@ -689,6 +689,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: message.id,
           text: message.text,
           attachments: message.attachments,
+          createdBy: message.createdBy,
+          creationSource: message.creationSource,
         },
         modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
@@ -709,6 +711,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
+      createdBy: command.createdBy,
+      creationSource: command.creationSource,
       id: command.threadId,
       projectId: command.projectId,
       title: command.title,
@@ -785,6 +789,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const targetThread: OrchestrationV2AppThread = {
       ...sourceProjection.thread,
+      createdBy: command.createdBy,
+      creationSource: command.creationSource,
       id: command.targetThreadId,
       title: command.title ?? `${sourceProjection.thread.title} fork`,
       activeProviderThreadId: null,
@@ -822,7 +828,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       targetRunId: null,
       status: "pending",
       resolution: null,
-      createdBy: "user",
+      createdBy: command.createdBy,
       error:
         sourceProviderThread?.nativeThreadRef?.strength === "strong"
           ? null
@@ -953,7 +959,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       targetRunId: null,
       status: "pending",
       resolution: null,
-      createdBy: "user",
+      createdBy: command.createdBy,
       error:
         sourceProviderThread === undefined ? "Source merge-back run has no provider thread." : null,
       createdAt: now,
@@ -996,6 +1002,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly messageId: OrchestrationV2ConversationMessage["id"];
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
+    readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly forceRestart: boolean;
   }) =>
     Effect.gen(function* () {
@@ -1073,6 +1081,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }) =>
         Effect.gen(function* () {
           const message: OrchestrationV2ConversationMessage = {
+            createdBy: input.createdBy,
+            creationSource: input.creationSource,
             id: input.messageId,
             threadId: input.command.threadId,
             runId: messageInput.runId,
@@ -1085,6 +1095,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
           const turnItem: OrchestrationV2TurnItem = {
+            createdBy: input.createdBy,
+            creationSource: input.creationSource,
             id: idAllocator.derive.userTurnItem({ messageId: input.messageId }),
             threadId: input.command.threadId,
             runId: messageInput.runId,
@@ -1149,6 +1161,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               messageId: input.messageId,
               text: input.text,
               attachments: input.attachments,
+              createdBy: input.createdBy,
+              creationSource: input.creationSource,
             },
           })
           .pipe(
@@ -1416,6 +1430,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             messageId: input.messageId,
             text: input.text,
             attachments: input.attachments,
+            createdBy: input.createdBy,
+            creationSource: input.creationSource,
           },
           modelSelection: input.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
@@ -1455,6 +1471,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: command.messageId,
           text: command.text,
           attachments: command.attachments,
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
           forceRestart: dispatchMode.type === "restart_active",
         });
         return;
@@ -1607,6 +1625,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: null,
         };
         const message: OrchestrationV2ConversationMessage = {
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
           id: command.messageId,
           threadId: command.threadId,
           runId,
@@ -1619,6 +1639,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         };
         const turnItem: OrchestrationV2TurnItem = {
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
           id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
           threadId: command.threadId,
           runId,
@@ -2228,6 +2250,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: null,
       };
       const message: OrchestrationV2ConversationMessage = {
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -2240,6 +2264,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
       };
       const turnItem: OrchestrationV2TurnItem = {
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
         id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
         threadId: command.threadId,
         runId,
@@ -2427,7 +2453,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : "delta_context",
             contextHandoffId: providerSwitchHandoff.id,
           },
-          createdBy: "user",
+          createdBy: command.createdBy,
           error: null,
           createdAt: now,
           updatedAt: now,
@@ -2629,6 +2655,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             messageId: command.messageId,
             text: providerMessageText,
             attachments: command.attachments,
+            createdBy: command.createdBy,
+            creationSource: command.creationSource,
           },
           modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
@@ -2715,6 +2743,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           modelSelection: command.modelSelection,
           title: taskTitle,
           now,
+          createdBy: command.createdBy,
+          creationSource: command.creationSource,
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
@@ -2725,7 +2755,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runId: parentRun.id,
         parentNodeId: command.parentNodeId,
         origin: "app_owned",
-        createdBy: "agent",
+        createdBy: command.createdBy,
         provider: command.modelSelection.instanceId,
         providerThreadId: null,
         childThreadId,
@@ -2819,6 +2849,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const childMessageCommand = {
         type: "message.dispatch",
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
         commandId: command.commandId,
         threadId: childThreadId,
         messageId: childMessageId,
@@ -2868,7 +2900,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetRunId: childRun.id,
         status: "consumed",
         resolution: null,
-        createdBy: "agent",
+        createdBy: command.createdBy,
         error: null,
         createdAt: now,
         updatedAt: now,
@@ -3109,6 +3141,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messageId: queuedMessage.id,
         text: queuedMessage.text,
         attachments: queuedMessage.attachments,
+        createdBy: queuedMessage.createdBy,
+        creationSource: queuedMessage.creationSource,
         forceRestart: false,
       });
     });
