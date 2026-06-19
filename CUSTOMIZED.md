@@ -2,7 +2,7 @@
 
 ## Last Upstream Merge
 
-Generated from local `main` at `1f5306990` and `upstream/main` at `20f37f367`. Before the merge, this branch was 212 commits ahead and 6 commits behind current `upstream/main`; after the merge, this branch is 213 commits ahead and 0 commits behind `upstream/main`. The incoming upstream diff since the previously merged upstream ref `e95b57dc2` was 121 files changed, 7377 insertions, and 1163 deletions; the remaining fork delta against current `upstream/main` is 241 files changed, 32995 insertions, and 756 deletions.
+Generated from local `main` at `fc10ed4c1`, `origin/main` at `434b29b82`, and `upstream/main` at `20f37f367`. No new upstream commits were available since the previously recorded upstream ref `20f37f367`, and no new `origin/main` commits were available since the previously recorded local-main ref `1f5306990`. Current local `main` is 218 commits ahead and 0 commits behind `upstream/main`, and 20 commits ahead and 0 commits behind `origin/main`; the remaining fork delta against current `upstream/main` is 250 files changed, 34324 insertions, and 975 deletions.
 
 No local customization is retired by this merge. Upstream added archived-thread and file-viewer surfaces on mobile, shared source-file preview helpers, origin-based worktree bootstrap controls, safer saved-environment deletion, repeated theme-DOM-sync avoidance, bound-host MCP endpoint handling, and SSH remote support for `fnm`. These upstream changes are authoritative; the local custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, workspace skill loading, terminal action reuse work, and mobile EAS ownership remain preserved around them.
 
