@@ -17,6 +17,7 @@ import {
   resolveThreadPr,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
+  ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
@@ -861,6 +862,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               </TooltipPopup>
             </Tooltip>
           )}
+          <ThreadWorktreeIndicator thread={thread} />
           {terminalStatus && (
             <Tooltip>
               <TooltipTrigger
