@@ -883,7 +883,7 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: false # Disabled for the fork: avoid committing release-only version bumps back to main.
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
     needs: [preflight, release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
