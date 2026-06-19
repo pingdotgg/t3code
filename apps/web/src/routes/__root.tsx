@@ -1,18 +1,19 @@
 import {
   type ProjectId,
+  type ServerConfig,
   type ServerLifecycleWelcomePayload,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
-  createRootRouteWithContext,
+  createRootRoute,
   type ErrorComponentProps,
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef } from "react";
-import { QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -20,11 +21,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
-import {
-  SlowRpcAckToastCoordinator,
-  WebSocketConnectionCoordinator,
-  WebSocketConnectionSurface,
-} from "../components/WebSocketConnectionSurface";
+import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -33,49 +30,42 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { readLocalApi } from "../localApi";
 import { useSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import {
-  getServerConfigUpdatedNotification,
-  ServerConfigUpdatedNotification,
-  startServerStateSync,
-  useServerConfig,
-  useServerConfigUpdatedSubscription,
-  useServerWelcomeSubscription,
-} from "../rpc/serverState";
-import { selectSidebarThreadsForProjectRefs, useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
-import {
-  ensureEnvironmentConnectionBootstrapped,
-  getPrimaryEnvironmentConnection,
-  listSavedEnvironmentRecords,
-  waitForSavedEnvironmentRegistryHydration,
-  startEnvironmentConnectionService,
-  useSavedEnvironmentRegistryStore,
-} from "../environments/runtime";
 import { configureClientTracing } from "../observability/clientTracing";
-import {
-  ensurePrimaryEnvironmentReady,
-  getPrimaryKnownEnvironment,
-  resolveInitialServerAuthGateState,
-  updatePrimaryEnvironmentDescriptor,
-} from "../environments/primary";
+import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { shellEnvironment } from "../state/shell";
+import { useAtomValue } from "@effect/atom-react";
+import { useAtomCommand } from "../state/use-atom-command";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  primaryServerConfigAtom,
+  primaryServerConfigEventAtom,
+  primaryServerWelcomeAtom,
+} from "../state/server";
+import {
+  readEnvironmentThreadRefs,
+  readProject,
+  readThreadShell,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+} from "../state/entities";
+import {
+  createKeybindingsUpdateToastController,
+  type KeybindingsUpdateToastController,
+} from "../components/KeybindingsUpdateToast.logic";
 import { isVscodeWebview } from "../env";
 import { resolveVscodeInitialThreadRef } from "../components/Sidebar.logic";
 
 type BootstrapProject = NonNullable<ServerLifecycleWelcomePayload["bootstrapProjects"]>[number];
-type EnvironmentStateSnapshot = ReturnType<
-  typeof useStore.getState
->["environmentStateById"][string];
 type ProjectGroupingSettings = ReturnType<typeof selectProjectGroupingSettings>;
-type ServerConfigSnapshot = ReturnType<typeof useServerConfig>;
 
 function resolveActiveBootstrapProject(payload: ServerLifecycleWelcomePayload): {
   readonly bootstrapProjects: readonly BootstrapProject[];
@@ -103,39 +93,35 @@ function resolveBootstrapProjectKey(input: {
   readonly payload: ServerLifecycleWelcomePayload;
   readonly activeBootstrapProject: BootstrapProject | null;
   readonly projectId: ProjectId;
-  readonly bootstrapEnvironmentState: EnvironmentStateSnapshot | undefined;
   readonly projectGroupingSettings: ProjectGroupingSettings;
-  readonly serverConfig: ServerConfigSnapshot;
+  readonly serverConfig: ServerConfig | null;
 }): string {
-  const bootstrapProject = input.bootstrapEnvironmentState?.projectById[input.projectId] ?? null;
+  const environmentId = input.payload.environment.environmentId;
+  const bootstrapProject = readProject(scopeProjectRef(environmentId, input.projectId));
   const bootstrapProjectCwd = input.activeBootstrapProject?.cwd ?? input.serverConfig?.cwd ?? null;
   return (
     (bootstrapProject
       ? deriveLogicalProjectKeyFromSettings(bootstrapProject, input.projectGroupingSettings)
       : null) ??
     (bootstrapProjectCwd
-      ? derivePhysicalProjectKeyFromPath(
-          input.payload.environment.environmentId,
-          bootstrapProjectCwd,
-        )
+      ? derivePhysicalProjectKeyFromPath(environmentId, bootstrapProjectCwd)
       : null) ??
-    scopedProjectKey(scopeProjectRef(input.payload.environment.environmentId, input.projectId))
+    scopedProjectKey(scopeProjectRef(environmentId, input.projectId))
   );
 }
 
 function expandBootstrapProjects(input: {
   readonly payload: ServerLifecycleWelcomePayload;
   readonly bootstrapProjects: readonly BootstrapProject[];
-  readonly bootstrapEnvironmentState: EnvironmentStateSnapshot | undefined;
   readonly projectGroupingSettings: ProjectGroupingSettings;
 }): void {
+  const environmentId = input.payload.environment.environmentId;
   for (const project of input.bootstrapProjects) {
-    const storeProject = input.bootstrapEnvironmentState?.projectById[project.projectId] ?? null;
+    const storeProject = readProject(scopeProjectRef(environmentId, project.projectId));
     const projectKey =
       (storeProject
         ? deriveLogicalProjectKeyFromSettings(storeProject, input.projectGroupingSettings)
-        : null) ??
-      derivePhysicalProjectKeyFromPath(input.payload.environment.environmentId, project.cwd);
+        : null) ?? derivePhysicalProjectKeyFromPath(environmentId, project.cwd);
     useUiStateStore.getState().setProjectExpanded(projectKey, true);
   }
 }
@@ -148,32 +134,30 @@ function resolveInitialThreadRefForBootstrap(input: {
   if (!isVscodeWebview) {
     return null;
   }
+  const environmentId = input.payload.environment.environmentId;
+  const projectIds =
+    input.bootstrapProjects.length > 0
+      ? input.bootstrapProjects.map((project) => project.projectId)
+      : [input.projectId];
+  const threads = readEnvironmentThreadRefs(environmentId).flatMap((threadRef) => {
+    const thread = readThreadShell(threadRef);
+    return thread && projectIds.includes(thread.projectId) ? [thread] : [];
+  });
+
   return resolveVscodeInitialThreadRef({
-    threads: selectSidebarThreadsForProjectRefs(
-      useStore.getState(),
-      input.bootstrapProjects.length > 0
-        ? input.bootstrapProjects.map((project) =>
-            scopeProjectRef(input.payload.environment.environmentId, project.projectId),
-          )
-        : [scopeProjectRef(input.payload.environment.environmentId, input.projectId)],
-    ),
+    threads,
     threadLastVisitedAtById: useUiStateStore.getState().threadLastVisitedAtById,
     scope: {
-      environmentId: input.payload.environment.environmentId,
+      environmentId,
       projectId: input.projectId,
-      projectIds:
-        input.bootstrapProjects.length > 0
-          ? input.bootstrapProjects.map((project) => project.projectId)
-          : [input.projectId],
+      projectIds,
       activeProjectId: input.projectId,
       cwd: input.payload.cwd,
     },
   });
 }
 
-export const Route = createRootRouteWithContext<{
-  queryClient: QueryClient;
-}>()({
+export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
@@ -184,7 +168,6 @@ export const Route = createRootRouteWithContext<{
     }
 
     if (isHostedStaticApp(new URL(window.location.href))) {
-      await waitForSavedEnvironmentRegistryHydration();
       return {
         authGateState: {
           status: "hosted-static",
@@ -192,10 +175,7 @@ export const Route = createRootRouteWithContext<{
       };
     }
 
-    const [, authGateState] = await Promise.all([
-      ensurePrimaryEnvironmentReady(),
-      resolveInitialServerAuthGateState(),
-    ]);
+    const authGateState = await resolveInitialServerAuthGateState();
     return {
       authGateState,
     };
@@ -241,47 +221,42 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        {primaryEnvironmentAuthenticated ? <ServerStateBootstrap /> : null}
-        <EnvironmentConnectionManagerBootstrap />
         <RelayClientInstallDialog />
         <SshPasswordPromptDialog />
+        <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-        {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? (
-          <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
-        ) : (
-          appShell
-        )}
+        {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
   );
 }
 
 function HostedStaticEnvironmentBootstrap() {
-  const savedEnvironmentCount = useSavedEnvironmentRegistryStore(
-    (state) => Object.keys(state.byId).length,
-  );
+  const { environments } = useEnvironments();
+  const activeEnvironmentId = useActiveEnvironmentId();
 
   useEffect(() => {
-    if (getPrimaryKnownEnvironment()) {
+    if (
+      environments.some(
+        (environment) => environment.entry.target._tag === "PrimaryConnectionTarget",
+      )
+    ) {
       return;
     }
 
-    const currentActiveEnvironmentId = useStore.getState().activeEnvironmentId;
-    if (currentActiveEnvironmentId) {
+    if (activeEnvironmentId) {
       return;
     }
 
-    const firstSavedEnvironment = listSavedEnvironmentRecords()[0];
+    const firstSavedEnvironment = environments[0];
     if (!firstSavedEnvironment) {
       return;
     }
 
-    useStore.getState().setActiveEnvironmentId(firstSavedEnvironment.environmentId);
-  }, [savedEnvironmentCount]);
+    setActiveEnvironmentId(firstSavedEnvironment.environmentId);
+  }, [activeEnvironmentId, environments]);
 
   return null;
 }
@@ -357,18 +332,6 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function ServerStateBootstrap() {
-  useEffect(() => {
-    if (!getPrimaryKnownEnvironment()) {
-      return;
-    }
-
-    return startServerStateSync(getPrimaryEnvironmentConnection().client.server);
-  }, []);
-
-  return null;
-}
-
 function AuthenticatedTracingBootstrap() {
   useEffect(() => {
     void configureClientTracing();
@@ -377,39 +340,29 @@ function AuthenticatedTracingBootstrap() {
   return null;
 }
 
-function EnvironmentConnectionManagerBootstrap() {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    return startEnvironmentConnectionService(queryClient);
-  }, [queryClient]);
-
-  return null;
-}
-
 function EventRouter() {
-  const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
+  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
-  const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
-  const lastKeybindingsSuccessToastAtRef = useRef(0);
-  const disposedRef = useRef(false);
-  const serverConfig = useServerConfig();
+  const handledConfigEventRef = useRef(serverConfigEvent);
+  const [keybindingsToastController] = useState<KeybindingsUpdateToastController>(() =>
+    createKeybindingsUpdateToastController({}),
+  );
 
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
 
-    updatePrimaryEnvironmentDescriptor(payload.environment);
     setActiveEnvironmentId(payload.environment.environmentId);
     void (async () => {
-      await ensureEnvironmentConnectionBootstrapped(payload.environment.environmentId);
-      if (disposedRef.current) {
-        return;
-      }
-
       const activeBootstrapContext = resolveActiveBootstrapProject(payload);
       if (!activeBootstrapContext) {
         return;
@@ -420,13 +373,10 @@ function EventRouter() {
         projectId: activeBootstrapProjectId,
         threadId: activeBootstrapThreadId,
       } = activeBootstrapContext;
-      const bootstrapEnvironmentState =
-        useStore.getState().environmentStateById[payload.environment.environmentId];
       const bootstrapProjectKey = resolveBootstrapProjectKey({
         payload,
         activeBootstrapProject,
         projectId: activeBootstrapProjectId,
-        bootstrapEnvironmentState,
         projectGroupingSettings,
         serverConfig,
       });
@@ -434,7 +384,6 @@ function EventRouter() {
       expandBootstrapProjects({
         payload,
         bootstrapProjects,
-        bootstrapEnvironmentState,
         projectGroupingSettings,
       });
 
@@ -464,91 +413,84 @@ function EventRouter() {
     })().catch(() => undefined);
   });
 
-  const handleServerConfigUpdated = useEffectEvent(
-    (notification: ServerConfigUpdatedNotification | null) => {
-      if (!notification) return;
+  const handleServerConfigUpdated = useEffectEvent(() => {
+    const decision = keybindingsToastController.handle(serverConfigEvent);
+    if (!decision) {
+      return;
+    }
 
-      const { id, payload, source } = notification;
-      if (id <= seenServerConfigUpdateIdRef.current) {
-        return;
-      }
-      seenServerConfigUpdateIdRef.current = id;
-      if (source !== "keybindingsUpdated") {
-        return;
-      }
+    if (decision._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
+      });
+      return;
+    }
 
-      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (!issue) {
-        const now = Date.now();
-        if (now - lastKeybindingsSuccessToastAtRef.current < 2_000) {
-          return;
-        }
-        lastKeybindingsSuccessToastAtRef.current = now;
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: decision.message,
+        actionVariant: "outline",
+        actionProps: {
+          children: "Open keybindings.json",
+          onClick: () => {
+            if (!serverConfig || !primaryEnvironment) {
+              return;
+            }
 
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Invalid keybindings configuration",
-          description: issue.message,
-          actionVariant: "outline",
-          actionProps: {
-            children: "Open keybindings.json",
-            onClick: () => {
-              const api = readLocalApi();
-              if (!api) {
+            const editor = resolveAndPersistPreferredEditor(serverConfig.availableEditors);
+            if (!editor) {
+              return;
+            }
+            void (async () => {
+              const result = await openInEditor({
+                environmentId: primaryEnvironment.environmentId,
+                input: {
+                  cwd: serverConfig.keybindingsConfigPath,
+                  editor,
+                },
+              });
+              if (result._tag === "Success") {
                 return;
               }
-
-              void Promise.resolve(serverConfig ?? api.server.getConfig())
-                .then((config) => {
-                  const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                  if (!editor) {
-                    throw new Error("No available editors found.");
-                  }
-                  return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-                })
-                .catch((error) => {
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Unable to open keybindings file",
-                      description:
-                        error instanceof Error ? error.message : "Unknown error opening file.",
-                    }),
-                  );
-                });
-            },
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open keybindings file",
+                  description:
+                    error instanceof Error ? error.message : "Unknown error opening file.",
+                }),
+              );
+            })();
           },
-        }),
-      );
-    },
-  );
+        },
+      }),
+    );
+  });
 
   useEffect(() => {
     if (!serverConfig) {
       return;
     }
 
-    updatePrimaryEnvironmentDescriptor(serverConfig.environment);
     setActiveEnvironmentId(serverConfig.environment.environmentId);
-  }, [serverConfig, setActiveEnvironmentId]);
+  }, [serverConfig]);
 
   useEffect(() => {
-    disposedRef.current = false;
-    return () => {
-      disposedRef.current = true;
-    };
-  }, []);
+    handleWelcome(serverWelcome);
+  }, [serverWelcome]);
 
-  useServerWelcomeSubscription(handleWelcome);
-  useServerConfigUpdatedSubscription(handleServerConfigUpdated);
+  useEffect(() => {
+    if (serverConfigEvent === null || handledConfigEventRef.current === serverConfigEvent) {
+      return;
+    }
+    handledConfigEventRef.current = serverConfigEvent;
+    handleServerConfigUpdated();
+  }, [serverConfigEvent]);
 
   return null;
 }

@@ -113,7 +113,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => providedKeybindings ?? [],
     [providedKeybindings],
   );
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });

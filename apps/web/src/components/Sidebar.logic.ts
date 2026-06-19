@@ -9,7 +9,7 @@ import {
 import type { Project, SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import type { T3HostVscodeWorkspaceBootstrap } from "@t3tools/contracts";
 
@@ -21,7 +21,7 @@ export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
-  name: string;
+  title: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
@@ -216,7 +216,7 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
+  if (!thread.lastVisitedAt) return false;
 
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
@@ -257,11 +257,13 @@ export function resolveSidebarNewThreadSeedContext(input: {
     branch: string | null;
     worktreePath: string | null;
     envMode: SidebarNewThreadEnvMode;
+    startFromOrigin: boolean;
   } | null;
 }): {
   branch?: string | null;
   worktreePath?: string | null;
   envMode: SidebarNewThreadEnvMode;
+  startFromOrigin?: boolean;
 } {
   if (input.defaultEnvMode === "worktree") {
     return {
@@ -274,6 +276,7 @@ export function resolveSidebarNewThreadSeedContext(input: {
       branch: input.activeDraftThread.branch,
       worktreePath: input.activeDraftThread.worktreePath,
       envMode: input.activeDraftThread.envMode,
+      startFromOrigin: input.activeDraftThread.startFromOrigin,
     };
   }
 
@@ -294,27 +297,38 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];
   getId: (item: TItem) => TId;
+  getPreferenceIds?: (item: TItem) => readonly TId[];
 }): TItem[] {
-  const { getId, items, preferredIds } = input;
+  const { getId, getPreferenceIds, items, preferredIds } = input;
   if (preferredIds.length === 0) {
     return [...items];
   }
 
-  const itemsById = new Map(items.map((item) => [getId(item), item] as const));
-  const preferredIdSet = new Set(preferredIds);
-  const emittedPreferredIds = new Set<TId>();
+  const indexesByPreferenceId = new Map<TId, number[]>();
+  for (const [index, item] of items.entries()) {
+    const preferenceIds = getPreferenceIds?.(item) ?? [getId(item)];
+    for (const preferenceId of new Set(preferenceIds)) {
+      const indexes = indexesByPreferenceId.get(preferenceId);
+      if (indexes) {
+        indexes.push(index);
+      } else {
+        indexesByPreferenceId.set(preferenceId, [index]);
+      }
+    }
+  }
+
+  const emittedIndexes = new Set<number>();
   const ordered = preferredIds.flatMap((id) => {
-    if (emittedPreferredIds.has(id)) {
+    const index = indexesByPreferenceId
+      .get(id)
+      ?.find((candidate) => !emittedIndexes.has(candidate));
+    if (index === undefined) {
       return [];
     }
-    const item = itemsById.get(id);
-    if (!item) {
-      return [];
-    }
-    emittedPreferredIds.add(id);
-    return [item];
+    emittedIndexes.add(index);
+    return [items[index]!];
   });
-  const remaining = items.filter((item) => !preferredIdSet.has(getId(item)));
+  const remaining = items.filter((_, index) => !emittedIndexes.has(index));
   return [...ordered, ...remaining];
 }
 
@@ -337,7 +351,7 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
 }
 
 export function filterProjectsForVscodeScope<
-  TProject extends Pick<Project, "cwd" | "environmentId" | "id">,
+  TProject extends Pick<Project, "environmentId" | "id"> & { readonly workspaceRoot: string },
 >(projects: readonly TProject[], scope: VscodeProjectScope): TProject[] {
   if (!scope.environmentId) {
     return [];
@@ -354,9 +368,9 @@ export function filterProjectsForVscodeScope<
       return project.id === scope.projectId;
     }
     if (scope.cwds && scope.cwds.length > 0) {
-      return scope.cwds.includes(project.cwd);
+      return scope.cwds.includes(project.workspaceRoot);
     }
-    return Boolean(scope.cwd) && project.cwd === scope.cwd;
+    return Boolean(scope.cwd) && project.workspaceRoot === scope.cwd;
   });
 }
 
@@ -528,7 +542,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "connecting") {
+  if (thread.session?.status === "starting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -706,6 +720,6 @@ export function sortProjectsForSidebar<
     const byTimestamp =
       rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
     if (byTimestamp !== 0) return byTimestamp;
-    return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
   });
 }

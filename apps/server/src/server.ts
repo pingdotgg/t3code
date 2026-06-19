@@ -132,7 +132,7 @@ const HttpServerLive = Layer.unwrap(
       );
       return BunHttpServer.layer({
         port: config.port,
-        ...(config.host ? { hostname: config.host } : {}),
+        hostname: config.host ?? "127.0.0.1",
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       });
     } else {
@@ -141,7 +141,7 @@ const HttpServerLive = Layer.unwrap(
         Effect.promise(() => import("node:http")),
       ]);
       return NodeHttpServer.layer(NodeHttp.createServer, {
-        host: config.host,
+        host: config.host ?? "127.0.0.1",
         port: config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       });

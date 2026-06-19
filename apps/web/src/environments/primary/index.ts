@@ -3,7 +3,6 @@ export {
   readPrimaryEnvironmentDescriptor,
   resetPrimaryEnvironmentDescriptorForTests,
   resolveInitialPrimaryEnvironmentDescriptor,
-  usePrimaryEnvironmentId,
   writePrimaryEnvironmentDescriptor,
   __resetPrimaryEnvironmentBootstrapForTests,
   __resetPrimaryEnvironmentDescriptorBootstrapForTests,

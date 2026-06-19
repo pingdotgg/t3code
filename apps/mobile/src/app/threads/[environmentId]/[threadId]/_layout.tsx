@@ -56,6 +56,32 @@ export default function ThreadLayout() {
         }}
       />
       <Stack.Screen
+        name="files/index"
+        options={{
+          animation: "slide_from_right",
+          contentStyle: sheetStyle,
+          headerBackButtonDisplayMode: "minimal",
+          headerShown: true,
+          headerTitle: "Files",
+          headerBackTitle: "",
+          headerShadowVisible: false,
+          headerStyle: headerBg,
+        }}
+      />
+      <Stack.Screen
+        name="files/[...path]"
+        options={{
+          animation: "slide_from_right",
+          contentStyle: sheetStyle,
+          headerBackButtonDisplayMode: "minimal",
+          headerShown: true,
+          headerTitle: "File",
+          headerBackTitle: "",
+          headerShadowVisible: false,
+          headerStyle: headerBg,
+        }}
+      />
+      <Stack.Screen
         name="review-comment"
         options={{
           contentStyle: sheetStyle,

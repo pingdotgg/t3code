@@ -80,6 +80,7 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
   ].join("; ");
   const bridgeScript = makeBridgeScript({
     bootstrap: {
+      environmentId: input.connection.environmentId,
       label: "Local VS Code",
       httpBaseUrl: input.connection.httpBaseUrl,
       wsBaseUrl: input.connection.wsBaseUrl,
@@ -278,7 +279,10 @@ const DEFAULT_HOST_APPEARANCE: WebviewHostAppearance = {
 const HOST_BRIDGE_REQUEST_TIMEOUT_MS = 30_000;
 
 function makeBridgeScript(input: {
-  readonly bootstrap: WebviewBackendConnection & { readonly label: string };
+  readonly bootstrap: WebviewBackendConnection & {
+    readonly environmentId: string;
+    readonly label: string;
+  };
   readonly displayPreferences: WebviewDisplayPreferences;
   readonly hostAppearance: WebviewHostAppearance;
   readonly initialRoute: string;

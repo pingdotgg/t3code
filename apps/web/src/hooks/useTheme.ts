@@ -27,6 +27,7 @@ const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let lastDesktopTheme: Theme | null = null;
+let lastAppliedTheme: ThemeSnapshot | null = null;
 
 function emitChange() {
   for (const listener of listeners) listener();
@@ -37,7 +38,11 @@ function hasThemeStorage() {
 }
 
 function getSystemDark() {
-  return typeof window !== "undefined" && window.matchMedia(MEDIA_QUERY).matches;
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(MEDIA_QUERY).matches
+  );
 }
 
 function getStored(): Theme {
@@ -98,16 +103,29 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  const systemDark = theme === "system" ? getSystemDark() : false;
+  const hostAppearance = readHostAppearance();
+  const hostResolvedTheme = resolveHostResolvedTheme(hostAppearance);
+  if (
+    lastAppliedTheme?.theme === theme &&
+    lastAppliedTheme.systemDark === systemDark &&
+    lastAppliedTheme.hostResolvedTheme === hostResolvedTheme
+  ) {
+    syncDesktopTheme(theme);
+    return;
+  }
+
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const hostResolvedTheme = applyHostAppearanceToDocument(readHostAppearance());
-  if (!hostResolvedTheme) {
-    const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const appliedHostResolvedTheme = applyHostAppearanceToDocument(hostAppearance);
+  if (!appliedHostResolvedTheme) {
+    const isDark = theme === "dark" || (theme === "system" && systemDark);
     document.documentElement.classList.toggle("dark", isDark);
   }
+  lastAppliedTheme = { theme, systemDark, hostResolvedTheme };
   syncBrowserChromeTheme();
-  if (!hostResolvedTheme) {
+  if (!appliedHostResolvedTheme) {
     syncDesktopTheme(theme);
   }
   if (suppressTransitions) {
@@ -173,12 +191,12 @@ function subscribe(listener: () => void): () => void {
   listeners.push(listener);
 
   // Listen for system preference changes
-  const mq = window.matchMedia(MEDIA_QUERY);
+  const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
   const handleChange = () => {
     if (getStored() === "system") applyTheme("system", true);
     emitChange();
   };
-  mq.addEventListener("change", handleChange);
+  mq?.addEventListener("change", handleChange);
 
   const unsubscribeHostAppearance = subscribeHostAppearance(() => {
     applyTheme(getStored(), true);
@@ -196,7 +214,7 @@ function subscribe(listener: () => void): () => void {
 
   return () => {
     listeners = listeners.filter((l) => l !== listener);
-    mq.removeEventListener("change", handleChange);
+    mq?.removeEventListener("change", handleChange);
     unsubscribeHostAppearance();
     window.removeEventListener("storage", handleStorage);
   };

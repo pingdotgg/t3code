@@ -60,6 +60,17 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
+const getHttpMcpEndpointHost = (hostname: string): string => {
+  const normalized = hostname.toLowerCase();
+  const endpointHostname =
+    normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]"
+      ? "127.0.0.1"
+      : hostname;
+  return endpointHostname.includes(":") && !endpointHostname.startsWith("[")
+    ? `[${endpointHostname}]`
+    : endpointHostname;
+};
+
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
@@ -73,7 +84,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const maximumLifetimeMs = options.maximumLifetimeMs ?? DEFAULT_MAXIMUM_LIFETIME_MS;
   const endpoint =
     httpServer.address._tag === "TcpAddress"
-      ? `http://127.0.0.1:${httpServer.address.port}/mcp`
+      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
       : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>

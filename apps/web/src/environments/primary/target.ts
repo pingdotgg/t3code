@@ -1,10 +1,15 @@
-import type { KnownEnvironment } from "@t3tools/client-runtime";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { getHostLocalEnvironmentBootstrap } from "./hostBootstrap";
 
 export interface PrimaryEnvironmentTarget {
-  readonly source: KnownEnvironment["source"];
-  readonly target: KnownEnvironment["target"];
+  readonly source: "configured" | "window-origin" | "desktop-managed";
+  readonly environmentId?: EnvironmentId;
+  readonly label?: string;
+  readonly target: {
+    readonly httpBaseUrl: string;
+    readonly wsBaseUrl: string;
+  };
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -122,6 +127,8 @@ function resolveHostPrimaryTarget(): PrimaryEnvironmentTarget | null {
 
   return {
     source: "desktop-managed",
+    ...(hostBootstrap.environmentId ? { environmentId: hostBootstrap.environmentId } : {}),
+    ...(hostBootstrap.label ? { label: hostBootstrap.label } : {}),
     target: {
       httpBaseUrl: normalizeBaseUrl(hostBootstrap.httpBaseUrl),
       wsBaseUrl: normalizeBaseUrl(hostBootstrap.wsBaseUrl),

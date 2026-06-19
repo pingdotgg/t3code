@@ -1,6 +1,11 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -19,13 +24,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { openInPreferredEditor } from "../editorPreferences";
+import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
-import { useCheckpointDiff } from "~/lib/checkpointDiffState";
-import { useVcsStatus } from "~/lib/vcsStatusState";
-import { cn } from "~/lib/utils";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
-import { readLocalApi } from "../localApi";
+import { useCheckpointDiff } from "~/lib/checkpointDiffState";
+import { cn } from "~/lib/utils";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -36,8 +39,7 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { selectProjectByRef, useStore } from "../store";
-import { createThreadSelectorByRef } from "../storeSelectors";
+import { useProject, useThread } from "../state/entities";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
@@ -45,9 +47,19 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { AnnotatableFileDiff } from "./diffs/AnnotatableFileDiff";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { vcsEnvironment } from "../state/vcs";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
+
+interface CollapsedDiffFilesState {
+  readonly scopeKey: string | null;
+  readonly fileKeys: ReadonlySet<string>;
+}
+
+const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 const DIFF_PANEL_UNSAFE_CSS = `
 [data-diffs-header],
@@ -161,9 +173,10 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
-  const [collapsedDiffFileKeys, setCollapsedDiffFileKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
+    scopeKey: null,
+    fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
+  }));
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -176,23 +189,32 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
-  );
+  const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((store) =>
+  const activeProject = useProject(
     activeThread && activeProjectId
-      ? selectProjectByRef(store, {
+      ? {
           environmentId: activeThread.environmentId,
           projectId: activeProjectId,
-        })
-      : undefined,
+        }
+      : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitStatusQuery = useVcsStatus({
-    environmentId: activeThread?.environmentId ?? null,
-    cwd: activeCwd ?? null,
-  });
+  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
+  );
+  const openInPreferredEditor = useOpenInPreferredEditor(
+    activeThread?.environmentId ?? null,
+    serverConfig?.availableEditors ?? [],
+  );
+  const gitStatusQuery = useEnvironmentQuery(
+    activeThread !== null && activeThread !== undefined && activeCwd != null
+      ? vcsEnvironment.status({
+          environmentId: activeThread.environmentId,
+          input: { cwd: activeCwd },
+        })
+      : null,
+  );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -222,6 +244,13 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : "conversation";
+  const collapseScopeKey = routeThreadRef
+    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+    : null;
+  const collapsedDiffFileKeys =
+    collapsedDiffFiles.scopeKey === collapseScopeKey
+      ? collapsedDiffFiles.fileKeys
+      : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : "All turns";
@@ -305,19 +334,6 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
   }, [renderablePatch]);
 
   useEffect(() => {
-    if (renderableFiles.length === 0) {
-      setCollapsedDiffFileKeys((current) => (current.size === 0 ? current : new Set()));
-      return;
-    }
-
-    const visibleFileKeys = new Set(renderableFiles.map(buildFileDiffRenderKey));
-    setCollapsedDiffFileKeys((current) => {
-      const next = new Set([...current].filter((fileKey) => visibleFileKeys.has(fileKey)));
-      return next.size === current.size ? current : next;
-    });
-  }, [renderableFiles]);
-
-  useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
       setDiffWordWrap(settings.diffWordWrap);
       setDiffIgnoreWhitespace(settings.diffIgnoreWhitespace);
@@ -342,27 +358,31 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
         filePath,
         activeCwd,
         openInEditor: (targetPath) => {
-          const api = readLocalApi();
-          if (!api) return;
-          void openInPreferredEditor(api, targetPath).catch((error) => {
-            console.warn("Failed to open diff file in editor.", error);
-          });
+          void (async () => {
+            const result = await openInPreferredEditor(targetPath);
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              console.warn("Failed to open diff file in editor.", squashAtomCommandFailure(result));
+            }
+          })();
         },
       });
     },
-    [activeCwd, routeThreadRef],
+    [activeCwd, openInPreferredEditor, routeThreadRef],
   );
-  const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
-    setCollapsedDiffFileKeys((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) {
-        next.delete(fileKey);
-      } else {
-        next.add(fileKey);
-      }
-      return next;
-    });
-  }, []);
+  const toggleDiffFileCollapsed = useCallback(
+    (fileKey: string) => {
+      setCollapsedDiffFiles((current) => {
+        const next = new Set(current.scopeKey === collapseScopeKey ? current.fileKeys : []);
+        if (next.has(fileKey)) {
+          next.delete(fileKey);
+        } else {
+          next.add(fileKey);
+        }
+        return { scopeKey: collapseScopeKey, fileKeys: next };
+      });
+    },
+    [collapseScopeKey],
+  );
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;

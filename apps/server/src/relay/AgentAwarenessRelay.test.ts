@@ -97,6 +97,27 @@ function makeMemorySecretStore() {
 }
 
 describe.sequential("signRelayAgentActivityPublishProof", () => {
+  it("distinguishes pending link credentials from disabled publication", () => {
+    expect(
+      AgentAwarenessRelay.resolveAgentActivityPublishingStartupState({
+        relayConfigured: false,
+        publishEnabled: false,
+      }),
+    ).toBe("waiting-for-link");
+    expect(
+      AgentAwarenessRelay.resolveAgentActivityPublishingStartupState({
+        relayConfigured: true,
+        publishEnabled: false,
+      }),
+    ).toBe("disabled");
+    expect(
+      AgentAwarenessRelay.resolveAgentActivityPublishingStartupState({
+        relayConfigured: true,
+        publishEnabled: true,
+      }),
+    ).toBe("enabled");
+  });
+
   it("derives the thread id from the aggregate id for thread events without payload thread ids", () => {
     const threadId = "thread-aggregate-1" as ThreadId;
     const now = "2026-05-25T00:00:00.000Z";

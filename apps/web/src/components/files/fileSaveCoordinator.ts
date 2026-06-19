@@ -1,11 +1,13 @@
-export interface FileSaveCoordinatorOptions {
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+
+export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
-  readonly persist: (contents: string) => Promise<void>;
+  readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
   readonly onConfirmed: (contents: string) => void;
 }
 
-export class FileSaveCoordinator {
+export class FileSaveCoordinator<A = unknown, E = unknown> {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private latestContents = "";
   private latestRevision = 0;
@@ -13,7 +15,7 @@ export class FileSaveCoordinator {
   private saving = false;
   private disposed = false;
 
-  constructor(private readonly options: FileSaveCoordinatorOptions) {}
+  constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
   change(contents: string): void {
     this.latestContents = contents;
@@ -49,12 +51,11 @@ export class FileSaveCoordinator {
     this.saving = true;
     const contents = this.latestContents;
     const revision = this.latestRevision;
-    let succeeded = false;
-    try {
-      await this.options.persist(contents);
-      succeeded = true;
+    const result = await this.options.persist(contents);
+    const succeeded = result._tag === "Success";
+    if (succeeded) {
       this.options.onConfirmed(contents);
-    } catch {}
+    }
 
     this.saving = false;
     if (revision === this.latestRevision) {

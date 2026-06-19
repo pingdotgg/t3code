@@ -1,19 +1,16 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
-  CommandId,
-  EnvironmentId,
   MessageId,
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
   ToolLifecycleItemType,
-  ThreadId,
   TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-import type { DraftComposerImageAttachment } from "./composerImages";
+import type { QueuedThreadMessage } from "../state/thread-outbox-model";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -35,16 +32,6 @@ export interface PendingUserInputDraftAnswer {
   readonly customAnswer?: string;
 }
 
-export interface QueuedThreadMessage {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly messageId: MessageId;
-  readonly commandId: CommandId;
-  readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly createdAt: string;
-}
-
 export interface ThreadFeedActivity {
   readonly id: string;
   readonly createdAt: string;
@@ -53,6 +40,19 @@ export interface ThreadFeedActivity {
   readonly detail: string | null;
   readonly fullDetail: string | null;
   readonly copyText: string;
+  readonly icon:
+    | "agent"
+    | "alert"
+    | "check"
+    | "command"
+    | "edit"
+    | "eye"
+    | "globe"
+    | "hammer"
+    | "message"
+    | "warning"
+    | "wrench"
+    | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
 }
@@ -73,6 +73,7 @@ interface WorkLogEntry {
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  toolData?: unknown;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -227,7 +228,7 @@ function resolvePendingUserInputAnswer(
 
 function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-): WorkLogEntry[] {
+): DerivedWorkLogEntry[] {
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
@@ -238,9 +239,7 @@ function deriveWorkLogEntries(
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries).map(
-    ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
-  );
+  return collapseDerivedWorkLogEntries(entries);
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -314,6 +313,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
+  if (itemType === "mcp_tool_call") {
+    const data = asRecord(payload?.data);
+    if (data?.item !== undefined) {
+      entry.toolData = data.item;
+    }
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -378,6 +383,7 @@ function mergeDerivedWorkLogEntries(
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
+  const toolData = next.toolData ?? previous.toolData;
   return {
     ...previous,
     ...next,
@@ -390,6 +396,7 @@ function mergeDerivedWorkLogEntries(
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+    ...(toolData !== undefined ? { toolData } : {}),
   };
 }
 
@@ -491,6 +498,52 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
     return "success";
   }
   return "neutral";
+}
+
+function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
+  if (
+    entry.activityKind === "user-input.requested" ||
+    entry.activityKind === "user-input.resolved"
+  ) {
+    return "message";
+  }
+  if (entry.activityKind === "runtime.warning") return "warning";
+  if (entry.requestKind === "command") return "command";
+  if (entry.requestKind === "file-read") return "eye";
+  if (entry.requestKind === "file-change") return "edit";
+  if (entry.itemType === "command_execution" || entry.command) return "command";
+  if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
+  if (entry.itemType === "web_search") return "globe";
+  if (entry.itemType === "image_view") return "eye";
+  if (entry.itemType === "mcp_tool_call") return "wrench";
+  if (entry.itemType === "dynamic_tool_call" || entry.itemType === "collab_agent_tool_call") {
+    return "hammer";
+  }
+  if (entry.tone === "error") return "alert";
+  if (entry.tone === "thinking") return "agent";
+  if (entry.tone === "info") return "check";
+  return "zap";
+}
+
+function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
+  const blocks: string[] = [];
+  const appendUniqueBlock = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && !blocks.includes(trimmed)) {
+      blocks.push(trimmed);
+    }
+  };
+
+  if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) {
+    appendUniqueBlock(`MCP call\n${JSON.stringify(entry.toolData, null, 2)}`);
+  }
+  appendUniqueBlock(entry.rawCommand ?? entry.command);
+  appendUniqueBlock(entry.detail);
+  if ((entry.changedFiles?.length ?? 0) > 0) {
+    appendUniqueBlock(entry.changedFiles!.join("\n"));
+  }
+
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
 function workEntryPreview(
@@ -1239,11 +1292,7 @@ export function buildThreadFeed(
         .map<RawThreadFeedEntry>((entry) => {
           const summary = workEntryHeading(entry);
           const detail = workEntryPreview(entry);
-          const normalizedFullDetail = entry.detail
-            ? unwrapKnownShellCommandWrapper(entry.detail)
-            : null;
-          const fullDetail =
-            normalizedFullDetail && normalizedFullDetail !== detail ? normalizedFullDetail : null;
+          const fullDetail = buildWorkEntryExpandedBody(entry);
           return {
             type: "activity",
             id: entry.id,
@@ -1256,6 +1305,7 @@ export function buildThreadFeed(
               summary,
               detail,
               fullDetail,
+              icon: workEntryIcon(entry),
               copyText: [summary, detail, fullDetail]
                 .filter((value, index, values): value is string => {
                   return Boolean(value) && values.indexOf(value) === index;

@@ -29,7 +29,7 @@ import {
 } from "@t3tools/contracts";
 
 import { GitManager, type GitRunStackedActionOptions } from "./GitManager.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver, type GitRemoteStatusOptions } from "../vcs/GitVcsDriver.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 
 export interface GitWorkflowServiceShape {
@@ -41,6 +41,7 @@ export interface GitWorkflowServiceShape {
   ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
   readonly remoteStatus: (
     input: VcsStatusInput,
+    options?: GitRemoteStatusOptions,
   ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
   readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -60,6 +61,18 @@ export interface GitWorkflowServiceShape {
   readonly createWorktree: (
     input: VcsCreateWorktreeInput,
   ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+  readonly fetchRemote: (input: {
+    readonly cwd: string;
+    readonly remoteName: string;
+  }) => Effect.Effect<void, GitCommandError>;
+  readonly resolveRemoteTrackingCommit: (input: {
+    readonly cwd: string;
+    readonly refName: string;
+    readonly fallbackRemoteName: string;
+  }) => Effect.Effect<
+    { readonly commitSha: string; readonly remoteRefName: string },
+    GitCommandError
+  >;
   readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
   readonly createRef: (
     input: VcsCreateRefInput,
@@ -259,10 +272,10 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
             : Effect.succeed(nonRepositoryLocalStatus()),
         ),
       ),
-    remoteStatus: (input) =>
+    remoteStatus: (input, options) =>
       detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
-          isGitRepository ? gitManager.remoteStatus(input) : Effect.succeed(null),
+          isGitRepository ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
         ),
       ),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
@@ -293,6 +306,14 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
         Effect.andThen(git.createWorktree(input)),
+      ),
+    fetchRemote: (input) =>
+      ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
+        Effect.andThen(git.fetchRemote(input)),
+      ),
+    resolveRemoteTrackingCommit: (input) =>
+      ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
+        Effect.andThen(git.resolveRemoteTrackingCommit(input)),
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(

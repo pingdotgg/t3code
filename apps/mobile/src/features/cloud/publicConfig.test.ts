@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { hasMobileTracingPublicConfig, resolveCloudPublicConfig } from "./publicConfig";
+import { hasTracingPublicConfig, resolveCloudPublicConfig } from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -94,9 +94,9 @@ describe("resolveCloudPublicConfig", () => {
   });
 
   it("keeps tracing disabled unless every public tracing value is configured", () => {
-    expect(hasMobileTracingPublicConfig(resolveCloudPublicConfig({}))).toBe(false);
+    expect(hasTracingPublicConfig(resolveCloudPublicConfig({}))).toBe(false);
     expect(
-      hasMobileTracingPublicConfig(
+      hasTracingPublicConfig(
         resolveCloudPublicConfig({
           observability: {
             tracesUrl: "https://api.axiom.co/v1/traces",
@@ -106,7 +106,7 @@ describe("resolveCloudPublicConfig", () => {
       ),
     ).toBe(false);
     expect(
-      hasMobileTracingPublicConfig(
+      hasTracingPublicConfig(
         resolveCloudPublicConfig({
           observability: {
             tracesUrl: "https://api.axiom.co/v1/traces",

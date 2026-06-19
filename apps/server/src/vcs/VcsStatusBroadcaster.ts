@@ -275,9 +275,12 @@ export const layer = Layer.effect(
 
     const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
       cwd: string,
+      options?: { readonly refreshUpstream?: boolean },
     ) {
-      yield* workflow.invalidateRemoteStatus(cwd);
-      const remote = yield* workflow.remoteStatus({ cwd });
+      if (options?.refreshUpstream !== false) {
+        yield* workflow.invalidateRemoteStatus(cwd);
+      }
+      const remote = yield* workflow.remoteStatus({ cwd }, options);
       return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
     });
 
@@ -303,17 +306,22 @@ export const layer = Layer.effect(
     ) => {
       return Effect.gen(function* () {
         const consecutiveFailuresRef = yield* Ref.make(0);
+        const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
         const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
           const configuredInterval = yield* automaticRemoteRefreshInterval;
           const activeInterval = Duration.isZero(configuredInterval)
             ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
             : configuredInterval;
-          if (Duration.isZero(configuredInterval)) {
+          const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
+          if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
             return activeInterval;
           }
 
-          const exit = yield* refreshRemoteStatus(cwd).pipe(Effect.exit);
+          const exit = yield* refreshRemoteStatus(cwd, {
+            refreshUpstream: !Duration.isZero(configuredInterval),
+          }).pipe(Effect.exit);
           if (Exit.isSuccess(exit)) {
+            yield* Ref.set(needsInitialRefreshRef, false);
             yield* Ref.set(consecutiveFailuresRef, 0);
             return activeInterval;
           }

@@ -1444,11 +1444,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const statusDetailsRemote: GitVcsDriver.GitVcsDriverShape["statusDetailsRemote"] = Effect.fn(
     "statusDetailsRemote",
-  )(function* (cwd) {
-    yield* refreshStatusUpstreamIfStale(cwd).pipe(
-      Effect.catchIf(isMissingGitCwdError, () => Effect.void),
-      Effect.ignoreCause({ log: true }),
-    );
+  )(function* (cwd, options) {
+    if (options?.refreshUpstream !== false) {
+      yield* refreshStatusUpstreamIfStale(cwd).pipe(
+        Effect.catchIf(isMissingGitCwdError, () => Effect.void),
+        Effect.ignoreCause({ log: true }),
+      );
+    }
     return yield* readStatusDetailsRemote(cwd);
   });
 
@@ -2186,6 +2188,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     });
 
+  const fetchRemote: GitVcsDriver.GitVcsDriverShape["fetchRemote"] = Effect.fn("fetchRemote")(
+    function* (input) {
+      yield* executeGit(
+        "GitVcsDriver.fetchRemote",
+        input.cwd,
+        ["fetch", "--quiet", input.remoteName],
+        {
+          env: STATUS_UPSTREAM_REFRESH_ENV,
+          fallbackErrorMessage: `git fetch ${input.remoteName} failed`,
+        },
+      );
+    },
+  );
+
+  const resolveRemoteTrackingCommit: GitVcsDriver.GitVcsDriverShape["resolveRemoteTrackingCommit"] =
+    Effect.fn("resolveRemoteTrackingCommit")(function* (input) {
+      const remoteNames = yield* listRemoteNames(input.cwd);
+      const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+        input.refName,
+        remoteNames.toSorted((left, right) => right.length - left.length),
+      );
+      const remoteRefName =
+        parsedRemoteRef?.remoteRef ?? `${input.fallbackRemoteName}/${input.refName}`;
+      const commitSha = yield* runGitStdout("GitVcsDriver.resolveRemoteTrackingCommit", input.cwd, [
+        "rev-parse",
+        "--verify",
+        `refs/remotes/${remoteRefName}^{commit}`,
+      ]).pipe(Effect.map((stdout) => stdout.trim()));
+
+      return { commitSha, remoteRefName };
+    });
+
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriverShape["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
@@ -2411,6 +2445,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     fetchPullRequestBranch,
     ensureRemote,
     resolvePrimaryRemoteName,
+    fetchRemote,
+    resolveRemoteTrackingCommit,
     fetchRemoteBranch,
     fetchRemoteTrackingBranch,
     setBranchUpstream,
