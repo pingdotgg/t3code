@@ -467,7 +467,7 @@ importers:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))
       '@ff-labs/fff-node':
-        specifier: ^0.9.4
+        specifier: 0.9.4
         version: 0.9.4(patch_hash=2b16019ce7ab61aec6478dd02f79ef468cc1d5c51e9d00764f7d2ab8167210c8)
       '@github/copilot':
         specifier: 1.0.60
