@@ -3,11 +3,12 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
 import * as Tracer from "effect/Tracer";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
+import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
@@ -22,7 +23,7 @@ const CLIENT_TRACING_RESOURCE = {
 } as const;
 
 const delegateRuntimeLayer = Layer.mergeAll(
-  FetchHttpClient.layer,
+  primaryEnvironmentHttpLayer,
   OtlpSerialization.layerJson,
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );

@@ -191,19 +191,19 @@ describe("DesktopWindow", () => {
   it("recognizes only same-origin renderer navigations", () => {
     assert.isTrue(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "http://127.0.0.1:3773/",
-        navigationUrl: "http://127.0.0.1:3773/settings/connections",
+        applicationUrl: "t3code://app/",
+        navigationUrl: "t3code://app/settings/connections",
       }),
     );
     assert.isFalse(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "http://127.0.0.1:3773/",
+        applicationUrl: "t3code://app/",
         navigationUrl: "https://accounts.microsoft.com/oauth",
       }),
     );
     assert.isFalse(
       DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "http://127.0.0.1:3773/",
+        applicationUrl: "t3code://app/",
         navigationUrl: "not a url",
       }),
     );
@@ -231,7 +231,7 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["http://127.0.0.1:5733/"]);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),

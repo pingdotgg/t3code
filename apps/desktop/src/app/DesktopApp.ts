@@ -11,7 +11,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
-import * as DesktopCloudAuth from "./DesktopCloudAuth.ts";
+import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -163,6 +163,16 @@ const bootstrap = Effect.gen(function* () {
   }
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const rendererTarget = environment.isDevelopment
+    ? Option.getOrThrow(environment.devServerUrl)
+    : backendConfig.httpBaseUrl;
+  yield* electronProtocol.registerDesktopProtocol({
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    targetOrigin: rendererTarget,
+    backendOrigin: backendConfig.httpBaseUrl,
+    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+  });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });
@@ -189,9 +199,8 @@ const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
   const electronApp = yield* ElectronApp.ElectronApp;
-  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-  const cloudAuth = yield* DesktopCloudAuth.DesktopCloudAuth;
+  const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -209,7 +218,7 @@ const startup = Effect.gen(function* () {
 
   yield* appIdentity.configure;
   yield* lifecycle.register;
-  yield* cloudAuth.configure;
+  yield* clerk.configure;
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),
@@ -218,7 +227,6 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("app ready");
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
-  yield* electronProtocol.registerDesktopFileProtocol;
   yield* updates.configure;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));

@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@callstack/liquid-glass": "^0.7.1",
-    "@clerk/expo": "^3.4.1",
+    "@clerk/expo": "catalog:",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/ui": "~56.0.8",

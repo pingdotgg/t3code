@@ -43,6 +43,13 @@ export class ClientPresentation extends Context.Service<
   }
 >()("@t3tools/client-runtime/platform/capabilities/ClientPresentation") {}
 
+export class PrimaryEnvironmentAuth extends Context.Service<
+  PrimaryEnvironmentAuth,
+  {
+    readonly bearerToken: Effect.Effect<Option.Option<string>, ConnectionAttemptError>;
+  }
+>()("@t3tools/client-runtime/platform/capabilities/PrimaryEnvironmentAuth") {}
+
 export class SshEnvironmentGateway extends Context.Service<
   SshEnvironmentGateway,
   {

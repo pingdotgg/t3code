@@ -1,18 +1,27 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-import { DesktopEnvironment, type DesktopEnvironmentShape } from "../app/DesktopEnvironment.ts";
+export const DESKTOP_HOST = "app";
+export const DESKTOP_PRODUCTION_SCHEME = "t3code";
+export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
-export const DESKTOP_SCHEME = "t3";
+export function getDesktopScheme(isDevelopment: boolean): string {
+  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+}
+
+export function getDesktopOrigin(isDevelopment: boolean): string {
+  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+}
+
+export function getDesktopUrl(isDevelopment: boolean): string {
+  return `${getDesktopOrigin(isDevelopment)}/`;
+}
 
 export class ElectronProtocolRegistrationError extends Data.TaggedError(
   "ElectronProtocolRegistrationError",
@@ -21,252 +30,117 @@ export class ElectronProtocolRegistrationError extends Data.TaggedError(
   readonly cause: unknown;
 }> {
   override get message() {
-    return `Failed to register ${this.scheme}: file protocol.`;
+    return `Failed to register ${this.scheme}: protocol.`;
   }
 }
 
-export class ElectronProtocolStaticBundleMissingError extends Data.TaggedError(
-  "ElectronProtocolStaticBundleMissingError",
-)<{}> {
-  override get message() {
-    return "Desktop static bundle missing. Build apps/server (with bundled client) first.";
-  }
+export interface DesktopProtocolRegistrationInput {
+  readonly scheme: string;
+  readonly targetOrigin: URL;
+  readonly backendOrigin: URL;
+  readonly clerkFrontendApiHostname: string | undefined;
 }
 
 export interface ElectronProtocolShape {
-  readonly registerFileProtocol: <E, R>(input: {
-    readonly scheme: string;
-    readonly handler: (
-      request: Electron.ProtocolRequest,
-    ) => Effect.Effect<Electron.ProtocolResponse, E, R>;
-    readonly onFailure?: (
-      request: Electron.ProtocolRequest,
-      cause: Cause.Cause<E>,
-    ) => Electron.ProtocolResponse;
-  }) => Effect.Effect<void, ElectronProtocolRegistrationError, R | Scope.Scope>;
-  readonly registerDesktopFileProtocol: Effect.Effect<
-    void,
-    ElectronProtocolRegistrationError | ElectronProtocolStaticBundleMissingError,
-    FileSystem.FileSystem | DesktopEnvironment | Scope.Scope
-  >;
+  readonly registerDesktopProtocol: (
+    input: DesktopProtocolRegistrationInput,
+  ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
 }
 
 export class ElectronProtocol extends Context.Service<ElectronProtocol, ElectronProtocolShape>()(
   "@t3tools/desktop/electron/ElectronProtocol",
 ) {}
 
-export function normalizeDesktopProtocolPathname(rawPath: string): Option.Option<string> {
-  const segments: string[] = [];
-  for (const segment of rawPath.split("/")) {
-    if (segment.length === 0 || segment === ".") {
-      continue;
-    }
-    if (segment === "..") {
-      return Option.none();
-    }
-    segments.push(segment);
-  }
-  return Option.some(segments.join("/"));
+export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
+  const clerkOrigin = input.clerkFrontendApiHostname
+    ? `https://${input.clerkFrontendApiHostname}`
+    : undefined;
+  const scriptSources = [
+    "'self'",
+    "'unsafe-inline'",
+    ...(clerkOrigin ? [clerkOrigin] : []),
+    "https://challenges.cloudflare.com",
+  ];
+
+  // The renderer connects directly to user-configured environments in addition to
+  // the build-configured Clerk, relay, and OTLP endpoints. Those environment
+  // origins are not known when this response policy is created, so restrict
+  // connections by the network schemes the client supports instead of by host.
+  const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
+
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSources.join(" ")}`,
+    `connect-src ${connectSources.join(" ")}`,
+    `img-src 'self' ${input.scheme}: blob: data: http: https:`,
+    "style-src 'self' 'unsafe-inline'",
+    `font-src 'self' ${input.scheme}: data:`,
+    "worker-src 'self' blob:",
+    "frame-src 'self' https://challenges.cloudflare.com",
+    "form-action 'self'",
+  ].join("; ");
 }
 
-const registerDesktopSchemePrivileges = Effect.sync(() => {
-  Electron.protocol.registerSchemesAsPrivileged([
-    {
-      scheme: DESKTOP_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-      },
-    },
-  ]);
-}).pipe(Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"));
+function withContentSecurityPolicy(response: Response, policy: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", policy);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
-export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
-
-const resolveDesktopStaticDir: Effect.Effect<
-  Option.Option<string>,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment
-> = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const environment = yield* DesktopEnvironment;
-  const candidates = [
-    environment.path.join(environment.appRoot, "apps/server/dist/client"),
-    environment.path.join(environment.appRoot, "apps/web/dist"),
-  ];
-  for (const candidate of candidates) {
-    const hasIndex = yield* fileSystem
-      .exists(environment.path.join(candidate, "index.html"))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (hasIndex) {
-      return Option.some(candidate);
-    }
+async function proxyRequest(
+  request: Request,
+  targetOrigin: URL,
+  contentSecurityPolicy: string,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.host !== DESKTOP_HOST) {
+    return new Response(null, { status: 404 });
   }
-  return Option.none<string>();
-});
 
-const resolveDesktopStaticPath = Effect.fn("desktop.electron.protocol.resolveDesktopStaticPath")(
-  function* (
-    staticRoot: string,
-    requestUrl: string,
-  ): Effect.fn.Return<string, never, FileSystem.FileSystem | DesktopEnvironment> {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const environment = yield* DesktopEnvironment;
-    const url = new URL(requestUrl);
-    const rawPath = decodeURIComponent(url.pathname);
-    const normalizedPath = normalizeDesktopProtocolPathname(rawPath);
-    if (Option.isNone(normalizedPath)) {
-      return environment.path.join(staticRoot, "index.html");
-    }
-
-    const requestedPath = normalizedPath.value.length > 0 ? normalizedPath.value : "index.html";
-    const resolvedPath = environment.path.join(staticRoot, requestedPath);
-
-    if (environment.path.extname(resolvedPath)) {
-      return resolvedPath;
-    }
-
-    const nestedIndex = environment.path.join(resolvedPath, "index.html");
-    const nestedIndexExists = yield* fileSystem
-      .exists(nestedIndex)
-      .pipe(Effect.orElseSucceed(() => false));
-    if (nestedIndexExists) {
-      return nestedIndex;
-    }
-
-    return environment.path.join(staticRoot, "index.html");
-  },
-);
-
-function isStaticAssetRequest(requestUrl: string, environment: DesktopEnvironmentShape): boolean {
-  try {
-    const url = new URL(requestUrl);
-    return environment.path.extname(url.pathname).length > 0;
-  } catch {
-    return false;
+  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  const init: RequestInit = {
+    method: request.method,
+    headers: request.headers,
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+    (init as RequestInit & { duplex: "half" }).duplex = "half";
   }
+  const response = await Electron.net.fetch(targetUrl.toString(), init);
+  return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
 const make = Effect.gen(function* () {
-  const registeredProtocols = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const registered = yield* Ref.make(false);
 
-  const registerFileProtocol = Effect.fn("desktop.electron.protocol.registerFileProtocol")(
-    function* <E, R>({
-      scheme,
-      handler,
-      onFailure,
-    }: {
-      readonly scheme: string;
-      readonly handler: (
-        request: Electron.ProtocolRequest,
-      ) => Effect.Effect<Electron.ProtocolResponse, E, R>;
-      readonly onFailure?: (
-        request: Electron.ProtocolRequest,
-        cause: Cause.Cause<E>,
-      ) => Electron.ProtocolResponse;
-    }): Effect.fn.Return<void, ElectronProtocolRegistrationError, R | Scope.Scope> {
-      yield* Effect.annotateCurrentSpan({ scheme });
-      const alreadyRegistered = yield* Ref.get(registeredProtocols).pipe(
-        Effect.map((protocols) => protocols.has(scheme)),
-      );
-      if (alreadyRegistered) {
-        return;
-      }
+  const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
+    function* (input: DesktopProtocolRegistrationInput) {
+      if (yield* Ref.get(registered)) return;
 
-      const context = yield* Effect.context<R>();
-      const runPromise = Effect.runPromiseWith(context);
+      const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
 
       yield* Effect.acquireRelease(
         Effect.try({
           try: () => {
-            const registered = Electron.protocol.registerFileProtocol(
-              scheme,
-              (request, callback) => {
-                const response = handler(request).pipe(
-                  Effect.withSpan("desktop.electron.protocol.handleFileRequest"),
-                  Effect.catchCause((cause) =>
-                    Effect.succeed(onFailure?.(request, cause) ?? ({ error: -2 } as const)),
-                  ),
-                );
-
-                void runPromise(response).then(callback, () => callback({ error: -2 }));
-              },
+            Electron.protocol.handle(input.scheme, (request) =>
+              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
             );
-            if (!registered) {
-              throw new ElectronProtocolRegistrationError({
-                scheme,
-                cause: "registerFileProtocol returned false",
-              });
-            }
           },
-          catch: (cause) =>
-            cause instanceof ElectronProtocolRegistrationError
-              ? cause
-              : new ElectronProtocolRegistrationError({ scheme, cause }),
-        }).pipe(
-          Effect.andThen(
-            Ref.update(registeredProtocols, (protocols) => new Set(protocols).add(scheme)),
-          ),
-        ),
+          catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
+        }).pipe(Effect.andThen(Ref.set(registered, true))),
         () =>
           Effect.sync(() => {
-            Electron.protocol.unregisterProtocol(scheme);
-          }).pipe(
-            Effect.andThen(
-              Ref.update(registeredProtocols, (protocols) => {
-                const next = new Set(protocols);
-                next.delete(scheme);
-                return next;
-              }),
-            ),
-          ),
+            Electron.protocol.unhandle(input.scheme);
+          }).pipe(Effect.andThen(Ref.set(registered, false))),
       );
     },
   );
 
-  const registerDesktopFileProtocol = Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
-    if (environment.isDevelopment) return;
-
-    const staticRoot = yield* resolveDesktopStaticDir;
-    if (Option.isNone(staticRoot)) {
-      return yield* new ElectronProtocolStaticBundleMissingError();
-    }
-
-    const staticRootResolved = environment.path.resolve(staticRoot.value);
-    const staticRootPrefix = `${staticRootResolved}${environment.path.sep}`;
-    const fallbackIndex = environment.path.join(staticRootResolved, "index.html");
-
-    yield* registerFileProtocol({
-      scheme: DESKTOP_SCHEME,
-      handler: Effect.fn("desktop.electron.protocol.handleDesktopFileRequest")(function* (request) {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const environment = yield* DesktopEnvironment;
-        const candidate = yield* resolveDesktopStaticPath(staticRootResolved, request.url);
-        const resolvedCandidate = environment.path.resolve(candidate);
-        const isInRoot =
-          resolvedCandidate === fallbackIndex || resolvedCandidate.startsWith(staticRootPrefix);
-        const isAssetRequest = isStaticAssetRequest(request.url, environment);
-        const exists = yield* fileSystem
-          .exists(resolvedCandidate)
-          .pipe(Effect.orElseSucceed(() => false));
-
-        if (!isInRoot || !exists) {
-          return isAssetRequest ? ({ error: -6 } as const) : ({ path: fallbackIndex } as const);
-        }
-
-        return { path: resolvedCandidate } as const;
-      }),
-      onFailure: () => ({ path: fallbackIndex }),
-    });
-  }).pipe(Effect.withSpan("desktop.electron.protocol.registerDesktopFileProtocol"));
-
-  return ElectronProtocol.of({
-    registerFileProtocol,
-    registerDesktopFileProtocol,
-  });
+  return ElectronProtocol.of({ registerDesktopProtocol });
 });
 
 export const layer = Layer.effect(ElectronProtocol, make);

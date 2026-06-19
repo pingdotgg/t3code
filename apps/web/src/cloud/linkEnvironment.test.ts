@@ -1,4 +1,5 @@
 import {
+  type DesktopBridge,
   EnvironmentId,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
@@ -28,6 +29,7 @@ import {
   ManagedRelayDpopSigner,
 } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 import {
   collectCloudLinkTargets,
@@ -146,6 +148,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetDesktopPrimaryAuthForTests();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -221,6 +224,33 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
         "http://127.0.0.1:3000/api/connect/link-state",
       );
+    }),
+  );
+
+  it.effect("uses desktop bearer auth for primary cloud link state", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          linked: true,
+          cloudUserId: "user-1",
+          relayUrl: "https://relay.example.test",
+          relayIssuer: "https://relay.example.test",
+          publishAgentActivity: false,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", {
+        location: { origin: "t3code://app" },
+        desktopBridge: {
+          getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+        } as unknown as DesktopBridge,
+      });
+
+      yield* withServices(readPrimaryCloudLinkState({ target: TARGET }));
+
+      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+      expect(request.credentials).not.toBe("include");
+      expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
     }),
   );
 

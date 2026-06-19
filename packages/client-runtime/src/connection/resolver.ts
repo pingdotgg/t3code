@@ -10,6 +10,7 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { ManagedRelayClient } from "../relay/managedRelay.ts";
 import {
   CloudSession,
+  PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
 } from "../platform/capabilities.ts";
@@ -58,17 +59,37 @@ function primarySocketUrl(target: PrimaryConnectionTarget): string {
   return url.toString();
 }
 
-const primaryBroker = Effect.fn("clientRuntime.connection.broker.primary")(
-  (target: PrimaryConnectionTarget) =>
-    Effect.succeed({
-      environmentId: target.environmentId,
-      label: target.label,
+const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary")(function* () {
+  const auth = yield* PrimaryEnvironmentAuth;
+  const remote = yield* RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.primary")(function* (
+    target: PrimaryConnectionTarget,
+  ) {
+    const bearerToken = yield* auth.bearerToken;
+    if (Option.isNone(bearerToken)) {
+      return {
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: primarySocketUrl(target),
+        httpAuthorization: null,
+        target,
+      } satisfies PreparedConnection;
+    }
+
+    const authorized = yield* remote.authorizeBearer({
+      expectedEnvironmentId: target.environmentId,
       httpBaseUrl: target.httpBaseUrl,
-      socketUrl: primarySocketUrl(target),
-      httpAuthorization: null,
+      wsBaseUrl: target.wsBaseUrl,
+      bearerToken: bearerToken.value,
+    });
+    return {
+      ...authorized,
       target,
-    } satisfies PreparedConnection),
-);
+    } satisfies PreparedConnection;
+  });
+});
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore;
@@ -228,6 +249,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
 export const connectionResolverLayer = Layer.effect(
   ConnectionResolver,
   Effect.gen(function* () {
+    const primary = yield* makePrimaryBroker();
     const bearer = yield* makeBearerBroker();
     const relay = yield* makeRelayBroker();
     const ssh = yield* makeSshBroker();
@@ -242,7 +264,7 @@ export const connectionResolverLayer = Layer.effect(
       });
       switch (target._tag) {
         case "PrimaryConnectionTarget":
-          return yield* primaryBroker(target);
+          return yield* primary(target);
         case "BearerConnectionTarget":
           return yield* bearer({ ...entry, target });
         case "RelayConnectionTarget":

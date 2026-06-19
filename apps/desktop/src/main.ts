@@ -27,13 +27,13 @@ import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
-import * as DesktopCloudAuth from "./app/DesktopCloudAuth.ts";
-import * as DesktopCloudAuthTokenStore from "./app/DesktopCloudAuthTokenStore.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
+import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
+import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
@@ -119,7 +119,6 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
   DesktopConnectionCatalogStore.layer.pipe(Layer.provideMerge(DesktopSavedEnvironments.layer)),
-  DesktopCloudAuthTokenStore.layer,
   DesktopAssets.layer,
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
@@ -149,17 +148,30 @@ const desktopBackendLayer = DesktopBackendManager.layer.pipe(
   Layer.provideMerge(desktopWindowLayer),
 );
 
+const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
+  Layer.provideMerge(desktopBackendLayer),
+);
+
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
-  DesktopCloudAuth.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
-).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
+).pipe(
+  Layer.provideMerge(DesktopUpdates.layer),
+  Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
+);
 
-const desktopRuntimeLayer = ElectronProtocol.layerSchemePrivileges.pipe(
-  Layer.flatMap(() =>
+const desktopClerkLayer = DesktopClerk.layer.pipe(
+  Layer.provideMerge(desktopEnvironmentLayer),
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(ElectronApp.layer),
+);
+
+const desktopRuntimeLayer = desktopClerkLayer.pipe(
+  Layer.flatMap((clerkContext) =>
     desktopApplicationLayer.pipe(
+      Layer.provideMerge(Layer.succeedContext(clerkContext)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(NodeHttpClient.layerUndici),
       Layer.provideMerge(NetService.layer),

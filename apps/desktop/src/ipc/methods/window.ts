@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
+import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
@@ -61,6 +62,16 @@ export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
           : {}),
       }),
     });
+  }),
+});
+
+export const getLocalEnvironmentBearerToken = makeIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
+    const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+    return yield* localAuth.getBearerToken;
   }),
 });
 

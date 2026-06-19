@@ -3,6 +3,7 @@ import {
   CloudSession,
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
+  PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
@@ -119,6 +120,10 @@ const capabilitiesLayer = Layer.succeedContext(
       }),
     }),
   ).pipe(
+    Context.add(
+      PrimaryEnvironmentAuth,
+      PrimaryEnvironmentAuth.of({ bearerToken: Effect.succeed(Option.none()) }),
+    ),
     Context.add(
       RelayDeviceIdentity,
       RelayDeviceIdentity.of({

@@ -17,6 +17,7 @@ import { ConnectionResolver } from "./resolver.ts";
 import { connectionResolverLayer } from "./resolver.ts";
 import {
   CloudSession,
+  PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
 } from "../platform/capabilities.ts";
@@ -101,6 +102,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly connectEnvironment?: ManagedRelayClient["Service"]["connectEnvironment"];
   readonly authorizeBearer?: RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
+  readonly primaryBearerToken?: string;
   readonly prepareSsh?: SshEnvironmentGateway["Service"]["prepare"];
 }) => {
   const profiles = new Map(
@@ -171,6 +173,12 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     Layer.succeed(ConnectionCredentialStore, credentialStore),
     Layer.succeed(CloudSession, CloudSession.of({ clerkToken: Effect.succeed("clerk-session") })),
     Layer.succeed(
+      PrimaryEnvironmentAuth,
+      PrimaryEnvironmentAuth.of({
+        bearerToken: Effect.succeed(Option.fromNullishOr(options?.primaryBearerToken)),
+      }),
+    ),
+    Layer.succeed(
       RelayDeviceIdentity,
       RelayDeviceIdentity.of({ deviceId: Effect.succeed(Option.some("device-1")) }),
     ),
@@ -214,6 +222,42 @@ describe("ConnectionResolver", () => {
         httpAuthorization: null,
         target,
       });
+    }),
+  );
+
+  it.effect("authorizes a desktop primary environment with its platform bearer token", () =>
+    Effect.gen(function* () {
+      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const brokerLayer = yield* makeDependencies({
+        primaryBearerToken: "desktop-bearer",
+        authorizeBearer: (input) =>
+          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "Primary",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=desktop",
+              httpAuthorization: {
+                _tag: "Bearer" as const,
+                token: input.bearerToken,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+
+      expect(yield* broker.prepare(catalogEntry(target))).toMatchObject({
+        socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=desktop",
+        httpAuthorization: { _tag: "Bearer", token: "desktop-bearer" },
+        target,
+      });
+      expect(yield* Ref.get(bearerInputs)).toEqual(["desktop-bearer"]);
     }),
   );
 
