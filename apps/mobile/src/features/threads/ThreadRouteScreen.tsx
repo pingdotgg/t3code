@@ -420,6 +420,7 @@ export function ThreadRouteScreen() {
         gitStatus={gitStatus.data}
         gitOperationLabel={gitState.gitOperationLabel}
         canOpenTerminal={Boolean(selectedThreadProject?.workspaceRoot)}
+        canOpenFiles={Boolean(selectedThreadProject?.workspaceRoot)}
         projectScripts={selectedThreadProject?.scripts ?? []}
         terminalSessions={terminalMenuSessions}
         onOpenTerminal={handleOpenTerminal}
@@ -452,6 +453,7 @@ export function ThreadRouteScreen() {
           activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
+          threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           onOpenDrawer={handleOpenDrawer}
           onOpenConnectionEditor={handleOpenConnectionEditor}

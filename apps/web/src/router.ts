@@ -1,7 +1,5 @@
-import { createElement } from "react";
 import { createRouter, RouterHistory } from "@tanstack/react-router";
 
-import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter(history: RouterHistory) {
@@ -9,7 +7,6 @@ export function getRouter(history: RouterHistory) {
     routeTree,
     history,
     context: {},
-    Wrap: ({ children }) => createElement(AppAtomRegistryProvider, undefined, children),
   });
 }
 

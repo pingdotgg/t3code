@@ -65,6 +65,8 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <ArchivedThreadsSettingsSection />
+
         <AppSettingsSection />
       </ScrollView>
     </View>
@@ -374,6 +376,8 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <ArchivedThreadsSettingsSection />
+
         <AppSettingsSection />
       </ScrollView>
     </View>
@@ -416,12 +420,20 @@ function AppSettingsSection() {
   );
 }
 
+function ArchivedThreadsSettingsSection() {
+  return (
+    <SettingsSection title="Threads">
+      <SettingsRow icon="archivebox" label="Archived Threads" href="/settings/archive" />
+    </SettingsSection>
+  );
+}
+
 function SettingsRow(props: {
   readonly disabled?: boolean;
   readonly icon: SymbolName;
   readonly label: string;
   readonly value?: string;
-  readonly href?: "/settings/environments";
+  readonly href?: "/settings/archive" | "/settings/environments";
   readonly onPress?: () => void;
 }) {
   const icon = useThemeColor("--color-icon");
@@ -459,7 +471,9 @@ function SettingsRow(props: {
   if (props.href) {
     return (
       <Link href={props.href} asChild>
-        <Pressable>{content}</Pressable>
+        <Pressable accessibilityLabel={props.label} accessibilityRole="button">
+          {content}
+        </Pressable>
       </Link>
     );
   }

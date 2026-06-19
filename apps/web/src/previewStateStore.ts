@@ -28,6 +28,8 @@ export interface DesktopPreviewOverlay {
 export interface ThreadPreviewState {
   snapshot: PreviewSessionSnapshot | null;
   sessions: Record<string, PreviewSessionSnapshot>;
+  /** Tabs intentionally closed by this client. Stale list snapshots must not resurrect them. */
+  suppressedTabIds: ReadonlySet<string>;
   activeTabId: string | null;
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
@@ -37,6 +39,7 @@ export interface ThreadPreviewState {
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   snapshot: null,
   sessions: {},
+  suppressedTabIds: new Set<string>(),
   activeTabId: null,
   desktopOverlay: null,
   desktopByTabId: {},
@@ -162,6 +165,7 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
       case "opened":
       case "navigated": {
         const snapshot = event.snapshot;
+        if (current.suppressedTabIds.has(snapshot.tabId)) return current;
         const recentlySeenUrls =
           snapshot.navStatus._tag === "Idle"
             ? current.recentlySeenUrls
@@ -221,6 +225,7 @@ export function applyPreviewServerSnapshot(
         desktopByTabId: {},
       };
     }
+    if (current.suppressedTabIds.has(snapshot.tabId)) return current;
     const existing = current.sessions[snapshot.tabId];
     if (existing && existing.updatedAt > snapshot.updatedAt) return current;
     const recentlySeenUrls =
@@ -255,8 +260,43 @@ export function applyPreviewDesktopState(
   });
 }
 
-export function removePreviewSession(ref: ScopedThreadRef, tabId: string): void {
-  updateThreadPreviewState(ref, (current) => removeSession(current, tabId));
+export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => {
+    const suppressedTabIds = new Set(current.suppressedTabIds);
+    suppressedTabIds.add(tabId);
+    return {
+      ...removeSession(current, tabId),
+      suppressedTabIds,
+    };
+  });
+}
+
+export function cancelPreviewSessionClose(
+  ref: ScopedThreadRef,
+  snapshot: PreviewSessionSnapshot | null,
+  tabId: string,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    if (!current.suppressedTabIds.has(tabId)) return current;
+    const suppressedTabIds = new Set(current.suppressedTabIds);
+    suppressedTabIds.delete(tabId);
+    if (!snapshot) {
+      return { ...current, suppressedTabIds };
+    }
+    const recentlySeenUrls =
+      snapshot.navStatus._tag !== "Idle"
+        ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)
+        : current.recentlySeenUrls;
+    return {
+      ...current,
+      snapshot,
+      sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
+      suppressedTabIds,
+      activeTabId: snapshot.tabId,
+      desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+      recentlySeenUrls,
+    };
+  });
 }
 
 export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {

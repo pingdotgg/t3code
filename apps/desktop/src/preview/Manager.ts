@@ -1195,26 +1195,103 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* attachListeners(tabId, wc);
     runFork(ensureControlSession(wc).pipe(Effect.ignore));
-    if (Math.abs(tab.zoomFactor - DEFAULT_ZOOM_FACTOR) > ZOOM_EPSILON) {
-      yield* attempt("registerWebview.restoreZoom", () => wc.setZoomFactor(tab.zoomFactor)).pipe(
-        Effect.ignore,
-      );
-    }
-    yield* update(tabId, {
-      webContentsId,
-      navStatus: computeNavStatus(wc),
-      canGoBack: wc.navigationHistory.canGoBack(),
-      canGoForward: wc.navigationHistory.canGoForward(),
-      zoomFactor: tab.zoomFactor,
+    const registeredAt = yield* currentIso;
+    const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (!current) {
+        return [
+          Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
+          tabs,
+        ] as const;
+      }
+      const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+      const next: PreviewTabState = {
+        ...current,
+        webContentsId,
+        navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+        canGoBack: wc.navigationHistory.canGoBack(),
+        canGoForward: wc.navigationHistory.canGoForward(),
+        updatedAt: registeredAt,
+      };
+      return [
+        Option.some({
+          state: next,
+          pendingUrl,
+        }),
+        replaceMap(tabs, (copy) => {
+          copy.set(tabId, next);
+        }),
+      ] as const;
     });
+    if (Option.isNone(registration)) {
+      return yield* fail("registerWebview", new PreviewTabNotFoundError(tabId));
+    }
+    const { state: registered, pendingUrl } = registration.value;
+    yield* emit(tabId, registered);
+    if (Math.abs(registered.zoomFactor - DEFAULT_ZOOM_FACTOR) > ZOOM_EPSILON) {
+      yield* attempt("registerWebview.restoreZoom", () =>
+        wc.setZoomFactor(registered.zoomFactor),
+      ).pipe(Effect.ignore);
+    }
     yield* attempt("registerWebview.sendTheme", () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
     );
+    const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
+    if (
+      pendingUrl &&
+      latestNavStatus?.kind === "Loading" &&
+      latestNavStatus.url === pendingUrl &&
+      wc.getURL() !== pendingUrl
+    ) {
+      runFork(
+        attemptPromise("registerWebview.loadPendingUrl", () => wc.loadURL(pendingUrl)).pipe(
+          Effect.ignore,
+        ),
+      );
+    }
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
-    const wc = yield* requireWebContents(tabId);
     const url = yield* attempt("navigate.normalizeUrl", () => normalizePreviewUrl(rawUrl));
+    const updatedAt = yield* currentIso;
+    const pending = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      const next: PreviewTabState = {
+        tabId,
+        webContentsId: current?.webContentsId ?? null,
+        navStatus: {
+          kind: "Loading",
+          url,
+          title: current?.navStatus.kind === "Idle" || !current ? "" : current.navStatus.title,
+        },
+        canGoBack: current?.canGoBack ?? false,
+        canGoForward: current?.canGoForward ?? false,
+        zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
+        controller: current?.controller ?? "none",
+        updatedAt,
+      };
+      return [
+        next,
+        replaceMap(tabs, (copy) => {
+          copy.set(tabId, next);
+        }),
+      ] as const;
+    });
+    yield* emit(tabId, pending);
+    if (pending.webContentsId == null) return;
+    const wc = webContents.fromId(pending.webContentsId);
+    if (!wc) {
+      const detached = { ...pending, webContentsId: null };
+      yield* SynchronizedRef.update(tabsRef, (tabs) =>
+        tabs.get(tabId)?.webContentsId !== pending.webContentsId
+          ? tabs
+          : replaceMap(tabs, (copy) => {
+              copy.set(tabId, detached);
+            }),
+      );
+      yield* emit(tabId, detached);
+      return;
+    }
     if (wc.getURL() === url) {
       yield* attempt("navigate.reload", () => wc.reload());
       return;

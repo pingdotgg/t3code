@@ -14,7 +14,7 @@ interface OpenPreviewSessionInput<E> {
     readonly input: PreviewOpenInput;
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
-  url: string;
+  url?: string;
 }
 
 export async function openPreviewSession<E>(
@@ -24,7 +24,7 @@ export async function openPreviewSession<E>(
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      url: input.url,
+      ...(input.url === undefined ? {} : { url: input.url }),
     },
   });
   if (result._tag === "Failure") {
@@ -32,9 +32,11 @@ export async function openPreviewSession<E>(
   }
   const snapshot = result.value;
   applyPreviewServerSnapshot(input.threadRef, snapshot);
-  rememberPreviewUrl(
-    input.threadRef,
-    snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
-  );
+  if (input.url !== undefined) {
+    rememberPreviewUrl(
+      input.threadRef,
+      snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
+    );
+  }
   return result;
 }

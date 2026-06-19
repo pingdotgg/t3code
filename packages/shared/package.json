@@ -163,6 +163,10 @@
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
     },
+    "./filePreview": {
+      "types": "./src/filePreview.ts",
+      "import": "./src/filePreview.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"

@@ -111,12 +111,12 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
-  applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime,
-  removePreviewSession,
   setActivePreviewTab,
   useThreadPreviewState,
 } from "../previewStateStore";
+import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { PreviewAutomationOwner } from "./preview/PreviewAutomationOwner";
@@ -2746,23 +2746,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, dismissPlanSidebarForCurrentTurn]);
   const createBrowserSurface = useCallback(() => {
     if (!activeThreadRef) return;
-    const activeTabId = activePreviewState.activeTabId;
-    if (activeTabId) {
-      useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
-      return;
-    }
-    void (async () => {
-      const result = await openPreview({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId },
-      });
-      if (result._tag === "Failure") {
-        return;
-      }
-      applyPreviewServerSnapshot(activeThreadRef, result.value);
-      useRightPanelStore.getState().openBrowser(activeThreadRef, result.value.tabId);
-    })();
-  }, [activePreviewState.activeTabId, activeThreadRef, openPreview]);
+    void addBrowserSurface({ threadRef: activeThreadRef, openPreview });
+  }, [activeThreadRef, openPreview]);
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useRightPanelStore.getState().open(activeThreadRef, "diff");
@@ -2807,8 +2792,14 @@ function ChatViewContent(props: ChatViewProps) {
         search: (previous) => ({ ...stripDiffSearchParams(previous), diff: undefined }),
       });
     }
-    createBrowserSurface();
+    const activeTabId = activePreviewState.activeTabId;
+    if (activeTabId) {
+      useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+    } else {
+      createBrowserSurface();
+    }
   }, [
+    activePreviewState.activeTabId,
     activeThreadRef,
     createBrowserSurface,
     diffOpen,
@@ -2993,10 +2984,11 @@ function ChatViewContent(props: ChatViewProps) {
 
       for (const surface of surfaces) {
         if (surface.kind === "preview" && surface.resourceId) {
-          removePreviewSession(activeThreadRef, surface.resourceId);
-          void closePreview({
-            environmentId: activeThreadRef.environmentId,
-            input: { threadId: activeThreadRef.threadId, tabId: surface.resourceId },
+          void closePreviewSession({
+            closePreview,
+            snapshot: activePreviewState.sessions[surface.resourceId] ?? null,
+            tabId: surface.resourceId,
+            threadRef: activeThreadRef,
           });
         }
         if (surface.kind === "terminal") {
@@ -3020,6 +3012,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThreadRef,
+      activePreviewState.sessions,
       closePreview,
       closeTerminalMutation,
       diffOpen,

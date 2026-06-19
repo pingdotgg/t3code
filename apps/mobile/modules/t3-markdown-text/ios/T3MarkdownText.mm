@@ -70,7 +70,12 @@ static void T3MarkdownTextApplyAttachments(
                                                           renderingMode:UIImageRenderingModeAlwaysOriginal];
     }
     attachment.image = image ?: [[UIImage alloc] init];
-    attachment.bounds = CGRectMake(0, -0.5, 10, 10);
+    const CGFloat attachmentSize = T3MarkdownTextAttachmentSize(attachmentRange);
+    attachment.bounds = CGRectMake(
+        0,
+        T3MarkdownTextAttachmentBaselineOffset(attachmentRange),
+        attachmentSize,
+        attachmentSize);
     const NSRange range = NSMakeRange(
         attachmentRange.location,
         MIN(attachmentRange.length, attributedString.length - attachmentRange.location));
@@ -79,104 +84,6 @@ static void T3MarkdownTextApplyAttachments(
     [attributedString replaceCharactersInRange:range withAttributedString:attachmentString];
   }
 }
-
-static NSArray<NSDictionary<NSString *, id> *> *T3MarkdownTextExtractChipBackgrounds(
-    NSMutableAttributedString *attributedString,
-    const std::vector<T3MarkdownTextChipRange> &chipRanges)
-{
-  NSMutableArray<NSDictionary<NSString *, id> *> *backgrounds = [NSMutableArray array];
-  for (const auto &chipRange : chipRanges) {
-    if (chipRange.length == 0 || chipRange.location >= attributedString.length) {
-      continue;
-    }
-
-    const NSRange range = NSMakeRange(
-        chipRange.location,
-        MIN(chipRange.length, attributedString.length - chipRange.location));
-    UIColor *color = [attributedString attribute:NSBackgroundColorAttributeName
-                                         atIndex:range.location
-                                  effectiveRange:nil];
-    UIColor *foregroundColor = [attributedString attribute:NSForegroundColorAttributeName
-                                                   atIndex:range.location
-                                            effectiveRange:nil];
-    if (color == nil) {
-      continue;
-    }
-    [backgrounds addObject:@{
-      @"range": [NSValue valueWithRange:range],
-      @"color": color,
-      @"strokeColor": [foregroundColor
-          colorWithAlphaComponent:chipRange.isSkill ? 0.25 : 0.1] ?: UIColor.clearColor,
-    }];
-    [attributedString removeAttribute:NSBackgroundColorAttributeName range:range];
-  }
-  return backgrounds;
-}
-
-@interface T3MarkdownTextBackingView : UITextView
-@property(nonatomic, copy) NSArray<NSDictionary<NSString *, id> *> *chipBackgrounds;
-@end
-
-@implementation T3MarkdownTextBackingView
-
-- (void)drawRect:(CGRect)rect
-{
-  [self.layoutManager ensureLayoutForTextContainer:self.textContainer];
-  CGContextRef context = UIGraphicsGetCurrentContext();
-  if (context != nil) {
-    CGContextSaveGState(context);
-    CGContextResetClip(context);
-    CGContextClipToRect(context, self.bounds);
-  }
-  for (NSDictionary<NSString *, id> *background in self.chipBackgrounds) {
-    const NSRange characterRange = [background[@"range"] rangeValue];
-    UIColor *color = background[@"color"];
-    UIColor *strokeColor = background[@"strokeColor"];
-    if (characterRange.length == 0 || NSMaxRange(characterRange) > self.textStorage.length) {
-      continue;
-    }
-
-    const NSRange glyphRange =
-        [self.layoutManager glyphRangeForCharacterRange:characterRange actualCharacterRange:nil];
-    [color setFill];
-    [self.layoutManager
-        enumerateEnclosingRectsForGlyphRange:glyphRange
-                    withinSelectedGlyphRange:NSMakeRange(NSNotFound, 0)
-                             inTextContainer:self.textContainer
-                                  usingBlock:^(CGRect glyphRect, BOOL *stop) {
-      const CGFloat chipHeight = 22;
-      CGRect chipRect = CGRectMake(
-          glyphRect.origin.x - 4,
-          CGRectGetMidY(glyphRect) - chipHeight / 2,
-          glyphRect.size.width + 8,
-          chipHeight);
-      chipRect.origin.x += self.textContainerInset.left;
-      chipRect.origin.y += self.textContainerInset.top;
-      const CGFloat minimumX = self.textContainerInset.left + 0.5;
-      const CGFloat maximumX =
-          CGRectGetWidth(self.bounds) - self.textContainerInset.right - 0.5;
-      if (chipRect.origin.x < minimumX) {
-        chipRect.size.width -= minimumX - chipRect.origin.x;
-        chipRect.origin.x = minimumX;
-      }
-      if (CGRectGetMaxX(chipRect) > maximumX) {
-        chipRect.size.width = MAX(0, maximumX - chipRect.origin.x);
-      }
-      UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:chipRect cornerRadius:6];
-      [path fill];
-      [strokeColor setStroke];
-      path.lineWidth = 1;
-      [path stroke];
-    }];
-  }
-  if (context != nil) {
-    CGContextRestoreGState(context);
-  }
-
-  [super drawRect:rect];
-}
-
-@end
 
 @protocol T3MarkdownOutsideTapTarget <NSObject>
 - (void)clearSelectionForOutsideTapWithHitView:(UIView *)hitView;
@@ -285,7 +192,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
 
 @implementation T3MarkdownText {
   UIView * _view;
-  T3MarkdownTextBackingView * _textView;
+  UITextView * _textView;
   T3MarkdownTextShadowNode::ConcreteState::Shared _state;
   __weak UIWindow * _outsideTapWindow;
   BOOL _suppressSelectionChange;
@@ -308,7 +215,7 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
     self.contentView = _view;
     self.clipsToBounds = true;
 
-    _textView = [[T3MarkdownTextBackingView alloc] init];
+    _textView = [[UITextView alloc] init];
     _attachmentImages = [[NSMutableDictionary alloc] init];
     _pendingAttachmentUris = [[NSMutableSet alloc] init];
     _textView.scrollEnabled = false;
@@ -405,9 +312,6 @@ T3MarkdownOutsideTapCoordinatorForWindow(UIWindow *window)
       convertedAttrString,
       _state->getData().attachmentRanges,
       _attachmentImages);
-  _textView.chipBackgrounds = T3MarkdownTextExtractChipBackgrounds(
-      convertedAttrString,
-      _state->getData().chipRanges);
   [self loadAttachmentImages:_state->getData().attachmentRanges];
 
   // Setting attributedText clears any active text selection, and re-assigning

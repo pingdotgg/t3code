@@ -161,12 +161,63 @@ describe("buildThreadFeed", () => {
         turnId: "turn-1",
         summary: "Run tests",
         detail: "bun run test",
-        fullDetail: null,
-        copyText: "Run tests\nbun run test",
+        fullDetail: "/bin/zsh -lc 'bun run test'",
+        copyText: "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
+        icon: "command",
         toolLike: true,
         status: "success",
       },
     ]);
+  });
+
+  it("keeps MCP inputs available to expanded mobile work rows", () => {
+    const turnId = TurnId.make("turn-mcp");
+    const thread = makeThread({
+      id: ThreadId.make("thread-mcp"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expandable MCP call",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("mcp-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Call repository tool",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Call repository tool",
+            itemType: "mcp_tool_call",
+            detail: "repository.search",
+            status: "completed",
+            data: {
+              item: {
+                server: "repository",
+                tool: "search",
+                arguments: { query: "work log" },
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread, [], null)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities[0]?.icon).toBe("wrench");
+    expect(group.activities[0]?.fullDetail).toContain('"query": "work log"');
+    expect(group.activities[0]?.fullDetail).toContain("repository.search");
   });
 
   it("folds settled turn work while leaving the terminal answer visible", () => {

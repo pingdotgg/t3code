@@ -110,6 +110,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly styleJson?: string;
   readonly rowHeight: number;
   readonly contentWidth: number;
+  readonly initialRowIndex?: number;
   readonly onDebug?: (event: NativeSyntheticEvent<Record<string, unknown>>) => void;
   readonly onToggleFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onToggleViewedFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;

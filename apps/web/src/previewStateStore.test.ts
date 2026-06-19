@@ -7,10 +7,11 @@ import {
   applyPreviewDesktopState,
   applyPreviewServerEvent,
   applyPreviewServerSnapshot,
+  beginPreviewSessionClose,
+  cancelPreviewSessionClose,
   previewStateAtom,
   readThreadPreviewState,
   rememberPreviewUrl,
-  removePreviewSession,
   removePreviewThread,
   resetPreviewStateForTests,
   setActivePreviewTab,
@@ -182,7 +183,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, first);
     applyPreviewServerSnapshot(ref, second);
 
-    removePreviewSession(ref, second.tabId);
+    beginPreviewSessionClose(ref, second.tabId);
 
     const state = readThreadPreviewState(ref);
     expect(Object.keys(state.sessions)).toEqual([first.tabId]);
@@ -193,7 +194,7 @@ describe("previewStateStore (single-tab)", () => {
   it("treats a late server close event after optimistic removal as a no-op", () => {
     const snapshot = makeSnapshot();
     applyPreviewServerSnapshot(ref, snapshot);
-    removePreviewSession(ref, snapshot.tabId);
+    beginPreviewSessionClose(ref, snapshot.tabId);
 
     applyPreviewServerEvent(ref, {
       type: "closed",
@@ -205,6 +206,30 @@ describe("previewStateStore (single-tab)", () => {
     const state = readThreadPreviewState(ref);
     expect(state.sessions).toEqual({});
     expect(state.snapshot).toBeNull();
+  });
+
+  it("does not resurrect an intentionally closed tab from a stale list snapshot", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerSnapshot(ref, snapshot);
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    applyPreviewServerSnapshot(ref, snapshot);
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({});
+    expect(state.snapshot).toBeNull();
+  });
+
+  it("can restore a suppressed tab after a failed close", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerSnapshot(ref, snapshot);
+    beginPreviewSessionClose(ref, snapshot.tabId);
+
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({ [snapshot.tabId]: snapshot });
+    expect(state.snapshot).toEqual(snapshot);
   });
 
   it("closed event for a different tab is a no-op", () => {

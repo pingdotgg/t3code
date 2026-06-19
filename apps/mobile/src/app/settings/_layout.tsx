@@ -14,7 +14,7 @@ export default function SettingsLayout() {
   const contentStyle = useResolveClassNames("bg-sheet");
   const sheetBg = useThemeColor("--color-sheet");
   const headerTint = useThemeColor("--color-foreground");
-  const handleClerkRouteTransitionEnd = useCallback(
+  const handleExpandedRouteTransitionEnd = useCallback(
     (event: { data: { closing: boolean } }) => {
       if (event.data.closing) {
         collapse();
@@ -48,8 +48,13 @@ export default function SettingsLayout() {
         options={{ animation: "slide_from_right", title: "Join the waitlist" }}
       />
       <Stack.Screen
+        name="archive"
+        listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
+        options={{ animation: "slide_from_right", title: "Archived Threads" }}
+      />
+      <Stack.Screen
         name="auth"
-        listeners={{ transitionEnd: handleClerkRouteTransitionEnd }}
+        listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
         options={{ animation: "slide_from_right", title: "Sign in" }}
       />
     </Stack>

@@ -293,6 +293,7 @@ function appendNode(
       if (presentation.kind === "file") {
         return appendRun(runs, presentation.label, {
           ...context,
+          href: presentation.href,
           fileIcon: presentation.icon,
         });
       }
@@ -317,6 +318,15 @@ function appendNode(
 
 export function nativeMarkdownTextRuns(node: MarkdownNode): ReadonlyArray<NativeMarkdownTextRun> {
   return appendChildren([], node, EMPTY_CONTEXT);
+}
+
+export function nativeMarkdownWithPreservedSoftBreaks(node: MarkdownNode): MarkdownNode {
+  const children = node.children?.map(nativeMarkdownWithPreservedSoftBreaks);
+  return {
+    ...node,
+    ...(node.type === "soft_break" ? { type: "line_break" as const } : {}),
+    ...(children ? { children } : {}),
+  };
 }
 
 function appendBlockTerminator(

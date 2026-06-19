@@ -101,6 +101,7 @@
     "react-native-screens": "4.25.2",
     "react-native-shiki-engine": "^0.3.12",
     "react-native-svg": "15.15.4",
+    "react-native-webview": "^13.16.1",
     "react-native-worklets": "0.8.3",
     "shiki": "4.2.0",
     "tailwind-merge": "^3.5.0",
