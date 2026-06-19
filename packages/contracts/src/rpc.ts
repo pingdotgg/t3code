@@ -226,7 +226,6 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
-  serverGetResourceTelemetry: "server.getResourceTelemetry",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverSignalProcess: "server.signalProcess",
@@ -344,12 +343,6 @@ export const WsServerGetProcessResourceHistoryRpc = Rpc.make(
     error: EnvironmentAuthorizationError,
   },
 );
-
-export const WsServerGetResourceTelemetryRpc = Rpc.make(WS_METHODS.serverGetResourceTelemetry, {
-  payload: Schema.Struct({}),
-  success: ResourceTelemetrySnapshot,
-  error: EnvironmentAuthorizationError,
-});
 
 export const WsServerGetResourceTelemetryHistoryRpc = Rpc.make(
   WS_METHODS.serverGetResourceTelemetryHistory,
@@ -774,7 +767,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
-  WsServerGetResourceTelemetryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerSignalProcessRpc,

@@ -319,7 +319,6 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGetResourceTelemetry, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetResourceTelemetryHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverRetryResourceTelemetry, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
@@ -1506,10 +1505,6 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverGetResourceTelemetry]: (_input) =>
-          observeRpcEffect(WS_METHODS.serverGetResourceTelemetry, resourceTelemetry.latest, {
-            "rpc.aggregate": "server",
-          }),
         [WS_METHODS.serverGetResourceTelemetryHistory]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverGetResourceTelemetryHistory,
