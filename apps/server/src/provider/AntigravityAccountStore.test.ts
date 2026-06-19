@@ -59,7 +59,7 @@ const TestLayer = Layer.mergeAll(
   Layer.fresh(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-antigravity-account-store-",
-    }),
+    }).pipe(Layer.provide(NodeServices.layer)),
   ),
 );
 

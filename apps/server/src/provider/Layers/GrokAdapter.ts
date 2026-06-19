@@ -975,6 +975,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         return c !== undefined && !c.stopped;
       });
 
+    const compactThread: GrokAdapterShape["compactThread"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "compactThread",
+          detail: `Provider '${PROVIDER}' does not support explicit context compaction yet for thread '${threadId}'.`,
+        }),
+      );
+
     const stopAll: GrokAdapterShape["stopAll"] = () =>
       Effect.forEach(Array.from(sessions.values()), stopSessionInternal, { discard: true });
 
@@ -1000,6 +1009,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       stopSession,
       listSessions,
       hasSession,
+      compactThread,
       stopAll,
       streamEvents,
     } satisfies GrokAdapterShape;

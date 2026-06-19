@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalFetch:off
 import {
   type AntigravitySettings,
   type ModelCapabilities,

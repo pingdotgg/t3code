@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalFetchInEffect:off
 import { SpeechToTextError, type SpeechToTextTranscribeInput } from "@t3tools/contracts";
 import type { ServerSettings } from "@t3tools/contracts/settings";
 import { Buffer } from "node:buffer";

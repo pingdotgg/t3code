@@ -1,3 +1,4 @@
+// -diagnostics anyUnknownInErrorContext:off missingEffectContext:off
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -11,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  AntigravityAccountError,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthReviewWriteScope,
@@ -1150,6 +1152,13 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.antigravityListAccounts,
             serverSettings.getSettings.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AntigravityAccountError({
+                    detail: "Failed to load Antigravity settings.",
+                    cause,
+                  }),
+              ),
               Effect.flatMap((settings) =>
                 listAntigravityAccounts(resolveAntigravitySettingsFromServer(settings)),
               ),
@@ -1160,6 +1169,13 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.antigravityDetectAccount,
             serverSettings.getSettings.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AntigravityAccountError({
+                    detail: "Failed to load Antigravity settings.",
+                    cause,
+                  }),
+              ),
               Effect.flatMap((settings) =>
                 detectAntigravityAccount(resolveAntigravitySettingsFromServer(settings)),
               ),
@@ -1170,6 +1186,13 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.antigravitySaveAccount,
             serverSettings.getSettings.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AntigravityAccountError({
+                    detail: "Failed to load Antigravity settings.",
+                    cause,
+                  }),
+              ),
               Effect.flatMap((settings) =>
                 saveAntigravityAccount({
                   settings: resolveAntigravitySettingsFromServer(settings),
@@ -1183,6 +1206,13 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.antigravitySwitchAccount,
             serverSettings.getSettings.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AntigravityAccountError({
+                    detail: "Failed to load Antigravity settings.",
+                    cause,
+                  }),
+              ),
               Effect.flatMap((settings) =>
                 switchAntigravityAccount({
                   settings: resolveAntigravitySettingsFromServer(settings),

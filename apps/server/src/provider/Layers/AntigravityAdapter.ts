@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off preferSchemaOverJson:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics runEffectInsideEffect:off
 // @effect-diagnostics catchUnfailableEffect:off

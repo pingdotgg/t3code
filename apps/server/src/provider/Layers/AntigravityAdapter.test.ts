@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalTimers:off
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import { AntigravitySettings, type ProviderRuntimeEvent } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -56,15 +56,21 @@ const makeTestServerConfig = (baseDir: string) =>
     } satisfies ServerConfigShape;
   });
 
+function diagnosticEventType(event: unknown): string {
+  return event !== null && typeof event === "object" && "type" in event
+    ? String((event as { readonly type?: unknown }).type)
+    : JSON.stringify(event);
+}
+
 async function waitFor(
   predicate: () => boolean,
-  events: ReadonlyArray<ProviderRuntimeEvent>,
+  events: ReadonlyArray<unknown>,
   timeoutMs = 5_000,
 ): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`timeout waiting; events=${events.map((event) => event.type).join(",")}`);
+      throw new Error(`timeout waiting; events=${events.map(diagnosticEventType).join(",")}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

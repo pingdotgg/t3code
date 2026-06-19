@@ -97,7 +97,7 @@ const readTextFileIfExists = Effect.fn("AntigravityAccountStore.readTextFileIfEx
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(filePath).pipe(
     Effect.map((contents) => contents.trim()),
-    Effect.catch(() => Effect.succeed(undefined)),
+    Effect.orElseSucceed(() => undefined),
   );
 });
 
@@ -121,7 +121,7 @@ export const readAntigravityAccountFingerprint = Effect.fn("readAntigravityAccou
       const browserProfile = path.join(geminiHome, "antigravity-browser-profile");
       const exists = yield* fileSystem
         .exists(browserProfile)
-        .pipe(Effect.catch(() => Effect.succeed(false)));
+        .pipe(Effect.orElseSucceed(() => false));
       if (exists) {
         parts.push("browser-profile");
       }
@@ -134,7 +134,7 @@ const pathExists = Effect.fn("AntigravityAccountStore.pathExists")(function* (
   targetPath: string,
 ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.exists(targetPath).pipe(Effect.catch(() => Effect.succeed(false)));
+  return yield* fileSystem.exists(targetPath).pipe(Effect.orElseSucceed(() => false));
 });
 
 const copyPathRecursive = Effect.fn("AntigravityAccountStore.copyPathRecursive")(function* (input: {
@@ -412,7 +412,11 @@ const fetchAuthStatus = Effect.fn("AntigravityAccountStore.fetchAuthStatus")(fun
         ...(email?.trim() ? { email: email.trim() } : {}),
       };
     },
-    catch: () => new Error("Antigravity auth status probe failed."),
+    catch: (cause) =>
+      new AntigravityAccountError({
+        detail: "Antigravity auth status probe failed.",
+        cause,
+      }),
   }).pipe(Effect.orElseSucceed(() => ({ authenticated: false })));
 });
 
