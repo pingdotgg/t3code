@@ -360,7 +360,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
-  it("settles the active turn when completion omits turn id", async () => {
+  it("ignores active turn completion when completion omits turn id", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -399,16 +399,12 @@ describe("ProviderRuntimeIngestion", () => {
       status: "completed",
     });
 
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.session?.status === "ready" &&
-        entry.session?.activeTurnId === null &&
-        entry.latestTurn?.turnId === "turn-missing-completion-id" &&
-        entry.latestTurn?.state === "completed",
-    );
-    expect(thread.session?.status).toBe("ready");
-    expect(thread.latestTurn?.state).toBe("completed");
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("turn-missing-completion-id");
+    expect(thread?.latestTurn?.state).toBe("running");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

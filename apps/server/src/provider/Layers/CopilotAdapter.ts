@@ -3211,6 +3211,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
 
     const response = answerFromUserInput(binding, answers);
+    yield* emit({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        requestId: binding.requestId,
+      }),
+      type: "user-input.resolved",
+      payload: {
+        answers: {
+          answer: response.answer,
+        },
+      },
+    });
+    context.pendingUserInputBindings.delete(requestId);
     yield* Deferred.succeed(binding.deferred, response);
   });
 
