@@ -48,7 +48,7 @@ export function ComposerEditor({
             minHeight: 0,
             color: foregroundColor,
             fontFamily: "DMSans_400Regular",
-            ...MOBILE_TYPOGRAPHY.body,
+            ...MOBILE_TYPOGRAPHY.composer,
             paddingVertical: contentInsetVertical,
           },
           textStyle,

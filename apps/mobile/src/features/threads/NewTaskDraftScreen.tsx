@@ -431,10 +431,7 @@ export function NewTaskDraftScreen(props: {
             onPasteImages={(uris) => void handleNativePasteImages(uris)}
             placeholder={`Describe a coding task in ${selectedProject.title}`}
             style={{ flex: 1, minHeight: 0 }}
-            textStyle={{
-              fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
-              lineHeight: MOBILE_TYPOGRAPHY.title.lineHeight,
-            }}
+            textStyle={MOBILE_TYPOGRAPHY.composer}
           />
         </View>
 

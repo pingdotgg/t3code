@@ -3,6 +3,7 @@ export const MOBILE_TYPOGRAPHY = {
   caption: { fontSize: 11, lineHeight: 15 },
   label: { fontSize: 12, lineHeight: 16 },
   footnote: { fontSize: 13, lineHeight: 18 },
+  composer: { fontSize: 14, lineHeight: 20 },
   body: { fontSize: 15, lineHeight: 22 },
   headline: { fontSize: 17, lineHeight: 22 },
   title: { fontSize: 20, lineHeight: 26 },

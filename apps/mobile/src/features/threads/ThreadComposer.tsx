@@ -718,8 +718,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     }
               }
               textStyle={{
-                fontSize: MOBILE_TYPOGRAPHY.body.fontSize,
-                lineHeight: isExpanded ? 22 : 20,
+                ...MOBILE_TYPOGRAPHY.composer,
                 color: foregroundColor,
                 fontFamily: "DMSans_400Regular",
               }}
