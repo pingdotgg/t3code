@@ -353,18 +353,6 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         wasFreeform: true,
       });
 
-      emit({
-        id: "evt-copilot-user-input-completed",
-        timestamp,
-        parentId: null,
-        type: "user_input.completed",
-        data: {
-          requestId,
-          answer: response.answer,
-          wasFreeform: response.wasFreeform,
-        },
-      } as SessionEvent);
-
       let resolved: ProviderRuntimeEvent | undefined;
       for (let attempt = 0; attempt < 20 && resolved === undefined; attempt += 1) {
         yield* waitForSdkEventQueue();
