@@ -21,11 +21,22 @@ vi.mock("@clerk/electron/storage", () => ({
   storage: storageMock,
 }));
 
-import { createDesktopClerkBridge } from "./DesktopClerk.ts";
+import {
+  createDesktopClerkBridge,
+  resolveDesktopClerkFrontendApiHostname,
+} from "./DesktopClerk.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 describe("DesktopClerk", () => {
+  it("derives the Clerk Frontend API hostname used by the desktop CSP", () => {
+    const publishableKey = `pk_test_${btoa("clerk.t3.codes$")}`;
+
+    assert.equal(resolveDesktopClerkFrontendApiHostname(publishableKey), "clerk.t3.codes");
+    assert.equal(resolveDesktopClerkFrontendApiHostname(""), undefined);
+    assert.equal(resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
+  });
+
   it.effect("acquires and releases the SDK bridge with the layer", () => {
     const cleanup = vi.fn();
     storageMock.mockReturnValue(storageAdapter);
@@ -48,6 +59,7 @@ describe("DesktopClerk", () => {
         [
           {
             storage: storageAdapter,
+            passkeys: true,
             renderer: { scheme: "t3code-dev", host: "app" },
           },
         ],
@@ -72,6 +84,7 @@ describe("DesktopClerk", () => {
       [
         {
           storage: storageAdapter,
+          passkeys: true,
           renderer: { scheme, host: "app" },
         },
       ],

@@ -120,8 +120,8 @@ selects the concrete relay deployment, but changing that URL does not require a 
 ## Desktop OAuth Redirect Allowlist
 
 The desktop app opens OAuth in the system browser and returns to the app with a custom URL scheme.
-In **Clerk Dashboard > Native applications**, enable native application support and add these
-entry under the mobile SSO redirect allowlist:
+In **Clerk Dashboard > Native applications**, enable the Native API and add these entries under the
+mobile SSO redirect allowlist:
 
 ```text
 t3code-dev://app/
@@ -133,6 +133,73 @@ matching origin to each Clerk instance's Backend API `allowed_origins` array as 
 Clerk instance should only need `t3code-dev://app`; the production Clerk instance should only need
 `t3code://app`. `@clerk/electron` owns the native request adapter, encrypted Clerk token persistence,
 external-browser OAuth transport, and callback delivery for initial sign-in and linked-account flows.
+
+There is currently no Dashboard UI for `allowed_origins`. Preserve any existing entries and update
+the instance through the Backend API:
+
+```sh
+curl -X PATCH https://api.clerk.com/v1/instance \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CLERK_SECRET_KEY" \
+  -d '{"allowed_origins":["t3code://app"]}'
+```
+
+Never put `CLERK_SECRET_KEY` in the desktop app, a client-facing environment file, or a build
+artifact.
+
+## Desktop Passkeys
+
+The production macOS bundle ID is `com.t3tools.t3code`. To enable native passkeys:
+
+1. Create an explicit macOS App ID for `com.t3tools.t3code` in the Apple Developer portal and enable
+   **Associated Domains**.
+2. Create a compatible macOS provisioning profile for that App ID and the certificate used to sign
+   the distributed app.
+3. In Clerk's Native API settings, add an iOS app with the same Apple Team ID and bundle ID. This is
+   also the configuration point for Electron/macOS passkeys.
+4. Confirm Clerk serves `https://<frontend-api>/.well-known/apple-app-site-association` and that
+   `webcredentials.apps` contains `<TEAM_ID>.com.t3tools.t3code`.
+5. Set the local or CI signing configuration described below.
+
+For a local signed build, add these values to `.env.local` or export them before invoking the
+desktop artifact command:
+
+```dotenv
+T3CODE_APPLE_TEAM_ID=ABC1234567
+T3CODE_MACOS_PROVISIONING_PROFILE=/absolute/path/to/t3code.provisionprofile
+# Optional: comma-separated override when Clerk's RP ID differs from the Frontend API hostname.
+T3CODE_CLERK_PASSKEY_RP_DOMAINS=example.clerk.accounts.dev,clerk.example.com
+```
+
+When `T3CODE_CLERK_PASSKEY_RP_DOMAINS` is absent, the build derives the RP domain from
+`T3CODE_CLERK_PUBLISHABLE_KEY`. Signed macOS builds fail early if the Team ID, provisioning profile,
+or RP-domain configuration is missing. The generated main-app entitlements include every configured
+`webcredentials:<domain>` entry; helper apps keep Electron's minimal default entitlements.
+
+The normal `dev:desktop` launcher is unsigned and cannot complete macOS passkey ceremonies. For
+renderer HMR, build and install a signed app first, run the renderer dev server, then launch the
+installed app executable with `VITE_DEV_SERVER_URL` and `T3CODE_PORT` set. Rebuild the signed app
+after native dependency, main-process, preload, entitlement, provisioning, or signing changes;
+renderer-only changes can reuse the installed app.
+
+For the default development ports, run `pnpm dev:web` in one terminal and launch the installed
+binary from another:
+
+```sh
+VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
+T3CODE_PORT=13773 \
+  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+```
+
+After changing Associated Domains, bump the build version before rebuilding; macOS may otherwise
+reuse stale Shared Web Credentials metadata for the same app/version pair.
+
+Verify the installed bundle before testing:
+
+```sh
+codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
+codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
+```
 
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
 flow uses a custom redirect URI, add that exact URI to the same allowlist.

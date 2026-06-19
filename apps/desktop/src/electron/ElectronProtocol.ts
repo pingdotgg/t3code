@@ -34,10 +34,16 @@ export class ElectronProtocolRegistrationError extends Data.TaggedError(
   }
 }
 
+export interface DesktopProtocolRegistrationInput {
+  readonly scheme: string;
+  readonly targetOrigin: URL;
+  readonly backendOrigin: URL;
+  readonly clerkFrontendApiHostname: string | undefined;
+}
+
 export interface ElectronProtocolShape {
   readonly registerDesktopProtocol: (
-    scheme: string,
-    targetOrigin: URL,
+    input: DesktopProtocolRegistrationInput,
   ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
 }
 
@@ -45,10 +51,61 @@ export class ElectronProtocol extends Context.Service<ElectronProtocol, Electron
   "@t3tools/desktop/electron/ElectronProtocol",
 ) {}
 
-function proxyRequest(request: Request, targetOrigin: URL): Promise<Response> {
+export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
+  const clerkOrigin = input.clerkFrontendApiHostname
+    ? `https://${input.clerkFrontendApiHostname}`
+    : undefined;
+  const scriptSources = [
+    "'self'",
+    "'unsafe-inline'",
+    ...(clerkOrigin ? [clerkOrigin] : []),
+    "https://challenges.cloudflare.com",
+  ];
+  const connectSources = new Set(["'self'", ...(clerkOrigin ? [clerkOrigin] : [])]);
+
+  const addConnectOrigin = (url: URL) => {
+    connectSources.add(url.origin);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      const webSocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
+      connectSources.add(`${webSocketProtocol}//${url.host}`);
+    }
+  };
+
+  addConnectOrigin(input.backendOrigin);
+  if (input.scheme === DESKTOP_DEVELOPMENT_SCHEME) {
+    addConnectOrigin(input.targetOrigin);
+  }
+
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSources.join(" ")}`,
+    `connect-src ${[...connectSources].join(" ")}`,
+    "img-src 'self' https://img.clerk.com data:",
+    "style-src 'self' 'unsafe-inline'",
+    "worker-src 'self' blob:",
+    "frame-src 'self' https://challenges.cloudflare.com",
+    "form-action 'self'",
+  ].join("; ");
+}
+
+function withContentSecurityPolicy(response: Response, policy: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", policy);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function proxyRequest(
+  request: Request,
+  targetOrigin: URL,
+  contentSecurityPolicy: string,
+): Promise<Response> {
   const requestUrl = new URL(request.url);
   if (requestUrl.host !== DESKTOP_HOST) {
-    return Promise.resolve(new Response(null, { status: 404 }));
+    return new Response(null, { status: 404 });
   }
 
   const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
@@ -60,26 +117,31 @@ function proxyRequest(request: Request, targetOrigin: URL): Promise<Response> {
     init.body = request.body;
     (init as RequestInit & { duplex: "half" }).duplex = "half";
   }
-  return Electron.net.fetch(targetUrl.toString(), init);
+  const response = await Electron.net.fetch(targetUrl.toString(), init);
+  return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
 const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
-    function* (scheme: string, targetOrigin: URL) {
+    function* (input: DesktopProtocolRegistrationInput) {
       if (yield* Ref.get(registered)) return;
+
+      const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
 
       yield* Effect.acquireRelease(
         Effect.try({
           try: () => {
-            Electron.protocol.handle(scheme, (request) => proxyRequest(request, targetOrigin));
+            Electron.protocol.handle(input.scheme, (request) =>
+              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+            );
           },
-          catch: (cause) => new ElectronProtocolRegistrationError({ scheme, cause }),
+          catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
         }).pipe(Effect.andThen(Ref.set(registered, true))),
         () =>
           Effect.sync(() => {
-            Electron.protocol.unhandle(scheme);
+            Electron.protocol.unhandle(input.scheme);
           }).pipe(Effect.andThen(Ref.set(registered, false))),
       );
     },

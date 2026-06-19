@@ -167,10 +167,12 @@ const bootstrap = Effect.gen(function* () {
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
     : backendConfig.httpBaseUrl;
-  yield* electronProtocol.registerDesktopProtocol(
-    ElectronProtocol.getDesktopScheme(environment.isDevelopment),
-    rendererTarget,
-  );
+  yield* electronProtocol.registerDesktopProtocol({
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    targetOrigin: rendererTarget,
+    backendOrigin: backendConfig.httpBaseUrl,
+    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+  });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });

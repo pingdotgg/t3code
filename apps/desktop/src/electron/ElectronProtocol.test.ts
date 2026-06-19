@@ -33,13 +33,26 @@ describe("ElectronProtocol", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const protocol = yield* ElectronProtocol.ElectronProtocol;
-          yield* protocol.registerDesktopProtocol("t3code-dev", new URL("http://127.0.0.1:3773/"));
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            backendOrigin: new URL("http://127.0.0.1:3774/"),
+            clerkFrontendApiHostname: "clerk.t3.codes",
+          });
           assert.isDefined(handler);
 
           const response = yield* Effect.promise(() =>
             handler!(new Request("t3code-dev://app/api/health?verbose=1")),
           );
           assert.equal(yield* Effect.promise(() => response.text()), "ok");
+          assert.include(
+            response.headers.get("content-security-policy") ?? "",
+            "script-src 'self' 'unsafe-inline' https://clerk.t3.codes https://challenges.cloudflare.com",
+          );
+          assert.include(
+            response.headers.get("content-security-policy") ?? "",
+            "connect-src 'self' https://clerk.t3.codes http://127.0.0.1:3774 ws://127.0.0.1:3774 http://127.0.0.1:3773 ws://127.0.0.1:3773",
+          );
         }),
       );
 
@@ -62,7 +75,12 @@ describe("ElectronProtocol", () => {
       const response = yield* Effect.scoped(
         Effect.gen(function* () {
           const protocol = yield* ElectronProtocol.ElectronProtocol;
-          yield* protocol.registerDesktopProtocol("t3code", new URL("http://127.0.0.1:3773/"));
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            backendOrigin: new URL("http://127.0.0.1:3773/"),
+            clerkFrontendApiHostname: undefined,
+          });
           return yield* Effect.promise(() => handler!(new Request("t3code://other/")));
         }),
       );
