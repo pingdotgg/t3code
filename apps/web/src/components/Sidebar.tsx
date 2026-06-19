@@ -188,6 +188,7 @@ import {
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  resolveSidebarStageBadgeLabel,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
@@ -197,7 +198,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -2680,6 +2681,12 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const primaryServerVersion =
+    useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
+  const stageBadgeLabel = resolveSidebarStageBadgeLabel({
+    primaryServerVersion,
+    fallbackStageLabel: APP_STAGE_LABEL,
+  });
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2696,7 +2703,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
                 Code
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                {APP_STAGE_LABEL}
+                {stageBadgeLabel}
               </span>
             </Link>
           }
