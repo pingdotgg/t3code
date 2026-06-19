@@ -953,6 +953,8 @@ export function makeCursorAdapterV2(
             type: "message.updated",
             provider: CURSOR_PROVIDER,
             message: {
+              createdBy: "agent",
+              creationSource: "provider",
               id: messageId,
               threadId: context.input.threadId,
               runId: context.input.runId,
@@ -1548,6 +1550,8 @@ export function makeCursorAdapterV2(
                   ordinal: input.context.subagents.size,
                 }),
                 now,
+                createdBy: "agent",
+                creationSource: "provider",
               }),
             });
             const promptNativeId = `${nativeItemId}:prompt`;
@@ -2334,6 +2338,8 @@ export function makeCursorAdapterV2(
                   }
                   return [
                     {
+                      createdBy: message.type === "user" ? "user" : "agent",
+                      creationSource: "provider",
                       id: idAllocator.derive.messageFromProviderItem({
                         provider: CURSOR_PROVIDER,
                         nativeItemId: message.uuid,

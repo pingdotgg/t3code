@@ -926,6 +926,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               nativeItemId: part.id,
             });
             const message: OrchestrationV2ConversationMessage = {
+              createdBy: "agent",
+              creationSource: "provider",
               id: messageId,
               threadId: turn.threadId,
               runId: turn.runId,
@@ -1060,6 +1062,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 ordinal: itemOrdinal(turn, part.id),
               }),
               now,
+              createdBy: "agent",
+              creationSource: "provider",
             });
             const childProviderThread: OrchestrationV2ProviderThread = {
               id: context.childProviderThreadId,
@@ -1829,6 +1833,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             nativeItemId: part.messageID,
           });
           const projected: OrchestrationV2ConversationMessage = {
+            createdBy: "agent",
+            creationSource: "provider",
             id: messageId,
             threadId: turn.threadId,
             runId: null,
@@ -1850,6 +1856,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             type: "turn_item.updated",
             provider: OPENCODE_PROVIDER,
             turnItem: {
+              createdBy: "agent",
+              creationSource: "provider",
               id: turnItemId,
               threadId: turn.threadId,
               runId: null,
@@ -2187,6 +2195,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const createdAt = dateTimeFromEpoch(info.time.created, snapshotNow);
               return [
                 {
+                  createdBy: info.role === "user" ? "user" : "agent",
+                  creationSource: "provider",
                   id: idAllocator.derive.messageFromProviderItem({
                     provider: OPENCODE_PROVIDER,
                     nativeItemId: info.id,
