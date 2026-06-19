@@ -111,6 +111,14 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/shell-reducer": {
+      "types": "./src/state/shellReducer.ts",
+      "default": "./src/state/shellReducer.ts"
+    },
+    "./state/thread-reducer": {
+      "types": "./src/state/threadReducer.ts",
+      "default": "./src/state/threadReducer.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
