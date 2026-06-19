@@ -1,9 +1,4 @@
-import {
-  GrokBuildSettings,
-  ProviderDriverKind,
-  type ServerProvider,
-  TextGenerationError,
-} from "@t3tools/contracts";
+import { GrokBuildSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -33,7 +28,7 @@ import {
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { ServerConfig } from "../../config.ts";
-import { type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import { makeGrokBuildTextGeneration } from "../../textGeneration/GrokBuildTextGeneration.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("grok-build");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
@@ -97,36 +92,7 @@ export const GrokBuildDriver: ProviderDriver<GrokBuildSettings, GrokBuildDriverE
         instanceId,
       });
 
-      const textGeneration: TextGenerationShape = {
-        generateCommitMessage: (_input) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: "generateCommitMessage",
-              detail: "Text generation is not supported by Grok Build.",
-            }),
-          ),
-        generatePrContent: (_input) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: "generatePrContent",
-              detail: "Text generation is not supported by Grok Build.",
-            }),
-          ),
-        generateBranchName: (_input) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: "generateBranchName",
-              detail: "Text generation is not supported by Grok Build.",
-            }),
-          ),
-        generateThreadTitle: (_input) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: "generateThreadTitle",
-              detail: "Text generation is not supported by Grok Build.",
-            }),
-          ),
-      };
+      const textGeneration = yield* makeGrokBuildTextGeneration(effectiveConfig, processEnv);
 
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.command,

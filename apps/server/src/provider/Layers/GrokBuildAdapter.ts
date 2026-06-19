@@ -6,6 +6,7 @@ import {
   type GrokBuildSettings,
   EventId,
   type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
   type ProviderRuntimeEvent,
   type ProviderSession,
   ProviderDriverKind,
@@ -61,6 +62,7 @@ import {
   type GrokAcpPromptCapabilities,
 } from "../acp/GrokAcpSupport.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import { CursorAskQuestionRequest, extractAskQuestions } from "../acp/CursorAcpExtension.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -78,6 +80,10 @@ interface PendingApproval {
   readonly kind: string | "unknown";
 }
 
+interface PendingUserInput {
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
 interface GrokBuildSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
@@ -86,6 +92,8 @@ interface GrokBuildSessionContext {
   readonly promptCapabilities: GrokAcpPromptCapabilities;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeTurnId: TurnId | undefined;
   lastPlanFingerprint: string | undefined;
   stopped: boolean;
@@ -98,6 +106,17 @@ function settlePendingApprovalsAsCancelled(
   return Effect.forEach(
     pendingEntries,
     (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
+    { discard: true },
+  );
+}
+
+function settlePendingUserInputsAsEmptyAnswers(
+  pendingUserInputs: ReadonlyMap<ApprovalRequestId, PendingUserInput>,
+): Effect.Effect<void> {
+  const pendingEntries = Array.from(pendingUserInputs.values());
+  return Effect.forEach(
+    pendingEntries,
+    (pending) => Deferred.succeed(pending.answers, {}).pipe(Effect.ignore),
     { discard: true },
   );
 }
@@ -235,6 +254,7 @@ export function makeGrokBuildAdapter(
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -394,6 +414,7 @@ export function makeGrokBuildAdapter(
             }
 
             const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+            const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
             const sessionScope = yield* Scope.make("sequential");
             let sessionScopeTransferred = false;
             yield* Effect.addFinalizer(() =>
@@ -433,6 +454,52 @@ export function makeGrokBuildAdapter(
             let ctx!: GrokBuildSessionContext;
 
             const started = yield* Effect.gen(function* () {
+              yield* acp.handleExtRequest(
+                "cursor/ask_question",
+                CursorAskQuestionRequest,
+                (params) =>
+                  Effect.gen(function* () {
+                    yield* logNative(input.threadId, "cursor/ask_question", params, "acp.jsonrpc");
+                    const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                    const runtimeRequestId = RuntimeRequestId.make(requestId);
+                    const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+                    pendingUserInputs.set(requestId, { answers });
+                    yield* offerRuntimeEvent({
+                      type: "user-input.requested",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      payload: { questions: extractAskQuestions(params) },
+                      raw: {
+                        source: "acp.jsonrpc",
+                        method: "cursor/ask_question",
+                        payload: params,
+                      },
+                    });
+                    const resolved = yield* Deferred.await(answers);
+                    pendingUserInputs.delete(requestId);
+                    yield* offerRuntimeEvent({
+                      type: "user-input.resolved",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      payload: { answers: resolved },
+                    });
+                    return { answers: resolved };
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new EffectAcpErrors.AcpTransportError({
+                          detail: "Failed to process Grok ACP user-input event.",
+                          cause,
+                        }),
+                    ),
+                  ),
+              );
               yield* acp.handleRequestPermission((params) =>
                 Effect.gen(function* () {
                   yield* logNative(
@@ -541,6 +608,8 @@ export function makeGrokBuildAdapter(
               promptCapabilities,
               notificationFiber: undefined,
               pendingApprovals,
+              pendingUserInputs,
+              turns: [],
               activeTurnId: undefined,
               lastPlanFingerprint: undefined,
               stopped: false,
@@ -714,6 +783,11 @@ export function makeGrokBuildAdapter(
               Effect.tap((result) =>
                 logNative(input.threadId, "session/prompt(response)", result, "acp.jsonrpc"),
               ),
+              Effect.tap((result) =>
+                Effect.sync(() => {
+                  ctx.turns.push({ id: turnId, items: [{ prompt: promptBlocks, result }] });
+                }),
+              ),
               Effect.flatMap((result) =>
                 makeEventStamp().pipe(
                   Effect.flatMap((stamp) =>
@@ -768,6 +842,7 @@ export function makeGrokBuildAdapter(
           Effect.gen(function* () {
             const ctx = yield* requireSession(threadId);
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+            yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
             yield* ctx.acp.cancel.pipe(Effect.ignore);
           }),
         ),
@@ -806,16 +881,53 @@ export function makeGrokBuildAdapter(
 
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
 
-      respondToUserInput: () =>
-        Effect.die(new Error("respondToUserInput not implemented for Grok Build")),
+      respondToUserInput: (threadId, requestId, answers) =>
+        withThreadLock(
+          threadId,
+          Effect.gen(function* () {
+            const ctx = yield* requireSession(threadId);
+            const pending = ctx.pendingUserInputs.get(requestId);
+            if (!pending) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "cursor/ask_question",
+                detail: `Unknown pending user-input request: ${requestId}`,
+              });
+            }
+            yield* Deferred.succeed(pending.answers, answers);
+          }),
+        ),
       listSessions: () =>
         Effect.succeed(
           Array.from(sessions.values())
             .filter((s) => !s.stopped)
             .map((s) => s.session),
         ),
-      readThread: () => Effect.die(new Error("readThread not implemented")),
-      rollbackThread: () => Effect.die(new Error("rollbackThread not implemented")),
+      readThread: (threadId) =>
+        withThreadLock(
+          threadId,
+          Effect.gen(function* () {
+            const ctx = yield* requireSession(threadId);
+            return { threadId, turns: ctx.turns };
+          }),
+        ),
+      rollbackThread: (threadId, numTurns) =>
+        withThreadLock(
+          threadId,
+          Effect.gen(function* () {
+            const ctx = yield* requireSession(threadId);
+            if (!Number.isInteger(numTurns) || numTurns < 1) {
+              return yield* new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "rollbackThread",
+                issue: "numTurns must be an integer >= 1.",
+              });
+            }
+            const nextLength = Math.max(0, ctx.turns.length - numTurns);
+            ctx.turns.splice(nextLength);
+            return { threadId, turns: ctx.turns };
+          }),
+        ),
       stopAll: () => Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }),
     };
 

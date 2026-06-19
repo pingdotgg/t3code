@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -337,6 +338,164 @@ const grokStopAdapterTestLayer = it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+const grokThreadAdapterTestLayer = it.layer(
+  Layer.effect(
+    GrokBuildAdapter,
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      const settings = decodeGrokBuildSettings({
+        enabled: true,
+        command: wrapperPath,
+        args: [],
+        envJson: "{}",
+        customModels: [],
+      });
+      return yield* makeGrokBuildAdapter(settings, {
+        instanceId: ProviderInstanceId.make("grok-build-test"),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-grok-thread-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+grokThreadAdapterTestLayer("GrokBuildAdapter thread snapshot", (it) => {
+  it.effect("records turns for readThread and rollbackThread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* GrokBuildAdapter;
+      const threadId = ThreadId.make("grok-thread-snapshot");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok-build"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok-build-test"),
+          model: "default",
+        },
+      });
+
+      const forkTurnCompletedWaiter = (count: number) =>
+        Stream.take(adapter.streamEvents, 30).pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn.completed" && String(event.threadId) === String(threadId),
+          ),
+          Stream.take(count),
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+
+      const firstTurnCompleted = yield* forkTurnCompletedWaiter(1);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first turn",
+        attachments: [],
+      });
+      yield* Fiber.join(firstTurnCompleted);
+
+      const secondTurnCompleted = yield* forkTurnCompletedWaiter(1);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "second turn",
+        attachments: [],
+      });
+      yield* Fiber.join(secondTurnCompleted);
+
+      const snapshot = yield* adapter.readThread(threadId);
+      assert.equal(snapshot.turns.length, 2);
+
+      const rolledBack = yield* adapter.rollbackThread(threadId, 1);
+      assert.equal(rolledBack.turns.length, 1);
+      assert.equal((yield* adapter.readThread(threadId)).turns.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+});
+
+const grokUserInputAdapterTestLayer = it.layer(
+  Layer.effect(
+    GrokBuildAdapter,
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
+      );
+      const settings = decodeGrokBuildSettings({
+        enabled: true,
+        command: wrapperPath,
+        args: [],
+        envJson: "{}",
+        customModels: [],
+      });
+      return yield* makeGrokBuildAdapter(settings, {
+        instanceId: ProviderInstanceId.make("grok-build-test"),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-grok-user-input-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+grokUserInputAdapterTestLayer("GrokBuildAdapter user input", (it) => {
+  it.effect("handles ask-question requests and user responses", () =>
+    Effect.gen(function* () {
+      const adapter = yield* GrokBuildAdapter;
+      const threadId = ThreadId.make("grok-user-input-thread");
+      const userInputRequested = yield* Deferred.make<ApprovalRequestId>();
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId) || event.type !== "user-input.requested") {
+          return Effect.void;
+        }
+        if (!event.requestId) {
+          return Effect.void;
+        }
+        return Deferred.succeed(
+          userInputRequested,
+          ApprovalRequestId.make(String(event.requestId)),
+        ).pipe(Effect.ignore);
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok-build"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok-build-test"),
+          model: "default",
+        },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "ask me a question",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+
+      const requestId = yield* Deferred.await(userInputRequested);
+      yield* adapter.respondToUserInput(threadId, requestId, { scope: "workspace" });
+
+      yield* Fiber.await(sendTurnFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+});
 
 grokStopAdapterTestLayer("GrokBuildAdapter shutdown", (it) => {
   it.effect("closes the ACP child process when a session stops", () =>
