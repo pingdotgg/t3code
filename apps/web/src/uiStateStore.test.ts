@@ -12,6 +12,7 @@ import {
   reorderProjects,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarFocusModeEnabled,
   setThreadChangedFilesExpanded,
   setThreadWorkActivityExpanded,
   setThreadWorkGroupExpanded,
@@ -28,6 +29,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadChangedFilesExpandedById: {},
     threadWorkGroupExpandedById: {},
     threadWorkActivityExpandedById: {},
+    sidebarFocusModeEnabled: false,
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -118,6 +120,15 @@ describe("uiStateStore pure functions", () => {
     expect(setDefaultAdvertisedEndpointKey(next, "")).toMatchObject({
       defaultAdvertisedEndpointKey: null,
     });
+  });
+
+  it("setSidebarFocusModeEnabled stores sidebar focus preference", () => {
+    const initialState = makeUiState();
+
+    const next = setSidebarFocusModeEnabled(initialState, true);
+
+    expect(next.sidebarFocusModeEnabled).toBe(true);
+    expect(setSidebarFocusModeEnabled(next, true)).toBe(next);
   });
 
   it("reorderProjects moves all member keys of a multi-member group together", () => {
@@ -622,6 +633,17 @@ describe("uiStateStore persistence round-trip", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+  });
+
+  it("persists the sidebar focus mode preference", () => {
+    const state = setSidebarFocusModeEnabled(makeUiState(), true);
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.sidebarFocusModeEnabled).toBe(true);
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {

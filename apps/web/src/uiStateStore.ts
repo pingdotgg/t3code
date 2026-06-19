@@ -19,6 +19,7 @@ export interface PersistedUiState {
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  sidebarFocusModeEnabled?: boolean;
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
 }
@@ -39,7 +40,11 @@ export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiSidebarState {
+  sidebarFocusModeEnabled: boolean;
+}
+
+export interface UiState extends UiProjectState, UiThreadState, UiEndpointState, UiSidebarState {}
 
 export interface SyncProjectInput {
   /** Physical project key (env + cwd). Used for manual sort order. */
@@ -61,6 +66,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   threadWorkGroupExpandedById: {},
   threadWorkActivityExpandedById: {},
+  sidebarFocusModeEnabled: false,
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -99,6 +105,7 @@ function readPersistedState(): UiState {
     hydratePersistedProjectState(parsed);
     return {
       ...initialState,
+      sidebarFocusModeEnabled: parsed.sidebarFocusModeEnabled === true,
       defaultAdvertisedEndpointKey:
         typeof parsed.defaultAdvertisedEndpointKey === "string" &&
         parsed.defaultAdvertisedEndpointKey.length > 0
@@ -197,6 +204,7 @@ export function persistState(state: UiState): void {
         collapsedProjectCwds,
         expandedProjectCwds,
         projectOrderCwds,
+        sidebarFocusModeEnabled: state.sidebarFocusModeEnabled,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
       } satisfies PersistedUiState),
@@ -644,6 +652,16 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function setSidebarFocusModeEnabled(state: UiState, enabled: boolean): UiState {
+  if (state.sidebarFocusModeEnabled === enabled) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarFocusModeEnabled: enabled,
+  };
+}
+
 export function toggleProject(state: UiState, projectId: string): UiState {
   const expanded = state.projectExpandedById[projectId] ?? true;
   return {
@@ -721,6 +739,7 @@ interface UiStateStore extends UiState {
   setThreadWorkGroupExpanded: (threadId: string, groupId: string, expanded: boolean) => void;
   setThreadWorkActivityExpanded: (threadId: string, activityId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setSidebarFocusModeEnabled: (enabled: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
   reorderProjects: (
@@ -746,6 +765,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadWorkActivityExpanded(state, threadId, activityId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setSidebarFocusModeEnabled: (enabled) =>
+    set((state) => setSidebarFocusModeEnabled(state, enabled)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),

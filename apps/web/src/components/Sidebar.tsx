@@ -6,6 +6,7 @@ import {
   IconChecklist,
   IconCloud as CloudIcon,
   IconEdit as SquarePenIcon,
+  IconFocus2 as FocusIcon,
   IconFolderPlus as FolderPlusIcon,
   IconLoader2,
   IconMessageQuestion,
@@ -69,7 +70,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_BASE_NAME, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
@@ -226,6 +227,31 @@ const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
 const SIDEBAR_THREAD_ACTION_BUTTON_CLASS =
   "inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
+const SIDEBAR_FOCUS_REVEAL_CLASS =
+  "opacity-25 blur-[1.5px] transition-[opacity,filter] duration-150 hover:opacity-100 hover:blur-0 focus-within:opacity-100 focus-within:blur-0";
+
+interface SidebarFocusTarget {
+  projectKey: string;
+  worktreePath: string | null;
+}
+
+function isSidebarThreadInFocusTarget(
+  thread: SidebarThreadSummary,
+  projectKey: string,
+  focusTarget: SidebarFocusTarget | null,
+): boolean {
+  if (!focusTarget) {
+    return true;
+  }
+  if (focusTarget.worktreePath) {
+    return thread.worktreePath === focusTarget.worktreePath;
+  }
+  return projectKey === focusTarget.projectKey && thread.worktreePath === null;
+}
+
+function resolveSidebarFocusClassName(dimmed: boolean): string | undefined {
+  return dimmed ? SIDEBAR_FOCUS_REVEAL_CLASS : undefined;
+}
 
 function SidebarThreadStatusIcon({ status }: { status: ThreadStatusPill }) {
   const Icon =
@@ -341,6 +367,7 @@ interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
+  focusDimmed: boolean;
   jumpLabel: string | null;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
@@ -377,6 +404,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const {
     orderedProjectThreadKeys,
     isActive,
+    focusDimmed,
     jumpLabel,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
@@ -592,7 +620,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   return (
     <SidebarMenuSubItem
-      className="w-full"
+      className={cn("w-full", resolveSidebarFocusClassName(focusDimmed))}
+      data-sidebar-focus-dimmed={focusDimmed ? "true" : undefined}
       data-thread-item
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
@@ -786,6 +815,7 @@ interface SidebarProjectThreadListProps {
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
   projectCwd: string;
+  sidebarFocusTarget: SidebarFocusTarget | null;
   activeRouteThreadKey: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   appSettingsConfirmThreadArchive: boolean;
@@ -838,6 +868,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     shouldShowThreadPanel,
     isThreadListExpanded,
     projectCwd,
+    sidebarFocusTarget,
     activeRouteThreadKey,
     threadJumpLabelByKey,
     appSettingsConfirmThreadArchive,
@@ -872,12 +903,14 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   );
   const renderThreadRow = (thread: SidebarThreadSummary) => {
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const focusDimmed = !isSidebarThreadInFocusTarget(thread, projectKey, sidebarFocusTarget);
     return (
       <SidebarThreadRow
         key={threadKey}
         thread={thread}
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         isActive={activeRouteThreadKey === threadKey}
+        focusDimmed={focusDimmed}
         jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
@@ -923,6 +956,9 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               <React.Fragment key={group.key}>{group.threads.map(renderThreadRow)}</React.Fragment>
             );
           }
+          const focusDimmed = !group.threads.some((thread) =>
+            isSidebarThreadInFocusTarget(thread, projectKey, sidebarFocusTarget),
+          );
 
           const isActiveWorktreeGroup =
             activeRouteThreadKey !== null &&
@@ -935,7 +971,11 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           return (
             <React.Fragment key={group.key}>
               <SidebarMenuSubItem
-                className={index === 0 ? "w-full" : "mt-1 border-t border-sidebar-border/70 pt-1"}
+                className={cn(
+                  index === 0 ? "w-full" : "mt-1 border-t border-sidebar-border/70 pt-1",
+                  resolveSidebarFocusClassName(focusDimmed),
+                )}
+                data-sidebar-focus-dimmed={focusDimmed ? "true" : undefined}
                 data-thread-selection-safe
               >
                 <div
@@ -1028,6 +1068,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
+  sidebarFocusTarget: SidebarFocusTarget | null;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
@@ -1049,6 +1090,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     isThreadListExpanded,
     activeRouteThreadKey,
+    sidebarFocusTarget,
     newThreadShortcutLabel,
     handleNewThread,
     archiveThread,
@@ -1257,6 +1299,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ) ?? null
     );
   }, [activeRouteThreadKey, projectExpanded, visibleProjectThreads]);
+  const projectFocusDimmed = useMemo(() => {
+    if (!sidebarFocusTarget) {
+      return false;
+    }
+    if (sidebarFocusTarget.worktreePath) {
+      return !visibleProjectThreads.some(
+        (thread) => thread.worktreePath === sidebarFocusTarget.worktreePath,
+      );
+    }
+    return project.projectKey !== sidebarFocusTarget.projectKey;
+  }, [project.projectKey, sidebarFocusTarget, visibleProjectThreads]);
 
   const {
     hasOverflowingThreads,
@@ -2129,9 +2182,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14 ${
-            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-          }`}
+          className={cn(
+            "gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14",
+            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+            resolveSidebarFocusClassName(projectFocusDimmed),
+          )}
+          data-sidebar-focus-dimmed={projectFocusDimmed ? "true" : undefined}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
@@ -2206,6 +2262,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.cwd}
+        sidebarFocusTarget={sidebarFocusTarget}
         activeRouteThreadKey={activeRouteThreadKey}
         threadJumpLabelByKey={threadJumpLabelByKey}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
@@ -2664,6 +2721,9 @@ interface SidebarProjectsContentProps {
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
+  sidebarFocusModeEnabled: boolean;
+  sidebarFocusTarget: SidebarFocusTarget | null;
+  setSidebarFocusModeEnabled: (enabled: boolean) => void;
   routeThreadKey: string | null;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
@@ -2706,6 +2766,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     sortedProjects,
     expandedThreadListsByProject,
     activeRouteProjectKey,
+    sidebarFocusModeEnabled,
+    sidebarFocusTarget,
+    setSidebarFocusModeEnabled,
     routeThreadKey,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
@@ -2744,6 +2807,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const effectiveSidebarFocusTarget = sidebarFocusModeEnabled ? sidebarFocusTarget : null;
+  const canToggleSidebarFocus = sidebarFocusTarget !== null;
+  const sidebarFocusTooltip = sidebarFocusModeEnabled
+    ? "Show all projects"
+    : canToggleSidebarFocus
+      ? "Focus current workspace"
+      : "Open a thread to focus the sidebar";
 
   return (
     <SidebarContent className="gap-0">
@@ -2799,6 +2869,29 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             Projects
           </span>
           <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={sidebarFocusTooltip}
+                    aria-pressed={sidebarFocusModeEnabled}
+                    disabled={!canToggleSidebarFocus && !sidebarFocusModeEnabled}
+                    data-testid="sidebar-focus-mode-toggle"
+                    className={cn(
+                      "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/60",
+                      sidebarFocusModeEnabled && "bg-accent text-foreground",
+                    )}
+                    onClick={() => {
+                      setSidebarFocusModeEnabled(!sidebarFocusModeEnabled);
+                    }}
+                  />
+                }
+              >
+                <FocusIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">{sidebarFocusTooltip}</TooltipPopup>
+            </Tooltip>
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
@@ -2851,6 +2944,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                         }
+                        sidebarFocusTarget={effectiveSidebarFocusTarget}
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
@@ -2884,6 +2978,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                 }
+                sidebarFocusTarget={effectiveSidebarFocusTarget}
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
@@ -2919,6 +3014,8 @@ export default function Sidebar() {
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const sidebarFocusModeEnabled = useUiStateStore((store) => store.sidebarFocusModeEnabled);
+  const setSidebarFocusModeEnabled = useUiStateStore((store) => store.setSidebarFocusModeEnabled);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -3029,6 +3126,19 @@ export default function Sidebar() {
       ) ?? scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId));
     return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
   }, [routeThreadKey, sidebarThreadByKey, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  const sidebarFocusTarget = useMemo<SidebarFocusTarget | null>(() => {
+    if (!routeThreadKey || !activeRouteProjectKey) {
+      return null;
+    }
+    const activeThread = sidebarThreadByKey.get(routeThreadKey);
+    if (!activeThread) {
+      return null;
+    }
+    return {
+      projectKey: activeRouteProjectKey,
+      worktreePath: activeThread.worktreePath ?? null,
+    };
+  }, [activeRouteProjectKey, routeThreadKey, sidebarThreadByKey]);
 
   // Group threads by logical project key so all threads from grouped projects
   // are displayed together.
@@ -3572,6 +3682,9 @@ export default function Sidebar() {
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
+            sidebarFocusModeEnabled={sidebarFocusModeEnabled}
+            sidebarFocusTarget={sidebarFocusTarget}
+            setSidebarFocusModeEnabled={setSidebarFocusModeEnabled}
             routeThreadKey={routeThreadKey}
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
