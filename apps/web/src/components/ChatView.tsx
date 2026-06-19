@@ -4795,7 +4795,6 @@ function ChatViewContent(props: ChatViewProps) {
     ) : visibleActiveRightPanelSurface?.kind === "source-control" && gitCwd ? (
       <Suspense fallback={null}>
         <SourceControlPanel
-          availableEditors={availableEditors}
           environmentId={environmentId}
           threadId={activeThreadRef.threadId}
           cwd={gitCwd}

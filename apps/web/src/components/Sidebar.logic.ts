@@ -9,6 +9,12 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+export {
+  filterProjectsForVscodeScope,
+  resolveVscodeInitialThreadRef,
+  resolveVscodeProjectScope,
+} from "@t3tools/client-runtime/environment";
+export type { VscodeProjectScope } from "@t3tools/client-runtime/environment";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;

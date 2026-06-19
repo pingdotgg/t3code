@@ -1,7 +1,9 @@
 import {
+  filterProjectsForVscodeScope,
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
+  resolveVscodeProjectScope,
 } from "@t3tools/client-runtime/environment";
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
@@ -14,6 +16,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { isVscodeWebview } from "../env";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
