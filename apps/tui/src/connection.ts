@@ -9,10 +9,12 @@ import {
   type OrchestrationThread,
   type ProjectId,
   type ProviderApprovalDecision,
+  type ProviderInteractionMode,
   type RuntimeMode,
   type TerminalAttachStreamEvent,
   type ThreadId,
   ThreadId as ThreadIdSchema,
+  TrimmedNonEmptyString,
   WS_METHODS,
 } from "@t3tools/contracts";
 import {
@@ -22,11 +24,17 @@ import {
   type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
 import {
+  archiveThread as archiveThreadOp,
   createThread as createThreadOp,
+  deleteThread as deleteThreadOp,
   interruptThreadTurn,
   respondToThreadApproval,
+  setThreadInteractionMode,
   setThreadRuntimeMode,
   startThreadTurn,
+  stopThreadSession,
+  unarchiveThread as unarchiveThreadOp,
+  updateThreadMetadata,
 } from "@t3tools/client-runtime/operations";
 import { request, rpcSessionFactoryLayer, RpcSessionFactory, subscribe } from "@t3tools/client-runtime/rpc";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
@@ -286,6 +294,12 @@ export interface TuiClient {
     decision: ProviderApprovalDecision,
   ) => Promise<void>;
   readonly setRuntimeMode: (threadId: ThreadId, mode: RuntimeMode) => Promise<void>;
+  readonly setInteractionMode: (threadId: ThreadId, mode: ProviderInteractionMode) => Promise<void>;
+  readonly renameThread: (threadId: ThreadId, title: string) => Promise<void>;
+  readonly archiveThread: (threadId: ThreadId) => Promise<void>;
+  readonly unarchiveThread: (threadId: ThreadId) => Promise<void>;
+  readonly deleteThread: (threadId: ThreadId) => Promise<void>;
+  readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly terminalWrite: (
     threadId: ThreadId,
     terminalId: string,
@@ -536,6 +550,30 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
 
     setRuntimeMode: (threadId, mode) =>
       runtime.runPromise(setThreadRuntimeMode({ threadId, runtimeMode: mode }).pipe(Effect.asVoid)),
+
+    setInteractionMode: (threadId, mode) =>
+      runtime.runPromise(
+        setThreadInteractionMode({ threadId, interactionMode: mode }).pipe(Effect.asVoid),
+      ),
+
+    renameThread: (threadId, title) =>
+      runtime.runPromise(
+        updateThreadMetadata({ threadId, title: TrimmedNonEmptyString.make(title) }).pipe(
+          Effect.asVoid,
+        ),
+      ),
+
+    archiveThread: (threadId) =>
+      runtime.runPromise(archiveThreadOp({ threadId }).pipe(Effect.asVoid)),
+
+    unarchiveThread: (threadId) =>
+      runtime.runPromise(unarchiveThreadOp({ threadId }).pipe(Effect.asVoid)),
+
+    deleteThread: (threadId) =>
+      runtime.runPromise(deleteThreadOp({ threadId }).pipe(Effect.asVoid)),
+
+    stopSession: (threadId) =>
+      runtime.runPromise(stopThreadSession({ threadId }).pipe(Effect.asVoid)),
 
     terminalWrite: (threadId, terminalId, data) =>
       runtime.runPromise(
