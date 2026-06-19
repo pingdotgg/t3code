@@ -69,7 +69,10 @@ async function main(): Promise<void> {
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
   });
+  let exiting = false;
   const handleExit = () => {
+    if (exiting) return;
+    exiting = true;
     try {
       renderer.destroy();
     } catch {
@@ -78,13 +81,25 @@ async function main(): Promise<void> {
     resolveDone();
   };
 
+  // Raw mode usually delivers Ctrl+C as a keystroke (handled in <App/>), but some
+  // terminals/multiplexers send a real signal — handle both so one press quits.
+  process.once("SIGINT", handleExit);
+  process.once("SIGTERM", handleExit);
+
   createRoot(renderer).render(<App client={client} onExit={handleExit} />);
 
   await done;
-  await client.dispose();
+  // The renderer is already torn down (handleExit). Dispose the RPC runtime, then
+  // force-exit: the live WebSocket and the IPC channel to the parent would
+  // otherwise keep Bun's event loop alive, so a single Ctrl+C wouldn't fully quit.
+  await Promise.race([
+    client.dispose().catch(() => {}),
+    new Promise((resolve) => setTimeout(resolve, 300)),
+  ]);
+  process.exit(0);
 }
 
 main().catch((error) => {
   process.stderr.write(`t3 tui crashed: ${String(error)}\n`);
-  process.exitCode = 1;
+  process.exit(1);
 });
