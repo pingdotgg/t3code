@@ -4,10 +4,12 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, vi } from "vite-plus/test";
 
 import { ManagedRelayClient, type ManagedRelayClientShape } from "./managedRelay.ts";
 import {
@@ -95,14 +97,16 @@ function setSession() {
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
 
-  it("waits for the current cloud session before reading its token", async () => {
-    const token = Effect.runPromise(waitForManagedRelayClerkToken(registry));
+  it.effect("waits for the current cloud session before reading its token", () =>
+    Effect.gen(function* () {
+      const token = yield* waitForManagedRelayClerkToken(registry).pipe(Effect.forkChild);
 
-    setSession();
+      setSession();
 
-    await expect(token).resolves.toBe("clerk-token");
-    expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
-  });
+      expect(yield* Fiber.join(token)).toBe("clerk-token");
+      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
+    }),
+  );
 
   it("keeps environment snapshots cached and refreshes them explicitly", async () => {
     const listEnvironments = vi.fn(() => Effect.succeed([environment]));

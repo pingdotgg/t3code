@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   RELAY_ACTIVITY_PUBLISH_TYP,
   signRelayJwt,
@@ -97,6 +98,16 @@ export function agentAwarenessPublishIdentity(state: RelayAgentActivityState | n
 
 export function isAgentActivityPublishingEnabled(value: string | null): boolean {
   return value === "true";
+}
+
+export function resolveAgentActivityPublishingStartupState(input: {
+  readonly relayConfigured: boolean;
+  readonly publishEnabled: boolean;
+}): "waiting-for-link" | "disabled" | "enabled" {
+  if (!input.relayConfigured) {
+    return "waiting-for-link";
+  }
+  return input.publishEnabled ? "enabled" : "disabled";
 }
 
 const RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH = 160;
@@ -303,7 +314,7 @@ const make = Effect.gen(function* () {
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity publish skipped; T3 Connect config missing", {
+      yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
         threadId,
       });
       return;
@@ -409,6 +420,7 @@ const make = Effect.gen(function* () {
         });
       }),
       Effect.withSpan("AgentAwarenessRelay.publishThread"),
+      withRelayClientTracing,
     );
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
@@ -421,7 +433,7 @@ const make = Effect.gen(function* () {
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity snapshot skipped; T3 Connect config missing");
+      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return false;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
@@ -442,31 +454,55 @@ const make = Effect.gen(function* () {
     return true;
   });
 
-  const publishActiveThreadsOnceWhenConfigured = Effect.gen(function* () {
-    while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
-      const published = yield* publishActiveThreadsUnsafe.pipe(Effect.orElseSucceed(() => false));
-      if (published) {
-        yield* Ref.set(activeSnapshotPublishedRef, true);
-        return;
+  const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
+    Effect.gen(function* () {
+      while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
+        const published = yield* publishActiveThreadsUnsafe.pipe(Effect.orElseSucceed(() => false));
+        if (published) {
+          yield* Ref.set(activeSnapshotPublishedRef, true);
+          if (logEnabledWhenReady) {
+            const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+            yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
+              relayUrl: relayConfig?.url,
+            });
+          }
+          return;
+        }
+        yield* Effect.sleep("5 seconds");
       }
-      yield* Effect.sleep("5 seconds");
-    }
-  });
+    });
 
   const worker = yield* makeDrainableWorker(publishThread);
 
   const start: AgentAwarenessRelayShape["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
-      const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-      if (!relayConfig) {
-        yield* Effect.logInfo("agent activity publishing standby; T3 Connect config missing");
-      } else {
-        yield* Effect.logInfo("agent activity publishing enabled", {
-          relayUrl: relayConfig.url,
-        });
+      const [relayConfig, publishEnabled] = yield* Effect.all([
+        readRelayConfig.pipe(Effect.orElseSucceed(() => null)),
+        readPublishAgentActivityEnabled.pipe(Effect.orElseSucceed(() => false)),
+      ]);
+      const startupState = resolveAgentActivityPublishingStartupState({
+        relayConfigured: relayConfig !== null,
+        publishEnabled,
+      });
+      switch (startupState) {
+        case "waiting-for-link":
+          yield* Effect.logInfo(
+            "agent activity publishing standby; waiting for T3 Connect link reconciliation",
+          );
+          break;
+        case "disabled":
+          yield* Effect.logInfo("agent activity publishing disabled by T3 Connect configuration");
+          break;
+        case "enabled":
+          yield* Effect.logInfo("agent activity publishing enabled", {
+            relayUrl: relayConfig?.url,
+          });
+          break;
       }
       yield* Effect.forkScoped(
-        Effect.sleep("1 second").pipe(Effect.andThen(publishActiveThreadsOnceWhenConfigured)),
+        Effect.sleep("1 second").pipe(
+          Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
+        ),
       );
       yield* Effect.forkScoped(
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {

@@ -8,8 +8,8 @@ import {
   managedRelayClientLayer,
   ManagedRelayClient,
   ManagedRelayDpopSigner,
-  remoteHttpClientLayer,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 
 import {
@@ -54,6 +54,8 @@ const savedConnection = {
   wsBaseUrl: "wss://desktop.example.test/ws",
   bearerToken: "local-bearer",
 };
+
+const stableClerkToken = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyXzEyMyJ9.test";
 
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
@@ -352,7 +354,7 @@ describe("mobile cloud link environment client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" }));
+      yield* withCloudServices(listCloudEnvironmentsWithStatus({ clerkToken: stableClerkToken }));
 
       expect(
         fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/client/dpop-token")),
@@ -425,9 +427,11 @@ describe("mobile cloud link environment client", () => {
 
       yield* withCloudServices(
         Effect.gen(function* () {
-          const records = yield* listCloudEnvironmentsWithStatus({ clerkToken: "clerk-token" });
+          const records = yield* listCloudEnvironmentsWithStatus({
+            clerkToken: stableClerkToken,
+          });
           yield* connectCloudEnvironment({
-            clerkToken: "clerk-token",
+            clerkToken: stableClerkToken,
             environment: records[0]!.environment,
           });
         }),
@@ -658,6 +662,7 @@ describe("mobile cloud link environment client", () => {
         _tag: "CloudEnvironmentLinkError",
         message:
           "https://relay.example.test/v1/client/environment-links failed: Relay rejected the environment link proof (origin_not_allowed).",
+        traceId: "trace-test",
       });
       expect(fetchMock).toHaveBeenCalledTimes(3);
     }),
@@ -1003,6 +1008,7 @@ describe("mobile cloud link environment client", () => {
         _tag: "CloudEnvironmentLinkError",
         message:
           "https://relay.example.test/v1/environments/env-1/connect failed: Relay rejected the DPoP proof.",
+        traceId: "trace-connect",
       });
     }),
   );

@@ -535,6 +535,7 @@ describe("EnvironmentConnector", () => {
         environmentId: "env-connector-test",
         status: "offline",
         error: "Managed endpoint health request failed: Environment is unavailable.",
+        traceId: expect.any(String),
       });
     }).pipe(Effect.provide(connectorTestLayer(execute)));
   });

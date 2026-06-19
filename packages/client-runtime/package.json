@@ -11,6 +11,126 @@
       "import": "./src/index.ts",
       "require": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./connection": {
+      "types": "./src/connection/index.ts",
+      "default": "./src/connection/index.ts"
+    },
+    "./authorization": {
+      "types": "./src/authorization/index.ts",
+      "default": "./src/authorization/index.ts"
+    },
+    "./environment": {
+      "types": "./src/environment/index.ts",
+      "default": "./src/environment/index.ts"
+    },
+    "./errors": {
+      "types": "./src/errors/index.ts",
+      "default": "./src/errors/index.ts"
+    },
+    "./rpc": {
+      "types": "./src/rpc/index.ts",
+      "default": "./src/rpc/index.ts"
+    },
+    "./operations": {
+      "types": "./src/operations/index.ts",
+      "default": "./src/operations/index.ts"
+    },
+    "./operations/projects": {
+      "types": "./src/operations/projects.ts",
+      "default": "./src/operations/projects.ts"
+    },
+    "./platform": {
+      "types": "./src/platform/index.ts",
+      "default": "./src/platform/index.ts"
+    },
+    "./relay": {
+      "types": "./src/relay/index.ts",
+      "default": "./src/relay/index.ts"
+    },
+    "./state/auth": {
+      "types": "./src/state/auth.ts",
+      "default": "./src/state/auth.ts"
+    },
+    "./state/assets": {
+      "types": "./src/state/assets.ts",
+      "default": "./src/state/assets.ts"
+    },
+    "./state/connections": {
+      "types": "./src/state/connections.ts",
+      "default": "./src/state/connections.ts"
+    },
+    "./state/entities": {
+      "types": "./src/state/entities.ts",
+      "default": "./src/state/entities.ts"
+    },
+    "./state/filesystem": {
+      "types": "./src/state/filesystem.ts",
+      "default": "./src/state/filesystem.ts"
+    },
+    "./state/git": {
+      "types": "./src/state/git.ts",
+      "default": "./src/state/git.ts"
+    },
+    "./state/models": {
+      "types": "./src/state/models.ts",
+      "default": "./src/state/models.ts"
+    },
+    "./state/orchestration": {
+      "types": "./src/state/orchestration.ts",
+      "default": "./src/state/orchestration.ts"
+    },
+    "./state/presentation": {
+      "types": "./src/state/presentation.ts",
+      "default": "./src/state/presentation.ts"
+    },
+    "./state/preview": {
+      "types": "./src/state/preview.ts",
+      "default": "./src/state/preview.ts"
+    },
+    "./state/projects": {
+      "types": "./src/state/projects.ts",
+      "default": "./src/state/projects.ts"
+    },
+    "./state/relay": {
+      "types": "./src/state/relayDiscovery.ts",
+      "default": "./src/state/relayDiscovery.ts"
+    },
+    "./state/review": {
+      "types": "./src/state/review.ts",
+      "default": "./src/state/review.ts"
+    },
+    "./state/runtime": {
+      "types": "./src/state/runtime.ts",
+      "default": "./src/state/runtime.ts"
+    },
+    "./state/server": {
+      "types": "./src/state/server.ts",
+      "default": "./src/state/server.ts"
+    },
+    "./state/session": {
+      "types": "./src/state/session.ts",
+      "default": "./src/state/session.ts"
+    },
+    "./state/shell": {
+      "types": "./src/state/shell.ts",
+      "default": "./src/state/shell.ts"
+    },
+    "./state/source-control": {
+      "types": "./src/state/sourceControl.ts",
+      "default": "./src/state/sourceControl.ts"
+    },
+    "./state/terminal": {
+      "types": "./src/state/terminal.ts",
+      "default": "./src/state/terminal.ts"
+    },
+    "./state/threads": {
+      "types": "./src/state/threads.ts",
+      "default": "./src/state/threads.ts"
+    },
+    "./state/vcs": {
+      "types": "./src/state/vcs.ts",
+      "default": "./src/state/vcs.ts"
     }
   },
   "scripts": {

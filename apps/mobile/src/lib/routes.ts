@@ -1,5 +1,5 @@
 import type { Href, useRouter } from "expo-router";
-import type { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
+import { type EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import type { SelectedThreadRef } from "../state/remote-runtime-types";
@@ -8,7 +8,7 @@ type Router = ReturnType<typeof useRouter>;
 
 type ThreadRouteInput =
   | Pick<SelectedThreadRef, "environmentId" | "threadId">
-  | Pick<EnvironmentScopedThreadShell, "environmentId" | "id">;
+  | Pick<EnvironmentThreadShell, "environmentId" | "id">;
 type PlainThreadRouteInput =
   | {
       environmentId: EnvironmentId;

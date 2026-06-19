@@ -8,19 +8,27 @@ import type { ComponentProps, ReactNode } from "react";
 import { Alert, Linking, Pressable, ScrollView, Switch, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  isAtomCommandInterrupted,
+  reportAtomCommandResult,
+  settleAsyncResult,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { AppText as Text } from "../../components/AppText";
 import { setLiveActivityUpdatesEnabled } from "../../features/agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../../features/agent-awareness/notificationPermissions";
 import { refreshAgentAwarenessRegistration } from "../../features/agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../../features/cloud/managedRelayState";
+import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
 import {
   hasCloudPublicConfig,
   resolveRelayClerkTokenOptions,
 } from "../../features/cloud/publicConfig";
-import { mobileRuntime } from "../../lib/runtime";
+import { runtime } from "../../lib/runtime";
 import { loadPreferences } from "../../lib/storage";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -31,7 +39,7 @@ export default function SettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentCount = Object.keys(savedConnectionsById).length;
 
   return (
@@ -66,9 +74,10 @@ function LocalSettingsRouteScreen() {
 function ConfiguredSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
   const { push } = useRouter();
+  const { expand: expandClerkSheet } = useClerkSettingsSheetDetent();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
 
@@ -85,8 +94,13 @@ function ConfiguredSettingsRouteScreen() {
       setNotificationStatus("unsupported");
       return;
     }
-    const permission = await Notifications.getPermissionsAsync();
-    setNotificationStatus(permission.granted ? "enabled" : "disabled");
+    const result = await settlePromise(() => Notifications.getPermissionsAsync());
+    if (result._tag === "Failure") {
+      reportAtomCommandResult(result, { label: "notification permission refresh" });
+      setNotificationStatus("disabled");
+      return;
+    }
+    setNotificationStatus(result.value.granted ? "enabled" : "disabled");
   }, []);
 
   useEffect(() => {
@@ -102,60 +116,66 @@ function ConfiguredSettingsRouteScreen() {
       setLiveActivityStatus("signed-out");
       return;
     }
-    void loadPreferences().then(
-      (preferences) => {
-        setLiveActivityStatus(preferences.liveActivitiesEnabled === false ? "disabled" : "enabled");
-      },
-      () => {
+    void (async () => {
+      const result = await settlePromise(() => loadPreferences());
+      if (result._tag === "Failure") {
+        reportAtomCommandResult(result, { label: "live activity preference load" });
         setLiveActivityStatus("enabled");
-      },
-    );
+        return;
+      }
+      setLiveActivityStatus(result.value.liveActivitiesEnabled === false ? "disabled" : "enabled");
+    })();
   }, [isLoaded, isSignedIn]);
 
   const requestNotifications = useCallback(async () => {
-    try {
-      const result = await mobileRuntime.runPromise(
+    const result = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
         requestAgentNotificationPermission.pipe(
           Effect.tap((permission) =>
             permission.type === "granted" ? refreshAgentAwarenessRegistration() : Effect.void,
           ),
         ),
-      );
-      if (result.type === "granted") {
-        setNotificationStatus("enabled");
-        Alert.alert(
-          "Notifications enabled",
-          "Live Activity notifications are enabled for this device.",
-        );
-        return;
-      }
-      if (result.type === "unsupported") {
-        setNotificationStatus("unsupported");
+      ),
+    );
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         Alert.alert(
           "Notifications unavailable",
-          "Live Activity notifications are only available on iOS.",
+          error instanceof Error ? error.message : "Could not request notification permission.",
         );
-        return;
       }
-      setNotificationStatus("disabled");
-      if (result.canAskAgain) {
-        Alert.alert("Notifications disabled", "Notifications were not enabled.");
-        return;
-      }
+      return;
+    }
+    if (result.value.type === "granted") {
+      setNotificationStatus("enabled");
       Alert.alert(
-        "Notifications disabled",
-        "Notifications were denied for this app. Open Settings to enable them.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Open Settings", onPress: () => void Linking.openSettings() },
-        ],
+        "Notifications enabled",
+        "Live Activity notifications are enabled for this device.",
       );
-    } catch (error) {
+      return;
+    }
+    if (result.value.type === "unsupported") {
+      setNotificationStatus("unsupported");
       Alert.alert(
         "Notifications unavailable",
-        error instanceof Error ? error.message : "Could not request notification permission.",
+        "Live Activity notifications are only available on iOS.",
       );
+      return;
     }
+    setNotificationStatus("disabled");
+    if (result.value.canAskAgain) {
+      Alert.alert("Notifications disabled", "Notifications were not enabled.");
+      return;
+    }
+    Alert.alert(
+      "Notifications disabled",
+      "Notifications were denied for this app. Open Settings to enable them.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Settings", onPress: () => void Linking.openSettings() },
+      ],
+    );
   }, []);
 
   const promptSignIn = useCallback(() => {
@@ -176,36 +196,51 @@ function ConfiguredSettingsRouteScreen() {
     }
 
     setLiveActivityStatus("linking");
-    try {
-      const token = await getToken(resolveRelayClerkTokenOptions());
-      if (!token) {
-        promptSignIn();
-        setLiveActivityStatus("signed-out");
-        return;
-      }
-
-      await mobileRuntime.runPromise(
-        setLiveActivityUpdatesEnabled({
-          enabled: true,
-          clerkToken: token,
-          connections,
-        }),
-      );
-      refreshManagedRelayEnvironments();
-      setLiveActivityStatus("enabled");
-      Alert.alert(
-        "Live Activities enabled",
-        environmentCount > 0
-          ? `${environmentCount} environment${environmentCount === 1 ? "" : "s"} linked for Live Activity updates.`
-          : "Live Activity updates are enabled. Add an environment to start receiving updates.",
-      );
-    } catch (error) {
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (tokenResult._tag === "Failure") {
       setLiveActivityStatus("disabled");
+      const error = squashAtomCommandFailure(tokenResult);
       Alert.alert(
         "Live Activities unavailable",
         error instanceof Error ? error.message : "Could not enable Live Activity updates.",
       );
+      return;
     }
+    if (!tokenResult.value) {
+      promptSignIn();
+      setLiveActivityStatus("signed-out");
+      return;
+    }
+
+    const updateResult = await settleAsyncResult(() =>
+      runtime.runPromiseExit(
+        setLiveActivityUpdatesEnabled({
+          enabled: true,
+          clerkToken: tokenResult.value,
+          connections,
+        }),
+      ),
+    );
+    if (updateResult._tag === "Failure") {
+      setLiveActivityStatus("disabled");
+      if (!isAtomCommandInterrupted(updateResult)) {
+        const error = squashAtomCommandFailure(updateResult);
+        Alert.alert(
+          "Live Activities unavailable",
+          error instanceof Error ? error.message : "Could not enable Live Activity updates.",
+        );
+      }
+      return;
+    }
+
+    refreshManagedRelayEnvironments();
+    setLiveActivityStatus("enabled");
+    Alert.alert(
+      "Live Activities enabled",
+      environmentCount > 0
+        ? `${environmentCount} environment${environmentCount === 1 ? "" : "s"} linked for Live Activity updates.`
+        : "Live Activity updates are enabled. Add an environment to start receiving updates.",
+    );
   }, [connections, environmentCount, getToken, isSignedIn, promptSignIn]);
 
   const handleDeviceNotificationsChange = useCallback(
@@ -232,19 +267,36 @@ function ConfiguredSettingsRouteScreen() {
       if (!enabled) {
         setLiveActivityStatus("disabled");
         void (async () => {
-          try {
-            const token = isSignedIn ? await getToken(resolveRelayClerkTokenOptions()) : null;
-            await mobileRuntime.runPromise(
+          let token: string | null = null;
+          if (isSignedIn) {
+            const tokenResult = await settlePromise(() =>
+              getToken(resolveRelayClerkTokenOptions()),
+            );
+            if (tokenResult._tag === "Failure") {
+              reportAtomCommandResult(tokenResult, {
+                label: "live activity disable token lookup",
+              });
+              return;
+            }
+            token = tokenResult.value;
+          }
+
+          const updateResult = await settleAsyncResult(() =>
+            runtime.runPromiseExit(
               setLiveActivityUpdatesEnabled({
                 enabled: false,
                 clerkToken: token,
                 connections,
               }),
-            );
-            refreshManagedRelayEnvironments();
-          } catch {
-            // The switch is optimistic; a future refresh reconciles relay state.
+            ),
+          );
+          if (updateResult._tag === "Failure") {
+            reportAtomCommandResult(updateResult, {
+              label: "live activity disable",
+            });
+            return;
           }
+          refreshManagedRelayEnvironments();
         })();
         return;
       }
@@ -265,11 +317,9 @@ function ConfiguredSettingsRouteScreen() {
       push("/settings/waitlist");
       return;
     }
-    Alert.alert(
-      "T3 Cloud unavailable",
-      "Native T3 Cloud account management is not available in this build.",
-    );
-  }, [isLoaded, isSignedIn, push]);
+    expandClerkSheet();
+    push("/settings/auth");
+  }, [expandClerkSheet, isLoaded, isSignedIn, push]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -335,7 +385,7 @@ type SymbolName = ComponentProps<typeof SymbolView>["name"];
 function SettingsSection(props: { readonly title: string; readonly children: ReactNode }) {
   return (
     <View className="gap-2">
-      <Text className="px-2 font-t3-bold text-[17px] text-foreground-tertiary">{props.title}</Text>
+      <Text className="px-2 text-[13px] font-t3-medium text-foreground-muted">{props.title}</Text>
       <View
         className="overflow-hidden rounded-[28px] bg-card"
         style={{ borderCurve: "continuous" }}
@@ -382,15 +432,20 @@ function SettingsRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="flex-1 text-[17px] text-foreground">{props.label}</Text>
-      {props.value ? (
-        <Text
-          className="max-w-[180px] text-right text-[16px] text-foreground-muted"
-          numberOfLines={1}
-        >
-          {props.value}
-        </Text>
-      ) : null}
+      <Text className="shrink-0 text-[17px] text-foreground" numberOfLines={1}>
+        {props.label}
+      </Text>
+      <View className="min-w-0 flex-1 items-end">
+        {props.value ? (
+          <Text
+            className="max-w-[180px] text-right text-[16px] text-foreground-muted"
+            ellipsizeMode="middle"
+            numberOfLines={1}
+          >
+            {props.value}
+          </Text>
+        ) : null}
+      </View>
       <SymbolView
         name="chevron.right"
         size={16}

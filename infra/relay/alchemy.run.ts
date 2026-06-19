@@ -42,6 +42,9 @@ export default Alchemy.Stack(
       mobileTracingUrl: observability.traces.otelTracesEndpoint,
       mobileTracingDataset: observability.traces.name,
       mobileTracingToken: observability.mobileIngestToken.token,
+      clientTracingUrl: observability.traces.otelTracesEndpoint,
+      clientTracingDataset: observability.traces.name,
+      clientTracingToken: observability.clientIngestToken.token,
     };
   }),
 );

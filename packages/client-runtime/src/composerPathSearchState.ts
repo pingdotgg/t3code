@@ -87,7 +87,9 @@ function toSearchEntries(
   return entries.map((entry) => ({
     path: entry.path,
     kind: entry.kind === "directory" ? "directory" : "file",
-    ...(entry.parentPath !== undefined ? { parentPath: entry.parentPath } : {}),
+    ...("parentPath" in entry && typeof entry.parentPath === "string"
+      ? { parentPath: entry.parentPath }
+      : {}),
   }));
 }
 

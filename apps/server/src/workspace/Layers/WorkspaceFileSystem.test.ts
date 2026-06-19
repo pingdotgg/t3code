@@ -8,20 +8,19 @@ import * as Path from "effect/Path";
 import { ServerConfig } from "../../config.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
+import * as WorkspaceEntries from "../WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "../Services/WorkspaceFileSystem.ts";
-import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 
 const ProjectLayer = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),
-  Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+  Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
 );
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(ProjectLayer),
-  Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
   Layer.provideMerge(WorkspacePathsLive),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(
@@ -53,7 +52,7 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
-it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -135,20 +134,15 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
 
     it.effect("invalidates workspace entry search cache after writes", () =>
       Effect.gen(function* () {
-        const workspaceEntries = yield* WorkspaceEntries;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const workspaceFileSystem = yield* WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/existing.ts", "export {};\n");
 
-        const beforeWrite = yield* workspaceEntries.search({
-          cwd,
-          query: "rpc",
-          limit: 10,
-        });
-        expect(beforeWrite).toEqual({
-          entries: [],
-          truncated: false,
-        });
+        const beforeWrite = yield* workspaceEntries.list({ cwd });
+        expect(beforeWrite.entries.some((entry) => entry.path === "plans/effect-rpc.md")).toBe(
+          false,
+        );
 
         yield* workspaceFileSystem.writeFile({
           cwd,
@@ -156,11 +150,7 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           contents: "# Plan\n",
         });
 
-        const afterWrite = yield* workspaceEntries.search({
-          cwd,
-          query: "rpc",
-          limit: 10,
-        });
+        const afterWrite = yield* workspaceEntries.list({ cwd });
         expect(afterWrite.entries).toEqual(
           expect.arrayContaining([expect.objectContaining({ path: "plans/effect-rpc.md" })]),
         );

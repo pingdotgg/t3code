@@ -35,6 +35,8 @@ describe("AssetAccess", () => {
       yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="report.css">');
       yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
       yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
+      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
+      const canonicalCssPath = yield* fileSystem.realPath(cssPath);
 
       const result = yield* issueAssetUrl({
         resource: {
@@ -50,11 +52,11 @@ describe("AssetAccess", () => {
 
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",
-        path: htmlPath,
+        path: canonicalHtmlPath,
       });
       expect(yield* resolveAsset(token, "report.css")).toEqual({
         kind: "file",
-        path: cssPath,
+        path: canonicalCssPath,
       });
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
@@ -120,6 +122,7 @@ describe("AssetAccess", () => {
       });
       const faviconPath = path.join(root, "favicon.svg");
       yield* fileSystem.writeFileString(faviconPath, "<svg />");
+      const canonicalFaviconPath = yield* fileSystem.realPath(faviconPath);
 
       const faviconResult = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
@@ -131,7 +134,7 @@ describe("AssetAccess", () => {
           faviconSuffix.slice(0, faviconSeparatorIndex),
           faviconSuffix.slice(faviconSeparatorIndex + 1),
         ),
-      ).toEqual({ kind: "file", path: faviconPath });
+      ).toEqual({ kind: "file", path: canonicalFaviconPath });
 
       yield* fileSystem.remove(faviconPath);
       const fallbackResult = yield* issueAssetUrl({

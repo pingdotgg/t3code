@@ -34,7 +34,7 @@ import { GitManager, type GitRunStackedActionOptions } from "./GitManager.ts";
 import { extractGitHubPullRequests } from "../externalIntake/github.ts";
 import { ExternalIntegrationRepository } from "../persistence/Services/ExternalIntegrations.ts";
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver, type GitRemoteStatusOptions } from "../vcs/GitVcsDriver.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 
 export interface GitWorkflowServiceShape {
@@ -46,6 +46,7 @@ export interface GitWorkflowServiceShape {
   ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
   readonly remoteStatus: (
     input: VcsStatusInput,
+    options?: GitRemoteStatusOptions,
   ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
   readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
   readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -305,10 +306,10 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
             : Effect.succeed(nonRepositoryLocalStatus()),
         ),
       ),
-    remoteStatus: (input) =>
+    remoteStatus: (input, options) =>
       detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
-          isGitRepository ? gitManager.remoteStatus(input) : Effect.succeed(null),
+          isGitRepository ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
         ),
       ),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,

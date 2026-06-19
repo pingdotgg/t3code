@@ -1,15 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
   ModelSelection,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   RuntimeMode,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
+import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
@@ -22,21 +25,17 @@ import {
   setComposerDraftText,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { vcsRefManager, useVcsRefs } from "../../state/use-vcs-refs";
-import { useRemoteCatalog } from "../../state/use-remote-catalog";
+import { useBranches } from "../../state/queries";
 import {
   setPendingConnectionError,
-  useRemoteEnvironmentState,
+  useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { EnvironmentScopedProjectShell, type VcsRef } from "@t3tools/client-runtime";
-import type { ClaudeAgentEffort } from "./claudeEffortOptions";
+import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 
 type WorkspaceMode = "local" | "worktree";
 
-function normalizeSelectedWorktreePath(
-  project: EnvironmentScopedProjectShell,
-  branch: VcsRef,
-): string | null {
+function normalizeSelectedWorktreePath(project: EnvironmentProject, branch: VcsRef): string | null {
   if (!branch.worktreePath) {
     return null;
   }
@@ -46,7 +45,7 @@ function normalizeSelectedWorktreePath(
 
 export function branchBadgeLabel(input: {
   readonly branch: VcsRef;
-  readonly project: EnvironmentScopedProjectShell | null;
+  readonly project: EnvironmentProject | null;
 }): string | null {
   if (input.branch.current) {
     return "current";
@@ -66,7 +65,7 @@ export function branchBadgeLabel(input: {
 type NewTaskFlowContextValue = {
   readonly logicalProjects: ReadonlyArray<{
     readonly key: string;
-    readonly project: EnvironmentScopedProjectShell;
+    readonly project: EnvironmentProject;
   }>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -82,22 +81,20 @@ type NewTaskFlowContextValue = {
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  readonly effort: ClaudeAgentEffort;
-  readonly fastMode: boolean;
-  readonly contextWindow: string;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
   }>;
-  readonly selectedProject: EnvironmentScopedProjectShell | null;
+  readonly selectedProject: EnvironmentProject | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
+  readonly selectedProviderSkills: ReadonlyArray<ServerProviderSkill>;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
-  readonly setProject: (project: EnvironmentScopedProjectShell) => void;
+  readonly setProject: (project: EnvironmentProject) => void;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly setSelectedModelKey: (key: string | null) => void;
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
@@ -112,17 +109,18 @@ type NewTaskFlowContextValue = {
   readonly loadBranches: () => Promise<void>;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
-  readonly setEffort: (value: ClaudeAgentEffort) => void;
-  readonly setFastMode: (value: boolean) => void;
-  readonly setContextWindow: (value: string) => void;
+  readonly setSelectedModelOptions: (
+    value: ReadonlyArray<ProviderOptionSelection> | undefined,
+  ) => void;
   readonly setExpandedProvider: (value: string | null) => void;
 };
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
-  const { projects, serverConfigByEnvironmentId, threads } = useRemoteCatalog();
-  const { savedConnectionsById } = useRemoteEnvironmentState();
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const { savedConnectionsById } = useSavedRemoteConnections();
 
   const repositoryGroups = useMemo(
     () => groupProjectsByRepository({ projects, threads }),
@@ -144,16 +142,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
             entry,
           ): entry is {
             readonly key: string;
-            readonly project: EnvironmentScopedProjectShell;
+            readonly project: EnvironmentProject;
           } => entry !== null,
         ),
       ),
     [repositoryGroups],
   );
 
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
-    projects[0]?.environmentId ?? null,
+  const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
+    null,
   );
+  const selectedEnvironmentId =
+    selectedEnvironmentIdOverride !== null &&
+    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
+      ? selectedEnvironmentIdOverride
+      : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("local");
@@ -166,17 +169,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [interactionMode, setInteractionMode] = useState<ProviderInteractionMode>(
     DEFAULT_PROVIDER_INTERACTION_MODE,
   );
-  const [effort, setEffort] = useState<ClaudeAgentEffort>("high");
-  const [fastMode, setFastMode] = useState(false);
-  const [contextWindow, setContextWindow] = useState("1M");
+  const [modelSelectionOverrides, setModelSelectionOverrides] = useState<
+    Record<string, ModelSelection>
+  >({});
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
 
   const reset = useCallback(() => {
-    console.log("[new task flow] reset", {
-      defaultEnvironmentId: projects[0]?.environmentId ?? null,
-      projectCount: projects.length,
-    });
-    setSelectedEnvironmentId(projects[0]?.environmentId ?? null);
+    setSelectedEnvironmentId(null);
     setSelectedProjectKey(null);
     setSelectedModelKey(null);
     setWorkspaceMode("local");
@@ -186,22 +185,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setBranchQuery("");
     setRuntimeMode(DEFAULT_RUNTIME_MODE);
     setInteractionMode(DEFAULT_PROVIDER_INTERACTION_MODE);
-    setEffort("high");
-    setFastMode(false);
-    setContextWindow("1M");
+    setModelSelectionOverrides({});
     setExpandedProvider(null);
-  }, [projects]);
-
-  useEffect(() => {
-    if (selectedEnvironmentId !== null || projects.length === 0) {
-      return;
-    }
-
-    console.log("[new task flow] initializing environment", {
-      environmentId: projects[0]!.environmentId,
-    });
-    setSelectedEnvironmentId(projects[0]!.environmentId);
-  }, [projects, selectedEnvironmentId]);
+  }, []);
 
   const environments = useMemo(
     () =>
@@ -252,6 +238,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     ) ??
     projectsForEnvironment[0] ??
     null;
+  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
+    selectedProject?.environmentId ?? null,
+  );
   const selectedProjectDraftKey = selectedProject
     ? `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`
     : null;
@@ -262,19 +251,29 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
-        selectedProject
-          ? (serverConfigByEnvironmentId[selectedProject.environmentId] ?? null)
-          : null,
+        selectedEnvironmentServerConfig,
         selectedProject?.defaultModelSelection ?? null,
       ),
-    [selectedProject, serverConfigByEnvironmentId],
+    [selectedEnvironmentServerConfig, selectedProject?.defaultModelSelection],
   );
 
-  const selectedModel =
+  const defaultModelKey = selectedProject?.defaultModelSelection
+    ? `${selectedProject.defaultModelSelection.instanceId}:${selectedProject.defaultModelSelection.model}`
+    : null;
+  const baseSelectedModel =
     modelOptions.find((option) => option.key === selectedModelKey)?.selection ??
+    (defaultModelKey
+      ? modelOptions.find((option) => option.key === defaultModelKey)?.selection
+      : null) ??
     selectedProject?.defaultModelSelection ??
     modelOptions[0]?.selection ??
     null;
+  const selectedModelIdentity = baseSelectedModel
+    ? `${baseSelectedModel.instanceId}:${baseSelectedModel.model}`
+    : null;
+  const selectedModel =
+    (selectedModelIdentity ? modelSelectionOverrides[selectedModelIdentity] : null) ??
+    baseSelectedModel;
 
   const selectedModelOption =
     modelOptions.find(
@@ -283,6 +282,28 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
+  const selectedProviderSkills =
+    selectedEnvironmentServerConfig?.providers.find(
+      (provider) => provider.instanceId === selectedModel?.instanceId,
+    )?.skills ?? [];
+  const setSelectedModelOptions = useCallback(
+    (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
+      if (!selectedModel || !selectedModelIdentity) {
+        return;
+      }
+      const nextSelection: ModelSelection = options
+        ? { ...selectedModel, options }
+        : {
+            instanceId: selectedModel.instanceId,
+            model: selectedModel.model,
+          };
+      setModelSelectionOverrides((current) => ({
+        ...current,
+        [selectedModelIdentity]: nextSelection,
+      }));
+    },
+    [selectedModel, selectedModelIdentity],
+  );
 
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   const setPrompt = useCallback(
@@ -335,7 +356,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }),
     [selectedProject?.environmentId, selectedProject?.workspaceRoot],
   );
-  const branchState = useVcsRefs(branchTarget);
+  const branchState = useBranches(branchTarget);
   const branchesLoading = branchState.isPending;
   const availableBranches = useMemo(
     () =>
@@ -358,13 +379,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     );
   }, [availableBranches, branchQuery]);
 
-  const setProject = useCallback((project: EnvironmentScopedProjectShell) => {
+  const setProject = useCallback((project: EnvironmentProject) => {
     const nextProjectKey = scopedProjectKey(project.environmentId, project.id);
     branchLoadVersionRef.current += 1;
     setSelectedEnvironmentId(project.environmentId);
     setSelectedProjectKey(nextProjectKey);
     setSelectedBranchName(null);
     setSelectedWorktreePath(null);
+    setModelSelectionOverrides({});
   }, []);
 
   const selectEnvironment = useCallback((environmentId: EnvironmentId) => {
@@ -373,6 +395,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(null);
     setSelectedBranchName(null);
     setSelectedWorktreePath(null);
+    setModelSelectionOverrides({});
   }, []);
 
   const selectBranch = useCallback(
@@ -392,37 +415,28 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
     const loadVersion = ++branchLoadVersionRef.current;
     const projectKey = scopedProjectKey(selectedProject.environmentId, selectedProject.id);
-    try {
-      const result = await vcsRefManager.load({
-        environmentId: selectedProject.environmentId,
-        cwd: selectedProject.workspaceRoot,
-        query: null,
-      });
-      if (loadVersion !== branchLoadVersionRef.current || selectedProjectKey !== projectKey) {
-        return;
-      }
-      setPendingConnectionError(null);
-      const branches = pipe(
-        result?.refs ?? [],
-        Arr.filter((branch) => !branch.isRemote),
-      );
-
-      if (workspaceMode === "worktree" && !selectedBranchName) {
-        const preferredBranch =
-          branches.find((branch) => branch.current)?.name ??
-          branches.find((branch) => branch.isDefault)?.name ??
-          null;
-        if (preferredBranch) {
-          setSelectedBranchName(preferredBranch);
-        }
-      }
-    } catch {
-      if (loadVersion !== branchLoadVersionRef.current) {
-        return;
-      }
-      setPendingConnectionError("Failed to load branches.");
+    branchState.refresh();
+    if (loadVersion !== branchLoadVersionRef.current || selectedProjectKey !== projectKey) {
+      return;
     }
-  }, [selectedBranchName, selectedProject, selectedProjectKey, workspaceMode]);
+    setPendingConnectionError(null);
+    if (workspaceMode === "worktree" && !selectedBranchName) {
+      const preferredBranch =
+        availableBranches.find((branch) => branch.current)?.name ??
+        availableBranches.find((branch) => branch.isDefault)?.name ??
+        null;
+      if (preferredBranch) {
+        setSelectedBranchName(preferredBranch);
+      }
+    }
+  }, [
+    availableBranches,
+    branchState,
+    selectedBranchName,
+    selectedProject,
+    selectedProjectKey,
+    workspaceMode,
+  ]);
 
   const value = useMemo<NewTaskFlowContextValue>(
     () => ({
@@ -441,15 +455,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       runtimeMode,
       interactionMode,
-      effort,
-      fastMode,
-      contextWindow,
       expandedProvider,
       environments,
       selectedProject,
       modelOptions,
       selectedModel,
       selectedModelOption,
+      selectedProviderSkills,
       providerGroups,
       filteredBranches,
       reset,
@@ -468,9 +480,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadBranches,
       setRuntimeMode,
       setInteractionMode,
-      setEffort,
-      setFastMode,
-      setContextWindow,
+      setSelectedModelOptions,
       setExpandedProvider,
     }),
     [
@@ -478,11 +488,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       branchQuery,
       branchesLoading,
-      contextWindow,
-      effort,
       environments,
       expandedProvider,
-      fastMode,
       filteredBranches,
       interactionMode,
       loadBranches,
@@ -498,6 +505,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedModelKey,
       selectedModelOption,
+      selectedProviderSkills,
+      setSelectedModelOptions,
       selectedProject,
       selectedProjectKey,
       selectedWorktreePath,
@@ -511,24 +520,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       removeAttachment,
     ],
   );
-
-  useEffect(() => {
-    console.log("[new task flow] state", {
-      availableBranchCount: availableBranches.length,
-      environmentCount: environments.length,
-      logicalProjectCount: logicalProjects.length,
-      selectedEnvironmentId,
-      selectedProjectKey,
-      selectedProjectTitle: selectedProject?.title ?? null,
-    });
-  }, [
-    availableBranches.length,
-    environments.length,
-    logicalProjects.length,
-    selectedEnvironmentId,
-    selectedProject?.title,
-    selectedProjectKey,
-  ]);
 
   return <NewTaskFlowContext.Provider value={value}>{props.children}</NewTaskFlowContext.Provider>;
 }

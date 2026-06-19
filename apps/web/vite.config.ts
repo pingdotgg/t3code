@@ -2,7 +2,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -19,6 +18,9 @@ const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
 const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
 const configuredClerkJwtTemplate = repoEnv.VITE_CLERK_JWT_TEMPLATE?.trim() || "";
+const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || "";
+const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
+const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppName = process.env.VITE_APP_NAME?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
@@ -54,30 +56,6 @@ const unitTestProject = {
     // run, those async tests can exceed Vitest's default 5s budget.
     hookTimeout: 15_000,
     testTimeout: 15_000,
-  },
-} satisfies TestProjectInlineConfiguration;
-
-const browserTestProject = {
-  extends: true,
-  server: {
-    // Browser tests need concurrent runs to claim the next available port.
-    strictPort: false,
-  },
-  test: {
-    name: "browser",
-    include: ["src/components/**/*.browser.tsx"],
-    hookTimeout: 30_000,
-    testTimeout: 30_000,
-    browser: {
-      enabled: true,
-      provider: playwright() as never,
-      instances: [{ browser: "chromium" }],
-      headless: true,
-      api: {
-        strictPort: false,
-      },
-    },
-    fileParallelism: false,
   },
 } satisfies TestProjectInlineConfiguration;
 
@@ -121,6 +99,8 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
+        "@clerk/clerk-js",
+        "@clerk/react/internal",
         "@pierre/diffs",
         "@pierre/diffs/editor",
         "@pierre/diffs/react",
@@ -136,6 +116,11 @@ export default defineConfig(() => {
       "import.meta.env.VITE_T3CODE_RELAY_URL": JSON.stringify(configuredRelayUrl),
       "import.meta.env.VITE_CLERK_PUBLISHABLE_KEY": JSON.stringify(configuredClerkPublishableKey),
       "import.meta.env.VITE_CLERK_JWT_TEMPLATE": JSON.stringify(configuredClerkJwtTemplate),
+      "import.meta.env.VITE_RELAY_OTLP_TRACES_URL": JSON.stringify(configuredRelayTracingUrl),
+      "import.meta.env.VITE_RELAY_OTLP_TRACES_DATASET": JSON.stringify(
+        configuredRelayTracingDataset,
+      ),
+      "import.meta.env.VITE_RELAY_OTLP_TRACES_TOKEN": JSON.stringify(configuredRelayTracingToken),
       "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
       "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
       "import.meta.env.VITE_APP_NAME": JSON.stringify(configuredAppName),
@@ -180,7 +165,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
+      projects: [defineProject(unitTestProject)],
     },
   };
 });

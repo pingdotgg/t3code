@@ -205,10 +205,10 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     getClientSettings: async () => null,
     setClientSettings: async () => undefined,
     getSavedEnvironmentRegistry: async () => [],
-    setSavedEnvironmentRegistry: async () => undefined,
+    setSavedEnvironmentRegistry: async () => true,
     getSavedEnvironmentSecret: async () => null,
     setSavedEnvironmentSecret: async () => true,
-    removeSavedEnvironmentSecret: async () => undefined,
+    removeSavedEnvironmentSecret: async () => true,
     discoverSshHosts: async () => [],
     ensureSshEnvironment: async () => {
       throw new Error("ensureSshEnvironment not implemented in test");

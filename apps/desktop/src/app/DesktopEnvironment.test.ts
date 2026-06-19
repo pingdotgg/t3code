@@ -51,7 +51,6 @@ describe("DesktopEnvironment", () => {
       );
 
       const path = environment.path;
-      const rootDir = path.resolve("/repo/apps/desktop/dist-electron", "../../..");
 
       assert.equal(environment.isDevelopment, true);
       assert.equal(
@@ -93,7 +92,6 @@ describe("DesktopEnvironment", () => {
         },
       );
 
-      const path = environment.path;
       assert.equal(environment.isDevelopment, false);
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
