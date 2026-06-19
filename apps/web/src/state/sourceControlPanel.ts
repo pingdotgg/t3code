@@ -16,6 +16,7 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { useAtomCommand } from "./use-atom-command";
+import { useAtomQueryRunner } from "./use-atom-query-runner";
 import { vcsEnvironment } from "./vcs";
 
 async function unwrapPanelCommand<TResult>(
@@ -28,14 +29,14 @@ async function unwrapPanelCommand<TResult>(
 }
 
 export function useSourceControlPanelApi(environmentId: EnvironmentId) {
-  const panelSnapshot = useAtomCommand(vcsEnvironment.panelSnapshot, { reportFailure: false });
-  const panelBranchDetails = useAtomCommand(vcsEnvironment.panelBranchDetails, {
+  const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, { reportFailure: false });
+  const panelBranchDetails = useAtomQueryRunner(vcsEnvironment.panelBranchDetails, {
     reportFailure: false,
   });
-  const panelBranchCommits = useAtomCommand(vcsEnvironment.panelBranchCommits, {
+  const panelBranchCommits = useAtomQueryRunner(vcsEnvironment.panelBranchCommits, {
     reportFailure: false,
   });
-  const panelStashDetails = useAtomCommand(vcsEnvironment.panelStashDetails, {
+  const panelStashDetails = useAtomQueryRunner(vcsEnvironment.panelStashDetails, {
     reportFailure: false,
   });
   const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, { reportFailure: false });
@@ -45,10 +46,13 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
   const panelDiscardFiles = useAtomCommand(vcsEnvironment.panelDiscardFiles, {
     reportFailure: false,
   });
-  const panelEnrichWorkingTreeFiles = useAtomCommand(vcsEnvironment.panelEnrichWorkingTreeFiles, {
-    reportFailure: false,
-  });
-  const panelReadFileDiff = useAtomCommand(vcsEnvironment.panelReadFileDiff, {
+  const panelEnrichWorkingTreeFiles = useAtomQueryRunner(
+    vcsEnvironment.panelEnrichWorkingTreeFiles,
+    {
+      reportFailure: false,
+    },
+  );
+  const panelReadFileDiff = useAtomQueryRunner(vcsEnvironment.panelReadFileDiff, {
     reportFailure: false,
   });
   const panelCommitStaged = useAtomCommand(vcsEnvironment.panelCommitStaged, {
@@ -98,7 +102,7 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
   });
   const panelPopStash = useAtomCommand(vcsEnvironment.panelPopStash, { reportFailure: false });
   const panelDropStash = useAtomCommand(vcsEnvironment.panelDropStash, { reportFailure: false });
-  const panelCompare = useAtomCommand(vcsEnvironment.panelCompare, { reportFailure: false });
+  const panelCompare = useAtomQueryRunner(vcsEnvironment.panelCompare, { reportFailure: false });
   const switchRefCommand = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const runPanelCommand = useCallback(
     async <TInput extends { readonly cwd: string }, TResult>(
@@ -258,7 +262,7 @@ export function resolveSourceControlPanelPresentationState(input: {
     };
   }
 
-  if (input.loading || input.statusPending) {
+  if (input.loading) {
     return {
       status: "ready",
       syncMessage: "Refreshing repository state...",

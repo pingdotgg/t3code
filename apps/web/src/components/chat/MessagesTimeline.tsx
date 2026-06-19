@@ -2008,6 +2008,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       normalizeCompactToolLabel(heading).toLowerCase()
       ? null
       : rawPreview;
+  const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
   const canExpand = hasExpandableWorkEntryDetails(workEntry, workspaceRoot);
@@ -2046,7 +2047,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         role: "button" as const,
         tabIndex: 0 as const,
         "aria-expanded": expanded,
-        "aria-label": expanded ? `Collapse ${heading}` : `Expand ${heading}`,
+        "aria-label": expanded ? `Collapse ${displayText}` : `Expand ${displayText}`,
         onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {

@@ -97,7 +97,6 @@ export function useProviderWorkspaceSkills(
     [target.cwd, target.enabled, target.environmentId, target.instanceId],
   );
   const key = targetKey(stableTarget);
-  const previousWorkspaceSkillsRef = useRef<ProviderWorkspaceSkillsSnapshot | null>(null);
   const query = useEnvironmentQuery(
     key === null ||
       stableTarget.environmentId === null ||
@@ -113,6 +112,14 @@ export function useProviderWorkspaceSkills(
         }),
   );
 
+  const previousFallbackSkillsRef = useRef(target.fallbackSkills);
+  useEffect(() => {
+    if (previousFallbackSkillsRef.current === target.fallbackSkills) return;
+    previousFallbackSkillsRef.current = target.fallbackSkills;
+    if (key !== null) query.refresh();
+  }, [key, query, target.fallbackSkills]);
+
+  const previousWorkspaceSkillsRef = useRef<ProviderWorkspaceSkillsSnapshot | null>(null);
   const querySkills = query.data?.skills ?? null;
   useEffect(() => {
     previousWorkspaceSkillsRef.current = resolveNextProviderWorkspaceSkillsSnapshot({

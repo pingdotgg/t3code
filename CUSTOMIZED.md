@@ -13,9 +13,9 @@ Concrete conflict notes from this merge:
 
 ## Latest Worktree Port
 
-Generated from local `main` at `d86cd6e9b` after inspecting active worktrees `fix/codex-skills`, `split/file-command-activity-boxes`, `split/subagent-threading-work`, `split/terminal-backed-project-actions`, `fix/thread-detail-subscription-race`, `split/version-control-panel-work`, and `split/vscode-extension-work`.
+Generated from local `main` at `3cbf5a53d` after inspecting active worktrees `fix/codex-skills`, `split/file-command-activity-boxes`, `split/subagent-threading-work`, `split/terminal-backed-project-actions`, `fix/thread-detail-subscription-race`, `split/version-control-panel-work`, and `split/vscode-extension-work`.
 
-The port retained only branch-local fixes that were absent from `main`: bounded workspace Codex skill discovery and cache hardening, inline raw-command rendering for expanded command rows, and prompt-readiness waits before terminal-backed project actions write commands. The subagent-threading, thread-detail subscription, Version Control panel, and VS Code extension worktrees were already represented or superseded on `main`; their newer upstream commits should still arrive through the normal upstream update flow, not by replaying split-worktree branches wholesale.
+The port retained only targeted branch-local fixes that were absent from `main`: refreshing workspace-scoped provider-skill queries when fallback provider skills change for the same workspace key, including command/file row preview text in expanded-row ARIA labels, preserving subagent `parentRelation` on fresh client-runtime `thread.created` detail initialization, modeling read-only Version Control panel RPCs as query atoms while keeping mutating operations as commands, suppressing stale `Refreshing repository state...` text when only the live VCS status subscription is pending, and refreshing the related `SOURCE_CONTROL.md`, `SUBAGENTS.md`, and VS Code implementation notes. The terminal-backed project action worktree and thread-detail subscription race worktree had no additional code to port; their useful behavior was already represented on `main`. Do not replay split worktrees wholesale: several remaining diffs are stale branch shape or would regress newer `main` behavior.
 
 ## Debug Browser Launch
 

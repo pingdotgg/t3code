@@ -175,6 +175,7 @@ The VS Code webview hides T3 Code controls that duplicate VS Code-native surface
 - Checkout mode indicator: VS Code already shows the active workspace/checkouts.
 - Branch/ref selector: VS Code already owns branch/ref selection through its source-control UI.
 - T3 Code terminal drawer: VS Code already owns terminal surfaces.
+- Version Control right-panel surface: VS Code already owns source-control account and branch-management surfaces.
 - Project management chrome: VS Code already scopes the webview to the active workspace folders.
 
 Each control can be restored individually with extension settings:
@@ -183,12 +184,13 @@ Each control can be restored individually with extension settings:
 - `t3code.ui.showCheckoutModeIndicator`
 - `t3code.ui.showBranchSelector`
 - `t3code.ui.enableTerminal`
+- `t3code.ui.enableSourceControlPanel`
 
 The VS Code webview can also customize chat width with:
 
 - `t3code.ui.threadConversationMaxWidth`
 
-The first four settings default to `false`; `t3code.ui.threadConversationMaxWidth` defaults to an empty value, which applies no maximum width to the React app's conversation and prompt input surfaces. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view. When `t3code.ui.enableTerminal` is `false`, the embedded T3 terminal drawer is disabled, terminal keybindings are ignored, terminal-backed project actions are hidden, and any open terminal drawer is closed.
+The first five settings default to `false`; `t3code.ui.threadConversationMaxWidth` defaults to an empty value, which applies no maximum width to the React app's conversation and prompt input surfaces. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view. When `t3code.ui.enableTerminal` is `false`, the embedded T3 terminal drawer is disabled, terminal keybindings are ignored, terminal-backed project actions are hidden, and any open terminal drawer is closed. When `t3code.ui.enableSourceControlPanel` is `false`, the Version Control right-panel surface is hidden inside VS Code webviews.
 
 Project management chrome is not configurable in the VS Code extension. The extension sends the full VS Code workspace folder list to the desktop backend through `POST /api/vscode/workspace-bootstrap`, and the backend ensures a T3 project/thread bootstrap for those folders. The backend validates `activeWorkspaceFolderKey` against the submitted folder keys and falls back to the first folder when the active key is missing or stale. For each bootstrapped project it reuses the latest active thread, creating a startup thread only when no active thread exists. The React app treats the VS Code surface as a workspace-scoped view: it filters the sidebar to the bootstrapped workspace projects, hides the add-project button, hides project sorting/grouping controls, omits project rows/labels, and renders the visible workspace threads directly. This avoids showing unrelated desktop-app projects inside an editor-scoped surface while still supporting multi-root workspaces.
 
@@ -338,6 +340,7 @@ Implemented so far:
   - `t3code.ui.showCheckoutModeIndicator`
   - `t3code.ui.showBranchSelector`
   - `t3code.ui.enableTerminal`
+  - `t3code.ui.enableSourceControlPanel`
 - Added extension setting for customizing the thread conversation timeline and prompt input width:
   - `t3code.ui.threadConversationMaxWidth`
 - Added extension setting for restoring the default T3 Code theme instead of matching VS Code:
@@ -735,6 +738,7 @@ Implemented:
   - `t3code.ui.showCheckoutModeIndicator`
   - `t3code.ui.showBranchSelector`
   - `t3code.ui.enableTerminal`
+  - `t3code.ui.enableSourceControlPanel`
 - Added `T3HostDisplayPreferences` to the shared host bridge contract.
 - Injected the current VS Code setting values into each rendered webview.
 - Broadcast setting changes to open T3 Code webviews and subscribed to them from React.

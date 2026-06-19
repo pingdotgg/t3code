@@ -33,6 +33,21 @@ describe("resolveSourceControlPanelPresentationState", () => {
     });
   });
 
+  it("does not show a refresh message only because the live status subscription is pending", () => {
+    expect(
+      resolveSourceControlPanelPresentationState({
+        snapshot: {} as never,
+        loading: false,
+        error: null,
+        statusPending: true,
+        statusError: null,
+      }),
+    ).toEqual({
+      status: "ready",
+      syncMessage: null,
+    });
+  });
+
   it("reports live status sync failures without discarding cached panel data", () => {
     expect(
       resolveSourceControlPanelPresentationState({

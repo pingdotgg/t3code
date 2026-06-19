@@ -48,7 +48,7 @@ The repository summary shows the current ref, upstream status, changed-file coun
 
 ## Live Updates
 
-The panel refreshes from the VCS status stream, explicit panel operations, window focus, and document visibility changes. `VcsStatusBroadcaster` also maintains ref-counted filesystem watchers per cwd while a repository is subscribed. File events are debounced, checked against Git ignore rules when possible, and only publish a new status when the working-tree fingerprint actually changes.
+The panel refreshes from the VCS status stream, explicit panel operations, window focus, and document visibility changes. `VcsStatusBroadcaster` also maintains ref-counted filesystem watchers per cwd while a repository is subscribed. Internal `.git/` events are ignored before any refresh decision, file events are debounced, remaining paths are checked against Git ignore rules when possible, and only publish a new status when the working-tree fingerprint actually changes.
 
 This keeps externally-created changes visible without requiring a window blur/refocus cycle, while avoiding repeated no-op refreshes for gitignored files or unchanged status.
 
@@ -71,7 +71,7 @@ The server also checks open change requests for every local branch across all co
 
 Client-side Actionable/Remotes expansion, row selection, and visible-row enrichment state lives in `apps/web/src/state/sourceControlPanel.ts`. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
 
-The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every few minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh.
+The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every five minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh while keeping idle network and Git churn conservative.
 
 Items are sorted by operational urgency, then recency. An unclean working tree is always first. Branch urgency is based on conflicts/diverged, behind, unpushed, dirty, and stale states. Branch and commit rows include succinct relative dates such as `5 minutes ago`, `yesterday`, `4 days ago`, and `last week`.
 
@@ -206,7 +206,7 @@ The panel keeps version-control actions server-authoritative across browser, des
 
 ## Validation
 
-The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including gitignored-file suppression. Rename coverage includes committing an unstaged `R` row and undoing that commit, verifying that the panel returns to a single `R` row rather than separate `A` and `D` rows.
+The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including internal `.git/` event filtering and gitignored-file suppression. Rename coverage includes committing an unstaged `R` row and undoing that commit, verifying that the panel returns to a single `R` row rather than separate `A` and `D` rows.
 
 Before considering source-control changes complete, run:
 

@@ -320,7 +320,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Ran command");
     expect(markup).toContain("vp test");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Ran command"');
+    expect(markup).toContain('aria-label="Expand Ran command - vp test"');
   });
 
   it("renders dynamic tool command metadata as expandable command rows", async () => {
@@ -352,7 +352,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Dynamic tool");
     expect(markup).toContain("vp test");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Dynamic tool"');
+    expect(markup).toContain('aria-label="Expand Dynamic tool - vp test"');
   });
 
   it("renders MCP tool command metadata as expandable command rows", async () => {
@@ -383,7 +383,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("MCP tool");
     expect(markup).toContain("rg TODO");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand MCP tool"');
+    expect(markup).toContain('aria-label="Expand MCP tool - rg TODO"');
   });
 
   it("does not render typed non-command stdout as command details", async () => {
@@ -443,7 +443,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Changed files");
     expect(markup).toContain("apps/web/src/session-logic.ts");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Changed files"');
+    expect(markup).toContain('aria-label="Expand Changed files - apps/web/src/session-logic.ts"');
   });
 
   it("renders dynamic tool patch metadata as expandable file-change rows", async () => {
@@ -535,7 +535,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Ran command");
     expect(markup).toContain("apps/web/src/session-logic.ts");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Ran command"');
+    expect(markup).toContain('aria-label="Expand Ran command - apps/web/src/session-logic.ts"');
   });
 
   it("renders mixed dynamic tool command and patch metadata", async () => {
@@ -568,7 +568,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("apply_patch");
     expect(markup).toContain("apps/web/src/session-logic.ts");
-    expect(markup).toContain('aria-label="Expand Dynamic edit tool"');
+    expect(markup).toContain('aria-label="Expand Dynamic edit tool - apply_patch"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {
@@ -642,7 +642,9 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Done");
     expect(markup).not.toContain("Running");
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Subagent"');
+    expect(markup).toContain(
+      'aria-label="Expand Subagent - Create one original haiku in English. Return only the haiku text."',
+    );
   });
 
   it("renders a deduped resumed subagent block as working when the parent turn matches", async () => {
