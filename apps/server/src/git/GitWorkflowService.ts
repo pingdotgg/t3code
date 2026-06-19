@@ -61,6 +61,18 @@ export interface GitWorkflowServiceShape {
   readonly createWorktree: (
     input: VcsCreateWorktreeInput,
   ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+  readonly fetchRemote: (input: {
+    readonly cwd: string;
+    readonly remoteName: string;
+  }) => Effect.Effect<void, GitCommandError>;
+  readonly resolveRemoteTrackingCommit: (input: {
+    readonly cwd: string;
+    readonly refName: string;
+    readonly fallbackRemoteName: string;
+  }) => Effect.Effect<
+    { readonly commitSha: string; readonly remoteRefName: string },
+    GitCommandError
+  >;
   readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
   readonly createRef: (
     input: VcsCreateRefInput,
@@ -294,6 +306,14 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
         Effect.andThen(git.createWorktree(input)),
+      ),
+    fetchRemote: (input) =>
+      ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
+        Effect.andThen(git.fetchRemote(input)),
+      ),
+    resolveRemoteTrackingCommit: (input) =>
+      ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
+        Effect.andThen(git.resolveRemoteTrackingCommit(input)),
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(

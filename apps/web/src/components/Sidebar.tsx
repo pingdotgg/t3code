@@ -1875,6 +1875,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 branch: currentActiveDraftThread.branch,
                 worktreePath: currentActiveDraftThread.worktreePath,
                 envMode: currentActiveDraftThread.envMode,
+                startFromOrigin: currentActiveDraftThread.startFromOrigin,
               }
             : null,
       });
@@ -1889,6 +1890,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               ? { worktreePath: seedContext.worktreePath }
               : {}),
             envMode: seedContext.envMode,
+            ...(seedContext.startFromOrigin !== undefined
+              ? { startFromOrigin: seedContext.startFromOrigin }
+              : {}),
           }),
         );
         if (result._tag === "Failure") {

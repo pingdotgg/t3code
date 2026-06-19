@@ -161,6 +161,22 @@ export interface GitFetchRemoteTrackingBranchInput {
   remoteBranch: string;
 }
 
+export interface GitFetchRemoteInput {
+  cwd: string;
+  remoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitInput {
+  cwd: string;
+  refName: string;
+  fallbackRemoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitResult {
+  commitSha: string;
+  remoteRefName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -217,6 +233,10 @@ export interface GitVcsDriverShape {
   ) => Effect.Effect<void, GitCommandError>;
   readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
   readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+  readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
+  readonly resolveRemoteTrackingCommit: (
+    input: GitResolveRemoteTrackingCommitInput,
+  ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
   readonly fetchRemoteBranch: (
     input: GitFetchRemoteBranchInput,
   ) => Effect.Effect<void, GitCommandError>;
