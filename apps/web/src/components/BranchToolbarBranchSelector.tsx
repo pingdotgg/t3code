@@ -20,6 +20,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThread } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -37,9 +38,13 @@ import {
   resolveEffectiveEnvMode,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
+import {
+  ChangeRequestStatusIcon,
+  prStatusIndicator,
+  resolveThreadPr,
+} from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   Combobox,
   ComboboxEmpty,
@@ -51,6 +56,7 @@ import {
   ComboboxTrigger,
 } from "./ui/combobox";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
@@ -525,6 +531,16 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
   });
 
+  // PR pill shown next to the branch selector when the active branch has one.
+  const branchPr = resolveThreadPr(resolvedActiveBranch, branchStatusQuery.data ?? null);
+  const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
+  // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
+  // state-description tooltip.
+  const branchPrTooltip = branchPr
+    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
+    : "";
+  const openPrLink = useOpenPrLink();
+
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
@@ -621,15 +637,38 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       value={resolvedActiveBranch}
     >
-      <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className={cn("min-w-0 text-muted-foreground/70 hover:text-foreground/80", className)}
-        disabled={isInitialBranchesLoadPending || isBranchActionPending}
-      >
-        <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-        <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
-      </ComboboxTrigger>
+      <div className={cn("flex min-w-0 items-center gap-1", className)}>
+        {branchPr && branchPrStatus ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={branchPrTooltip}
+                  onClick={(event) => openPrLink(event, branchPrStatus.url)}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium tabular-nums transition-colors hover:bg-muted/60",
+                    branchPrStatus.colorClass,
+                  )}
+                />
+              }
+            >
+              <ChangeRequestStatusIcon className="size-3" />
+              <span>#{branchPr.number}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size="xs" />}
+          className="min-w-0 text-muted-foreground/70 hover:text-foreground/80"
+          disabled={isInitialBranchesLoadPending || isBranchActionPending}
+        >
+          <GitBranchIcon className="size-3 shrink-0 opacity-70" />
+          <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+        </ComboboxTrigger>
+      </div>
       <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
