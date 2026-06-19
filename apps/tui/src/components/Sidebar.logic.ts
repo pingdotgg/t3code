@@ -78,8 +78,10 @@ export function buildRows(
     else byProject.set(thread.projectId, [thread]);
   }
 
+  // All catalogue projects (so the list matches the "N project(s)" count and an
+  // empty project is still visible/selectable), then any orphaned project ids.
   const orderedIds: string[] = [
-    ...shell.projects.map((project) => project.id as string).filter((id) => byProject.has(id)),
+    ...shell.projects.map((project) => project.id as string),
     ...[...byProject.keys()].filter((id) => !projectTitles.has(id)),
   ];
 

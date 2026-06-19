@@ -5,9 +5,9 @@ import { useKeyboard } from "@opentui/react";
 // useKeyboard wraps the handler in an effect-event, so reading the latest
 // `actions` each press is safe.
 //
-// The terminal drawer coexists with the prompt. Two keys control it and are
-// ALWAYS intercepted (never forwarded to the shell), so they behave the same
-// whichever pane has focus:
+// The terminal drawer coexists with the prompt. Two keys control it from both the
+// terminal and the prompt (intercepted in those panes, never forwarded to the
+// shell; the new-thread modal handles only its own keys):
 //   ^E  show / hide the terminal drawer (opening focuses it)
 //   ^P  toggle focus between the prompt and the terminal
 //   ^↑ / ^↓  grow / shrink the drawer

@@ -61,6 +61,9 @@ export function ChatView({
   const scrollRef = React.useRef<ScrollBoxRenderable | null>(null);
 
   const projects = state.shell?.projects ?? [];
+  // projectIndex is held across shell updates; clamp it so a shrinking project
+  // list can't leave it pointing past the end (projects[projectIndex] = undefined).
+  const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
   const rows = React.useMemo(
     () => buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId),
@@ -132,22 +135,24 @@ export function ChatView({
   };
 
   const submitNewThread = () => {
-    const project = projects[projectIndex];
+    const project = projects[activeProjectIndex];
     const message = draft.trim();
-    if (project && message.length > 0) {
-      if (!project.defaultModelSelection) {
-        store.setStatus("Project has no default model — set one in the web UI first.");
-      } else {
-        void client
-          .createThread({
-            projectId: project.id,
-            title: message.slice(0, 60),
-            modelSelection: project.defaultModelSelection,
-            firstMessage: message,
-          })
-          .catch((error) => store.setStatus(`create failed: ${String(error)}`));
-        store.setStatus("Creating thread…");
-      }
+    // Keep the dialog open (and the typed message) when the project can't accept
+    // it yet, so the user doesn't lose what they wrote.
+    if (project && message.length > 0 && !project.defaultModelSelection) {
+      store.setStatus("Project has no default model — set one in the web UI first.");
+      return;
+    }
+    if (project && message.length > 0 && project.defaultModelSelection) {
+      void client
+        .createThread({
+          projectId: project.id,
+          title: message.slice(0, 60),
+          modelSelection: project.defaultModelSelection,
+          firstMessage: message,
+        })
+        .catch((error) => store.setStatus(`create failed: ${String(error)}`));
+      store.setStatus("Creating thread…");
     }
     setDraft("");
     setFocus("compose");
@@ -298,7 +303,7 @@ export function ChatView({
         reply={reply}
         draft={draft}
         placeholder={placeholder}
-        projectName={projects[projectIndex]?.title ?? "(none)"}
+        projectName={projects[activeProjectIndex]?.title ?? "(none)"}
         inputFocused={!terminalFocused}
         onReplyInput={setReply}
         onDraftInput={setDraft}

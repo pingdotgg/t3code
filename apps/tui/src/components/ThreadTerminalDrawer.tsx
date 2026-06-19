@@ -70,6 +70,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   const safeRows = Math.max(2, rows);
   const termRef = React.useRef<XTerm | null>(null);
   const scheduled = React.useRef(false);
+  const renderTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, bump] = React.useReducer((n: number) => n + 1, 0);
 
   if (!termRef.current) {
@@ -84,6 +85,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
 
   React.useEffect(
     () => () => {
+      if (renderTimer.current !== null) clearTimeout(renderTimer.current);
       termRef.current?.dispose();
       termRef.current = null;
     },
@@ -99,7 +101,8 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
     const scheduleRender = () => {
       if (scheduled.current) return;
       scheduled.current = true;
-      setTimeout(() => {
+      renderTimer.current = setTimeout(() => {
+        renderTimer.current = null;
         scheduled.current = false;
         bump();
       }, 16);

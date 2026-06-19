@@ -72,8 +72,7 @@ export function createStore(client: TuiClient): Store {
     });
   };
 
-  const selectionFromRow = (row: Row): Selection =>
-    row.kind === "thread" ? { kind: "thread", id: row.id } : { kind: row.kind, id: row.id };
+  const selectionFromRow = (row: Row): Selection => ({ kind: row.kind, id: row.id });
 
   const applySelection = (selection: Selection | null) => {
     const threadId = selection?.kind === "thread" ? selection.id : null;
