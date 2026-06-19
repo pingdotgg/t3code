@@ -309,6 +309,7 @@ function withoutProviderInstanceFavorites(
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
   provider: definition.value,
+  hasDefaultInstance: definition.hasDefaultInstance !== false,
 }));
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
@@ -1838,9 +1839,9 @@ export function ProviderSettingsPanel() {
   }
 
   const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
-      String(defaultInstanceIdForDriver(providerSettings.provider)),
-    ),
+    visibleProviderSettings
+      .filter((providerSettings) => providerSettings.hasDefaultInstance)
+      .map((providerSettings) => String(defaultInstanceIdForDriver(providerSettings.provider))),
   );
 
   const rows: InstanceRow[] = [];
@@ -1849,6 +1850,12 @@ export function ProviderSettingsPanel() {
   );
 
   for (const providerSettings of visibleProviderSettings) {
+    if (!providerSettings.hasDefaultInstance) {
+      for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
+        rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+      }
+      continue;
+    }
     type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
     const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
     const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<

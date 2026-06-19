@@ -1,11 +1,15 @@
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
 import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts";
 import { assertCursorMessageSteeringOutput } from "./message_steering/cursor_output.ts";
+import { assertGrokMessageSteeringOutput } from "./message_steering/grok_output.ts";
 import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
 import { multiTurnInput } from "./multi_turn/input.ts";
+import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
+import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
 import { assertPlanQuestionsOutput } from "./plan_questions/codex_output.ts";
+import { assertOpenCodePlanQuestionsOutput } from "./plan_questions/opencode_output.ts";
 import { planQuestionsInput } from "./plan_questions/input.ts";
 import { assertProposedPlanOutput } from "./proposed_plan/codex_output.ts";
 import { assertProposedPlanCursorOutput } from "./proposed_plan/cursor_output.ts";
@@ -26,6 +30,7 @@ import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
 import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
+import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
 import { todoListInput } from "./todo_list/input.ts";
 import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
 import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor_output.ts";
@@ -52,9 +57,12 @@ import { assertClaudeWebSearchOutput } from "./web_search/claude_output.ts";
 import { assertWebSearchOutput } from "./web_search/codex_output.ts";
 import { webSearchInput } from "./web_search/input.ts";
 import {
+  ACP_REGISTRY_MODEL_SELECTION,
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
+  GROK_MODEL_SELECTION,
+  OPENCODE_MODEL_SELECTION,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
   RESTRICTED_GRANULAR_POLICY,
@@ -63,6 +71,26 @@ import {
 } from "./shared.ts";
 
 export const ORCHESTRATOR_REPLAY_FIXTURES = [
+  {
+    name: "acp_elicitation",
+    buildInput: planQuestionsInput,
+    providers: [
+      {
+        provider: "grok",
+        transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertPlanQuestionsOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./acp_elicitation/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertPlanQuestionsOutput,
+      },
+    ],
+  },
   {
     name: "simple",
     buildInput: simpleInput,
@@ -85,6 +113,24 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
+        provider: "opencode",
+        transcriptFile: new URL("./simple/opencode_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
     ],
   },
   {
@@ -102,6 +148,20 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         provider: "cursor",
         transcriptFile: new URL("./tool_call_read_only/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertToolCallReadOnlyCursorOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./tool_call_read_only/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertToolCallReadOnlyCursorOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./tool_call_read_only/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyCursorOutput,
       },
@@ -130,6 +190,26 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestClaudeOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestOutput,
       },
     ],
   },
@@ -224,6 +304,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     ],
   },
   {
+    name: "opencode_subagent",
+    buildInput: openCodeSubagentInput,
+    providers: [
+      {
+        provider: "opencode",
+        transcriptFile: new URL("./opencode_subagent/opencode_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeSubagentOutput,
+      },
+    ],
+  },
+  {
     name: "multi_turn",
     buildInput: multiTurnInput,
     providers: [
@@ -243,6 +335,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         provider: "cursor",
         transcriptFile: new URL("./multi_turn/cursor_transcript.ndjson", import.meta.url),
         modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
     ],
@@ -281,6 +385,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
     ],
   },
   {
@@ -300,6 +416,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertTodoListCursorOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./todo_list/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertTodoListGrokOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./todo_list/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertTodoListGrokOutput,
       },
     ],
   },
@@ -331,6 +459,20 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertPlanQuestionsOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./plan_questions/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertPlanQuestionsOutput,
+      },
+      {
+        provider: "opencode",
+        transcriptFile: new URL("./plan_questions/opencode_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertOpenCodePlanQuestionsOutput,
       },
     ],
   },
@@ -376,6 +518,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CURSOR_MODEL_SELECTION,
         assertOutput: assertCursorMessageSteeringOutput,
       },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
     ],
   },
   {
@@ -395,6 +549,27 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CLAUDE_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptClaudeOutput,
+      },
+      {
+        provider: "grok",
+        transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
+        provider: "acpRegistry",
+        transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
+        provider: "opencode",
+        transcriptFile: new URL("./turn_interrupt/opencode_transcript.ndjson", import.meta.url),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
       },
     ],
   },

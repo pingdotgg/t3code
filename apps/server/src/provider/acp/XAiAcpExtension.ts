@@ -88,6 +88,17 @@ export function extractXAiAskUserQuestions(
   }));
 }
 
+export function extractXAiAskUserQuestionIdentity(params: XAiAskUserQuestionRequest): {
+  readonly sessionId: string;
+  readonly toolCallId: string;
+} {
+  const unwrapped = unwrapAskUserQuestionParams(params);
+  return {
+    sessionId: unwrapped.sessionId,
+    toolCallId: unwrapped.toolCallId,
+  };
+}
+
 interface XAiAskUserQuestionAnnotation {
   readonly preview?: string;
   readonly notes?: string;

@@ -111,6 +111,7 @@ export type AcpParsedSessionEvent =
     };
 
 type AcpSessionSetupResponse =
+  | EffectAcpSchema.ForkSessionResponse
   | EffectAcpSchema.LoadSessionResponse
   | EffectAcpSchema.NewSessionResponse
   | EffectAcpSchema.ResumeSessionResponse;
