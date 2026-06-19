@@ -1589,6 +1589,8 @@ function buildAssistantArtifacts(input: {
       completedAt: input.completedAt,
     },
     message: {
+      createdBy: "agent",
+      creationSource: "provider",
       id: messageId,
       threadId: input.turnInput.threadId,
       runId: input.turnInput.runId,
@@ -2016,6 +2018,8 @@ export function makeClaudeAdapterV2(
                 ordinal: input.context.subagentsByTaskId.size,
               }),
               now,
+              createdBy: "agent",
+              creationSource: "provider",
             });
             yield* emitProviderEvent({
               type: "app_thread.created",

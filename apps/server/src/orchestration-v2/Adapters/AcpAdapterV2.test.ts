@@ -81,6 +81,8 @@ function makeTurnInput(input: {
   const modelSelection = { instanceId: input.instanceId, model: "default" } as const;
   return {
     appThread: {
+      createdBy: "user",
+      creationSource: "web",
       id: input.threadId,
       projectId: ProjectId.make(`project:${input.threadId}`),
       title: "ACP adapter test",
@@ -110,6 +112,8 @@ function makeTurnInput(input: {
     rootNodeId: NodeId.make(`node:${suffix}`),
     providerThread: input.providerThread,
     message: {
+      createdBy: "user",
+      creationSource: "web",
       messageId: MessageId.make(`message:${suffix}`),
       text: "test prompt",
       attachments: [],

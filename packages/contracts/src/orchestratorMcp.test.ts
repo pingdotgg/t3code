@@ -1,15 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadInterruptInput,
+  OrchestratorMcpThreadListInput,
+  OrchestratorMcpThreadReadInput,
+  OrchestratorMcpThreadSendInput,
+  OrchestratorMcpThreadStartInput,
+  OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
 
 const decodeCreateThreadsInput = Schema.decodeUnknownSync(OrchestratorMcpCreateThreadsInput);
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
+const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
+const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
+const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
+const decodeThreadStartInput = Schema.decodeUnknownSync(OrchestratorMcpThreadStartInput);
+const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
 
 describe("orchestrator MCP contracts", () => {
   it("decodes cross-provider delegated task requests and durable results", () => {
@@ -59,5 +71,49 @@ describe("orchestrator MCP contracts", () => {
     expect(request.threads).toHaveLength(2);
     expect(request.threads[0]?.prompt).toBeUndefined();
     expect(request.threads[1]?.target?.driverKind).toBe("claudeAgent");
+  });
+
+  it("decodes project-scoped thread orchestration requests", () => {
+    expect(
+      decodeThreadStartInput({
+        prompt: "Run the first loop iteration.",
+        clientRequestId: "start-loop-1",
+      }).prompt,
+    ).toBe("Run the first loop iteration.");
+    expect(
+      decodeThreadListInput({
+        statuses: ["running", "completed"],
+        includeSubagents: false,
+        limit: 25,
+      }).statuses,
+    ).toEqual(["running", "completed"]);
+    expect(
+      decodeThreadReadInput({
+        threadId: "thread-loop-1",
+        view: "activity",
+        afterPosition: 10,
+      }).afterPosition,
+    ).toBe(10);
+    expect(
+      decodeThreadSendInput({
+        threadId: "thread-loop-1",
+        message: "Continue with the next iteration.",
+        mode: "steer",
+        clientRequestId: "send-loop-2",
+      }).mode,
+    ).toBe("steer");
+    expect(
+      decodeThreadWaitInput({
+        threadId: "thread-loop-1",
+        runId: "run-loop-2",
+        timeoutMs: 5_000,
+      }).runId,
+    ).toBe("run-loop-2");
+    expect(
+      decodeThreadInterruptInput({
+        threadId: "thread-loop-1",
+        reason: "Loop converged.",
+      }).reason,
+    ).toBe("Loop converged.");
   });
 });

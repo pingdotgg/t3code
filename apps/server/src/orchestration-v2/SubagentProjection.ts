@@ -3,7 +3,9 @@ import type {
   ModelSelection,
   NodeId,
   OrchestrationV2AppThread,
+  OrchestrationV2Actor,
   OrchestrationV2ConversationMessage,
+  OrchestrationV2CreationSource,
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
@@ -44,9 +46,13 @@ export function makeSubagentChildThread(input: {
   readonly modelSelection: ModelSelection;
   readonly title: string;
   readonly now: DateTime.Utc;
+  readonly createdBy: OrchestrationV2Actor;
+  readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
   return {
     ...input.parentThread,
+    createdBy: input.createdBy,
+    creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
     defaultProvider: input.providerInstanceId,
@@ -85,6 +91,8 @@ export function makeSubagentConversationArtifacts(input: {
   readonly turnItem: OrchestrationV2TurnItem;
 } {
   const message: OrchestrationV2ConversationMessage = {
+    createdBy: "agent",
+    creationSource: "provider",
     id: input.messageId,
     threadId: input.threadId,
     runId: null,
@@ -118,6 +126,8 @@ export function makeSubagentConversationArtifacts(input: {
     input.role === "user"
       ? {
           ...base,
+          createdBy: "agent",
+          creationSource: "provider",
           type: "user_message",
           inputIntent: "turn_start",
           attachments: [],

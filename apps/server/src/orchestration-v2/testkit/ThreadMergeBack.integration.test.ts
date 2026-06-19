@@ -184,6 +184,8 @@ function makeCreateCommand(input: {
 }): OrchestrationV2Command {
   return {
     type: "thread.create",
+    createdBy: "user",
+    creationSource: "web",
     commandId: input.commandId,
     threadId: input.threadId,
     projectId: input.projectId,
@@ -224,6 +226,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             }),
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: `thread-merge-back-${variant.provider}`,
                 commandName: "source",
@@ -237,6 +241,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make(`command-merge-fork-${variant.provider}`),
               sourceThreadId,
               targetThreadId: forkThreadId,
@@ -245,6 +251,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: `thread-merge-back-${variant.provider}`,
                 commandName: "fork-delta",
@@ -258,6 +266,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.merge_back",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make(`command-merge-back-${variant.provider}`),
               sourceThreadId: forkThreadId,
               targetThreadId: sourceThreadId,
@@ -265,6 +275,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: `thread-merge-back-${variant.provider}`,
                 commandName: "consume-merge",
@@ -278,6 +290,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: `thread-merge-back-${variant.provider}`,
                 commandName: "recall",
@@ -404,6 +418,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             }),
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("source"),
               threadId: sourceThreadId,
               messageId: MessageId.make(`message-${fixtureName}-source`),
@@ -414,6 +430,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("first-fork"),
               sourceThreadId,
               targetThreadId: firstForkThreadId,
@@ -422,6 +440,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("first-fork-delta"),
               threadId: firstForkThreadId,
               messageId: MessageId.make(`message-${fixtureName}-first-fork`),
@@ -432,6 +452,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("second-fork"),
               sourceThreadId,
               targetThreadId: secondForkThreadId,
@@ -440,6 +462,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("second-fork-delta"),
               threadId: secondForkThreadId,
               messageId: MessageId.make(`message-${fixtureName}-second-fork`),
@@ -450,6 +474,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.merge_back",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("merge-first"),
               sourceThreadId: firstForkThreadId,
               targetThreadId: sourceThreadId,
@@ -457,6 +483,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("consume-first"),
               threadId: sourceThreadId,
               messageId: MessageId.make(`message-${fixtureName}-consume-first`),
@@ -467,6 +495,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "thread.merge_back",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("merge-second"),
               sourceThreadId: secondForkThreadId,
               targetThreadId: sourceThreadId,
@@ -474,6 +504,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("consume-second"),
               threadId: sourceThreadId,
               messageId: MessageId.make(`message-${fixtureName}-consume-second`),
@@ -484,6 +516,8 @@ describe("orchestration V2 merge-back provider replay", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* commandId("recall"),
               threadId: sourceThreadId,
               messageId: MessageId.make(`message-${fixtureName}-recall`),

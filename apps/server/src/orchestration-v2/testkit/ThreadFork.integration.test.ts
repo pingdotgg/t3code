@@ -420,6 +420,8 @@ describe("orchestration V2 thread fork", () => {
           const commands = [
             {
               type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "thread-create-source",
@@ -435,6 +437,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "source-message",
@@ -448,6 +452,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command-thread-fork-native"),
               sourceThreadId,
               targetThreadId,
@@ -456,6 +462,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command-thread-fork-native"),
               sourceThreadId,
               targetThreadId,
@@ -464,6 +472,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "target-message",
@@ -590,6 +600,8 @@ describe("orchestration V2 thread fork", () => {
           const commands = [
             {
               type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "thread-create-source",
@@ -605,6 +617,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "source-message",
@@ -618,6 +632,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command-thread-fork-native"),
               sourceThreadId,
               targetThreadId,
@@ -626,6 +642,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native",
                 commandName: "target-message",
@@ -723,6 +741,8 @@ describe("orchestration V2 thread fork", () => {
           const commands = [
             {
               type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native-prior-turn",
                 commandName: "thread-create-source",
@@ -738,6 +758,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native-prior-turn",
                 commandName: "source-message-alpha",
@@ -751,6 +773,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native-prior-turn",
                 commandName: "source-message-beta",
@@ -764,6 +788,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command-thread-fork-native-prior-turn"),
               sourceThreadId,
               targetThreadId,
@@ -772,6 +798,8 @@ describe("orchestration V2 thread fork", () => {
             },
             {
               type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
               commandId: yield* ids.allocate.command({
                 fixtureName: "thread-fork-native-prior-turn",
                 commandName: "target-message-repeat",
@@ -894,6 +922,8 @@ describe("orchestration V2 thread fork", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "thread-create-source",
@@ -909,6 +939,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "source-message-alpha",
@@ -922,6 +954,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "source-message-beta",
@@ -935,6 +969,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-fork-native-prior-turn"),
             sourceThreadId,
             targetThreadId,
@@ -943,6 +979,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "target-message-repeat",
@@ -1046,6 +1084,8 @@ describe("orchestration V2 thread fork", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn-source-rollback",
               commandName: "thread-create-source",
@@ -1061,6 +1101,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn-source-rollback",
               commandName: "source-message-alpha",
@@ -1076,6 +1118,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn-source-rollback",
               commandName: "source-message-beta",
@@ -1089,6 +1133,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-fork-native-prior-turn-source-rollback"),
             sourceThreadId,
             targetThreadId,
@@ -1097,6 +1143,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn-source-rollback",
               commandName: "target-message-repeat",
@@ -1233,6 +1281,8 @@ describe("orchestration V2 thread fork", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-fork-local-rollback",
               commandName: "thread-create-source",
@@ -1248,6 +1298,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-fork-local-rollback",
               commandName: "source-message",
@@ -1261,6 +1313,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-fork-native-fork-local-rollback"),
             sourceThreadId,
             targetThreadId,
@@ -1269,6 +1323,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-fork-local-rollback",
               commandName: "fork-first-message",
@@ -1282,6 +1338,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-fork-local-rollback",
               commandName: "fork-second-message",
@@ -1305,6 +1363,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-fork-local-rollback",
               commandName: "fork-repeat-after-rollback",
@@ -1406,6 +1466,8 @@ describe("orchestration V2 thread fork", () => {
         const commands = [
           {
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "thread-create-source",
@@ -1421,6 +1483,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "source-message-alpha",
@@ -1434,6 +1498,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "source-message-beta",
@@ -1447,6 +1513,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-fork-native-prior-turn"),
             sourceThreadId,
             targetThreadId,
@@ -1455,6 +1523,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "target-message-repeat",
@@ -1468,6 +1538,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.merge_back",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-merge-back-native-prior-turn-stale"),
             sourceThreadId: targetThreadId,
             targetThreadId: sourceThreadId,
@@ -1475,6 +1547,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "thread.merge_back",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command-thread-merge-back-native-prior-turn"),
             sourceThreadId: targetThreadId,
             targetThreadId: sourceThreadId,
@@ -1482,6 +1556,8 @@ describe("orchestration V2 thread fork", () => {
           },
           {
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: yield* ids.allocate.command({
               fixtureName: "thread-fork-native-prior-turn",
               commandName: "source-message-merge-back",

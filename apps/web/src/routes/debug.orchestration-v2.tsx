@@ -1824,6 +1824,8 @@ function OrchestrationV2DebugRoute() {
     const nextThreadId = newThreadId();
     const result = await api.dispatchCommand({
       type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
       commandId: newCommandId(),
       threadId: nextThreadId,
       projectId: newProjectId(),
@@ -1878,6 +1880,8 @@ function OrchestrationV2DebugRoute() {
         const targetRunId = activeTurn?.targetRunId;
         const result = await api.dispatchCommand({
           type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
           commandId: newCommandId(),
           threadId: activeThreadId,
           messageId: newMessageId(),
@@ -2010,6 +2014,8 @@ function OrchestrationV2DebugRoute() {
         const targetThreadId = newThreadId();
         const result = await api.dispatchCommand({
           type: "thread.fork",
+          createdBy: "user",
+          creationSource: "web",
           commandId: newCommandId(),
           sourceThreadId: input.threadId,
           targetThreadId,
@@ -2039,6 +2045,8 @@ function OrchestrationV2DebugRoute() {
     try {
       const result = await api.dispatchCommand({
         type: "thread.merge_back",
+        createdBy: "user",
+        creationSource: "web",
         commandId: newCommandId(),
         sourceThreadId: mergeBackCandidate.sourceThreadId,
         targetThreadId: mergeBackCandidate.targetThreadId,

@@ -2,12 +2,24 @@ import * as Schema from "effect/Schema";
 
 import {
   ContextTransferId,
+  IsoDateTime,
+  MessageId,
   NodeId,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
+  TurnItemId,
 } from "./baseSchemas.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import {
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2RunStatus,
+  OrchestrationV2TurnItemStatus,
+} from "./orchestrationV2.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -127,6 +139,8 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpCreatedThreadStatus,
   title: Schema.String,
+  createdBy: OrchestrationV2Actor,
+  creationSource: OrchestrationV2CreationSource,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
 });
@@ -136,6 +150,187 @@ export const OrchestratorMcpCreateThreadsResult = Schema.Struct({
   threads: Schema.Array(OrchestratorMcpCreatedThread),
 });
 export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThreadsResult.Type;
+
+export const OrchestratorMcpThreadStartInput = Schema.Struct({
+  prompt: OrchestratorMcpPrompt,
+  title: Schema.optional(OrchestratorMcpTitle),
+  target: Schema.optional(OrchestratorMcpTarget),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+});
+export type OrchestratorMcpThreadStartInput = typeof OrchestratorMcpThreadStartInput.Type;
+
+export const OrchestratorMcpThreadStatus = Schema.Union([
+  Schema.Literal("idle"),
+  OrchestrationV2RunStatus,
+]);
+export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
+
+export const OrchestratorMcpThreadListInput = Schema.Struct({
+  statuses: Schema.optional(
+    Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
+  ),
+  titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  includeSubagents: Schema.optional(Schema.Boolean),
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
+});
+export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInput.Type;
+
+export const OrchestratorMcpThreadListItem = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  createdBy: OrchestrationV2Actor,
+  creationSource: OrchestrationV2CreationSource,
+  status: OrchestratorMcpThreadStatus,
+  latestRunId: Schema.NullOr(RunId),
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  parentThreadId: Schema.NullOr(ThreadId),
+  relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  itemCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestratorMcpThreadListItem = typeof OrchestratorMcpThreadListItem.Type;
+
+export const OrchestratorMcpThreadListResult = Schema.Struct({
+  projectId: ProjectId,
+  currentThreadId: ThreadId,
+  threads: Schema.Array(OrchestratorMcpThreadListItem),
+  nextCursor: Schema.NullOr(NonNegativeInt),
+  total: NonNegativeInt,
+});
+export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
+
+export const OrchestratorMcpThreadReadInput = Schema.Struct({
+  threadId: ThreadId,
+  view: Schema.optional(Schema.Literals(["messages", "activity"])),
+  afterPosition: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
+  runLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
+  maxCharsPerItem: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50_000))),
+});
+export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
+
+export const OrchestratorMcpThreadDetail = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  createdBy: OrchestrationV2Actor,
+  creationSource: OrchestrationV2CreationSource,
+  status: OrchestratorMcpThreadStatus,
+  latestRunId: Schema.NullOr(RunId),
+  activeRunId: Schema.NullOr(RunId),
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  parentThreadId: Schema.NullOr(ThreadId),
+  relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  runCount: NonNegativeInt,
+  itemCount: NonNegativeInt,
+  pendingRequestCount: NonNegativeInt,
+  archived: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestratorMcpThreadDetail = typeof OrchestratorMcpThreadDetail.Type;
+
+export const OrchestratorMcpThreadRun = Schema.Struct({
+  runId: RunId,
+  ordinal: PositiveInt,
+  status: OrchestrationV2RunStatus,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;
+
+export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
+  position: NonNegativeInt,
+  visibility: Schema.Literals(["local", "inherited", "synthetic"]),
+  sourceThreadId: ThreadId,
+  itemId: TurnItemId,
+  runId: Schema.NullOr(RunId),
+  messageId: Schema.NullOr(MessageId),
+  createdBy: Schema.NullOr(OrchestrationV2Actor),
+  creationSource: Schema.NullOr(OrchestrationV2CreationSource),
+  type: Schema.String,
+  status: OrchestrationV2TurnItemStatus,
+  title: Schema.NullOr(Schema.String),
+  text: Schema.NullOr(Schema.String),
+  textTruncated: Schema.Boolean,
+  updatedAt: IsoDateTime,
+});
+export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;
+
+export const OrchestratorMcpThreadReadResult = Schema.Struct({
+  thread: OrchestratorMcpThreadDetail,
+  recentRuns: Schema.Array(OrchestratorMcpThreadRun),
+  items: Schema.Array(OrchestratorMcpThreadTimelineItem),
+  nextPosition: Schema.NullOr(NonNegativeInt),
+  hasMore: Schema.Boolean,
+});
+export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
+
+export const OrchestratorMcpThreadSendInput = Schema.Struct({
+  threadId: ThreadId,
+  message: OrchestratorMcpPrompt,
+  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
+
+export const OrchestratorMcpThreadSendResult = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  runId: RunId,
+  status: OrchestrationV2RunStatus,
+  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+});
+export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
+
+export const OrchestratorMcpThreadWaitInput = Schema.Struct({
+  threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  timeoutMs: Schema.optional(Schema.Number),
+});
+export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
+
+export const OrchestratorMcpThreadWaitResult = Schema.Struct({
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  status: OrchestratorMcpThreadStatus,
+  timedOut: Schema.Boolean,
+});
+export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
+
+export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
+  threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadInterruptInput = typeof OrchestratorMcpThreadInterruptInput.Type;
+
+export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  status: Schema.Union([
+    Schema.Literal("interrupt_requested"),
+    Schema.Literal("no_active_run"),
+    Schema.Literals(["completed", "failed", "cancelled", "interrupted", "rolled_back"]),
+  ]),
+});
+export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
 
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
@@ -165,6 +360,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     asyncPolling: Schema.Boolean,
     cancellation: Schema.Boolean,
     batchThreadCreation: Schema.Boolean,
+    threadManagement: Schema.Boolean,
+    incrementalThreadRead: Schema.Boolean,
     maxBatchThreads: Schema.Number,
   }),
 });
@@ -182,6 +379,10 @@ export class OrchestratorMcpFailure extends Schema.TaggedErrorClass<Orchestrator
       "interaction_mode_escalation_denied",
       "task_not_found",
       "task_not_cancellable",
+      "thread_not_found",
+      "run_not_found",
+      "thread_not_sendable",
+      "thread_not_interruptible",
       "invalid_request",
       "orchestration_error",
     ]),
