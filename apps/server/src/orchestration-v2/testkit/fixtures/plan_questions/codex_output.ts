@@ -18,7 +18,7 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-export function assertPlanQuestionsOutput(
+export function assertPlanQuestionsOutputBase(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
@@ -35,7 +35,15 @@ export function assertPlanQuestionsOutput(
   assertTurnItemTypes(projection, ["user_message", "user_input_request", "assistant_message"]);
   assertUserMessagesInclude(projection, [PLAN_QUESTIONS_PROMPT]);
   assertAssistantTextIncludes(projection, "plan questions fixture complete");
+}
 
+export function assertPlanQuestionsOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertPlanQuestionsOutputBase(result, transcript);
+
+  const projection = projectionFor(result, transcript.scenario);
   const requestItem = projection.turnItems.find((item) => item.type === "user_input_request");
   assert.isDefined(requestItem);
   assert.equal(requestItem?.questions[0]?.id, "schema_vs_ui_flexibility");

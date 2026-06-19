@@ -90,9 +90,40 @@ Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
 `mcpServers` agent and send options. The adapter passes the authorization header
 to the SDK but projects only redacted option metadata into protocol diagnostics.
 
+### Grok ACP V2
+
+Grok receives the authenticated HTTP MCP endpoint through the ACP
+`session/new`, `session/load`, and `session/fork` `mcpServers` field. The shared
+ACP adapter owns standard protocol behavior; the Grok flavor adds xAI extension
+requests such as structured user questions.
+
+ACP does not define native subagents or active steering. Grok therefore uses
+orchestrator-owned child threads and implements steering through
+cancel-and-restart. Its current driver also lacks `session/fork`, so app forks
+use portable context transfer. These are orchestrator policies, not
+provider-specific MCP tools.
+
+### ACP Registry V2
+
+The `acpRegistry` driver is the generic flavor of the same shared ACP adapter.
+Each provider instance names an agent from the official ACP Registry. At
+session startup the driver resolves the current platform distribution, uses a
+managed binary cache or the declared `npx`/`uvx` package, and then negotiates
+standard ACP capabilities during `initialize`. A local executable may override
+the managed command without changing the registry-declared arguments or
+environment.
+
+Capabilities such as session loading, session forking, models, modes, and MCP
+transport are enabled only when the selected agent advertises them. Missing
+features degrade through V2 policy: steering uses interrupt-and-restart,
+forking uses portable context when native `session/fork` is unavailable, and
+subagents use orchestrator-owned child threads. Registry agents do not receive
+provider-specific extensions; those remain in flavors such as Grok.
+
 ### Initial Provider Support
 
-The V2 provider adapters are Codex, Claude Agent SDK, and Cursor Agent SDK.
+The V2 provider adapters are Codex, Claude Agent SDK, Cursor Agent SDK, and
+Grok plus generic registry agents over ACP.
 Capability discovery still reports other registered provider instances, but marks them
 unavailable for orchestration when no V2 adapter exists. This keeps provider
 selection model-visible without allowing a request that cannot run.
@@ -299,6 +330,6 @@ Coverage includes:
 - inheritance and per-thread provider overrides; and
 - idempotent retries.
 
-Provider adapter tests separately verify Codex, Claude, and Cursor MCP injection, and
-the provider-session manager test verifies that credentials exist before an
-adapter opens and are revoked when it closes.
+Provider adapter tests separately verify Codex, Claude, Cursor, Grok, and ACP
+Registry behavior and MCP injection. The provider-session manager test verifies
+that credentials exist before an adapter opens and are revoked when it closes.

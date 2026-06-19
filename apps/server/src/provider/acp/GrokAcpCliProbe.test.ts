@@ -1,7 +1,6 @@
 /**
  * Optional integration check against a real `grok agent stdio` install.
- * Enable with: T3_GROK_ACP_PROBE=1 vp test run GrokAcpCliProbe
- * Set T3_GROK_LIVE_TURN=1 to also send a small prompt to the real model.
+ * Enable with: T3_GROK_ACP_PROBE=1 bun run test GrokAcpCliProbe
  *
  * The probe assumes either `XAI_API_KEY` is set in the environment or
  * the user has previously run `grok login`. Without credentials the
@@ -11,10 +10,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
-import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { describe, expect } from "vite-plus/test";
 
@@ -72,59 +67,22 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("session/set_model accepts advertised reasoning effort metadata", () =>
+  it.effect("switches to another advertised model and completes a prompt", () =>
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;
       const started = yield* runtime.start();
-      const modelState = started.sessionSetupResult.models;
-      const currentModelId = modelState?.currentModelId.trim();
-      expect(currentModelId).toBeDefined();
-      if (!currentModelId) return;
+      const models = started.sessionSetupResult.models;
+      const targetModel = models?.availableModels.find(
+        ({ modelId }) => modelId !== models.currentModelId,
+      )?.modelId;
+      expect(targetModel).toBeDefined();
+      if (!targetModel) return;
 
-      const currentModel = modelState?.availableModels.find(
-        (model) => model.modelId.trim() === currentModelId,
-      );
-      const reasoningEffort = currentModel?._meta?.reasoningEffort;
-      expect(typeof reasoningEffort).toBe("string");
-      if (typeof reasoningEffort !== "string") return;
-
-      yield* runtime.setSessionModel(currentModelId, { reasoningEffort });
+      yield* runtime.setSessionModel(targetModel).pipe(Effect.timeout("20 seconds"));
+      const result = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "Respond with exactly: grok switch ok" }] })
+        .pipe(Effect.timeout("60 seconds"));
+      expect(result.stopReason).toBe("end_turn");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect.skipIf(process.env.T3_GROK_LIVE_TURN !== "1")(
-    "finishes a real Grok turn and streams its answer",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const cwd = yield* fileSystem.makeTempDirectoryScoped();
-        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const runtime = yield* makeGrokAcpRuntime({
-          grokSettings: { binaryPath: "grok" },
-          environment: process.env,
-          childProcessSpawner,
-          cwd,
-          runtimeMode: "approval-required",
-          clientInfo: { name: "t3-grok-probe", version: "0.0.0" },
-        });
-        yield* runtime.start();
-        const chunks: string[] = [];
-        const events = yield* Stream.runForEach(runtime.getEvents(), (event) => {
-          if (event._tag === "EventStreamBarrier") {
-            return Deferred.succeed(event.acknowledge, undefined);
-          }
-          if (event._tag === "ContentDelta") {
-            chunks.push(event.text);
-          }
-          return Effect.void;
-        }).pipe(Effect.forkChild);
-        const result = yield* runtime.prompt({
-          prompt: [{ type: "text", text: "Reply exactly GROK_T3_OK. Do not use any tools." }],
-        });
-        yield* runtime.drainEvents;
-        expect(result.stopReason).toBe("end_turn");
-        expect(chunks.join("")).toContain("GROK_T3_OK");
-        yield* Fiber.interrupt(events);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
