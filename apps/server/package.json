@@ -27,7 +27,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
-    "@ff-labs/fff-node": "^0.9.4",
+    "@ff-labs/fff-node": "0.9.4",
     "@github/copilot": "1.0.60",
     "@github/copilot-sdk": "1.0.0",
     "@opencode-ai/sdk": "^1.3.15",
