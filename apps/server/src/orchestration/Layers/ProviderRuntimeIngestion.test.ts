@@ -360,7 +360,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
-  it("ignores unscoped turn completion while provider reports the active turn", async () => {
+  it("settles unscoped turn completion while provider reports the active turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -399,12 +399,14 @@ describe("ProviderRuntimeIngestion", () => {
       status: "completed",
     });
 
-    await harness.drain();
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.session?.status).toBe("running");
-    expect(thread?.session?.activeTurnId).toBe("turn-missing-completion-id");
-    expect(thread?.latestTurn?.state).toBe("running");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.latestTurn?.state === "completed",
+    );
+    expect(thread.latestTurn?.turnId).toBe("turn-missing-completion-id");
   });
 
   it("settles unscoped turn completion after provider clears the active turn", async () => {

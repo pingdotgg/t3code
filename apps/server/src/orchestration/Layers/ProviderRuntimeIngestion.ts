@@ -1337,12 +1337,10 @@ const make = Effect.gen(function* () {
             if (conflictsWithActiveTurn) {
               return false;
             }
-            if (
-              activeTurnId !== null &&
-              lifecycleEventTurnId === undefined &&
-              sameId(activeTurnId, providerActiveTurnId)
-            ) {
-              return false;
+            if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
+              return (
+                providerActiveTurnId === undefined || sameId(activeTurnId, providerActiveTurnId)
+              );
             }
             // Only the active turn may close the lifecycle state.
             if (activeTurnId !== null && lifecycleEventTurnId !== undefined) {
