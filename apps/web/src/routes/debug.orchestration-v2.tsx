@@ -36,6 +36,7 @@ import {
 } from "../lib/orchestrationV2Timeline";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../modelSelection";
+import { deriveOrchestrationV2DebugProviderSnapshots } from "../orchestrationV2DebugProviders";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
@@ -1621,7 +1622,14 @@ function OrchestrationV2DebugRoute() {
   const serverProviders = useServerProviders();
   const settings = useSettings();
   const keybindings = useServerKeybindings();
-  const providerSnapshots = serverProviders.length > 0 ? serverProviders : DEBUG_PROVIDER_SNAPSHOTS;
+  const providerSnapshots = useMemo(
+    () =>
+      deriveOrchestrationV2DebugProviderSnapshots({
+        providers: serverProviders.length > 0 ? serverProviders : DEBUG_PROVIDER_SNAPSHOTS,
+        providerInstances: settings.providerInstances,
+      }),
+    [serverProviders, settings.providerInstances],
+  );
   const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerSnapshots)),
     [providerSnapshots],

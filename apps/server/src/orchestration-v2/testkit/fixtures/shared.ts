@@ -41,6 +41,8 @@ export const MESSAGE_STEERING_INITIAL_PROMPT =
   "Respond with exactly: steering fixture initial response";
 export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
+export const OPENCODE_SUBAGENT_PROMPT =
+  "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
 export const SUBAGENT_CONTINUE_PROMPT =
   "Spawn one subagent and have it reply exactly: initial subagent response";
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
@@ -234,6 +236,22 @@ export const CLAUDE_MODEL_SELECTION = {
 export const CURSOR_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("cursor"),
   model: "composer-2.5",
+} satisfies ModelSelection;
+
+export const GROK_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("grok"),
+  model: "grok-build",
+} satisfies ModelSelection;
+
+export const OPENCODE_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("opencode"),
+  model: "openai/gpt-5.4-mini",
+  options: [{ id: "agent", value: "build" }],
+} satisfies ModelSelection;
+
+export const ACP_REGISTRY_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("acpRegistry"),
+  model: "default",
 } satisfies ModelSelection;
 
 export const READ_ONLY_ON_REQUEST_POLICY = {
