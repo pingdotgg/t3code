@@ -77,6 +77,9 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           <span fg={approvals.length > 0 ? ansi("red") : ansi(sessionStatusColor(detail.session?.status))}>
             {approvals.length > 0 ? "pending approval" : statusLabel(detail)}
           </span>
+          <span fg={detail.interactionMode === "plan" ? palette.accent : palette.dim}>
+            {`  ·  ${detail.interactionMode === "plan" ? "plan" : "build"}`}
+          </span>
           <span fg={palette.dim}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
         </text>
       </box>

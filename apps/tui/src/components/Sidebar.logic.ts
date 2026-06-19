@@ -60,14 +60,20 @@ export function visibleThreadsForProject(
   };
 }
 
-/** Pure: build the visible rows from the snapshot + UI state. */
+/**
+ * Pure: build the visible rows from the snapshot + UI state. When `filter` is
+ * non-empty, projects auto-expand and only matching threads (or all threads of a
+ * project whose own title matches) are shown, with no "show more" row.
+ */
 export function buildRows(
   shell: OrchestrationShellSnapshot | null,
   expanded: ReadonlySet<string>,
   loadedInFull: ReadonlySet<string>,
   selectedThreadId: string | null,
+  filter = "",
 ): Row[] {
   if (!shell) return [];
+  const needle = filter.trim().toLowerCase();
   const projectTitles = new Map<string, string>(
     shell.projects.map((project) => [project.id, project.title]),
   );
@@ -88,11 +94,31 @@ export function buildRows(
   const rows: Row[] = [];
   for (const id of orderedIds) {
     const threads = byProject.get(id) ?? [];
+    const title = projectTitles.get(id) ?? id;
+
+    if (needle.length > 0) {
+      const projectMatches = title.toLowerCase().includes(needle);
+      const shown = projectMatches
+        ? threads
+        : threads.filter((thread) => thread.title.toLowerCase().includes(needle));
+      if (shown.length === 0 && !projectMatches) continue;
+      rows.push({
+        kind: "project",
+        id,
+        title,
+        count: shown.length,
+        status: resolveProjectStatus(shown),
+        expanded: true,
+      });
+      for (const thread of shown) rows.push({ kind: "thread", id: thread.id, thread });
+      continue;
+    }
+
     const isExpanded = expanded.has(id);
     rows.push({
       kind: "project",
       id,
-      title: projectTitles.get(id) ?? id,
+      title,
       count: threads.length,
       status: resolveProjectStatus(threads),
       expanded: isExpanded,

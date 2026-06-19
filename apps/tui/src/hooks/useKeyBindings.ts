@@ -5,23 +5,46 @@ import { useKeyboard } from "@opentui/react";
 // useKeyboard wraps the handler in an effect-event, so reading the latest
 // `actions` each press is safe.
 //
-// The terminal drawer coexists with the prompt. Two keys control it from both the
-// terminal and the prompt (intercepted in those panes, never forwarded to the
-// shell; the new-thread modal handles only its own keys):
+// The terminal drawer coexists with the prompt; two keys control it from both the
+// terminal and the prompt (intercepted there, never forwarded to the shell):
 //   ^E  show / hide the terminal drawer (opening focuses it)
 //   ^P  toggle focus between the prompt and the terminal
 //   ^↑ / ^↓  grow / shrink the drawer
+// Thread shortcuts from the prompt: ^B plan/build · ^O runtime mode · ^N new ·
+//   ^K thread actions (rename/archive/delete/stop) · ^F find/filter.
+
+export type KeyBindingMode =
+  | "terminal"
+  | "actions"
+  | "confirmDelete"
+  | "new"
+  | "rename"
+  | "filter"
+  | "compose";
 
 export interface KeyBindingActions {
-  readonly mode: "terminal" | "new" | "compose";
+  readonly mode: KeyBindingMode;
   readonly onExit: () => void;
-  // Terminal / prompt switching (work in both panes)
+  // Terminal
   readonly onToggleTerminal: () => void;
   readonly onToggleFocus: () => void;
   readonly onGrowTerminal: () => void;
   readonly onShrinkTerminal: () => void;
-  // Terminal-focused
   readonly onTerminalKey: (sequence: string) => void;
+  // Thread-actions overlay (^K)
+  readonly onOpenActions: () => void;
+  readonly onActionRename: () => void;
+  readonly onActionArchive: () => void;
+  readonly onActionDelete: () => void;
+  readonly onActionStop: () => void;
+  readonly onCloseOverlay: () => void;
+  readonly onConfirmDelete: () => void;
+  // Rename / filter input modes
+  readonly onSubmitRename: () => void;
+  readonly onCancelRename: () => void;
+  readonly onOpenFilter: () => void;
+  readonly onCommitFilter: () => void;
+  readonly onCancelFilter: () => void;
   // New-thread mode
   readonly onCancelNew: () => void;
   readonly onProjectPrev: () => void;
@@ -33,6 +56,7 @@ export interface KeyBindingActions {
   readonly onScrollUp: () => void;
   readonly onScrollDown: () => void;
   readonly onNewThread: () => void;
+  readonly onTogglePlanMode: () => void;
   readonly onInterrupt: () => void;
   readonly onApprove: () => void;
   readonly onDecline: () => void;
@@ -54,8 +78,20 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     }
 
     // Ctrl+C always exits cleanly (outside the terminal).
-    if (key.ctrl && key.name === "c") {
-      actions.onExit();
+    if (key.ctrl && key.name === "c") return actions.onExit();
+
+    // ── Thread-actions overlay (mnemonic keys) ──────────────────────────────
+    if (actions.mode === "actions") {
+      if (key.name === "r") return actions.onActionRename();
+      if (key.name === "a") return actions.onActionArchive();
+      if (key.name === "d") return actions.onActionDelete();
+      if (key.name === "s") return actions.onActionStop();
+      if (key.name === "escape") return actions.onCloseOverlay();
+      return;
+    }
+    if (actions.mode === "confirmDelete") {
+      if (key.name === "y") return actions.onConfirmDelete();
+      if (key.name === "n" || key.name === "escape") return actions.onCloseOverlay();
       return;
     }
 
@@ -68,9 +104,19 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       return;
     }
 
+    // ── Rename / filter single-line inputs (the <input> owns typed chars) ────
+    if (actions.mode === "rename") {
+      if (key.name === "return" || key.name === "enter") return actions.onSubmitRename();
+      if (key.name === "escape") return actions.onCancelRename();
+      return;
+    }
+    if (actions.mode === "filter") {
+      if (key.name === "return" || key.name === "enter") return actions.onCommitFilter();
+      if (key.name === "escape") return actions.onCancelFilter();
+      return;
+    }
+
     // ── Compose mode (default) ──────────────────────────────────────────────
-    // The composer <input> owns typed characters; here we handle navigation,
-    // scrolling, terminal switch/resize, action shortcuts, and submit.
     if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
     if (key.ctrl && key.name === "p") return actions.onToggleFocus();
     if (key.name === "up") return key.ctrl ? actions.onGrowTerminal() : actions.onNavUp();
@@ -78,6 +124,9 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.name === "pageup") return actions.onScrollUp();
     if (key.name === "pagedown") return actions.onScrollDown();
     if (key.ctrl && key.name === "n") return actions.onNewThread();
+    if (key.ctrl && key.name === "b") return actions.onTogglePlanMode();
+    if (key.ctrl && key.name === "k") return actions.onOpenActions();
+    if (key.ctrl && key.name === "f") return actions.onOpenFilter();
     if (key.ctrl && key.name === "g") return actions.onInterrupt();
     if (key.ctrl && key.name === "a") return actions.onApprove();
     if (key.ctrl && key.name === "r") return actions.onDecline();

@@ -12,6 +12,7 @@ import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { Sidebar } from "./Sidebar.tsx";
+import { ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
 
 const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
@@ -48,9 +49,12 @@ export function ChatView({
     return () => store.stop();
   }, [store]);
 
-  const [focus, setFocus] = React.useState<"compose" | "new">("compose");
+  const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter">("compose");
+  // Transient key-driven overlay over the composer (thread actions / delete confirm).
+  const [overlay, setOverlay] = React.useState<"none" | "actions" | "confirmDelete">("none");
   const [reply, setReply] = React.useState("");
   const [draft, setDraft] = React.useState("");
+  const [renameDraft, setRenameDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
@@ -66,10 +70,12 @@ export function ChatView({
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
   const rows = React.useMemo(
-    () => buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId),
-    [state.shell, state.expanded, state.loadedInFull, selectedThreadId],
+    () => buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter),
+    [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+  const sessionActive =
+    !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
   const approvals = React.useMemo(
     () => (detail ? derivePendingApprovals(detail.activities) : []),
     [detail],
@@ -190,8 +196,23 @@ export function ChatView({
     );
   };
 
+  const keyMode =
+    activeTerminal && terminalFocused
+      ? "terminal"
+      : overlay === "actions"
+        ? "actions"
+        : overlay === "confirmDelete"
+          ? "confirmDelete"
+          : focus === "new"
+            ? "new"
+            : focus === "rename"
+              ? "rename"
+              : focus === "filter"
+                ? "filter"
+                : "compose";
+
   useKeyBindings({
-    mode: activeTerminal && terminalFocused ? "terminal" : focus === "new" ? "new" : "compose",
+    mode: keyMode,
     onExit,
     onTerminalKey: (sequence) => {
       if (activeTerminal) {
@@ -220,6 +241,73 @@ export function ChatView({
     onToggleTerminal: toggleTerminal,
     onGrowTerminal: () => resizeTerminal(2),
     onShrinkTerminal: () => resizeTerminal(-2),
+    onTogglePlanMode: () => {
+      if (!detail) return;
+      const next = detail.interactionMode === "plan" ? "default" : "plan";
+      void client.setInteractionMode(detail.id, next).catch(() => {});
+      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.");
+    },
+    onOpenActions: () => {
+      if (!detail) {
+        store.setStatus("Select a thread first.");
+        return;
+      }
+      setOverlay("actions");
+    },
+    onActionRename: () => {
+      if (!detail) return;
+      setRenameDraft(detail.title);
+      setOverlay("none");
+      setFocus("rename");
+    },
+    onActionArchive: () => {
+      if (!detail) return;
+      const archived = detail.archivedAt !== null;
+      void (archived ? client.unarchiveThread(detail.id) : client.archiveThread(detail.id)).catch(
+        () => {},
+      );
+      setOverlay("none");
+      store.setStatus(archived ? "Unarchived." : "Archived.");
+    },
+    onActionDelete: () => {
+      if (!detail) return;
+      setOverlay("confirmDelete");
+    },
+    onActionStop: () => {
+      if (!detail) return;
+      void client.stopSession(detail.id).catch(() => {});
+      setOverlay("none");
+      store.setStatus("Session stopped.");
+    },
+    onCloseOverlay: () => setOverlay("none"),
+    onConfirmDelete: () => {
+      if (!detail) {
+        setOverlay("none");
+        return;
+      }
+      void client.deleteThread(detail.id).catch(() => {});
+      setOverlay("none");
+      store.setStatus("Deleted.");
+    },
+    onSubmitRename: () => {
+      const title = renameDraft.trim();
+      if (detail && title.length > 0 && title !== detail.title) {
+        void client.renameThread(detail.id, title).catch(() => {});
+        store.setStatus("Renamed.");
+      }
+      setRenameDraft("");
+      setFocus("compose");
+    },
+    onCancelRename: () => {
+      setRenameDraft("");
+      setFocus("compose");
+    },
+    onOpenFilter: () => setFocus("filter"),
+    onCommitFilter: () => setFocus("compose"),
+    onCancelFilter: () => {
+      store.setFilter("");
+      setFocus("compose");
+    },
     onInterrupt: () => {
       if (!detail) return;
       void client.interrupt(detail.id).catch(() => {});
@@ -263,7 +351,7 @@ export function ChatView({
 
   const hint = activeTerminal
     ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
-    : "↑/↓ threads · PgUp/PgDn scroll · Enter send · ^N new · ^E term · ^G stop · ^A/^R approve · ^O mode · ^C quit";
+    : "↑/↓ · Enter send · ^N new · ^B plan/build · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
 
   return (
     <box flexDirection="column" width={width} height={height}>
@@ -298,16 +386,27 @@ export function ChatView({
         />
       ) : null}
 
-      <ChatComposer
-        mode={focus}
-        reply={reply}
-        draft={draft}
-        placeholder={placeholder}
-        projectName={projects[activeProjectIndex]?.title ?? "(none)"}
-        inputFocused={!terminalFocused}
-        onReplyInput={setReply}
-        onDraftInput={setDraft}
-      />
+      {overlay !== "none" && detail ? (
+        <ThreadActionsMenu
+          overlay={overlay}
+          title={detail.title}
+          archived={detail.archivedAt !== null}
+          sessionRunning={sessionActive}
+        />
+      ) : (
+        <ChatComposer
+          mode={focus}
+          reply={reply}
+          draft={draft}
+          auxValue={focus === "rename" ? renameDraft : focus === "filter" ? state.filter : ""}
+          placeholder={placeholder}
+          projectName={projects[activeProjectIndex]?.title ?? "(none)"}
+          inputFocused={!terminalFocused}
+          onReplyInput={setReply}
+          onDraftInput={setDraft}
+          onAuxInput={focus === "rename" ? setRenameDraft : store.setFilter}
+        />
+      )}
 
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
         <text fg={palette.dim}>{hint}</text>

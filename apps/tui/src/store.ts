@@ -22,6 +22,8 @@ export interface StoreState {
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   readonly status: string;
+  /** Sidebar filter text; empty = unfiltered. */
+  readonly filter: string;
 }
 
 export interface Store {
@@ -34,6 +36,7 @@ export interface Store {
   readonly toggleProject: (id: string) => void;
   readonly loadMore: (id: string) => void;
   readonly setStatus: (status: string) => void;
+  readonly setFilter: (filter: string) => void;
 }
 
 export function createStore(client: TuiClient): Store {
@@ -44,6 +47,7 @@ export function createStore(client: TuiClient): Store {
     selection: null,
     detail: null,
     status: "Connecting…",
+    filter: "",
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
@@ -51,7 +55,7 @@ export function createStore(client: TuiClient): Store {
 
   const selectedThreadId = () => (state.selection?.kind === "thread" ? state.selection.id : null);
   const rowsNow = () =>
-    buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId());
+    buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId(), state.filter);
 
   const emit = () => {
     for (const listener of listeners) listener();
@@ -149,5 +153,10 @@ export function createStore(client: TuiClient): Store {
       );
     },
     setStatus: (status) => set({ status }),
+    setFilter: (filter) => {
+      state = { ...state, filter };
+      ensureValidSelection(rowsNow());
+      emit();
+    },
   };
 }
