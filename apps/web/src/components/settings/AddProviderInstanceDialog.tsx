@@ -82,11 +82,6 @@ const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
     icon: Gemini,
   },
   {
-    value: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    icon: ACPRegistryIcon,
-  },
-  {
     value: ProviderDriverKind.make("piAgent"),
     label: "Pi Agent",
     icon: PiAgentIcon,
