@@ -2801,6 +2801,34 @@ export function ConnectionsSettings() {
     [desktopBridge],
   );
 
+  // Seed the WSL backend state from the desktop bridge on mount (and when
+  // local-backend management becomes available). Without this, desktopWslState
+  // stays null and renderWslRow() bails, hiding the WSL settings UI entirely.
+  // The broader desktop access-management state is owned by desktopNetworkAccess
+  // upstream; this effect only owns the WSL picker's state.
+  useEffect(() => {
+    if (!canManageLocalBackend || !desktopBridge) {
+      return;
+    }
+    let cancelled = false;
+    void desktopBridge
+      .getWslState()
+      .then((state) => {
+        if (!cancelled) {
+          setDesktopWslState(state);
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setDesktopWslError(error instanceof Error ? error.message : "Failed to load WSL state.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageLocalBackend, desktopBridge]);
+
   // True when a desktop-local WSL backend is currently registered as an
   // environment on this machine. We use this as a proxy for "the user has work
   // that lives on the WSL side": if WSL has connected in a way that registered
