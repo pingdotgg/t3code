@@ -360,7 +360,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
-  it("ignores active turn completion when completion omits turn id", async () => {
+  it("ignores unscoped turn completion while provider reports the active turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -405,6 +405,54 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.session?.status).toBe("running");
     expect(thread?.session?.activeTurnId).toBe("turn-missing-completion-id");
     expect(thread?.latestTurn?.state).toBe("running");
+  });
+
+  it("settles unscoped turn completion after provider clears the active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-provider-cleared"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-provider-cleared"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-provider-cleared",
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-provider-cleared"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.100Z",
+      status: "completed",
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.latestTurn?.state === "completed",
+    );
+    expect(thread.latestTurn?.turnId).toBe("turn-provider-cleared");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
