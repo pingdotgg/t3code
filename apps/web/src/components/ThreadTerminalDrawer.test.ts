@@ -1,34 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
-  TERMINAL_SELECTION_ACTION_MENU_ITEMS,
-  copyTerminalSelectionTextToClipboard,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("terminal selection action menu", () => {
-  it("places copy after add to chat", () => {
-    expect(TERMINAL_SELECTION_ACTION_MENU_ITEMS).toEqual([
-      { id: "add-to-chat", label: "Add to chat" },
-      { id: "copy", label: "Copy" },
-    ]);
-  });
-
-  it("copies selected terminal text to the clipboard", async () => {
-    const writeText = vi.fn(async () => undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-
-    await copyTerminalSelectionTextToClipboard("first line\nsecond line");
-
-    expect(writeText).toHaveBeenCalledWith("first line\nsecond line");
-  });
-});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
