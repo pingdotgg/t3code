@@ -1,10 +1,8 @@
 import * as Layer from "effect/Layer";
+import { FetchHttpClient } from "effect/unstable/http";
 
-import {
-  claudeAgentSdkQueryRunnerLiveLayer,
-  layer as claudeAdapterLayer,
-} from "./Adapters/ClaudeAdapterV2.ts";
-import { layer as codexAdapterLayer } from "./Adapters/CodexAdapterV2.ts";
+import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime.ts";
+import { claudeAgentSdkQueryRunnerLiveLayer } from "./Adapters/ClaudeAdapterV2.ts";
 import { codexAppServerClientFactoryFromSettingsLayer } from "./Adapters/CodexAdapterV2.ts";
 import { cursorAgentSdkRunnerLiveLayer } from "./Adapters/CursorAgentSdk.ts";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2 } from "./builtInProviderAdapterDrivers.ts";
@@ -47,6 +45,8 @@ const codexAdapterProvided = codexAdapterLayer.pipe(
 const claudeAdapterProvided = claudeAdapterLayer.pipe(
   Layer.provide(claudeAgentSdkQueryRunnerLiveLayer),
   Layer.provide(cursorAgentSdkRunnerLiveLayer),
+  Layer.provide(OpenCodeRuntimeLive),
+  Layer.provide(FetchHttpClient.layer),
   Layer.provide(idAllocatorLayer),
 );
 
