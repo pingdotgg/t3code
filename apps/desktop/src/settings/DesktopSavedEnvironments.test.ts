@@ -272,6 +272,26 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
+  it.effect("removes saved environment metadata and its embedded secret atomically", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+        yield* savedEnvironments.setSecret({
+          environmentId: savedRegistryRecord.environmentId,
+          secret: "bearer-token",
+        });
+
+        yield* savedEnvironments.removeEnvironment(savedRegistryRecord.environmentId);
+
+        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
+        assert.isTrue(
+          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+        );
+      }),
+    ),
+  );
+
   it.effect("treats empty saved environment documents as empty", () =>
     withSavedEnvironments(
       Effect.gen(function* () {

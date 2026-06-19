@@ -121,6 +121,9 @@ export interface DesktopSavedEnvironmentsShape {
   readonly setRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
   ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  readonly removeEnvironment: (
+    environmentId: string,
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
   readonly getSecret: (
     environmentId: string,
   ) => Effect.Effect<Option.Option<string>, DesktopSavedEnvironmentsGetSecretError>;
@@ -293,6 +296,23 @@ export const layer = Layer.effect(
         ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
         yield* writeDocument(preserveExistingSecrets(currentDocument, records));
       }),
+      removeEnvironment: Effect.fn("desktop.savedEnvironments.removeEnvironment")(
+        function* (environmentId) {
+          yield* Effect.annotateCurrentSpan({ environmentId });
+          const document = yield* readRegistryDocument(
+            fileSystem,
+            environment.savedEnvironmentRegistryPath,
+          ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
+          if (!document.records.some((record) => record.environmentId === environmentId)) {
+            return;
+          }
+
+          yield* writeDocument({
+            version: document.version,
+            records: document.records.filter((record) => record.environmentId !== environmentId),
+          });
+        },
+      ),
       getSecret: Effect.fn("desktop.savedEnvironments.getSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -385,6 +405,18 @@ export const layerTest = (input?: {
       return DesktopSavedEnvironments.of({
         getRegistry: Ref.get(recordsRef),
         setRegistry: (records) => Ref.set(recordsRef, records),
+        removeEnvironment: (environmentId) =>
+          Ref.update(recordsRef, (records) =>
+            records.filter((record) => record.environmentId !== environmentId),
+          ).pipe(
+            Effect.andThen(
+              Ref.update(secretsRef, (secrets) => {
+                const nextSecrets = new Map(secrets);
+                nextSecrets.delete(environmentId);
+                return nextSecrets;
+              }),
+            ),
+          ),
         getSecret: (environmentId) =>
           Ref.get(secretsRef).pipe(
             Effect.map((secrets) => Option.fromNullishOr(secrets.get(environmentId))),
