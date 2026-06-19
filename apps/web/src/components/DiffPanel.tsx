@@ -33,6 +33,7 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
+  canRenderFileDiff,
   getDiffCollapseIconClassName,
   getRenderablePatch,
   resolveDiffThemeName,
@@ -325,12 +326,22 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     if (!renderablePatch || renderablePatch.kind !== "files") {
       return [];
     }
-    return renderablePatch.files.toSorted((left, right) =>
-      resolveFileDiffPath(left).localeCompare(resolveFileDiffPath(right), undefined, {
-        numeric: true,
-        sensitivity: "base",
-      }),
-    );
+    return renderablePatch.files
+      .map((fileDiff) => ({
+        canRender: canRenderFileDiff(fileDiff),
+        fileDiff,
+        filePath: resolveFileDiffPath(fileDiff),
+      }))
+      .toSorted((left, right) => {
+        const renderOrder = Number(!left.canRender) - Number(!right.canRender);
+        return (
+          renderOrder ||
+          left.filePath.localeCompare(right.filePath, undefined, {
+            numeric: true,
+            sensitivity: "base",
+          })
+        );
+      });
   }, [renderablePatch]);
 
   useEffect(() => {
@@ -679,11 +690,10 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                   intersectionObserverMargin: 1200,
                 }}
               >
-                {renderableFiles.map((fileDiff) => {
-                  const filePath = resolveFileDiffPath(fileDiff);
+                {renderableFiles.map(({ canRender, fileDiff, filePath }) => {
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
-                  const collapsed = collapsedDiffFileKeys.has(fileKey);
+                  const collapsed = !canRender || collapsedDiffFileKeys.has(fileKey);
                   return (
                     <div
                       key={themedFileKey}
@@ -720,8 +730,10 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                                     collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
                                   }
                                   aria-expanded={!collapsed}
+                                  disabled={!canRender}
                                   onClick={(event) => {
                                     event.stopPropagation();
+                                    if (!canRender) return;
                                     toggleDiffFileCollapsed(fileKey);
                                   }}
                                 />
@@ -748,6 +760,11 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
                       />
+                      {!canRender && (
+                        <div className="px-3 py-3 text-[11px] leading-relaxed text-muted-foreground">
+                          This file is too large to display. Open the file to inspect the change.
+                        </div>
+                      )}
                     </div>
                   );
                 })}
