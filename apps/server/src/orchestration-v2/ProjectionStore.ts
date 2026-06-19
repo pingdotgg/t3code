@@ -588,6 +588,8 @@ export function threadShellFromProjection(
 ): OrchestrationV2ThreadShell {
   const latestRun = projection.runs.at(-1) ?? null;
   return {
+    createdBy: projection.thread.createdBy,
+    creationSource: projection.thread.creationSource,
     id: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -703,6 +705,8 @@ function shellFromState(input: {
   readonly visibleItemCount: number;
 }): OrchestrationV2ThreadShell {
   return {
+    createdBy: input.state.thread.createdBy,
+    creationSource: input.state.thread.creationSource,
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,

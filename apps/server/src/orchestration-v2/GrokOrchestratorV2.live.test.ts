@@ -78,6 +78,8 @@ describe.runIf(process.env.T3_GROK_LIVE_ORCHESTRATOR === "1")("Grok V2 live orch
 
         yield* orchestrator.dispatch({
           type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
           commandId: CommandId.make("command:grok-live-portable-fork:create"),
           threadId: sourceThreadId,
           projectId,
@@ -91,6 +93,8 @@ describe.runIf(process.env.T3_GROK_LIVE_ORCHESTRATOR === "1")("Grok V2 live orch
         yield* Console.log("Grok live source thread created; dispatching source prompt.");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
           commandId: CommandId.make("command:grok-live-portable-fork:source"),
           threadId: sourceThreadId,
           messageId: MessageId.make("message:grok-live-portable-fork:source"),
@@ -105,6 +109,8 @@ describe.runIf(process.env.T3_GROK_LIVE_ORCHESTRATOR === "1")("Grok V2 live orch
 
         yield* orchestrator.dispatch({
           type: "thread.fork",
+          createdBy: "user",
+          creationSource: "web",
           commandId: CommandId.make("command:grok-live-portable-fork:fork"),
           sourceThreadId,
           targetThreadId,
@@ -113,6 +119,8 @@ describe.runIf(process.env.T3_GROK_LIVE_ORCHESTRATOR === "1")("Grok V2 live orch
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
           commandId: CommandId.make("command:grok-live-portable-fork:target"),
           threadId: targetThreadId,
           messageId: MessageId.make("message:grok-live-portable-fork:target"),
