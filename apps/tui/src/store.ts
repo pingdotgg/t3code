@@ -76,8 +76,12 @@ export function createStore(client: TuiClient): Store {
     row.kind === "thread" ? { kind: "thread", id: row.id } : { kind: row.kind, id: row.id };
 
   const applySelection = (selection: Selection | null) => {
-    subscribeDetail(selection?.kind === "thread" ? selection.id : null);
-    set({ selection, detail: null });
+    const threadId = selection?.kind === "thread" ? selection.id : null;
+    subscribeDetail(threadId);
+    // Seed from the warm cache so re-selecting a thread paints instantly; the
+    // live value streams in immediately after (no refetch, no blank).
+    const cached = threadId ? client.peekThread(threadId as never) : null;
+    set({ selection, detail: cached });
   };
 
   const ensureValidSelection = (rows: Row[]) => {
