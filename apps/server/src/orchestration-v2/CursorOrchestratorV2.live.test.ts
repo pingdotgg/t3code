@@ -82,6 +82,8 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
 
           yield* orchestrator.dispatch({
             type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-live-portable-fork:create"),
             threadId: sourceThreadId,
             projectId,
@@ -94,6 +96,8 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-live-portable-fork:source"),
             threadId: sourceThreadId,
             messageId: MessageId.make("message:cursor-live-portable-fork:source"),
@@ -107,6 +111,8 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
 
           yield* orchestrator.dispatch({
             type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-live-portable-fork:fork"),
             sourceThreadId,
             targetThreadId,
@@ -115,6 +121,8 @@ describe.runIf(process.env.T3_CURSOR_LIVE_ORCHESTRATOR === "1")(
           });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
             commandId: CommandId.make("command:cursor-live-portable-fork:target"),
             threadId: targetThreadId,
             messageId: MessageId.make("message:cursor-live-portable-fork:target"),
