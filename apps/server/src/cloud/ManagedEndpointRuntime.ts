@@ -22,10 +22,10 @@ function bytesToString(bytes: Uint8Array): string {
 const readRuntimeConfig = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const bytes = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-  if (!bytes) {
+  if (Option.isNone(bytes)) {
     return null;
   }
-  return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes)));
+  return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes.value)));
 });
 
 export interface CloudManagedEndpointRuntimeShape {

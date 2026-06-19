@@ -276,7 +276,13 @@ const make = Effect.gen(function* () {
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
   const readSecretString = (name: string) =>
-    secrets.get(name).pipe(Effect.map((bytes) => (bytes ? new TextDecoder().decode(bytes) : null)));
+    secrets
+      .get(name)
+      .pipe(
+        Effect.map((bytes) =>
+          Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
+        ),
+      );
 
   const readRelayConfig = Effect.gen(function* () {
     const [url, issuer, environmentCredential] = yield* Effect.all([

@@ -100,8 +100,8 @@ const make = Effect.gen(function* () {
 
   const read = Effect.fn("cloud.cli_token.read")(function* () {
     const encoded = yield* secrets.get(CLOUD_CLI_OAUTH_TOKEN_SECRET);
-    if (!encoded) return Option.none<PersistedToken>();
-    return Option.some(yield* decodePersistedToken(bytesToString(encoded)));
+    if (Option.isNone(encoded)) return Option.none<PersistedToken>();
+    return Option.some(yield* decodePersistedToken(bytesToString(encoded.value)));
   });
 
   const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (

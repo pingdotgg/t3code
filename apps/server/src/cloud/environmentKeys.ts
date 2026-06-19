@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -33,14 +34,15 @@ const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
   secrets: ServerSecretStore.ServerSecretStoreShape,
 ) {
   const encoded = yield* secrets.get(CLOUD_LINK_KEY_PAIR);
-  if (encoded === null) {
-    return null;
+  if (Option.isNone(encoded)) {
+    return Option.none<EnvironmentKeyPair>();
   }
-  return yield* decodeEnvironmentKeyPair(bytesToString(encoded)).pipe(
+  const decoded = yield* decodeEnvironmentKeyPair(bytesToString(encoded.value)).pipe(
     Effect.mapError((cause) =>
       keyPairPersistenceError("Failed to decode environment signing key pair.", cause),
     ),
   );
+  return Option.some(decoded);
 });
 
 const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(function* (
@@ -57,14 +59,16 @@ const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(functio
     Effect.catchTag("SecretStoreError", (error) =>
       ServerSecretStore.isSecretAlreadyExistsError(error)
         ? readEnvironmentKeyPair(secrets).pipe(
-            Effect.flatMap((existing) =>
-              existing !== null
-                ? Effect.succeed(existing)
-                : Effect.fail(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () =>
+                  Effect.fail(
                     keyPairPersistenceError(
                       "Failed to read environment signing key pair after concurrent creation.",
                     ),
                   ),
+              }),
             ),
           )
         : Effect.fail(error),
@@ -76,16 +80,16 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
   secrets: ServerSecretStore.ServerSecretStoreShape,
 ) {
   const existing = yield* readEnvironmentKeyPair(secrets);
-  if (existing !== null) {
-    return existing;
+  if (Option.isSome(existing)) {
+    return existing.value;
   }
 
   const existingPrivate = yield* secrets.get(CLOUD_LINK_PRIVATE_KEY);
   const existingPublic = yield* secrets.get(CLOUD_LINK_PUBLIC_KEY);
-  if (existingPrivate && existingPublic) {
+  if (Option.isSome(existingPrivate) && Option.isSome(existingPublic)) {
     return yield* persistEnvironmentKeyPair(secrets, {
-      privateKey: bytesToString(existingPrivate),
-      publicKey: bytesToString(existingPublic),
+      privateKey: bytesToString(existingPrivate.value),
+      publicKey: bytesToString(existingPublic.value),
     });
   }
 

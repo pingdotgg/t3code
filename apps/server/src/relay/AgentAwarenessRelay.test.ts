@@ -64,9 +64,10 @@ function makeMemorySecretStore() {
   const values = new Map<string, Uint8Array>();
   const store = {
     get: ((name) =>
-      Effect.sync(
-        () => values.get(name) ?? null,
-      )) satisfies ServerSecretStore.ServerSecretStoreShape["get"],
+      Effect.sync(() => {
+        const value = values.get(name);
+        return value === undefined ? Option.none() : Option.some(Uint8Array.from(value));
+      })) satisfies ServerSecretStore.ServerSecretStoreShape["get"],
     set: ((name, value) =>
       Effect.sync(() => {
         values.set(name, Uint8Array.from(value));

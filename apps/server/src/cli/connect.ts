@@ -385,9 +385,9 @@ const connectStatusCommand = Command.make("status", {
         const status: CloudCliStatus = {
           desired,
           authenticated,
-          linked: cloudUserId !== null,
-          cloudUserId: cloudUserId ? bytesToString(cloudUserId) : null,
-          relayUrl: relayUrl ? bytesToString(relayUrl) : null,
+          linked: Option.isSome(cloudUserId),
+          cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
+          relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
           relayClient: executable,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));
