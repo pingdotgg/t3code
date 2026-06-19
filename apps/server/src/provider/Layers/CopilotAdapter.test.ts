@@ -712,6 +712,52 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-empty-task-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-task-complete-empty-success",
+          toolName: "Task_complete",
+          arguments: {},
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-empty-task-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-task-complete-empty-success",
+          success: true,
+          result: {},
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-failed-task-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-task-complete-failure",
+          toolName: "Task_complete",
+          arguments: {},
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-failed-task-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-task-complete-failure",
+          success: false,
+          error: {
+            message: "Task completion failed",
+          },
+        },
+      } as SessionEvent);
+      emit({
         id: "evt-copilot-idle",
         timestamp,
         parentId: null,
@@ -782,16 +828,87 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           delta: resultText,
         });
       }
-      const taskCompleteToolLifecycleEvent = runtimeEvents.find(
-        (event) =>
-          (event.type === "item.started" || event.type === "item.completed") &&
-          String(event.itemId) === "copilot-tool-tool-task-complete",
+      const taskCompleteToolIds = new Set([
+        "copilot-tool-tool-task-complete",
+        "copilot-tool-tool-task-complete-empty-success",
+        "copilot-tool-tool-task-complete-failure",
+      ]);
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            (event.type === "item.started" || event.type === "item.completed") &&
+            taskCompleteToolIds.has(String(event.itemId)),
+        ),
+        false,
       );
-      assert.equal(taskCompleteToolLifecycleEvent, undefined);
       assert.equal(
         runtimeEvents.some((event) => event.type === "turn.diff.updated"),
         false,
       );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits user interrupt aborts from the SDK abort event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-interrupt-sdk-abort-source");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "stop this turn",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      assert.equal(runtimeMock.state.lastSession.abort.mock.calls.length, 1);
+      yield* waitForSdkEventQueue();
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.aborted").length, 0);
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-abort",
+        timestamp,
+        parentId: null,
+        type: "abort",
+        data: {
+          reason: "user_initiated",
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const abortedEvents = runtimeEvents.filter((event) => event.type === "turn.aborted");
+      assert.equal(abortedEvents.length, 1);
+      const aborted = abortedEvents[0];
+      assert.equal(aborted?.type, "turn.aborted");
+      if (aborted?.type === "turn.aborted") {
+        assert.equal(String(aborted.turnId), String(turn.turnId));
+        assert.equal(aborted.payload.reason, "user_initiated");
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "cancelled");
+      }
 
       yield* adapter.stopSession(threadId);
     }),

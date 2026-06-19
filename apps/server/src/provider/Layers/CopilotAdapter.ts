@@ -2625,8 +2625,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           trimOrUndefined(event.data.result?.content) ??
           trimOrUndefined(event.data.error?.message);
         const detail = normalizedToolCompletionDetail(toolMeta, rawDetail);
-        if (event.data.success && detail && isTaskCompleteTool(toolMeta?.toolName)) {
-          context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
+        if (isTaskCompleteTool(toolMeta?.toolName)) {
+          if (event.data.success && detail) {
+            context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
+          }
           return;
         }
         await emitAsync({
@@ -3116,24 +3118,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   });
 
   const interruptTurn: CopilotAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, turnId) {
+    function* (threadId, _turnId) {
       const context = yield* requireSessionContext(sessions, threadId);
 
       yield* copilotSdk.abort(context);
-
-      const targetTurnId = turnId ?? context.activeTurnId;
-      if (targetTurnId) {
-        yield* emit({
-          ...createBaseEvent({
-            threadId,
-            turnId: targetTurnId,
-          }),
-          type: "turn.aborted",
-          payload: {
-            reason: "Interrupted by user.",
-          },
-        });
-      }
     },
   );
 
