@@ -12,6 +12,7 @@ import { Stack } from "expo-router";
 import { Text as RNText, View } from "react-native";
 
 import { useThemeColor } from "../../lib/useThemeColor";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 
 export interface HomeHeaderEnvironment {
@@ -118,7 +119,7 @@ export function HomeHeader(props: {
             <RNText
               style={{
                 fontFamily: "DMSans_700Bold",
-                fontSize: 17,
+                fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
                 color: iconColor,
                 letterSpacing: -0.4,
               }}
@@ -136,7 +137,7 @@ export function HomeHeader(props: {
               <RNText
                 style={{
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 10,
+                  fontSize: MOBILE_TYPOGRAPHY.micro.fontSize,
                   color: mutedColor,
                   letterSpacing: 1.1,
                   textTransform: "uppercase",

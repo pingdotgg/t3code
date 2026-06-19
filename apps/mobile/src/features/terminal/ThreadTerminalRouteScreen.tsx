@@ -25,6 +25,7 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import {
   useAttachedTerminalSession,
   useKnownTerminalSessions,
@@ -920,7 +921,7 @@ export function ThreadTerminalRouteScreen() {
                 style={{
                   color: terminalTheme.foreground,
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 13,
+                  fontSize: MOBILE_TYPOGRAPHY.footnote.fontSize,
                   lineHeight: 16,
                 }}
               >
@@ -932,7 +933,7 @@ export function ThreadTerminalRouteScreen() {
                 style={{
                   color: terminalTheme.mutedForeground,
                   fontFamily: "Menlo",
-                  fontSize: 11,
+                  fontSize: MOBILE_TYPOGRAPHY.caption.fontSize,
                   lineHeight: 14,
                 }}
               >

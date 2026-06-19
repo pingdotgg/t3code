@@ -6,6 +6,7 @@ import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
+import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useThemeColor } from "../lib/useThemeColor";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
@@ -150,9 +151,15 @@ export function ComposerEditor({
           ? resolvedTextStyle.fontFamily
           : "DMSans_400Regular"
       }
-      fontSize={typeof resolvedTextStyle.fontSize === "number" ? resolvedTextStyle.fontSize : 15}
+      fontSize={
+        typeof resolvedTextStyle.fontSize === "number"
+          ? resolvedTextStyle.fontSize
+          : MOBILE_TYPOGRAPHY.composer.fontSize
+      }
       lineHeight={
-        typeof resolvedTextStyle.lineHeight === "number" ? resolvedTextStyle.lineHeight : 22
+        typeof resolvedTextStyle.lineHeight === "number"
+          ? resolvedTextStyle.lineHeight
+          : MOBILE_TYPOGRAPHY.composer.lineHeight
       }
       contentInsetVertical={contentInsetVertical}
       editable={props.editable ?? true}

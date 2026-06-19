@@ -3,10 +3,30 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildNativeSourceRows,
   buildNativeSourceTokens,
+  NATIVE_SOURCE_ROW_HEIGHT,
+  NATIVE_SOURCE_STYLE,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
+import {
+  NATIVE_REVIEW_DIFF_ROW_HEIGHT,
+  NATIVE_REVIEW_DIFF_STYLE,
+} from "../review/nativeReviewDiffAdapter";
 
 describe("nativeSourceFileAdapter", () => {
+  it("uses the same compact code typography as the diff viewer", () => {
+    expect(NATIVE_SOURCE_ROW_HEIGHT).toBe(NATIVE_REVIEW_DIFF_ROW_HEIGHT);
+    expect(NATIVE_SOURCE_STYLE).toMatchObject({
+      rowHeight: NATIVE_REVIEW_DIFF_STYLE.rowHeight,
+      gutterWidth: NATIVE_REVIEW_DIFF_STYLE.gutterWidth,
+      codePadding: NATIVE_REVIEW_DIFF_STYLE.codePadding,
+      textVerticalInset: NATIVE_REVIEW_DIFF_STYLE.textVerticalInset,
+      codeFontSize: NATIVE_REVIEW_DIFF_STYLE.codeFontSize,
+      codeFontWeight: NATIVE_REVIEW_DIFF_STYLE.codeFontWeight,
+      lineNumberFontSize: NATIVE_REVIEW_DIFF_STYLE.lineNumberFontSize,
+      lineNumberFontWeight: NATIVE_REVIEW_DIFF_STYLE.lineNumberFontWeight,
+    });
+  });
+
   it("maps plain source lines onto context rows with stable line numbers", () => {
     expect(buildNativeSourceRows(["const value = 1;", "\treturn value;"])).toEqual([
       {

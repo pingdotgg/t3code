@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { resolveNativeTerminalSurfaceView } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
@@ -53,7 +54,7 @@ function estimateGridSize(input: {
 }
 
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
-  const fontSize = props.fontSize ?? 12;
+  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInput>(null);
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
@@ -93,7 +94,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
         <Text
           style={{
             color: theme.mutedForeground,
-            fontSize: 11,
+            fontSize: MOBILE_TYPOGRAPHY.caption.fontSize,
             paddingBottom: 8,
           }}
         >
@@ -140,7 +141,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
             color: theme.foreground,
             flex: 1,
             fontFamily: "Menlo",
-            fontSize: 13,
+            fontSize: MOBILE_TYPOGRAPHY.footnote.fontSize,
             padding: 0,
           }}
           onSubmitEditing={(event) => {
@@ -165,7 +166,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
             style={{
               color: theme.foreground,
               fontFamily: "DMSans_700Bold",
-              fontSize: 11,
+              fontSize: MOBILE_TYPOGRAPHY.caption.fontSize,
             }}
           >
             Ctrl-C
@@ -177,7 +178,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 });
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const fontSize = props.fontSize ?? 12;
+  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const keyboardInputRef = useRef<TextInput>(null);
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);

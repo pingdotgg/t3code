@@ -1,5 +1,6 @@
 included:
   - ios/T3Code
+  - modules/t3-composer-editor/ios
   - modules/t3-terminal/ios
   - modules/t3-review-diff/ios
 

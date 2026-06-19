@@ -24,6 +24,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { cn } from "../../lib/cn";
 import { buildThreadFilesNavigation } from "../../lib/routes";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
@@ -100,7 +101,7 @@ function ModeButton(props: {
       <SymbolView name={props.icon} size={13} tintColor={iconColor} type="monochrome" />
       <Text
         className={cn(
-          "text-[12px] font-t3-bold",
+          "text-xs font-t3-bold",
           props.active ? "text-primary-foreground" : "text-foreground-muted",
         )}
       >
@@ -187,7 +188,7 @@ function FileBreadcrumbs(props: { readonly projectName: string; readonly relativ
               ) : null}
               <Text
                 className={cn(
-                  "max-w-[180px] px-1 text-[12px]",
+                  "max-w-[180px] px-1 text-xs",
                   crumb.kind === "file"
                     ? "font-t3-bold text-foreground"
                     : "font-t3-medium text-foreground-muted",
@@ -308,7 +309,7 @@ function FileContent(props: {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
-        <Text className="text-center text-[13px] text-foreground-muted">Loading file...</Text>
+        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
       </View>
     );
   }
@@ -317,10 +318,10 @@ function FileContent(props: {
     <View className="flex-1 bg-card">
       {props.truncated ? (
         <View className="border-b border-amber-200 bg-amber-50 px-4 py-2 dark:border-amber-900/60 dark:bg-amber-950/40">
-          <Text className="text-[11px] font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+          <Text className="text-2xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
             Partial file
           </Text>
-          <Text className="text-[12px] leading-[17px] text-amber-800 dark:text-amber-200">
+          <Text className="text-xs leading-[17px] text-amber-800 dark:text-amber-200">
             Preview limited to the first 1 MB of a truncated file.
           </Text>
         </View>
@@ -389,7 +390,7 @@ function FilesHeaderTitle(props: { readonly projectName: string }) {
         style={{
           color: foregroundColor,
           fontFamily: "DMSans_700Bold",
-          fontSize: 18,
+          fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
           fontWeight: "900",
           letterSpacing: -0.4,
         }}
@@ -401,7 +402,7 @@ function FilesHeaderTitle(props: { readonly projectName: string }) {
         style={{
           color: secondaryForegroundColor,
           fontFamily: "DMSans_500Medium",
-          fontSize: 12,
+          fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
           fontWeight: "500",
           letterSpacing: 0.2,
         }}

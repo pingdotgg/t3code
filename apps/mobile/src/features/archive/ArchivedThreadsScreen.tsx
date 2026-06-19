@@ -147,14 +147,14 @@ function ProjectGroupLabel(props: {
         workspaceRoot={props.project.workspaceRoot}
       />
       <Text
-        className="flex-1 text-[12px] font-t3-medium uppercase text-foreground-muted"
+        className="flex-1 text-xs font-t3-medium uppercase text-foreground-muted"
         numberOfLines={1}
         style={{ letterSpacing: 0.5 }}
       >
         {props.project.title}
       </Text>
       {props.environmentLabel ? (
-        <Text className="max-w-[42%] text-[11px] text-foreground-tertiary" numberOfLines={1}>
+        <Text className="max-w-[42%] text-2xs text-foreground-tertiary" numberOfLines={1}>
           {props.environmentLabel}
         </Text>
       ) : null}
@@ -265,13 +265,13 @@ function ArchivedThreadRow(props: {
         <View className="min-w-0 flex-1 gap-1">
           <View className="flex-row items-center gap-2">
             <Text
-              className="min-w-0 flex-1 text-[15px] font-t3-bold leading-[20px] text-foreground"
+              className="min-w-0 flex-1 text-base font-t3-bold leading-[20px] text-foreground"
               numberOfLines={1}
             >
               {props.thread.title}
             </Text>
             <Text
-              className="text-[12px] text-foreground-tertiary"
+              className="text-xs text-foreground-tertiary"
               style={{ fontVariant: ["tabular-nums"] }}
             >
               {timestamp}
@@ -286,7 +286,7 @@ function ArchivedThreadRow(props: {
                 type="monochrome"
               />
               <Text
-                className="min-w-0 flex-1 text-[11px] text-foreground-tertiary"
+                className="min-w-0 flex-1 text-2xs text-foreground-tertiary"
                 numberOfLines={1}
                 style={{ fontFamily: "monospace" }}
               >
@@ -314,10 +314,12 @@ function ArchivedThreadRow(props: {
 function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
   return (
     <View className="rounded-[20px] border border-danger-border bg-danger p-4">
-      <Text className="font-t3-bold text-danger-foreground">Could not load every archive</Text>
-      <Text className="mt-1 text-[13px] leading-[18px] text-foreground-muted">{props.message}</Text>
+      <Text className="text-base font-t3-bold text-danger-foreground">
+        Could not load every archive
+      </Text>
+      <Text className="mt-1 text-sm leading-[18px] text-foreground-muted">{props.message}</Text>
       <Pressable className="mt-3 self-start active:opacity-60" onPress={props.onRetry}>
-        <Text className="text-[13px] font-t3-bold text-danger-foreground">Try again</Text>
+        <Text className="text-sm font-t3-bold text-danger-foreground">Try again</Text>
       </Pressable>
     </View>
   );
@@ -386,7 +388,7 @@ export function ArchivedThreadsScreen(props: {
         {isInitialLoad ? (
           <View className="items-center py-16">
             <ActivityIndicator color={refreshTint} />
-            <Text className="mt-3 text-[13px] text-foreground-muted">Loading archive…</Text>
+            <Text className="mt-3 text-sm text-foreground-muted">Loading archive…</Text>
           </View>
         ) : props.groups.length === 0 ? (
           <EmptyState

@@ -186,7 +186,7 @@ function ProjectGroupLabel(props: {
         workspaceRoot={props.project.workspaceRoot}
       />
       <Text
-        className="flex-1 text-[12px] font-t3-medium uppercase text-foreground-muted"
+        className="flex-1 text-xs font-t3-medium uppercase text-foreground-muted"
         style={{ letterSpacing: 0.5 }}
         numberOfLines={1}
       >
@@ -196,7 +196,7 @@ function ProjectGroupLabel(props: {
       {hiddenCount > 0 ? (
         <Pressable onPress={props.onToggleExpand} hitSlop={8}>
           <Text
-            className="text-[12px] font-t3-medium text-foreground-muted"
+            className="text-xs font-t3-medium text-foreground-muted"
             style={{ letterSpacing: 0.4 }}
           >
             {props.isExpanded ? "Show less" : `${hiddenCount} more`}
@@ -335,7 +335,7 @@ function ThreadRow(props: {
           <View style={{ flex: 1, gap: 3 }}>
             <View className="flex-row items-center justify-between gap-2">
               <Text
-                className="flex-1 text-[15px] font-t3-bold leading-[20px] text-foreground"
+                className="flex-1 text-base font-t3-bold leading-[20px] text-foreground"
                 numberOfLines={1}
               >
                 {props.thread.title}
@@ -345,12 +345,12 @@ function ThreadRow(props: {
                   className={tone.pillClassName}
                   style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
                 >
-                  <Text className={`text-[10px] font-t3-bold ${tone.textClassName}`}>
+                  <Text className={`text-3xs font-t3-bold ${tone.textClassName}`}>
                     {tone.label}
                   </Text>
                 </View>
                 <Text
-                  className="text-[12px] text-foreground-tertiary"
+                  className="text-xs text-foreground-tertiary"
                   style={{ fontVariant: ["tabular-nums"] }}
                 >
                   {timestamp}
@@ -367,7 +367,7 @@ function ThreadRow(props: {
                   type="monochrome"
                 />
                 <Text
-                  className="text-[11px] text-foreground-tertiary"
+                  className="text-2xs text-foreground-tertiary"
                   numberOfLines={1}
                   style={{ fontFamily: "monospace" }}
                 >
@@ -429,7 +429,7 @@ function StaleCatalogStatusPill(props: {
           weight="semibold"
         />
       )}
-      <Text className="max-w-[260px] text-[13px] font-t3-bold text-foreground" numberOfLines={1}>
+      <Text className="max-w-[260px] text-sm font-t3-bold text-foreground" numberOfLines={1}>
         {label}
       </Text>
     </Pressable>

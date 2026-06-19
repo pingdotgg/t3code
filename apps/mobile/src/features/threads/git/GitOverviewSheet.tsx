@@ -175,13 +175,13 @@ export function GitOverviewSheet() {
           />
         </Pressable>
         <Text
-          className="text-[12px] font-t3-bold uppercase text-foreground-muted"
+          className="text-xs font-t3-bold uppercase text-foreground-muted"
           style={{ letterSpacing: 1 }}
         >
           Branch
         </Text>
-        <Text className="text-[28px] font-t3-bold">{currentBranchLabel}</Text>
-        <Text className="text-foreground-secondary text-[13px] font-medium leading-[19px]">
+        <Text className="text-3xl font-t3-bold">{currentBranchLabel}</Text>
+        <Text className="text-foreground-secondary text-sm font-medium leading-[19px]">
           {statusSummary(gitStatus.data)}
         </Text>
       </View>

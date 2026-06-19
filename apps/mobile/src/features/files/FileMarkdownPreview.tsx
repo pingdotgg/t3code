@@ -7,6 +7,7 @@ import {
 } from "react-native-nitro-markdown";
 import { Linking, ScrollView, Text as NativeText, View } from "react-native";
 
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
   hasNativeSelectableMarkdownText,
@@ -72,8 +73,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         text: {
           color: body,
           fontFamily: "DMSans_400Regular",
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
         },
         heading: {
           color: strong,
@@ -123,8 +123,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
         skillTextColor: codeText,
         quoteMarkerColor: blockquoteBorder,
         dividerColor: horizontalRule,
-        fontSize: 15,
-        lineHeight: 22,
+        ...MOBILE_TYPOGRAPHY.body,
         fontFamily: "DMSans_400Regular",
         headingFontFamily: "DMSans_700Bold",
         boldFontFamily: "DMSans_700Bold",

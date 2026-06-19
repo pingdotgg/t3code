@@ -5,6 +5,7 @@ import type {
 } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
+import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import { getPierreTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
 import {
@@ -18,16 +19,16 @@ import type { ReviewInlineComment } from "./reviewCommentSelection";
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 
-export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = 20;
+export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
 export const NATIVE_REVIEW_DIFF_STYLE = {
   rowHeight: NATIVE_REVIEW_DIFF_ROW_HEIGHT,
   contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
   changeBarWidth: 4,
-  gutterWidth: 46,
-  codePadding: 7,
-  textVerticalInset: 2,
+  gutterWidth: MOBILE_CODE_SURFACE.gutterWidth,
+  codePadding: MOBILE_CODE_SURFACE.codePadding,
+  textVerticalInset: MOBILE_CODE_SURFACE.textVerticalInset,
   fileHeaderHeight: 56,
   fileHeaderHorizontalMargin: 8,
   fileHeaderVerticalMargin: 6,
@@ -36,9 +37,9 @@ export const NATIVE_REVIEW_DIFF_STYLE = {
   fileHeaderPathRightPadding: 118,
   fileHeaderCountColumnWidth: 38,
   fileHeaderCountGap: 5,
-  codeFontSize: 11,
+  codeFontSize: MOBILE_CODE_SURFACE.fontSize,
   codeFontWeight: "regular",
-  lineNumberFontSize: 10,
+  lineNumberFontSize: MOBILE_CODE_SURFACE.lineNumberFontSize,
   lineNumberFontWeight: "regular",
   hunkFontSize: 11,
   hunkFontWeight: "medium",

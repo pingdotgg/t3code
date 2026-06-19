@@ -275,8 +275,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     fileTint: "#737373"
   )
   private var fontFamily = "DMSans_400Regular"
-  private var fontSize: CGFloat = 15
-  private var lineHeight: CGFloat = 22
+  private var fontSize: CGFloat = 14
+  private var lineHeight: CGFloat = 20
   private var contentInsetVertical: CGFloat = 0
   private var shouldAutoFocus = false
   private var didAutoFocus = false
@@ -460,7 +460,17 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     guard !isApplyingControlledValue else {
       return
     }
+    restoreBaseTypingAttributes()
     emitSelection()
+  }
+
+  public func textView(
+    _ textView: UITextView,
+    shouldChangeTextIn range: NSRange,
+    replacementText text: String
+  ) -> Bool {
+    restoreBaseTypingAttributes()
+    return true
   }
 
   public func textViewDidBeginEditing(_ textView: UITextView) {
@@ -484,6 +494,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     let targetSelection = requestedSelection ?? previousSelection
     requestedSelection = nil
     textView.selectedRange = displayRange(for: targetSelection)
+    restoreBaseTypingAttributes()
     isApplyingControlledValue = false
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
@@ -556,7 +567,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
       size: image.size,
       baselineOffset: baselineOffset
     )
-    return NSAttributedString(attachment: attachment)
+    let attributedAttachment = NSMutableAttributedString(attachment: attachment)
+    attributedAttachment.addAttributes(
+      baseAttributes(),
+      range: NSRange(location: 0, length: attributedAttachment.length)
+    )
+    return attributedAttachment
   }
 
   private func renderChip(
@@ -660,9 +676,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     let font = UIFont(name: fontFamily, size: fontSize)
       ?? UIFont.systemFont(ofSize: fontSize)
     textView.font = font
-    textView.typingAttributes = baseAttributes()
+    restoreBaseTypingAttributes()
     placeholderLabel.font = font
     setNeedsLayout()
+  }
+
+  private func restoreBaseTypingAttributes() {
+    guard textView.markedTextRange == nil else {
+      return
+    }
+    textView.typingAttributes = baseAttributes()
   }
 
   private func applyTheme() {

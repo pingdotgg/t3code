@@ -64,7 +64,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
       <PierreEntryIcon path={node.path} kind={node.kind} size={17} />
       <Text
         className={cn(
-          "min-w-0 flex-1 text-[14px] leading-[19px]",
+          "min-w-0 flex-1 text-sm leading-[19px]",
           selected ? "font-t3-bold text-foreground" : "font-t3-medium text-foreground-secondary",
         )}
         numberOfLines={1}
@@ -72,7 +72,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
         {node.name}
       </Text>
       {node.kind === "directory" ? (
-        <Text className="text-[11px] font-t3-medium text-foreground-tertiary">
+        <Text className="text-2xs font-t3-medium text-foreground-tertiary">
           {node.children.length}
         </Text>
       ) : null}
@@ -142,10 +142,8 @@ export function FileTreeBrowser(props: {
     <View className="flex-1 bg-sheet">
       {props.error && props.entries.length === 0 ? (
         <View className="px-4 py-5">
-          <Text className="text-[13px] font-t3-bold text-foreground">Files unavailable</Text>
-          <Text className="mt-1 text-[12px] leading-[18px] text-foreground-muted">
-            {props.error}
-          </Text>
+          <Text className="text-sm font-t3-bold text-foreground">Files unavailable</Text>
+          <Text className="mt-1 text-xs leading-[18px] text-foreground-muted">{props.error}</Text>
         </View>
       ) : (
         <FlatList
@@ -174,8 +172,8 @@ export function FileTreeBrowser(props: {
                 <ActivityIndicator size="small" />
               ) : (
                 <>
-                  <Text className="text-[13px] font-t3-bold text-foreground">No files found</Text>
-                  <Text className="mt-1 text-[12px] leading-[18px] text-foreground-muted">
+                  <Text className="text-sm font-t3-bold text-foreground">No files found</Text>
+                  <Text className="mt-1 text-xs leading-[18px] text-foreground-muted">
                     {props.searchQuery.trim().length > 0
                       ? "Try a different search."
                       : "The workspace file index is empty."}

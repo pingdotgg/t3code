@@ -56,6 +56,7 @@ import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
 import type { LayoutVariant } from "../../lib/layout";
 import { buildThreadFilesNavigation } from "../../lib/routes";
+import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -444,8 +445,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                     marginRight: 5,
                     color: inlineTextColor,
                     fontFamily: "DMSans_400Regular",
-                    fontSize: 15,
-                    lineHeight: 22,
+                    ...MOBILE_TYPOGRAPHY.body,
                     textAlign: ordered ? "right" : "center",
                   }}
                 >
@@ -466,7 +466,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             style={{
               color: inlineCodeTextColor,
               fontFamily: "ui-monospace",
-              fontSize: 12,
+              fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
               lineHeight: 22,
             }}
           >
@@ -503,7 +503,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                 style={{
                   color: markdownBodyColor,
                   fontFamily: "ui-monospace",
-                  fontSize: 12,
+                  fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                   opacity: 0.7,
                   textTransform: "uppercase",
                 }}
@@ -523,7 +523,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               style={{
                 color: blockTextColor,
                 fontFamily: "ui-monospace",
-                fontSize: 12,
+                fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                 lineHeight: 18,
               }}
             >
@@ -603,8 +603,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: "#f0abfc",
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
@@ -633,8 +632,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
-          fontSize: 15,
-          lineHeight: 22,
+          ...MOBILE_TYPOGRAPHY.body,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
@@ -821,7 +819,7 @@ function renderFeedEntry(
           className="max-w-[85%] gap-2 rounded-[22px] rounded-br-[6px] px-3.5 py-2.5 opacity-60"
           style={{ backgroundColor: userBubbleColor }}
         >
-          <Text className="font-sans text-[15px] leading-[22px] text-white">
+          <Text className="font-sans text-base leading-[22px] text-white">
             {entry.queuedMessage.text}
           </Text>
           {entry.queuedMessage.attachments.length > 0 ? (
@@ -995,7 +993,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
         </View>
         <View className="min-w-0 flex-1">
           <Text
-            className="font-mono text-[12px] leading-[16px]"
+            className="font-mono text-xs leading-[16px]"
             numberOfLines={1}
             style={{ color: props.colors.text }}
           >
@@ -1040,8 +1038,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             style={{
               color: props.colors.text,
               fontFamily: "ui-monospace",
-              fontSize: 12,
-              lineHeight: 18,
+              fontSize: MOBILE_CODE_SURFACE.fontSize,
+              lineHeight: MOBILE_CODE_SURFACE.rowHeight,
             }}
           >
             {props.comment.diff.trim()}
@@ -1052,7 +1050,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
         <View className="border-t px-3 py-3" style={{ borderColor: props.colors.border }}>
           <Text
             selectable
-            className="text-[15px] leading-[21px]"
+            className="text-base leading-[21px]"
             style={{ color: props.colors.text }}
           >
             {props.comment.text}

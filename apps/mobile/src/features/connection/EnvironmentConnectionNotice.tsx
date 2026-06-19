@@ -73,10 +73,10 @@ export function EnvironmentConnectionNotice(props: {
           />
         )}
 
-        <Text className="text-center text-[17px] font-t3-bold leading-[22px] text-foreground">
+        <Text className="text-center text-lg font-t3-bold leading-[22px] text-foreground">
           {noticeTitle(props.connection.phase, props.environmentLabel)}
         </Text>
-        <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+        <Text className="text-center text-sm leading-[20px] text-foreground-muted">
           {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}
           {props.connection.traceId ? (
             <>
@@ -99,7 +99,7 @@ export function EnvironmentConnectionNotice(props: {
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
             onPress={props.onRetry}
           >
-            <Text className="text-[13px] font-t3-bold text-foreground">Retry now</Text>
+            <Text className="text-sm font-t3-bold text-foreground">Retry now</Text>
           </Pressable>
         ) : null}
       </View>

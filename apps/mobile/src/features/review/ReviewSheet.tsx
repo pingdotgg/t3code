@@ -20,6 +20,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useReviewCacheForThread } from "./reviewState";
@@ -41,10 +42,10 @@ const REVIEW_HEADER_SPACING = 0;
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
   return (
     <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-[12px] font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
         Partial diff
       </Text>
-      <Text className="text-[12px] leading-[18px] text-amber-800 dark:text-amber-200">
+      <Text className="text-xs leading-[18px] text-amber-800 dark:text-amber-200">
         {props.notice}
       </Text>
     </View>
@@ -69,7 +70,7 @@ function ReviewSelectionActionBar(props: {
         tintColor="#ffffff"
         type="monochrome"
       />
-      <Text className="text-[15px] font-t3-bold text-white">{props.title}</Text>
+      <Text className="text-base font-t3-bold text-white">{props.title}</Text>
     </>
   );
 
@@ -218,8 +219,8 @@ export function ReviewSheet() {
     if (error) {
       children.push(
         <View key="review-error" className="border-b border-border bg-card px-4 py-3">
-          <Text className="text-[13px] font-t3-bold text-foreground">Review unavailable</Text>
-          <Text className="text-[12px] leading-[18px] text-foreground-muted">{error}</Text>
+          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-xs leading-[18px] text-foreground-muted">{error}</Text>
         </View>,
       );
     }
@@ -251,7 +252,7 @@ export function ReviewSheet() {
                 numberOfLines={1}
                 style={{
                   fontFamily: "DMSans_700Bold",
-                  fontSize: 18,
+                  fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
                   fontWeight: "900",
                   color: headerForeground,
                   letterSpacing: -0.4,
@@ -273,7 +274,7 @@ export function ReviewSheet() {
                     <NativeText
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: "#16a34a",
                       }}
@@ -283,7 +284,7 @@ export function ReviewSheet() {
                     <NativeText
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: "#e11d48",
                       }}
@@ -294,7 +295,7 @@ export function ReviewSheet() {
                       <NativeText
                         style={{
                           fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
+                          fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                           fontWeight: "700",
                           color: "#b45309",
                         }}
@@ -309,7 +310,7 @@ export function ReviewSheet() {
                       numberOfLines={1}
                       style={{
                         fontFamily: "DMSans_700Bold",
-                        fontSize: 12,
+                        fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                         fontWeight: "700",
                         color: headerMuted,
                       }}
@@ -320,7 +321,7 @@ export function ReviewSheet() {
                       <NativeText
                         style={{
                           fontFamily: "DMSans_700Bold",
-                          fontSize: 12,
+                          fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
                           fontWeight: "700",
                           color: "#b45309",
                         }}
@@ -430,30 +431,30 @@ export function ReviewSheet() {
             {listHeader}
             {!selectedSection ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-[14px] font-t3-bold text-foreground">No review diffs</Text>
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   This thread has no ready turn diffs and the worktree diff is empty.
                 </Text>
               </View>
             ) : selectedSection.isLoading && selectedSection.diff === null ? (
               <View className="items-center gap-3 border-b border-border bg-card px-4 py-6">
                 <ActivityIndicator size="small" />
-                <Text className="text-[12px] text-foreground-muted">Loading diff…</Text>
+                <Text className="text-xs text-foreground-muted">Loading diff…</Text>
               </View>
             ) : parsedDiff.kind === "empty" ? (
               <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-[14px] font-t3-bold text-foreground">No changes</Text>
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   {selectedSection.subtitle ?? "This diff is empty."}
                 </Text>
               </View>
             ) : parsedDiff.kind === "raw" ? (
               <View className="gap-3 border-b border-border bg-card px-4 py-4">
-                <Text className="text-[12px] leading-[18px] text-foreground-muted">
+                <Text className="text-xs leading-[18px] text-foreground-muted">
                   {parsedDiff.reason}
                 </Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
-                  <Text selectable className="font-mono text-[12px] leading-[19px] text-foreground">
+                  <Text selectable className="font-mono text-xs leading-[19px] text-foreground">
                     {parsedDiff.text}
                   </Text>
                 </ScrollView>

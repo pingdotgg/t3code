@@ -167,7 +167,7 @@ function SwipeActionButton(props: {
           </Animated.View>
         </View>
         <Animated.View style={[{ paddingTop: 2 }, labelStyle]}>
-          <Text className="text-[10px] font-t3-medium text-foreground-muted">{props.label}</Text>
+          <Text className="text-3xs font-t3-medium text-foreground-muted">{props.label}</Text>
         </Animated.View>
       </Pressable>
     </Animated.View>

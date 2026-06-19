@@ -98,7 +98,7 @@ export function ThreadWorkLog(props: {
   return (
     <View className="-mx-1 mb-3 px-1 py-0.5">
       {!onlyToolRows ? (
-        <Text className="px-0.5 pb-0.5 font-t3-medium text-[11px] text-foreground-muted opacity-60">
+        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
           work log
         </Text>
       ) : null}
@@ -164,7 +164,7 @@ export function ThreadWorkLog(props: {
 
                   <View className="shrink-0 flex-row items-center gap-px">
                     {props.copiedRowId === row.id ? (
-                      <Text className="pr-1 font-t3-medium text-[10px] text-emerald-600 dark:text-emerald-400">
+                      <Text className="pr-1 font-t3-medium text-3xs text-emerald-600 dark:text-emerald-400">
                         Copied
                       </Text>
                     ) : null}
@@ -209,7 +209,7 @@ export function ThreadWorkLog(props: {
                   >
                     <Text
                       selectable
-                      className="text-[11px] leading-[17px] text-foreground-muted"
+                      className="text-2xs leading-[17px] text-foreground-muted"
                       style={{ fontFamily: "ui-monospace" }}
                     >
                       {row.fullDetail}

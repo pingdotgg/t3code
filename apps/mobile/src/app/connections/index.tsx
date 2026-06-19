@@ -85,7 +85,7 @@ export default function ConnectionsRouteScreen() {
                 type="monochrome"
               />
             </View>
-            <Text className="text-center text-[14px] leading-[20px] text-foreground-muted">
+            <Text className="text-center text-sm leading-[20px] text-foreground-muted">
               No environments connected yet.{"\n"}Tap{" "}
               <Text className="font-t3-bold text-foreground">+</Text> to add one.
             </Text>

@@ -43,6 +43,7 @@ import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
   insertRankedSearchResult,
@@ -189,7 +190,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
           <View className="h-2 w-2 rounded-full bg-red-500" />
         )}
         <Text
-          className="max-w-[260px] text-[13px] font-t3-bold leading-[17px] text-foreground"
+          className="max-w-[260px] text-sm font-t3-bold leading-[17px] text-foreground"
           numberOfLines={1}
         >
           {props.status.label}
@@ -717,8 +718,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     }
               }
               textStyle={{
-                fontSize: 15,
-                lineHeight: isExpanded ? 22 : 20,
+                ...MOBILE_TYPOGRAPHY.composer,
                 color: foregroundColor,
                 fontFamily: "DMSans_400Regular",
               }}
@@ -751,7 +751,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     justifyContent: "center",
                   }}
                 >
-                  <Text className="text-foreground-muted text-[11px] font-t3-bold">
+                  <Text className="text-foreground-muted text-2xs font-t3-bold">
                     +{props.draftAttachments.length - 3}
                   </Text>
                 </View>
@@ -831,8 +831,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <Text
             className="text-foreground-muted"
             style={{
-              fontSize: 12,
-              lineHeight: 18,
+              ...MOBILE_TYPOGRAPHY.label,
               paddingTop: 8,
             }}
           >

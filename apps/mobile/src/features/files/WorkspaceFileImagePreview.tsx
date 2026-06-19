@@ -81,7 +81,7 @@ function CachedWorkspaceFileImagePreview(props: {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
-        <Text className="text-center text-[13px] text-foreground-muted">Loading image...</Text>
+        <Text className="text-center text-sm text-foreground-muted">Loading image...</Text>
       </View>
     );
   }
@@ -102,7 +102,7 @@ export function WorkspaceFileImagePreview(props: {
     return (
       <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
         <ActivityIndicator />
-        <Text className="text-center text-[13px] text-foreground-muted">
+        <Text className="text-center text-sm text-foreground-muted">
           Preparing image preview...
         </Text>
       </View>

@@ -152,7 +152,7 @@ export function ThreadNavigationDrawer(props: {
             ]}
           >
             <View className="flex-row items-center justify-between px-4 pb-5">
-              <Text className="text-[26px] font-t3-bold">Threads</Text>
+              <Text className="text-2xl font-t3-bold">Threads</Text>
               <Pressable
                 onPress={() => {
                   props.onClose();
@@ -224,7 +224,7 @@ function ThreadNavigationDrawerContent(props: {
       {groupedThreads.map((group) => (
         <View key={group.key} className="gap-3">
           <Text
-            className="px-1 text-[15px] font-t3-bold text-foreground-muted"
+            className="px-1 text-base font-t3-bold text-foreground-muted"
             style={{ letterSpacing: -0.2 }}
           >
             {group.title}
@@ -233,9 +233,7 @@ function ThreadNavigationDrawerContent(props: {
           <View className="overflow-hidden rounded-[22px] bg-card">
             {group.threads.length === 0 ? (
               <View className="px-4 py-4">
-                <Text className="text-[14px] font-medium text-foreground-tertiary">
-                  No threads yet
-                </Text>
+                <Text className="text-sm font-medium text-foreground-tertiary">No threads yet</Text>
               </View>
             ) : (
               group.threads.map((thread, index) => {
@@ -260,11 +258,11 @@ function ThreadNavigationDrawerContent(props: {
                   >
                     <View className="flex-row items-start justify-between gap-3">
                       <View className="flex-1 gap-1">
-                        <Text className="text-[16px] font-t3-bold" numberOfLines={1}>
+                        <Text className="text-base font-t3-bold" numberOfLines={1}>
                           {thread.title}
                         </Text>
                         <Text
-                          className="text-[13px] font-medium text-foreground-muted"
+                          className="text-sm font-medium text-foreground-muted"
                           numberOfLines={1}
                         >
                           {relativeTime(thread.updatedAt ?? thread.createdAt)}
