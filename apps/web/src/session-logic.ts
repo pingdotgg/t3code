@@ -634,6 +634,7 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isHiddenWorkLogTelemetryActivity(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
@@ -641,6 +642,24 @@ export function deriveWorkLogEntries(
     const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
+}
+
+function isHiddenWorkLogTelemetryActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind === "account.updated" || activity.kind === "account.rate-limits.updated") {
+    return true;
+  }
+
+  const normalizedSummary = activity.summary.trim().toLowerCase();
+  if (normalizedSummary === "account quota updated") {
+    return true;
+  }
+
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const title = typeof payload?.title === "string" ? payload.title.trim().toLowerCase() : "";
+  return title === "account quota updated";
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
