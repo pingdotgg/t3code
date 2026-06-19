@@ -13,6 +13,10 @@ const bundledPackagePrefixes = [
 ];
 
 export function shouldBundleCliDependency(id: string): boolean {
+  // `@t3tools/tui` is a Bun + OpenTUI app spawned as a subprocess by `t3 tui`.
+  // It must stay an external, resolvable file (with @opentui native deps) rather
+  // than being inlined into the Node bin.
+  if (id === "@t3tools/tui") return false;
   return bundledPackagePrefixes.some((prefix) => id.startsWith(prefix));
 }
 

@@ -3,7 +3,8 @@
   "compilerOptions": {
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
   },
   "include": ["src"]
 }

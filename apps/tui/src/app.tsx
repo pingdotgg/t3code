@@ -1,17 +1,14 @@
-import { appendFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join as joinPath } from "node:path";
 
 import {
   DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT,
   DEFAULT_TERMINAL_ID,
-  type OrchestrationMessage,
   type OrchestrationThreadShell,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Box, render, Text, useInput } from "ink";
+import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import * as React from "react";
 
 import { derivePendingApprovals, type PendingApproval } from "./approvals.ts";
@@ -23,18 +20,14 @@ import {
   sessionStatusColor,
   type ThreadStatus,
 } from "./theme.ts";
+import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "./connection.ts";
 
 // @xterm/headless ships as CommonJS, so load it via createRequire (matching the
-// repo's node-pty pattern) rather than a named ESM import.
+// repo's node-pty pattern) rather than a named ESM import. Works under Bun.
 const { Terminal } = createRequire(import.meta.url)(
   "@xterm/headless",
 ) as typeof import("@xterm/headless");
 type XTerm = InstanceType<typeof Terminal>;
-import type {
-  OrchestrationShellSnapshot,
-  OrchestrationThread,
-  TuiClient,
-} from "./connection.ts";
 
 const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
   "approval-required",
@@ -42,155 +35,18 @@ const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
   "full-access",
 ];
 
-/** Detach key for the terminal passthrough (Ctrl-Q). */
-const TERMINAL_DETACH_BYTE = 0x11;
-
-/** Switch the terminal into the alternate screen buffer (fullscreen) and back. */
-const enterFullscreen = () => process.stdout.write("\x1b[?1049h\x1b[2J\x1b[H");
-const leaveFullscreen = () => process.stdout.write("\x1b[?1049l");
-
-/**
- * Enable/disable mouse reporting. 1000 = button press/release, 1002 = motion
- * while a button is held (for divider dragging), 1006 = SGR encoding. We also
- * parse the legacy X10 encoding in case a terminal/multiplexer falls back to it.
- */
-const enableMouse = () => process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
-const disableMouse = () => process.stdout.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
-
-/** Width of the thread-list pane. */
+/** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
-
-/** Conversation lines scrolled per mouse-wheel notch (the usual terminal step). */
-const WHEEL_LINES = 6;
-
+/** Conversation lines scrolled per page key. */
+const SCROLL_STEP = 8;
 /** Replay at most this many bytes of terminal history on attach (keeps it fast). */
 const TERMINAL_HISTORY_TAIL = 128 * 1024;
 
-/** Matches the leftover of an SGR mouse report so it never lands in the prompt. */
-const MOUSE_SEQUENCE = /<\d+;\d+;\d+[Mm]/;
-
-/** Opt-in: dump raw stdin bytes (hex) so we can see what the wheel emits. */
-const INPUT_DEBUG = Boolean(process.env.T3CODE_TUI_DEBUG);
-const INPUT_DEBUG_PATH = joinPath(tmpdir(), "t3-tui-input.log");
-const logInputBytes = (chunk: Buffer | string) => {
-  if (!INPUT_DEBUG) return;
-  try {
-    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "latin1") : chunk;
-    appendFileSync(
-      INPUT_DEBUG_PATH,
-      `${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(" ")}\n`,
-    );
-  } catch {
-    // best effort
-  }
-};
-
-/**
- * Map an SGR/X10 mouse button code to a scroll direction. Wheel/scroll events
- * set bit 6 (64); the low bits encode the axis+direction (64 up, 65 down, 66
- * left, 67 right) and bits 2-4 are shift/alt/ctrl modifiers, which we strip.
- * Both wheel axes are treated as vertical scroll since that's all the UI scrolls.
- */
-function wheelDirection(button: number): "up" | "down" | null {
-  const base = button & ~(4 | 8 | 16); // strip shift/alt/ctrl
-  // 64/65 are the standard vertical wheel; 66/67 are the "other" axis some
-  // devices report scroll on — both mapped to vertical scroll.
-  if (base === 64 || base === 66) return "up";
-  if (base === 65 || base === 67) return "down";
-  return null;
-}
-
-interface MouseHandlers {
-  readonly onWheel: (direction: "up" | "down", column: number) => void;
-  /** Left-button press at a 1-based (column, row). */
-  readonly onPress: (column: number, row: number) => void;
-  /** Left-button motion (drag) at a 1-based (column, row). */
-  readonly onDrag: (column: number, row: number) => void;
-  /** Any button release. */
-  readonly onRelease: (column: number, row: number) => void;
-}
-
-/** Decode one mouse report (button code already de-offset for X10). */
-function dispatchMouse(
-  button: number,
-  column: number,
-  row: number,
-  isPress: boolean,
-  handlers: MouseHandlers,
-): void {
-  const direction = wheelDirection(button);
-  if (direction) {
-    handlers.onWheel(direction, column);
-    return;
-  }
-  if (!isPress) {
-    handlers.onRelease(column, row); // SGR release (lowercase m)
-    return;
-  }
-  const baseButton = button & 3;
-  if (baseButton === 3) {
-    handlers.onRelease(column, row); // X10 release
-    return;
-  }
-  if ((button & 32) !== 0) {
-    if (baseButton === 0) handlers.onDrag(column, row); // left-button drag
-    return;
-  }
-  if (baseButton === 0) handlers.onPress(column, row); // left-button press
-}
-
-/**
- * Parse both SGR and legacy X10 mouse reports out of a stdin chunk and dispatch
- * wheel + press/drag/release events. Ink delivers the chunk as a string, so we
- * scan via `charCodeAt` rather than Buffer indexing.
- */
-function parseMouse(chunk: Buffer | string, handlers: MouseHandlers): void {
-  const text = typeof chunk === "string" ? chunk : chunk.toString("latin1");
-  // SGR: ESC [ < button ; col ; row (M=press | m=release)
-  if (text.includes("<")) {
-    const sgr = /<(\d+);(\d+);(\d+)([Mm])/g;
-    let match: RegExpExecArray | null;
-    while ((match = sgr.exec(text)) !== null) {
-      dispatchMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M", handlers);
-    }
-  }
-  // Legacy X10: ESC [ M then 3 chars (button+32, col+32, row+32); press only.
-  for (let i = 0; i + 6 <= text.length; i++) {
-    if (text.charCodeAt(i) === 0x1b && text[i + 1] === "[" && text[i + 2] === "M") {
-      dispatchMouse(
-        text.charCodeAt(i + 3) - 32,
-        text.charCodeAt(i + 4) - 32,
-        text.charCodeAt(i + 5) - 32,
-        true,
-        handlers,
-      );
-      i += 5;
-    }
-  }
-}
-
-/** Track the live terminal dimensions so the root box can fill the screen. */
-function useTerminalSize(): { readonly columns: number; readonly rows: number } {
-  const [size, setSize] = React.useState({
-    columns: process.stdout.columns ?? 80,
-    rows: process.stdout.rows ?? 24,
-  });
-  React.useEffect(() => {
-    const onResize = () =>
-      setSize({ columns: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 });
-    process.stdout.on("resize", onResize);
-    return () => {
-      process.stdout.off("resize", onResize);
-    };
-  }, []);
-  return size;
-}
+/** Muted foreground used for hints, timestamps, and the "dim" affordance. */
+const DIM = "#7a7f87";
+const SELECTED_BG = "#1f2a3a";
 
 // ── Row model ────────────────────────────────────────────────────────────────
-//
-// The list is a flat sequence of rows: one header per project followed by its
-// threads, but only when the project is expanded. Projects are collapsed by
-// default, so the cursor walks project headers until the user expands one.
 
 type Selection =
   | { readonly kind: "project"; readonly id: string }
@@ -213,11 +69,21 @@ function selectionEquals(selection: Selection | null, row: Row): boolean {
   return selection !== null && selection.kind === row.kind && selection.id === row.id;
 }
 
+/** Truncate to `width` with a trailing ellipsis. */
+function clip(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length <= width) return text;
+  return `${text.slice(0, width - 1)}…`;
+}
+/** Truncate then right-pad so a fixed trailing segment sits at the right edge. */
+function padClip(text: string, width: number): string {
+  return clip(text, width).padEnd(Math.max(0, width));
+}
+
 /**
  * Only the top {@link DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT} threads of a project
- * render until its list is loaded in full — mirroring the web sidebar's
- * `getVisibleThreadsForProject`. The currently selected thread is always kept
- * visible so the cursor never points at a hidden row.
+ * render until its list is loaded in full — mirroring the web sidebar. The
+ * currently selected thread is always kept visible.
  */
 function visibleThreadsForProject(
   threads: ReadonlyArray<OrchestrationThreadShell>,
@@ -261,7 +127,6 @@ export function buildRows(
     else byProject.set(thread.projectId, [thread]);
   }
 
-  // Known projects first (in catalogue order), then any orphaned project ids.
   const orderedIds: string[] = [
     ...shell.projects.map((project) => project.id as string).filter((id) => byProject.has(id)),
     ...[...byProject.keys()].filter((id) => !projectTitles.has(id)),
@@ -297,14 +162,10 @@ export function buildRows(
 }
 
 // ── External store ─────────────────────────────────────────────────────────
-//
-// Source of truth lives here, not in React, so it survives the Ink unmount /
-// remount we do when entering the full-screen terminal passthrough.
 
 interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
   readonly expanded: ReadonlySet<string>;
-  /** Projects whose full thread list has been loaded ("show more" activated). */
   readonly loadedInFull: ReadonlySet<string>;
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
@@ -391,8 +252,6 @@ function createStore(client: TuiClient): Store {
           b.updatedAt.localeCompare(a.updatedAt),
         );
         const nextShell = { ...shell, threads: sortedThreads };
-        // Every project starts collapsed; the cursor lands on the first project
-        // header until the user expands one.
         state = {
           ...state,
           shell: nextShell,
@@ -426,8 +285,6 @@ function createStore(client: TuiClient): Store {
     loadMore: (id) => {
       const loadedInFull = new Set(state.loadedInFull).add(id);
       set({ loadedInFull });
-      // Land the cursor on the first newly revealed thread (where "show more"
-      // sat), so the user keeps reading downward.
       const projectThreads = (state.shell?.threads ?? []).filter(
         (thread) => thread.projectId === id,
       );
@@ -440,94 +297,77 @@ function createStore(client: TuiClient): Store {
   };
 }
 
-// ── Signals from the UI back to the top-level controller ────────────────────
+// ── List rows ────────────────────────────────────────────────────────────────
 
-type AppSignal = { readonly type: "exit" };
-
-// ── Components ───────────────────────────────────────────────────────────────
-
-/** Truncate to `width` with a trailing ellipsis (Ink's flex truncate is brittle). */
-function clip(text: string, width: number): string {
-  if (width <= 0) return "";
-  if (text.length <= width) return text;
-  return `${text.slice(0, width - 1)}…`;
-}
-/** Truncate then right-pad so a fixed trailing segment sits at the right edge. */
-function padClip(text: string, width: number): string {
-  return clip(text, width).padEnd(Math.max(0, width));
-}
-
-const ProjectRow = React.memo(function ProjectRow({
+function ProjectRow({
   row,
   selected,
   innerWidth,
+  onClick,
 }: {
   readonly row: Extract<Row, { kind: "project" }>;
   readonly selected: boolean;
   readonly innerWidth: number;
-}): React.ReactElement {
+  readonly onClick: () => void;
+}): React.ReactNode {
   const caret = row.expanded ? "▾" : "▸";
-  const color = selected ? "cyan" : "blue";
   const count = ` (${row.count})`;
   const dot = row.status ? ` ${row.status.glyph}` : "";
-  const titleBudget = innerWidth - 3 - count.length - dot.length; // lead "M C " = 3
+  const titleBudget = innerWidth - 3 - count.length - dot.length;
   return (
-    <Text color={color} bold wrap="truncate-end">
-      {`${selected ? "›" : " "}${caret} `}
-      {padClip(row.title, titleBudget)}
-      {count}
-      {row.status ? (
-        <Text color={row.status.color} bold={row.status.bold}>
-          {dot}
-        </Text>
-      ) : null}
-    </Text>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+      <text>
+        <span fg={selected ? "cyan" : "blue"}>
+          {`${selected ? "›" : " "}${caret} ${padClip(row.title, titleBudget)}${count}`}
+        </span>
+        {row.status ? <span fg={row.status.color}>{dot}</span> : null}
+      </text>
+    </box>
   );
-});
+}
 
-const ThreadRow = React.memo(function ThreadRow({
+function ThreadRow({
   thread,
   selected,
   innerWidth,
+  onClick,
 }: {
   readonly thread: OrchestrationThreadShell;
   readonly selected: boolean;
   readonly innerWidth: number;
-}): React.ReactElement {
+  readonly onClick: () => void;
+}): React.ReactNode {
   const status = resolveThreadStatus(thread);
   const time = ` ${relativeTime(thread.updatedAt)}`;
-  const titleBudget = innerWidth - 6 - time.length; // lead "   ▶● " = 6
+  const titleBudget = innerWidth - 6 - time.length;
   return (
-    <Text wrap="truncate-end">
-      <Text color={status.color} bold={status.bold}>
-        {`   ${selected ? "▶" : " "}${status.glyph} `}
-      </Text>
-      <Text {...(selected ? { color: "cyan" as const } : {})} bold={selected}>
-        {padClip(thread.title, titleBudget)}
-      </Text>
-      <Text dimColor>{time}</Text>
-    </Text>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+      <text>
+        <span fg={status.color}>{`   ${selected ? "▶" : " "}${status.glyph} `}</span>
+        <span fg={selected ? "#ffffff" : "#cfd3da"}>{padClip(thread.title, titleBudget)}</span>
+        <span fg={DIM}>{time}</span>
+      </text>
+    </box>
   );
-});
+}
 
-const MoreRow = React.memo(function MoreRow({
+function MoreRow({
   hiddenCount,
   selected,
+  onClick,
 }: {
   readonly hiddenCount: number;
   readonly selected: boolean;
-}): React.ReactElement {
+  readonly onClick: () => void;
+}): React.ReactNode {
   return (
-    <Text
-      color={selected ? "cyan" : "gray"}
-      dimColor={!selected}
-      bold={selected}
-      wrap="truncate-end"
-    >
-      {`   ${selected ? "▶" : " "}… show ${hiddenCount} more`}
-    </Text>
+    <box onMouseDown={onClick} {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+      <text fg={selected ? "cyan" : DIM}>
+        {`   ${selected ? "▶" : " "}… show ${hiddenCount} more`}
+      </text>
+    </box>
   );
-});
+}
 
 function ThreadList({
   rows,
@@ -535,38 +375,51 @@ function ThreadList({
   moreAbove,
   moreBelow,
   width,
+  height,
+  store,
 }: {
   readonly rows: ReadonlyArray<Row>;
   readonly selection: Selection | null;
   readonly moreAbove: boolean;
   readonly moreBelow: boolean;
   readonly width: number;
-}): React.ReactElement {
-  const innerWidth = Math.max(8, width - 4); // round border (2) + paddingX (2)
+  readonly height: number;
+  readonly store: Store;
+}): React.ReactNode {
+  const innerWidth = Math.max(8, width - 4);
+  const activate = (row: Row) => {
+    if (row.kind === "project") store.toggleProject(row.id);
+    else if (row.kind === "more") store.loadMore(row.id);
+    else store.select({ kind: "thread", id: row.id });
+  };
   return (
-    <Box
+    <box
       flexDirection="column"
       width={width}
-      borderStyle="round"
+      height={height}
+      border
+      borderStyle="rounded"
       borderColor="gray"
-      paddingX={1}
-      overflow="hidden"
+      paddingLeft={1}
+      paddingRight={1}
     >
-      <Text bold color="cyan">
-        Projects
-        {moreAbove ? <Text dimColor>{"  ↑ more"}</Text> : null}
-      </Text>
+      <text>
+        <span fg="cyan">Projects</span>
+        {moreAbove ? <span fg={DIM}>{"  ↑ more"}</span> : null}
+      </text>
       {rows.length === 0 ? (
-        <Text dimColor>No projects yet. Press ^N.</Text>
+        <text fg={DIM}>No projects yet. Press ^N.</text>
       ) : (
         rows.map((row) => {
+          const selected = selectionEquals(selection, row);
           if (row.kind === "project") {
             return (
               <ProjectRow
                 key={`p:${row.id}`}
                 row={row}
-                selected={selectionEquals(selection, row)}
+                selected={selected}
                 innerWidth={innerWidth}
+                onClick={() => activate(row)}
               />
             );
           }
@@ -575,7 +428,8 @@ function ThreadList({
               <MoreRow
                 key={`m:${row.id}`}
                 hiddenCount={row.hiddenCount}
-                selected={selectionEquals(selection, row)}
+                selected={selected}
+                onClick={() => activate(row)}
               />
             );
           }
@@ -583,14 +437,15 @@ function ThreadList({
             <ThreadRow
               key={`t:${row.id}`}
               thread={row.thread}
-              selected={selectionEquals(selection, row)}
+              selected={selected}
               innerWidth={innerWidth}
+              onClick={() => activate(row)}
             />
           );
         })
       )}
-      {moreBelow ? <Text dimColor>{"  ↓ more"}</Text> : null}
-    </Box>
+      {moreBelow ? <text fg={DIM}>{"  ↓ more"}</text> : null}
+    </box>
   );
 }
 
@@ -598,189 +453,116 @@ function statusLabel(thread: { session: OrchestrationThread["session"] }): strin
   return thread.session?.status ?? "idle";
 }
 
-interface ChatLine {
-  readonly text: string;
-  readonly color?: string;
-  readonly bold?: boolean;
-}
+// ── Conversation (scrollbox + streaming markdown) ────────────────────────────
 
-/** Greedy word-wrap a paragraph (honouring existing newlines) to `width`. */
-function wrapText(text: string, width: number): string[] {
-  const max = Math.max(1, width);
-  const out: string[] = [];
-  for (const paragraph of text.replace(/\r/g, "").split("\n")) {
-    if (paragraph.length === 0) {
-      out.push("");
-      continue;
-    }
-    let line = "";
-    for (const word of paragraph.split(" ")) {
-      if (word.length > max) {
-        if (line.length > 0) {
-          out.push(line);
-          line = "";
-        }
-        let rest = word;
-        while (rest.length > max) {
-          out.push(rest.slice(0, max));
-          rest = rest.slice(max);
-        }
-        line = rest;
-        continue;
-      }
-      if (line.length === 0) line = word;
-      else if (line.length + 1 + word.length <= max) line += ` ${word}`;
-      else {
-        out.push(line);
-        line = word;
-      }
-    }
-    out.push(line);
-  }
-  return out;
-}
-
-/**
- * Per-message cache of wrapped body lines, keyed by the message object (which
- * the reducer keeps stable for unchanged messages) so a streaming update only
- * re-wraps the one message that changed — not the whole thread.
- */
-const wrapCache = new WeakMap<OrchestrationMessage, { width: number; lines: string[] }>();
-function wrapMessageBody(message: OrchestrationMessage, width: number): string[] {
-  const cached = wrapCache.get(message);
-  if (cached && cached.width === width) return cached.lines;
-  const body = message.text.trim().length > 0 ? message.text.trim() : "…";
-  const lines = wrapText(body, width);
-  wrapCache.set(message, { width, lines });
-  return lines;
-}
-
-/**
- * Flatten a thread's messages into individually styled display lines, wrapped
- * to the pane width. Line-accurate so the conversation paginates exactly to the
- * viewport — no message-sized clipping.
- */
-function buildConversationLines(detail: OrchestrationThread, width: number): ChatLine[] {
-  const lines: ChatLine[] = [];
-  for (const message of detail.messages) {
-    const color =
-      message.role === "user" ? "yellow" : message.role === "assistant" ? "white" : "gray";
-    const who = message.role === "user" ? "you" : message.role;
-    lines.push({ text: `${who}${message.streaming ? " ⟳" : ""}`, color, bold: true });
-    for (const wrapped of wrapMessageBody(message, width)) lines.push({ text: wrapped, color });
-    lines.push({ text: "" });
-  }
-  return lines;
-}
-
-/**
- * A vertical scrollbar column: an array of `height` glyphs with a proportional
- * thumb marking the current window position. Empty when everything fits.
- */
-function scrollbarColumn(total: number, height: number, start: number): string[] {
-  if (total <= height) return [];
-  const thumb = Math.max(1, Math.round((height * height) / total));
-  const maxStart = total - height;
-  const thumbStart =
-    maxStart <= 0 ? 0 : Math.round((height - thumb) * (Math.min(start, maxStart) / maxStart));
-  return Array.from({ length: height }, (_, index) =>
-    index >= thumbStart && index < thumbStart + thumb ? "█" : "│",
-  );
-}
-
-function ThreadDetail({
+function ConversationView({
   detail,
   approvals,
   projectHint,
-  lines,
-  bodyHeight,
-  start,
+  width,
+  height,
+  syntaxStyle,
+  scrollRef,
 }: {
   readonly detail: OrchestrationThread | null;
   readonly approvals: ReadonlyArray<PendingApproval>;
   readonly projectHint: string | null;
-  readonly lines: ReadonlyArray<ChatLine>;
-  readonly bodyHeight: number;
-  readonly start: number;
-}): React.ReactElement {
+  readonly width: number;
+  readonly height: number;
+  readonly syntaxStyle: SyntaxStyle;
+  readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
+}): React.ReactNode {
+  const headerHeight = 1;
+  const approvalHeight = approvals.length > 0 ? approvals.length + 2 : 0;
+  const bodyHeight = Math.max(1, height - headerHeight - approvalHeight - 2);
+
   if (!detail) {
     return (
-      <Box flexGrow={1} borderStyle="round" borderColor="gray" paddingX={1}>
-        <Text dimColor>
+      <box
+        flexGrow={1}
+        height={height}
+        border
+        borderStyle="rounded"
+        borderColor="gray"
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg={DIM}>
           {projectHint
             ? `${projectHint} — Enter to expand, then ↑/↓ to pick a thread.`
             : "Select a thread to view its conversation."}
-        </Text>
-      </Box>
+        </text>
+      </box>
     );
   }
-  // `start` is the absolute index of the top visible line (computed by the
-  // parent so streaming appends don't drag the viewport).
-  const total = lines.length;
-  const visible = lines.slice(start, start + bodyHeight);
-  const bar = scrollbarColumn(total, bodyHeight, start);
+
   return (
-    <Box
+    <box
       flexDirection="column"
       flexGrow={1}
-      borderStyle="round"
+      height={height}
+      border
+      borderStyle="rounded"
       borderColor="gray"
-      paddingX={1}
-      overflow="hidden"
+      paddingLeft={1}
+      paddingRight={1}
     >
-      <Box flexDirection="row" width="100%">
-        <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-          <Text bold wrap="truncate-end">
-            {detail.title}
-          </Text>
-        </Box>
-        <Text>
-          <Text dimColor>{"  "}</Text>
-          <Text color={approvals.length > 0 ? "red" : sessionStatusColor(detail.session?.status)}>
+      <box flexDirection="row" width="100%">
+        <box flexGrow={1}>
+          <text>
+            <strong>{clip(detail.title, Math.max(8, width - 28))}</strong>
+          </text>
+        </box>
+        <text>
+          <span fg={approvals.length > 0 ? "red" : sessionStatusColor(detail.session?.status)}>
             {approvals.length > 0 ? "pending approval" : statusLabel(detail)}
-          </Text>
-          <Text dimColor>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</Text>
-        </Text>
-      </Box>
-      <Box flexDirection="row" flexGrow={1} overflow="hidden">
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          {visible.map((line, index) => (
-            <Text
-              key={start + index}
-              wrap="truncate-end"
-              {...(line.color ? { color: line.color } : {})}
-              {...(line.bold ? { bold: true } : {})}
-            >
-              {line.text.length > 0 ? line.text : " "}
-            </Text>
-          ))}
-        </Box>
-        {bar.length > 0 ? (
-          <Box flexDirection="column" marginLeft={1}>
-            {bar.map((glyph, index) => (
-              <Text key={index} color={glyph === "█" ? "cyan" : "gray"} dimColor={glyph !== "█"}>
-                {glyph}
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-      </Box>
+          </span>
+          <span fg={DIM}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
+        </text>
+      </box>
+
+      <scrollbox
+        ref={scrollRef}
+        height={bodyHeight}
+        stickyScroll
+        stickyStart="bottom"
+        style={{ rootOptions: { backgroundColor: "transparent" } }}
+      >
+        {detail.messages.map((message) => {
+          const roleColor =
+            message.role === "user" ? "yellow" : message.role === "assistant" ? "cyan" : DIM;
+          const who = message.role === "user" ? "you" : message.role;
+          const body = message.text.trim().length > 0 ? message.text : "…";
+          return (
+            <box key={message.id} flexDirection="column" marginBottom={1}>
+              <text>
+                <span fg={roleColor}>{who}</span>
+                {message.streaming ? <span fg={DIM}> ⟳</span> : null}
+              </text>
+              <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} />
+            </box>
+          );
+        })}
+      </scrollbox>
+
       {approvals.length > 0 ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1}>
-          <Text color="red" bold>
-            Approval required
-          </Text>
+        <box flexDirection="column" border borderStyle="rounded" borderColor="red" paddingLeft={1} paddingRight={1}>
+          <text>
+            <span fg="red">Approval required</span>
+          </text>
           {approvals.map((approval) => (
-            <Text key={approval.requestId}>
+            <text key={approval.requestId}>
               {`${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`}
-            </Text>
+            </text>
           ))}
-          <Text dimColor>^A approve   ^R deny</Text>
-        </Box>
+          <text fg={DIM}>^A approve   ^R deny</text>
+        </box>
       ) : null}
-    </Box>
+    </box>
   );
 }
+
+// ── Embedded terminal pane ───────────────────────────────────────────────────
 
 interface TerminalInfo {
   readonly threadId: ThreadId;
@@ -790,24 +572,25 @@ interface TerminalInfo {
   readonly worktreePath: string | null;
 }
 
-/** Ink props for one styled terminal segment (no `undefined` values). */
-function segmentProps(segment: TermSegment): Record<string, unknown> {
-  return {
-    ...(segment.color ? { color: segment.color } : {}),
-    ...(segment.backgroundColor ? { backgroundColor: segment.backgroundColor } : {}),
-    ...(segment.bold ? { bold: true } : {}),
-    ...(segment.dimColor ? { dimColor: true } : {}),
-    ...(segment.italic ? { italic: true } : {}),
-    ...(segment.underline ? { underline: true } : {}),
-    ...(segment.inverse ? { inverse: true } : {}),
-  };
+/** Render one styled terminal segment, applying fg/bg + bold/underline/inverse. */
+function renderSegment(segment: TermSegment, key: number): React.ReactNode {
+  // Inverse swaps fg/bg so the cursor cell and reverse-video runs read correctly.
+  const fg = segment.inverse ? (segment.backgroundColor ?? "#000000") : segment.color;
+  const bg = segment.inverse ? (segment.color ?? "#c0c0c0") : segment.backgroundColor;
+  let node: React.ReactNode = segment.text;
+  if (segment.underline) node = <u>{node}</u>;
+  if (segment.italic) node = <em>{node}</em>;
+  if (segment.bold) node = <strong>{node}</strong>;
+  const style: { fg?: string; bg?: string } = {};
+  if (fg) style.fg = fg;
+  if (bg) style.bg = bg;
+  return (
+    <span key={key} {...style}>
+      {node}
+    </span>
+  );
 }
 
-/**
- * Embedded terminal pane: owns a headless xterm emulator (the same engine as the
- * web UI), feeds it the thread's PTY output, and renders its grid into Ink —
- * matching the web instead of taking over the screen.
- */
 function TerminalPane({
   client,
   info,
@@ -818,7 +601,7 @@ function TerminalPane({
   readonly info: TerminalInfo;
   readonly cols: number;
   readonly rows: number;
-}): React.ReactElement {
+}): React.ReactNode {
   const safeCols = Math.max(2, cols);
   const safeRows = Math.max(2, rows);
   const termRef = React.useRef<XTerm | null>(null);
@@ -843,13 +626,11 @@ function TerminalPane({
     [],
   );
 
-  // Keep the emulator and the PTY sized to the pane.
   React.useEffect(() => {
     if (term.cols !== safeCols || term.rows !== safeRows) term.resize(safeCols, safeRows);
     void client.terminalResize(info.threadId, info.terminalId, safeCols, safeRows).catch(() => {});
   }, [safeCols, safeRows]);
 
-  // Attach to the thread terminal and stream its output into the emulator.
   React.useEffect(() => {
     const scheduleRender = () => {
       if (scheduled.current) return;
@@ -871,8 +652,6 @@ function TerminalPane({
       (event) => {
         if (event.type === "snapshot" || event.type === "restarted") {
           term.reset();
-          // Threads can accumulate megabytes of history; only replay the tail so
-          // attaching stays instant.
           const history = event.snapshot.history;
           term.write(
             history.length > TERMINAL_HISTORY_TAIL
@@ -896,65 +675,55 @@ function TerminalPane({
 
   const frame = readTerminalFrame(term);
   return (
-    <Box
+    <box
       flexDirection="column"
-      height={safeRows + 3} // title (1) + grid + round border (2)
+      height={safeRows + 3}
       flexShrink={0}
-      borderStyle="round"
+      border
+      borderStyle="rounded"
       borderColor="yellow"
-      paddingX={1}
-      overflow="hidden"
+      paddingLeft={1}
+      paddingRight={1}
     >
-      <Text bold color="yellow" wrap="truncate-end">
-        {`Terminal · ${info.title}`}
-        <Text dimColor>{"  ·  drag top edge to resize · Ctrl+Q to return"}</Text>
-      </Text>
+      <text>
+        <span fg="yellow">{`Terminal · ${info.title}`}</span>
+        <span fg={DIM}>{"  ·  Ctrl+Q to return"}</span>
+      </text>
       {frame.rows.map((segments, index) => (
-        <Text key={index} wrap="truncate-end">
-          {segments.length === 0
-            ? " "
-            : segments.map((segment, segmentIndex) => (
-                <Text key={segmentIndex} {...segmentProps(segment)}>
-                  {segment.text}
-                </Text>
-              ))}
-        </Text>
+        <text key={index}>
+          {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}
+        </text>
       ))}
-    </Box>
+    </box>
   );
 }
 
-function App({
-  store,
+// ── App ──────────────────────────────────────────────────────────────────────
+
+export function App({
   client,
-  emit,
+  onExit,
 }: {
-  readonly store: Store;
   readonly client: TuiClient;
-  readonly emit: (signal: AppSignal) => void;
-}): React.ReactElement {
+  readonly onExit: () => void;
+}): React.ReactNode {
+  const { width, height } = useTerminalDimensions();
+  const store = React.useMemo(() => createStore(client), [client]);
+  const syntaxStyle = React.useMemo(() => SyntaxStyle.create(), []);
   const state = React.useSyncExternalStore(store.subscribe, store.getState);
-  const size = useTerminalSize();
+
+  React.useEffect(() => {
+    store.start();
+    return () => store.stop();
+  }, [store]);
+
   const [focus, setFocus] = React.useState<"compose" | "new">("compose");
   const [reply, setReply] = React.useState("");
   const [draft, setDraft] = React.useState("");
   const [projectIndex, setProjectIndex] = React.useState(0);
-  // Absolute index of the top visible conversation line, or `null` to follow the
-  // latest message (stick to bottom). Absolute so streaming appends don't move it.
-  const [chatTop, setChatTop] = React.useState<number | null>(null);
-  // When set, a bottom drawer shows the embedded terminal and keystrokes go to it.
   const [activeTerminal, setActiveTerminal] = React.useState<TerminalInfo | null>(null);
-  // User-dragged drawer height (rows); null = default proportion of the screen.
-  const [terminalHeight, setTerminalHeight] = React.useState<number | null>(null);
-  // Width of the thread-list pane (drag-resizable).
-  const [listWidth, setListWidth] = React.useState(LIST_PANE_WIDTH);
-  const activeTerminalRef = React.useRef<TerminalInfo | null>(null);
-  activeTerminalRef.current = activeTerminal;
-  const closeTerminalRef = React.useRef<() => void>(() => {});
-  closeTerminalRef.current = () => setActiveTerminal(null);
-  // Which divider (if any) is being dragged: the vertical list edge or the
-  // horizontal terminal-drawer top edge.
-  const dividerDragRef = React.useRef<"list" | "terminal" | null>(null);
+  const [listWidth] = React.useState(LIST_PANE_WIDTH);
+  const scrollRef = React.useRef<ScrollBoxRenderable | null>(null);
 
   const projects = state.shell?.projects ?? [];
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
@@ -972,32 +741,20 @@ function App({
       ? (projects.find((project) => project.id === state.selection?.id)?.title ?? null)
       : null;
 
-  // Follow the latest message again when switching threads.
-  React.useEffect(() => {
-    setChatTop(null);
-  }, [selectedThreadId]);
+  // The conversation scrollbox uses stickyScroll (bottom), so it auto-follows new
+  // messages while still letting the user scroll up. No manual scroll plumbing.
 
-  // The terminal is a full-width bottom drawer (like the web) whose height the
-  // user can drag. The list + conversation stay visible above it.
-  const terminalDrawerHeight = activeTerminal
-    ? Math.min(
-        Math.max(terminalHeight ?? Math.floor(size.rows * 0.62), 6),
-        Math.max(6, size.rows - 6),
-      )
-    : 0;
-
-  // Deterministic viewport heights derived from the terminal size + the fixed
-  // composer/footer (or drawer) rows, so the list follows the cursor and scroll.
+  // Deterministic viewport heights.
   const composerHeight = focus === "new" ? 6 : 5;
+  const terminalDrawerHeight = activeTerminal
+    ? Math.min(Math.max(Math.floor(height * 0.62), 6), Math.max(6, height - 6))
+    : 0;
   const bottomReserve = activeTerminal ? terminalDrawerHeight + 1 : composerHeight + 1;
-  const panesHeight = Math.max(4, size.rows - bottomReserve);
-  const listViewport = Math.max(1, panesHeight - 3); // round border (2) + header (1)
-  // Drawer interior: full width minus border (2) + padding (2); height minus
-  // border (2) + title (1).
-  const termCols = Math.max(2, size.columns - 4);
+  const panesHeight = Math.max(4, height - bottomReserve);
+  const listViewport = Math.max(1, panesHeight - 3);
+  const termCols = Math.max(2, width - 4);
   const termRows = Math.max(2, terminalDrawerHeight - 3);
-  // Terminal drawer's top border row (drag handle), 1-based.
-  const dividerRow = panesHeight + 1;
+  const chatWidth = Math.max(20, width - listWidth - 4);
 
   // Window the list around the selection so the highlighted row stays on screen.
   const selectedIndex = Math.max(
@@ -1015,471 +772,253 @@ function App({
   const moreAbove = listStart > 0;
   const moreBelow = listStart + listViewport < rows.length;
 
-  // Line-accurate conversation pagination: wrap every message to the pane width,
-  // then scroll through the flat line list a precise window at a time.
-  const chatWidth = Math.max(20, size.columns - listWidth - 6);
-  const conversationLines = React.useMemo(
-    () => (detail ? buildConversationLines(detail, chatWidth) : []),
-    [detail, chatWidth],
-  );
-  const approvalRows = approvals.length > 0 ? approvals.length + 3 : 0;
-  // border (2) + title (1) + any approval panel.
-  const chatBodyHeight = Math.max(1, panesHeight - 3 - approvalRows);
-  const maxStart = Math.max(0, conversationLines.length - chatBodyHeight);
-  // Resolve the anchor: null follows the bottom; otherwise clamp the saved top.
-  const chatStart = chatTop === null ? maxStart : Math.min(Math.max(0, chatTop), maxStart);
+  const sendReply = () => {
+    const text = reply.trim();
+    if (text.length === 0) {
+      // Empty prompt → Enter activates the highlighted row.
+      if (state.selection?.kind === "project") store.toggleProject(state.selection.id);
+      else if (state.selection?.kind === "more") store.loadMore(state.selection.id);
+      return;
+    }
+    if (!detail) {
+      store.setStatus("Select a thread (↑/↓) to send a message.");
+      return;
+    }
+    void client
+      .sendReply(detail, text)
+      .catch((error) => store.setStatus(`send failed: ${String(error)}`));
+    store.setStatus("Reply sent.");
+    setReply("");
+  };
 
-  // Positive delta scrolls up (older); reaching the bottom re-enables following.
-  const scrollChat = (deltaLines: number) => {
-    setChatTop((previous) => {
-      const base = previous === null ? maxStart : Math.min(Math.max(0, previous), maxStart);
-      const next = base - deltaLines;
-      return next >= maxStart ? null : Math.max(0, next);
+  const submitNewThread = () => {
+    const project = projects[projectIndex];
+    const message = draft.trim();
+    if (project && message.length > 0) {
+      if (!project.defaultModelSelection) {
+        store.setStatus("Project has no default model — set one in the web UI first.");
+      } else {
+        void client
+          .createThread({
+            projectId: project.id,
+            title: message.slice(0, 60),
+            modelSelection: project.defaultModelSelection,
+            firstMessage: message,
+          })
+          .catch((error) => store.setStatus(`create failed: ${String(error)}`));
+        store.setStatus("Creating thread…");
+      }
+    }
+    setDraft("");
+    setFocus("compose");
+  };
+
+  const openTerminal = () => {
+    if (!detail) return;
+    const project = projects.find((p) => p.id === detail.projectId);
+    const cwd = detail.worktreePath ?? project?.workspaceRoot ?? process.cwd();
+    setActiveTerminal({
+      threadId: detail.id,
+      terminalId: DEFAULT_TERMINAL_ID,
+      title: detail.title,
+      cwd,
+      worktreePath: detail.worktreePath,
     });
   };
 
-  // Mouse handlers are kept in refs so the stdin listener (registered once)
-  // always calls the latest closures.
-  const onWheelRef = React.useRef<(direction: "up" | "down", column: number) => void>(() => {});
-  onWheelRef.current = (direction, column) => {
-    if (focus === "new") return;
-    const inList = column <= listWidth + 1;
-    if (inList) {
-      // Move the list selection a few rows per notch.
-      store.moveSelection(direction === "up" ? -2 : 2);
-    } else {
-      scrollChat(direction === "up" ? WHEEL_LINES : -WHEEL_LINES);
-    }
-  };
-  // Click a list row: thread → select/open, project → expand/collapse, more →
-  // load more. The list box is: row 1 border, row 2 "Projects", rows 3.. items.
-  const onClickRef = React.useRef<(column: number, row: number) => void>(() => {});
-  onClickRef.current = (column, row) => {
-    if (focus !== "compose") return;
-    if (column > listWidth) return;
-    const index = row - 3;
-    const target = listRows[index];
-    if (!target) return;
-    if (target.kind === "project") store.toggleProject(target.id);
-    else if (target.kind === "more") store.loadMore(target.id);
-    else store.select({ kind: "thread", id: target.id });
-  };
-  // Drag a divider: the vertical list/conversation edge (by column) or the
-  // terminal drawer's top edge (by row). Returns whether the event belonged to a
-  // divider (so terminal mode knows not to forward it to the PTY).
-  const dividerPressRef = React.useRef<(column: number, row: number) => boolean>(() => false);
-  dividerPressRef.current = (column, row) => {
-    if (Math.abs(column - listWidth) <= 1) {
-      dividerDragRef.current = "list";
-      return true;
-    }
-    if (activeTerminal && Math.abs(row - dividerRow) <= 1) {
-      dividerDragRef.current = "terminal";
-      return true;
-    }
-    return false;
-  };
-  const dividerMoveRef = React.useRef<(column: number, row: number) => boolean>(() => false);
-  dividerMoveRef.current = (column, row) => {
-    if (dividerDragRef.current === "list") {
-      setListWidth(Math.min(Math.max(column, 22), Math.max(22, size.columns - 24)));
-      return true;
-    }
-    if (dividerDragRef.current === "terminal") {
-      setTerminalHeight(Math.min(Math.max(size.rows - row, 6), Math.max(6, size.rows - 6)));
-      return true;
-    }
-    return false;
-  };
-  const dividerReleaseRef = React.useRef<() => boolean>(() => false);
-  dividerReleaseRef.current = () => {
-    if (dividerDragRef.current === null) return false;
-    dividerDragRef.current = null;
-    return true;
-  };
-  React.useEffect(() => {
-    // Enable mouse *after* Ink has initialised the terminal so it can't clobber
-    // the mode we set, then parse wheel + click/drag events from the raw stream.
-    enableMouse();
-    const onData = (chunk: Buffer | string) => {
-      logInputBytes(chunk);
-      const term = activeTerminalRef.current;
-      if (term) {
-        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-        if (text.length === 1 && text.charCodeAt(0) === TERMINAL_DETACH_BYTE) {
-          closeTerminalRef.current();
-          return;
-        }
-        // Resizing a divider takes priority; everything else goes to the PTY.
-        let handled = false;
-        parseMouse(chunk, {
-          onWheel: () => {},
-          onPress: (column, row) => {
-            if (dividerPressRef.current(column, row)) handled = true;
-          },
-          onDrag: (column, row) => {
-            if (dividerMoveRef.current(column, row)) handled = true;
-          },
-          onRelease: () => {
-            if (dividerReleaseRef.current()) handled = true;
-          },
-        });
-        if (handled) return;
-        void client.terminalWrite(term.threadId, term.terminalId, text).catch(() => {});
+  useKeyboard((key) => {
+    // ── Embedded terminal: forward keystrokes to the PTY ────────────────────
+    if (activeTerminal) {
+      if (key.ctrl && key.name === "q") {
+        setActiveTerminal(null);
         return;
       }
-      parseMouse(chunk, {
-        onWheel: (direction, column) => onWheelRef.current(direction, column),
-        onPress: (column, row) => {
-          if (!dividerPressRef.current(column, row)) onClickRef.current(column, row);
-        },
-        onDrag: (column, row) => {
-          dividerMoveRef.current(column, row);
-        },
-        onRelease: () => {
-          dividerReleaseRef.current();
-        },
-      });
-    };
-    process.stdin.on("data", onData);
-    return () => {
-      process.stdin.off("data", onData);
-      disableMouse();
-    };
-  }, []);
-
-  useInput((input, key) => {
-    // While the embedded terminal is open, all keystrokes are forwarded to the
-    // PTY by the stdin listener above — ignore them here.
-    if (activeTerminal) return;
-    // Swallow any leftover of an SGR mouse report so it never types into the
-    // prompt — the wheel itself is handled by the stdin listener above.
-    if (input && (input.includes("\x1b") || MOUSE_SEQUENCE.test(input))) {
-      return;
-    }
-    // Ctrl-C always exits cleanly so we restore the screen instead of leaving
-    // the terminal stuck in the alternate buffer.
-    if (key.ctrl && input === "c") {
-      emit({ type: "exit" });
+      if (key.sequence) {
+        void client.terminalWrite(activeTerminal.threadId, activeTerminal.terminalId, key.sequence).catch(() => {});
+      }
       return;
     }
 
-    // ── New-thread dialog ────────────────────────────────────────────────────
+    // Ctrl+C always exits cleanly.
+    if (key.ctrl && key.name === "c") {
+      onExit();
+      return;
+    }
+
+    // ── New-thread dialog ───────────────────────────────────────────────────
     if (focus === "new") {
-      if (key.escape) {
+      if (key.name === "escape") {
         setDraft("");
         setFocus("compose");
         return;
       }
-      if (key.upArrow) {
+      if (key.name === "up") {
         setProjectIndex((index) => (index > 0 ? index - 1 : Math.max(projects.length - 1, 0)));
         return;
       }
-      if (key.downArrow) {
+      if (key.name === "down") {
         setProjectIndex((index) => (index + 1) % Math.max(projects.length, 1));
         return;
       }
-      if (key.return) {
-        const project = projects[projectIndex];
-        const message = draft.trim();
-        if (project && message.length > 0) {
-          if (!project.defaultModelSelection) {
-            store.setStatus("Project has no default model — set one in the web UI first.");
-          } else {
-            void client
-              .createThread({
-                projectId: project.id,
-                title: message.slice(0, 60),
-                modelSelection: project.defaultModelSelection,
-                firstMessage: message,
-              })
-              .catch((error) => store.setStatus(`create failed: ${String(error)}`));
-            store.setStatus("Creating thread…");
-          }
-        }
-        setDraft("");
-        setFocus("compose");
+      if (key.name === "return" || key.name === "enter") {
+        submitNewThread();
         return;
-      }
-      if (key.backspace || key.delete) {
-        setDraft((value) => value.slice(0, -1));
-        return;
-      }
-      if (input && !key.ctrl && !key.meta) {
-        setDraft((value) => value + input);
       }
       return;
     }
 
-    // ── Compose mode (default): the prompt is always ready for typing ─────────
-
-    // Thread navigation is on the arrow keys so plain typing flows to the prompt.
-    if (key.upArrow) {
+    // ── Compose mode (default) ──────────────────────────────────────────────
+    // The composer <input> owns typed characters; here we only handle
+    // navigation, scrolling, action shortcuts, and submit.
+    if (key.name === "up") {
       store.moveSelection(-1);
       return;
     }
-    if (key.downArrow) {
+    if (key.name === "down") {
       store.moveSelection(1);
       return;
     }
-
-    // Conversation scrolling (in display lines): PgUp/PgDn = a page, ^U/^D = half.
-    const page = Math.max(1, chatBodyHeight - 1);
-    const halfPage = Math.max(1, Math.floor(chatBodyHeight / 2));
-    if (key.pageUp) {
-      scrollChat(page);
+    if (key.name === "pageup") {
+      scrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP });
       return;
     }
-    if (key.pageDown) {
-      scrollChat(-page);
-      return;
-    }
-    if (key.ctrl && input === "u") {
-      scrollChat(halfPage);
-      return;
-    }
-    if (key.ctrl && input === "d") {
-      scrollChat(-halfPage);
+    if (key.name === "pagedown") {
+      scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP });
       return;
     }
 
-    // Ctrl-shortcuts for actions (bare letters are reserved for the prompt).
-    if (key.ctrl && input === "n") {
+    if (key.ctrl && key.name === "n") {
       setProjectIndex(0);
       setFocus("new");
       return;
     }
-    // Open the embedded thread terminal: Ctrl+E (reliable) or Alt+T (mnemonic).
-    if (((key.ctrl && input === "e") || (key.meta && input === "t")) && detail) {
-      const project = projects.find((p) => p.id === detail.projectId);
-      const cwd = detail.worktreePath ?? project?.workspaceRoot ?? process.cwd();
-      setActiveTerminal({
-        threadId: detail.id,
-        terminalId: DEFAULT_TERMINAL_ID,
-        title: detail.title,
-        cwd,
-        worktreePath: detail.worktreePath,
-      });
+    if (key.ctrl && key.name === "e") {
+      openTerminal();
       return;
     }
-    if (key.ctrl && input === "g" && detail) {
+    if (key.ctrl && key.name === "g" && detail) {
       void client.interrupt(detail.id).catch(() => {});
       store.setStatus("Interrupt sent.");
       return;
     }
-    if (key.ctrl && input === "a" && detail && approvals[0]) {
+    if (key.ctrl && key.name === "a" && detail && approvals[0]) {
       void client.approve(detail.id, approvals[0].requestId, "accept").catch(() => {});
       store.setStatus("Approved.");
       return;
     }
-    if (key.ctrl && input === "r" && detail && approvals[0]) {
+    if (key.ctrl && key.name === "r" && detail && approvals[0]) {
       void client.approve(detail.id, approvals[0].requestId, "decline").catch(() => {});
       store.setStatus("Declined.");
       return;
     }
-    if (key.ctrl && input === "o" && detail) {
+    if (key.ctrl && key.name === "o" && detail) {
       const current = RUNTIME_MODES.indexOf(detail.runtimeMode);
       const nextMode = RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
       void client.setRuntimeMode(detail.id, nextMode).catch(() => {});
       store.setStatus(`Mode → ${nextMode}`);
       return;
     }
-
-    if (key.return) {
-      const text = reply.trim();
-      if (text.length > 0) {
-        // Send the prompt to the selected thread.
-        if (detail) {
-          void client
-            .sendReply(detail, text)
-            .catch((error) => store.setStatus(`send failed: ${String(error)}`));
-          store.setStatus("Reply sent.");
-          setReply("");
-        } else {
-          store.setStatus("Select a thread (↑/↓) to send a message.");
-        }
-        return;
-      }
-      // Empty prompt → Enter activates the highlighted row.
-      if (state.selection?.kind === "project") {
-        store.toggleProject(state.selection.id);
-      } else if (state.selection?.kind === "more") {
-        store.loadMore(state.selection.id);
-      }
+    if (key.name === "return" || key.name === "enter") {
+      sendReply();
       return;
     }
-
-    if (key.escape) {
+    if (key.name === "escape" && detail) {
       if (reply.length > 0) {
         setReply("");
         return;
       }
-      if (detail) {
-        void client.interrupt(detail.id).catch(() => {});
-        store.setStatus("Interrupt sent.");
-      }
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setReply((value) => value.slice(0, -1));
-      return;
-    }
-
-    if (input && !key.ctrl && !key.meta) {
-      setReply((value) => value + input);
+      void client.interrupt(detail.id).catch(() => {});
+      store.setStatus("Interrupt sent.");
     }
   });
 
-  // Once a thread is selected the field is "focused" and ready, so no
-  // placeholder — just the cursor. Only hint when there is no thread to message.
   const placeholder = detail
-    ? null
+    ? "Type a reply, Enter to send"
     : state.selection?.kind === "project"
-      ? "Enter to expand · ↑/↓ to move · type to compose"
-      : state.selection?.kind === "more"
-        ? "Enter to load more · ↑/↓ to move"
-        : "Select a thread with ↑/↓ to start typing";
+      ? "Enter to expand · ↑/↓ to move"
+      : "Select a thread with ↑/↓";
 
   const hint =
     "↑/↓ threads · PgUp/PgDn scroll · Enter send · ^N new · ^E term · ^G stop · ^A/^R approve · ^O mode · ^C quit";
 
-  const composer =
-    focus === "new" ? (
-      <Box flexDirection="column">
-        <Text>
-          <Text color="cyan">new thread ▸ project: </Text>
-          {projects[projectIndex]?.title ?? "(none)"}
-          <Text dimColor>{"  ↑/↓ change · Esc cancel"}</Text>
-        </Text>
-        <Text>
-          <Text color="cyan">message ▸ </Text>
-          {draft}
-          <Text inverse>{" "}</Text>
-        </Text>
-      </Box>
-    ) : (
-      <Text>
-        <Text color="yellow">› </Text>
-        {reply.length > 0 ? reply : placeholder ? <Text dimColor>{placeholder}</Text> : null}
-        <Text inverse>{" "}</Text>
-      </Text>
-    );
-
-  // Top area: thread list + conversation. Fills the screen normally; in terminal
-  // mode it shrinks to the height above the drawer (conversation stays visible).
-  const topArea = (
-    <Box
-      {...(activeTerminal
-        ? { height: panesHeight, flexShrink: 0, overflow: "hidden" as const }
-        : { flexGrow: 1, overflow: "hidden" as const })}
-    >
-      <ThreadList
-        rows={listRows}
-        selection={state.selection}
-        moreAbove={moreAbove}
-        moreBelow={moreBelow}
-        width={listWidth}
-      />
-      <ThreadDetail
-        detail={detail}
-        approvals={approvals}
-        projectHint={selectedProjectTitle}
-        lines={conversationLines}
-        bodyHeight={chatBodyHeight}
-        start={chatStart}
-      />
-    </Box>
-  );
-
-  if (activeTerminal) {
-    return (
-      <Box flexDirection="column" width={size.columns} height={size.rows}>
-        {topArea}
-        <TerminalPane client={client} info={activeTerminal} cols={termCols} rows={termRows} />
-        <Box paddingX={1} flexShrink={0}>
-          <Text wrap="truncate-end" dimColor>
-            keys → shell · drag the drawer's top edge to resize · Ctrl+Q to return
-          </Text>
-        </Box>
-      </Box>
-    );
-  }
-
   return (
-    <Box flexDirection="column" width={size.columns} height={size.rows}>
-      {topArea}
-      <Box
-        borderStyle="round"
-        borderColor={focus === "new" ? "cyan" : "yellow"}
-        paddingX={1}
-        flexShrink={0}
-        minHeight={focus === "new" ? 6 : 5}
-      >
-        {composer}
-      </Box>
-      <Box justifyContent="space-between" paddingX={1} flexShrink={0}>
-        <Text dimColor wrap="truncate-end">
-          {hint}
-        </Text>
-        <Text dimColor wrap="truncate-end">
-          {` ${state.status}`}
-        </Text>
-      </Box>
-    </Box>
+    <box flexDirection="column" width={width} height={height}>
+      <box height={panesHeight} flexShrink={0} flexDirection="row">
+        <ThreadList
+          rows={listRows}
+          selection={state.selection}
+          moreAbove={moreAbove}
+          moreBelow={moreBelow}
+          width={listWidth}
+          height={panesHeight}
+          store={store}
+        />
+        <ConversationView
+          detail={detail}
+          approvals={approvals}
+          projectHint={selectedProjectTitle}
+          width={chatWidth}
+          height={panesHeight}
+          syntaxStyle={syntaxStyle}
+          scrollRef={scrollRef}
+        />
+      </box>
+
+      {activeTerminal ? (
+        <box flexDirection="column" flexShrink={0}>
+          <TerminalPane client={client} info={activeTerminal} cols={termCols} rows={termRows} />
+          <box paddingLeft={1} paddingRight={1} flexShrink={0}>
+            <text fg={DIM}>keys → shell · Ctrl+Q to return</text>
+          </box>
+        </box>
+      ) : focus === "new" ? (
+        <box
+          flexDirection="column"
+          border
+          borderStyle="rounded"
+          borderColor="cyan"
+          paddingLeft={1}
+          paddingRight={1}
+          flexShrink={0}
+        >
+          <text>
+            <span fg="cyan">new thread ▸ project: </span>
+            {projects[projectIndex]?.title ?? "(none)"}
+            <span fg={DIM}>{"  ↑/↓ change · Esc cancel"}</span>
+          </text>
+          <box flexDirection="row">
+            <text>
+              <span fg="cyan">message ▸ </span>
+            </text>
+            <input value={draft} onChange={setDraft} focused placeholder="Describe the task…" flexGrow={1} />
+          </box>
+        </box>
+      ) : (
+        <box
+          border
+          borderStyle="rounded"
+          borderColor="yellow"
+          paddingLeft={1}
+          paddingRight={1}
+          flexShrink={0}
+        >
+          <text>
+            <span fg="yellow">{"› "}</span>
+          </text>
+          <input
+            value={reply}
+            onChange={setReply}
+            focused
+            placeholder={placeholder}
+            flexGrow={1}
+          />
+        </box>
+      )}
+
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
+        <text fg={DIM}>{hint}</text>
+        <text fg={DIM}>{` ${state.status}`}</text>
+      </box>
+    </box>
   );
-}
-
-// ── Top-level controller ─────────────────────────────────────────────────────
-
-function renderUntilExit(store: Store, client: TuiClient): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    // Render fullscreen in the alternate screen buffer so the UI owns the whole
-    // terminal and never pollutes scrollback. Enable mouse reporting *before* the
-    // first frame (so tmux/the terminal latches onto "this app wants the wheel"),
-    // then the app re-asserts it after mount as well.
-    enterFullscreen();
-    enableMouse();
-    const instance = render(
-      <App
-        store={store}
-        client={client}
-        emit={(signal: AppSignal) => {
-          if (settled || signal.type !== "exit") return;
-          settled = true;
-          // Let React finish this tick, then tear down Ink before resolving so
-          // its stdin/raw-mode handlers are detached and the screen is restored.
-          setImmediate(() => {
-            instance.unmount();
-            disableMouse();
-            leaveFullscreen();
-            resolve();
-          });
-        }}
-      />,
-      { exitOnCtrlC: false },
-    );
-  });
-}
-
-export async function runTuiApp(client: TuiClient): Promise<void> {
-  const store = createStore(client);
-  store.start();
-  // Safety net: if the process dies unexpectedly, leave the alternate screen so
-  // the user's terminal isn't left in a broken state.
-  const restoreScreen = () => {
-    try {
-      disableMouse();
-      leaveFullscreen();
-    } catch {
-      // best effort
-    }
-  };
-  process.once("exit", restoreScreen);
-  try {
-    await renderUntilExit(store, client);
-  } finally {
-    store.stop();
-  }
 }

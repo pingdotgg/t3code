@@ -8,31 +8,30 @@
   ],
   "exports": {
     ".": {
-      "types": "./src/public.d.ts",
       "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --packages=external --format=esm --platform=node --jsx=automatic --outfile=dist/index.js",
+    "build": "bun build src/index.tsx --target bun --packages external --outfile dist/index.js",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@opentui/core": "^0.4.1",
+    "@opentui/react": "^0.4.1",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@xterm/headless": "^5.5.0",
     "effect": "catalog:",
-    "ink": "^6.3.1",
     "react": "19.2.6"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/react": "~19.2.14",
-    "esbuild": "^0.27.7",
     "vite-plus": "catalog:"
   },
   "engines": {
-    "node": "^22.16 || ^23.11 || >=24.10"
+    "bun": ">=1.3.0"
   }
 }
