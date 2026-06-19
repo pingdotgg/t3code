@@ -8,7 +8,7 @@
   ],
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./src/public.d.ts",
       "default": "./dist/index.js"
     }
   },
