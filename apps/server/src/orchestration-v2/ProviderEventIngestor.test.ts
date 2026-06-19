@@ -61,6 +61,8 @@ function threadCreatedEvent(
       nativeThreadId: "native-thread",
     });
     const thread: OrchestrationV2AppThread = {
+      createdBy: "user",
+      creationSource: "web",
       id: threadId,
       projectId,
       title: "Provider event ingestor",
@@ -263,6 +265,8 @@ layer("ProviderEventIngestorV2", (it) => {
           type: "message.updated",
           provider: "codex",
           message: {
+            createdBy: "agent",
+            creationSource: "provider",
             id: MessageId.make("message:subagent-response"),
             threadId: childThreadId,
             runId: null,

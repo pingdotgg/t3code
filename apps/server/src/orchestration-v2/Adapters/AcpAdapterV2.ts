@@ -783,6 +783,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               nativeItemId: segment.nativeItemId,
             });
             const message: OrchestrationV2ConversationMessage = {
+              createdBy: "agent",
+              creationSource: "provider",
               id: messageId,
               threadId: context.input.threadId,
               runId: context.input.runId,
@@ -1143,6 +1145,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const previous = current.messages.get(key);
               const messages = new Map(current.messages);
               messages.set(key, {
+                createdBy: previous?.createdBy ?? (role === "user" ? "user" : "agent"),
+                creationSource: previous?.creationSource ?? "provider",
                 id: messageId,
                 threadId: input.threadId,
                 runId: null,
@@ -1855,6 +1859,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               },
             });
             yield* rememberSnapshotMessage({
+              createdBy: turnInput.message.createdBy,
+              creationSource: turnInput.message.creationSource,
               id: turnInput.message.messageId,
               threadId: turnInput.threadId,
               runId: turnInput.runId,

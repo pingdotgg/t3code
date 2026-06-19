@@ -36,6 +36,23 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 
+export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
+export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
+
+export const OrchestrationV2CreationSource = Schema.Literals([
+  "web",
+  "mobile",
+  "mcp",
+  "provider",
+  "server",
+]);
+export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
+
+const OrchestrationV2CreationFields = {
+  createdBy: OrchestrationV2Actor,
+  creationSource: OrchestrationV2CreationSource,
+} as const;
+
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
@@ -125,7 +142,7 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
     "superseded",
   ]),
   resolution: Schema.NullOr(OrchestrationV2ContextTransferResolution),
-  createdBy: Schema.Literals(["user", "agent", "system"]),
+  createdBy: OrchestrationV2Actor,
   error: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
@@ -260,6 +277,7 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -397,7 +415,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   runId: Schema.NullOr(RunId),
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
-  createdBy: Schema.Literals(["agent", "user", "system"]),
+  createdBy: OrchestrationV2Actor,
   provider: ProviderKind,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   childThreadId: Schema.NullOr(ThreadId),
@@ -540,6 +558,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  ...OrchestrationV2CreationFields,
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -675,6 +694,7 @@ export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResu
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
     inputIntent: OrchestrationV2UserMessageInputIntent,
@@ -988,6 +1008,7 @@ export const OrchestrationV2ShellThreadStatus = Schema.Union([
 export type OrchestrationV2ShellThreadStatus = typeof OrchestrationV2ShellThreadStatus.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -1159,6 +1180,7 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
     inputIntent: OrchestrationV2UserMessageInputIntent,
@@ -1433,6 +1455,7 @@ export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJs
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
     projectId: ProjectId,
@@ -1445,6 +1468,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -1496,6 +1520,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.fork"),
+    ...OrchestrationV2CreationFields,
     commandId: CommandId,
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
@@ -1505,6 +1530,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.merge_back"),
+    ...OrchestrationV2CreationFields,
     commandId: CommandId,
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
@@ -1513,6 +1539,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
+    ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,
     parentRunId: RunId,
