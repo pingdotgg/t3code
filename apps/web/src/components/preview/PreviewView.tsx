@@ -1,6 +1,7 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -20,6 +21,7 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
+import { previewUrlFailureContext, reportPreviewActionFailure } from "./reportPreviewActionFailure";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -91,58 +93,112 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           environmentHttpBaseUrl,
         }) ?? undefined)
       : undefined;
+  const threadKey = scopedThreadKey(threadRef);
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
+      let operation = "resolve-url";
+      let targetUrl = next;
       try {
         const resolvedUrl = resolveDiscoveredServerUrl(threadRef.environmentId, next);
+        targetUrl = resolvedUrl;
         if (tabId && previewBridge) {
           // Drive the webview imperatively; `usePreviewBridge` mirrors the
           // resolved URL back to the server so other clients stay in sync.
+          operation = "navigate";
           await previewBridge.navigate(tabId, resolvedUrl);
           rememberPreviewUrl(threadRef, resolvedUrl);
         } else {
-          await openPreviewSession({
+          operation = "open-session";
+          const result = await openPreviewSession({
             openPreview: open,
             threadRef,
             url: resolvedUrl,
           });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            reportPreviewActionFailure(
+              {
+                operation,
+                threadKey,
+                ...(tabId ? { tabId } : {}),
+                ...previewUrlFailureContext(targetUrl),
+              },
+              result.cause,
+            );
+          }
         }
-      } catch {
+      } catch (cause) {
+        reportPreviewActionFailure(
+          {
+            operation,
+            threadKey,
+            ...(tabId ? { tabId } : {}),
+            ...previewUrlFailureContext(targetUrl),
+          },
+          cause,
+        );
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [open, tabId, threadRef],
+    [open, tabId, threadKey, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.refresh(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.refresh(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "refresh", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleZoomIn = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomIn(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.zoomIn(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "zoom-in", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleZoomOut = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomOut(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.zoomOut(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "zoom-out", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleResetZoom = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.resetZoom(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.resetZoom(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "reset-zoom", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleBack = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.goBack(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.goBack(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "go-back", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleForward = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.goForward(tabId);
-  }, [tabId]);
+    if (!previewBridge || !tabId) return;
+    void previewBridge.goForward(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation: "go-forward", threadKey, tabId }, cause);
+    });
+  }, [tabId, threadKey]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
-  }, [url]);
+    void localApi.shell.openExternal(url).catch((cause) => {
+      reportPreviewActionFailure(
+        {
+          operation: "open-external",
+          threadKey,
+          ...(tabId ? { tabId } : {}),
+          ...previewUrlFailureContext(url),
+        },
+        cause,
+      );
+    });
+  }, [tabId, threadKey, url]);
 
   const handleCapture = useCallback(
     (record: boolean) => {
@@ -180,6 +236,15 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
                   }, 2_000);
                 },
                 (error) => {
+                  reportPreviewActionFailure(
+                    {
+                      operation: "copy-recording-path",
+                      threadKey,
+                      tabId,
+                      artifactPath: artifact.path,
+                    },
+                    error,
+                  );
                   toastManager.update(
                     toastId,
                     stackedThreadToast({
@@ -195,7 +260,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
 
             const revealAction = {
               children: revealInFileExplorerLabel(navigator.platform),
-              onClick: () => void bridge.revealArtifact(artifact.path),
+              onClick: () =>
+                void bridge.revealArtifact(artifact.path).catch((cause) => {
+                  reportPreviewActionFailure(
+                    {
+                      operation: "reveal-recording",
+                      threadKey,
+                      tabId,
+                      artifactPath: artifact.path,
+                    },
+                    cause,
+                  );
+                }),
             };
             const updateRecordingToast = () => {
               toastManager.update(
@@ -232,6 +308,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
             );
           },
           (error) => {
+            reportPreviewActionFailure({ operation: "stop-recording", threadKey, tabId }, error);
             toastManager.add({
               type: "error",
               title: "Unable to stop recording",
@@ -251,6 +328,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           return;
         }
         void startBrowserRecording(tabId).catch((error) => {
+          reportPreviewActionFailure({ operation: "start-recording", threadKey, tabId }, error);
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
@@ -263,7 +341,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         (artifact) => {
           const revealAction = {
             children: revealInFileExplorerLabel(navigator.platform),
-            onClick: () => void bridge.revealArtifact(artifact.path),
+            onClick: () =>
+              void bridge.revealArtifact(artifact.path).catch((cause) => {
+                reportPreviewActionFailure(
+                  {
+                    operation: "reveal-screenshot",
+                    threadKey,
+                    tabId,
+                    artifactPath: artifact.path,
+                  },
+                  cause,
+                );
+              }),
           };
           let pathCopied = false;
           let imageCopied = false;
@@ -325,6 +414,15 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
                 }, 2_000);
               },
               (error) => {
+                reportPreviewActionFailure(
+                  {
+                    operation: "copy-screenshot-path",
+                    threadKey,
+                    tabId,
+                    artifactPath: artifact.path,
+                  },
+                  error,
+                );
                 updateScreenshotToast(
                   "error",
                   "Unable to copy screenshot path",
@@ -345,6 +443,15 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
                 }, 2_000);
               },
               (error) => {
+                reportPreviewActionFailure(
+                  {
+                    operation: "copy-screenshot-image",
+                    threadKey,
+                    tabId,
+                    artifactPath: artifact.path,
+                  },
+                  error,
+                );
                 updateScreenshotToast(
                   "error",
                   "Unable to copy screenshot",
@@ -381,6 +488,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           );
         },
         (error) => {
+          reportPreviewActionFailure({ operation: "capture-screenshot", threadKey, tabId }, error);
           toastManager.add({
             type: "error",
             title: "Unable to capture screenshot",
@@ -389,13 +497,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         },
       );
     },
-    [activeRecordingTabId, tabId],
+    [activeRecordingTabId, tabId, threadKey],
   );
 
   const handlePickElement = useCallback(() => {
     if (!previewBridge || !tabId) return;
     if (pickActiveRef.current) {
-      void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+      void previewBridge.cancelPickElement(tabId).catch((cause) => {
+        reportPreviewActionFailure(
+          { operation: "cancel-element-picker", threadKey, tabId, trigger: "toggle" },
+          cause,
+        );
+      });
       return;
     }
     // Snapshot whatever the user was focused on (typically the chat
@@ -408,12 +521,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     pickActiveRef.current = true;
     setPickActive(true);
     void (async () => {
+      let operation = "pick-element";
+      let annotationId: string | undefined;
       try {
         const annotation = await previewBridge.pickElement(tabId);
         if (!annotation) return;
+        annotationId = annotation.id;
+        operation = "add-preview-annotation";
         addPreviewAnnotation(threadRef, annotation);
+        operation = "prepare-annotation-screenshot";
         const screenshotFile = await previewAnnotationScreenshotFile(annotation);
         if (screenshotFile && annotation.screenshot) {
+          operation = "attach-annotation-screenshot";
           addImage(threadRef, {
             type: "image",
             id: annotation.id,
@@ -424,8 +543,17 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
             file: screenshotFile,
           });
         }
-      } catch {
-        // Picker failed (e.g. webview navigated). Treat as silent cancel.
+      } catch (cause) {
+        reportPreviewActionFailure(
+          {
+            operation,
+            threadKey,
+            tabId,
+            ...(annotationId ? { annotationId } : {}),
+          },
+          cause,
+        );
+        // Keep picker failures silent in the UI; navigating during a pick is expected.
       } finally {
         pickActiveRef.current = false;
         // Avoid `setState on unmounted component` if the panel/thread closed
@@ -447,7 +575,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, tabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, tabId, threadKey, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -457,11 +585,16 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       if (!pickActiveRef.current) return;
       pickActiveRef.current = false;
       if (previewBridge && tabId) {
-        void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+        void previewBridge.cancelPickElement(tabId).catch((cause) => {
+          reportPreviewActionFailure(
+            { operation: "cancel-element-picker", threadKey, tabId, trigger: "tab-change" },
+            cause,
+          );
+        });
       }
       if (isMountedRef.current) setPickActive(false);
     };
-  }, [tabId]);
+  }, [tabId, threadKey]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
@@ -491,10 +624,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, visible]);
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
-      data-thread-key={scopedThreadKey(threadRef)}
-    >
+    <div className="flex min-h-0 flex-1 flex-col bg-background" data-thread-key={threadKey}>
       <PreviewChromeRow
         url={url}
         displayUrl={displayUrl}

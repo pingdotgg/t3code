@@ -7,6 +7,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/compone
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import { previewBridge } from "./previewBridge";
+import { reportPreviewActionFailure } from "./reportPreviewActionFailure";
 
 interface Props {
   /** Active preview tab id. Tab-targeting actions are disabled without it. */
@@ -30,9 +31,11 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
   if (!previewBridge) return null;
   const bridge = previewBridge;
   const tabDisabled = !tabId || !hasWebContents;
-  const callTab = (op: (tabId: string) => Promise<void>) => () => {
+  const callTab = (operation: string, op: (tabId: string) => Promise<void>) => () => {
     if (!tabId) return;
-    void op(tabId).catch(() => undefined);
+    void op(tabId).catch((cause) => {
+      reportPreviewActionFailure({ operation, tabId }, cause);
+    });
   };
 
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
@@ -53,10 +56,10 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
         <TooltipPopup>More</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
-        <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
+        <MenuItem onClick={callTab("hard-reload", bridge.hardReload)} disabled={tabDisabled}>
           Hard reload
         </MenuItem>
-        <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
+        <MenuItem onClick={callTab("open-devtools", bridge.openDevTools)} disabled={tabDisabled}>
           Open DevTools
         </MenuItem>
         {/*
@@ -75,7 +78,7 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomOut)}
+              onClick={callTab("zoom-out", bridge.zoomOut)}
               aria-label="Zoom out"
               disabled={tabDisabled}
             >
@@ -88,7 +91,7 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomIn)}
+              onClick={callTab("zoom-in", bridge.zoomIn)}
               aria-label="Zoom in"
               disabled={tabDisabled}
             >
@@ -98,7 +101,7 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
               variant="ghost"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.resetZoom)}
+              onClick={callTab("reset-zoom", bridge.resetZoom)}
               aria-label="Reset zoom"
               disabled={tabDisabled}
             >
@@ -107,10 +110,22 @@ export function PreviewMoreMenu({ tabId, hasWebContents, zoomFactor }: Props) {
           </span>
         </MenuItem>
         <MenuSeparator />
-        <MenuItem onClick={() => void bridge.clearCookies().catch(() => undefined)}>
+        <MenuItem
+          onClick={() =>
+            void bridge.clearCookies().catch((cause) => {
+              reportPreviewActionFailure({ operation: "clear-cookies" }, cause);
+            })
+          }
+        >
           Clear cookies
         </MenuItem>
-        <MenuItem onClick={() => void bridge.clearCache().catch(() => undefined)}>
+        <MenuItem
+          onClick={() =>
+            void bridge.clearCache().catch((cause) => {
+              reportPreviewActionFailure({ operation: "clear-cache" }, cause);
+            })
+          }
+        >
           Clear cache
         </MenuItem>
       </MenuPopup>
