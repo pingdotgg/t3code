@@ -187,6 +187,7 @@ function failureFromExit<A>(
       error: new ConnectionTransientError({
         reason: "transport",
         detail: `${target.label} connection failed unexpectedly.`,
+        cause: exit.cause,
       }),
       attemptSpan: Option.none(),
     },
