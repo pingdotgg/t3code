@@ -1,6 +1,7 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -109,11 +110,17 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           rememberPreviewUrl(threadRef, resolvedUrl);
         } else {
           operation = "open-session";
-          await openPreviewSession({
+          const result = await openPreviewSession({
             openPreview: open,
             threadRef,
             url: resolvedUrl,
           });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            reportPreviewActionFailure(
+              { operation, threadKey, ...(tabId ? { tabId } : {}), url: targetUrl },
+              result.cause,
+            );
+          }
         }
       } catch (cause) {
         reportPreviewActionFailure(
