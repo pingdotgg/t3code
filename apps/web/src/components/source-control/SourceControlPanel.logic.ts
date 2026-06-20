@@ -107,7 +107,10 @@ export function mergeBranchCommitPage(
     readonly page: VcsPanelBranchCommitsResult;
   },
 ): ReadonlyMap<string, VcsPanelBranchDetails> {
-  const nextDetails = current.get(input.detailsKey) ?? input.details;
+  const currentDetails = current.get(input.detailsKey);
+  if (currentDetails && currentDetails.baseRef !== input.details.baseRef) return current;
+
+  const nextDetails = currentDetails ?? input.details;
   let merged: VcsPanelBranchDetails;
   switch (input.kind) {
     case "ahead":

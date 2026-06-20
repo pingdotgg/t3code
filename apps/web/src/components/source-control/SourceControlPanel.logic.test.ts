@@ -283,6 +283,41 @@ describe("SourceControlPanel branch detail paging", () => {
     ]);
     expect(next.get(branchName)?.commitsRemaining).toBe(0);
   });
+
+  it("discards branch pages loaded for a stale compare base", () => {
+    const branchName = "split/version-control-panel-work";
+    const currentDetails = branchDetails({
+      name: branchName,
+      fullRefName: branchName,
+      baseRef: "upstream/main",
+      behindCommits: [commit("1111111111111111111111111111111111111111")],
+      behindCommitsRemaining: 2,
+    });
+    const staleDetails = branchDetails({
+      name: branchName,
+      fullRefName: branchName,
+      baseRef: "origin/main",
+      behindCommits: [commit("2222222222222222222222222222222222222222")],
+      behindCommitsRemaining: 1,
+    });
+    const current = new Map<string, VcsPanelBranchDetails>([[branchName, currentDetails]]);
+
+    const next = mergeBranchCommitPage(current, {
+      detailsKey: branchName,
+      details: staleDetails,
+      kind: "behind",
+      page: {
+        commits: [commit("3333333333333333333333333333333333333333")],
+        remaining: 0,
+      },
+    });
+
+    expect(next).toBe(current);
+    expect(commitShas(next.get(branchName)?.behindCommits ?? [])).toEqual([
+      "1111111111111111111111111111111111111111",
+    ]);
+    expect(next.get(branchName)?.behindCommitsRemaining).toBe(2);
+  });
 });
 
 describe("SourceControlPanel working-tree presentation logic", () => {
