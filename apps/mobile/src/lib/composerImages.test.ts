@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 
+const missingFileCause = new Error("missing file");
 const files = new Map<string, { base64: string; deleted: boolean }>();
 
 vi.mock("expo-file-system", () => ({
@@ -18,7 +19,7 @@ vi.mock("expo-file-system", () => ({
     async base64(): Promise<string> {
       const entry = files.get(this.uri);
       if (!entry || entry.deleted) {
-        throw new Error("missing file");
+        throw missingFileCause;
       }
       return entry.base64;
     }
@@ -90,5 +91,31 @@ describe("native pasted image cleanup", () => {
     expect(files.get(rejected)?.deleted).toBe(true);
     expect(files.get(overflow)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
+  });
+
+  it("reports structured context when reading a pasted image fails", async () => {
+    const uri = "file:///private/var/mobile/photos/signed-secret-token/missing.png?token=private";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 }),
+    ).resolves.toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[composer-images] failed to read pasted image",
+      expect.objectContaining({
+        _tag: "ComposerImageOperationError",
+        operation: "read-pasted-image",
+        uriLength: uri.length,
+        uriProtocol: "file:",
+        cause: missingFileCause,
+        message: `Composer image operation read-pasted-image failed for a file: URI (length ${uri.length}).`,
+      }),
+    );
+    const error = warn.mock.calls[0]?.[1];
+    expect(error).not.toHaveProperty("uri");
+    expect(String(error)).not.toContain("signed-secret-token");
+    expect(String(error)).not.toContain("token=private");
+
+    warn.mockRestore();
   });
 });
