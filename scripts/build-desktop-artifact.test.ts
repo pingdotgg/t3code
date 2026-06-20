@@ -6,10 +6,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import {
+  BuildScriptError,
   createStageWorkspaceConfig,
   createStagePnpmConfig,
   createBuildConfig,
   DESKTOP_ASAR_UNPACK,
+  InvalidMacPasskeyRpDomainError,
+  InvalidMacPasskeyPublishableKeyError,
+  isMacPasskeySigningConfigurationError,
+  MissingMacPasskeyProvisioningProfileError,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
@@ -214,23 +219,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
-    assert.throws(
-      () =>
-        resolveMacPasskeySigningConfiguration({
-          T3CODE_APPLE_TEAM_ID: "ABC1234567",
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
-        }),
-      /T3CODE_MACOS_PROVISIONING_PROFILE/u,
+    const captureError = (env: Readonly<Record<string, string | undefined>>) => {
+      try {
+        resolveMacPasskeySigningConfiguration(env);
+      } catch (error) {
+        return error;
+      }
+      return assert.fail("Expected passkey signing configuration to fail.");
+    };
+
+    const missingProfileError = captureError({
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+    });
+    assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
+    assert.equal(
+      missingProfileError.message,
+      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
     );
-    assert.throws(
-      () =>
-        resolveMacPasskeySigningConfiguration({
-          T3CODE_APPLE_TEAM_ID: "ABC1234567",
-          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "https://example.clerk.accounts.dev/path",
-        }),
-      /Invalid passkey RP domain/u,
-    );
+
+    const unsafeDomain =
+      "https://domain-user:domain-secret@example.clerk.accounts.dev/path?token=query-secret";
+    const invalidDomainError = captureError({
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
+    });
+    assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
+    assert.equal(invalidDomainError.reason, "scheme-not-allowed");
+    assert.equal(invalidDomainError.inputLength, unsafeDomain.length);
+    assert.equal(invalidDomainError.message, "Invalid passkey RP domain (scheme-not-allowed).");
+    assert.notProperty(invalidDomainError, "domain");
+    assert.notProperty(invalidDomainError, "cause");
+    const serializedInvalidDomainError = JSON.stringify(invalidDomainError);
+    assert.notInclude(serializedInvalidDomainError, unsafeDomain);
+    assert.notInclude(serializedInvalidDomainError, "domain-user");
+    assert.notInclude(serializedInvalidDomainError, "domain-secret");
+    assert.notInclude(serializedInvalidDomainError, "query-secret");
     assert.throws(
       () =>
         resolveMacPasskeySigningConfiguration({
@@ -240,6 +265,38 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         }),
       /Invalid passkey RP domain/u,
     );
+    const invalidPublishableKeyError = captureError({
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_%",
+    });
+    assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
+    assert.ok(invalidPublishableKeyError.cause);
+    assert.equal(invalidPublishableKeyError.message, "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.");
+    assert.notProperty(invalidPublishableKeyError, "publishableKey");
+    assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
+  });
+
+  it("preserves known passkey signing configuration errors at the build boundary", () => {
+    const decodingCause = new Error("publishable-key-decode-failed");
+    const knownError = new InvalidMacPasskeyPublishableKeyError({ cause: decodingCause });
+    const error = BuildScriptError.fromMacPasskeySigningConfiguration(knownError);
+
+    assert.strictEqual(error, knownError);
+    assert.instanceOf(error, InvalidMacPasskeyPublishableKeyError);
+    assert.strictEqual(error.cause, decodingCause);
+    assert.isTrue(isMacPasskeySigningConfigurationError(error));
+  });
+
+  it("wraps unknown passkey signing configuration defects without copying cause text", () => {
+    const secret = "pk_test_do-not-retain";
+    const cause = new Error(secret);
+    const error = BuildScriptError.fromMacPasskeySigningConfiguration(cause);
+
+    assert.instanceOf(error, BuildScriptError);
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.message, "Failed to resolve macOS passkey signing configuration.");
+    assert.notInclude(error.message, secret);
   });
 
   it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
