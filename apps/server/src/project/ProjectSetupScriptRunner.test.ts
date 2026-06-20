@@ -153,9 +153,8 @@ describe("ProjectSetupScriptRunner", () => {
 
   it.effect("keeps terminal failures as the exact cause of a structured operation error", () => {
     const rootCause = new Error("stat failed");
-    const terminalError = new TerminalManager.TerminalCwdError({
+    const terminalError = new TerminalManager.TerminalCwdStatError({
       cwd: "/repo/worktrees/a",
-      reason: "statFailed",
       cause: rootCause,
     });
     const project = makeProject([
