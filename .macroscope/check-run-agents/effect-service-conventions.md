@@ -1,6 +1,6 @@
 ---
 title: Effect Service Conventions
-model: claude-opus-4-7
+model: claude-opus-4-8
 effort: high
 input: full_diff
 tools:
