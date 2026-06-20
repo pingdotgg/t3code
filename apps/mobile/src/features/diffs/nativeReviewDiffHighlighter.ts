@@ -8,12 +8,39 @@ import jsxLanguage from "@shikijs/langs/jsx";
 import tsxLanguage from "@shikijs/langs/tsx";
 import typescriptLanguage from "@shikijs/langs/typescript";
 import yamlLanguage from "@shikijs/langs/yaml";
+import * as Schema from "effect/Schema";
 
 import type { NativeReviewDiffFile, NativeReviewDiffLanguage } from "./nativeReviewDiffTypes";
 import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewDiffSurface";
 
 export type NativeReviewDiffHighlightScheme = "light" | "dark";
 export type NativeReviewDiffHighlightEngine = "native" | "javascript";
+
+export class NativeReviewDiffHighlighterUnavailableError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterUnavailableError>()(
+  "NativeReviewDiffHighlighterUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "The native review diff highlighter is unavailable in this build.";
+  }
+}
+
+export const isNativeReviewDiffHighlighterUnavailableError = Schema.is(
+  NativeReviewDiffHighlighterUnavailableError,
+);
+
+export class NativeReviewDiffHighlighterInitializationError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterInitializationError>()(
+  "NativeReviewDiffHighlighterInitializationError",
+  {
+    requestedEngine: Schema.Literals(["native", "javascript"]),
+    attemptedEngine: Schema.Literals(["native", "javascript"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to initialize the ${this.attemptedEngine} review diff highlighter requested as ${this.requestedEngine}.`;
+  }
+}
 
 export interface NativeReviewDiffHighlighterHandle {
   readonly engine: NativeReviewDiffHighlightEngine;
@@ -197,7 +224,7 @@ function normalizeTokens(
 async function createNativeReviewDiffHighlighter(): Promise<NativeReviewDiffHighlighterHandle> {
   const nativeEngineModule = await import("react-native-shiki-engine");
   if (!nativeEngineModule.isNativeEngineAvailable()) {
-    throw new Error("Native Shiki engine is not available in this build.");
+    throw new NativeReviewDiffHighlighterUnavailableError();
   }
 
   const highlighter = await createHighlighterCore({
@@ -229,18 +256,52 @@ export async function getNativeReviewDiffHighlighter(
   engine: NativeReviewDiffHighlightEngine = "native",
 ): Promise<NativeReviewDiffHighlighterHandle> {
   if (engine === "javascript") {
-    javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
-    return javascriptHighlighterPromise;
+    try {
+      javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
+      return await javascriptHighlighterPromise;
+    } catch (cause) {
+      javascriptHighlighterPromise = null;
+      throw new NativeReviewDiffHighlighterInitializationError({
+        requestedEngine: engine,
+        attemptedEngine: "javascript",
+        cause,
+      });
+    }
   }
 
-  nativeHighlighterPromise ??= createNativeReviewDiffHighlighter().catch((error: unknown) => {
-    console.warn("[debug-native-diff] native highlighter unavailable", {
-      error: error instanceof Error ? error.message : String(error),
+  nativeHighlighterPromise ??= createNativeReviewDiffHighlighter()
+    .catch(async (cause: unknown) => {
+      const nativeError = isNativeReviewDiffHighlighterUnavailableError(cause)
+        ? cause
+        : new NativeReviewDiffHighlighterInitializationError({
+            requestedEngine: engine,
+            attemptedEngine: "native",
+            cause,
+          });
+      console.warn("[debug-native-diff] native highlighter unavailable", {
+        error: nativeError,
+      });
+      try {
+        javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
+        return await javascriptHighlighterPromise;
+      } catch (fallbackCause) {
+        javascriptHighlighterPromise = null;
+        throw new NativeReviewDiffHighlighterInitializationError({
+          requestedEngine: engine,
+          attemptedEngine: "javascript",
+          cause: new AggregateError(
+            [nativeError, fallbackCause],
+            "Native and JavaScript review diff highlighter initialization failed.",
+            { cause: nativeError },
+          ),
+        });
+      }
+    })
+    .catch((error) => {
+      nativeHighlighterPromise = null;
+      throw error;
     });
-    javascriptHighlighterPromise ??= createJavascriptReviewDiffHighlighter();
-    return javascriptHighlighterPromise;
-  });
-  return nativeHighlighterPromise;
+  return await nativeHighlighterPromise;
 }
 
 function isHighlightableLineRow(row: NativeReviewDiffRow): row is NativeReviewDiffLineRow {
