@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView } from "expo";
 
+import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+
 const NATIVE_TERMINAL_MODULE_NAME = "T3TerminalSurface";
 
 interface ExpoGlobalWithViewConfig {
@@ -33,6 +35,7 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
 }
 
 let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;
+let nativeTerminalSurfaceViewResolutionFailed = false;
 
 function getExpoViewConfig(moduleName: string) {
   return (globalThis as typeof globalThis & ExpoGlobalWithViewConfig).expo?.getViewConfig?.(
@@ -45,6 +48,10 @@ export function resolveNativeTerminalSurfaceView(): ComponentType<NativeTerminal
     return cachedNativeTerminalSurfaceView;
   }
 
+  if (nativeTerminalSurfaceViewResolutionFailed) {
+    return null;
+  }
+
   if (getExpoViewConfig(NATIVE_TERMINAL_MODULE_NAME) == null) {
     return null;
   }
@@ -53,7 +60,14 @@ export function resolveNativeTerminalSurfaceView(): ComponentType<NativeTerminal
     cachedNativeTerminalSurfaceView = requireNativeView<NativeTerminalSurfaceProps>(
       NATIVE_TERMINAL_MODULE_NAME,
     );
-  } catch {
+  } catch (cause) {
+    nativeTerminalSurfaceViewResolutionFailed = true;
+    console.error(
+      new NativeViewResolutionError({
+        nativeModuleName: NATIVE_TERMINAL_MODULE_NAME,
+        cause,
+      }),
+    );
     return null;
   }
 

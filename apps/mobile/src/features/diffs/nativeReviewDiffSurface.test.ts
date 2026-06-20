@@ -58,10 +58,23 @@ describe("resolveNativeReviewDiffView", () => {
 
   it("returns null when the view manager cannot be required", async () => {
     setExpoViewConfigAvailable();
+    const cause = new Error("boom");
     expoMocks.requireNativeView.mockImplementation(() => {
-      throw new Error("boom");
+      throw cause;
     });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
+
     expect(resolveNativeReviewDiffView()).toBeNull();
+    expect(resolveNativeReviewDiffView()).toBeNull();
+    expect(expoMocks.requireNativeView).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _tag: "NativeViewResolutionError",
+        nativeModuleName: "T3ReviewDiffSurface",
+        cause,
+      }),
+    );
+    expect(consoleError).toHaveBeenCalledTimes(1);
   });
 });
