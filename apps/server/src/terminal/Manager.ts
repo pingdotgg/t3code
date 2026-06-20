@@ -9,10 +9,15 @@
 import {
   DEFAULT_TERMINAL_ID,
   TerminalCwdError,
+  TerminalCwdNotDirectoryError,
+  TerminalCwdNotFoundError,
+  TerminalCwdStatError,
   TerminalError,
   TerminalHistoryError,
   TerminalNotRunningError,
+  TerminalResizeError,
   TerminalSessionLookupError,
+  TerminalWriteError,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalClearInput,
@@ -58,10 +63,15 @@ import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
   TerminalCwdError,
+  TerminalCwdNotDirectoryError,
+  TerminalCwdNotFoundError,
+  TerminalCwdStatError,
   TerminalError,
   TerminalHistoryError,
   TerminalNotRunningError,
+  TerminalResizeError,
   TerminalSessionLookupError,
+  TerminalWriteError,
 };
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
@@ -189,6 +199,25 @@ interface TerminalSubprocessInspector {
     terminalPid: number,
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
 }
+
+const resizePtyProcess = (
+  session: TerminalSessionState,
+  process: PtyAdapter.PtyProcess,
+  cols: number,
+  rows: number,
+) =>
+  Effect.try({
+    try: () => process.resize(cols, rows),
+    catch: (cause) =>
+      new TerminalResizeError({
+        threadId: session.threadId,
+        terminalId: session.terminalId,
+        terminalPid: process.pid,
+        cols,
+        rows,
+        cause,
+      }),
+  });
 
 export interface ShellCandidate {
   shell: string;
@@ -1157,16 +1186,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const legacyHistoryPath = (threadId: string) =>
     path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
 
-  const toTerminalHistoryError =
-    (operation: "read" | "truncate" | "migrate", threadId: string, terminalId: string) =>
-    (cause: unknown) =>
-      new TerminalHistoryError({
-        operation,
-        threadId,
-        terminalId,
-        cause,
-      });
-
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
   const modifyManagerState = <A>(
@@ -1250,7 +1269,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId,
           terminalId,
           signal: "SIGTERM",
-          error: error.message,
+          cause: error,
         }).pipe(Effect.as(false)),
       ),
     );
@@ -1274,7 +1293,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId,
           terminalId,
           signal: "SIGKILL",
-          error: error.message,
+          cause: error,
         }),
       ),
     );
@@ -1372,16 +1391,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (
       yield* fileSystem
         .exists(nextPath)
-        .pipe(Effect.mapError(toTerminalHistoryError("read", threadId, terminalId)))
+        .pipe(
+          Effect.mapError(
+            (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+          ),
+        )
     ) {
       const raw = yield* fileSystem
         .readFileString(nextPath)
-        .pipe(Effect.mapError(toTerminalHistoryError("read", threadId, terminalId)));
+        .pipe(
+          Effect.mapError(
+            (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
+          ),
+        );
       const capped = capHistory(raw, historyLineLimit);
       if (capped !== raw) {
         yield* fileSystem
           .writeFileString(nextPath, capped)
-          .pipe(Effect.mapError(toTerminalHistoryError("truncate", threadId, terminalId)));
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new TerminalHistoryError({ operation: "truncate", threadId, terminalId, cause }),
+            ),
+          );
       }
       return capped;
     }
@@ -1394,18 +1426,33 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (
       !(yield* fileSystem
         .exists(legacyPath)
-        .pipe(Effect.mapError(toTerminalHistoryError("migrate", threadId, terminalId))))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
+          ),
+        ))
     ) {
       return "";
     }
 
     const raw = yield* fileSystem
       .readFileString(legacyPath)
-      .pipe(Effect.mapError(toTerminalHistoryError("migrate", threadId, terminalId)));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
+        ),
+      );
     const capped = capHistory(raw, historyLineLimit);
     yield* fileSystem
       .writeFileString(nextPath, capped)
-      .pipe(Effect.mapError(toTerminalHistoryError("migrate", threadId, terminalId)));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
+        ),
+      );
     yield* fileSystem.remove(legacyPath, { force: true }).pipe(
       Effect.catch((cleanupError) =>
         Effect.logWarning("failed to remove legacy terminal history", {
@@ -1472,20 +1519,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (cwd: string) {
     const stats = yield* fileSystem.stat(cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new TerminalCwdError({
-            cwd,
-            reason: cause.reason._tag === "NotFound" ? "notFound" : "statFailed",
-            cause,
-          }),
-      ),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? new TerminalCwdNotFoundError({ cwd })
+            : new TerminalCwdStatError({ cwd, cause }),
+      }),
     );
     if (stats.type !== "Directory") {
-      return yield* new TerminalCwdError({
-        cwd,
-        reason: "notDirectory",
-      });
+      return yield* new TerminalCwdNotDirectoryError({ cwd });
     }
   });
 
@@ -1881,7 +1923,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* Effect.logError("failed to start terminal", {
         threadId: session.threadId,
         terminalId: session.terminalId,
-        error: message,
+        cause: error,
         ...(startedShell ? { shell: startedShell } : {}),
       });
     }
@@ -2168,10 +2210,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
+      yield* resizePtyProcess(liveSession, liveSession.process, targetCols, targetRows);
       liveSession.cols = targetCols;
       liveSession.rows = targetRows;
       liveSession.updatedAt = yield* nowIso;
-      liveSession.process.resize(targetCols, targetRows);
     }
 
     return snapshot(liveSession);
@@ -2219,10 +2261,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           session.status === "running" &&
           (session.cols !== targetCols || session.rows !== targetRows)
         ) {
+          const process = session.process;
+          yield* resizePtyProcess(session, process, targetCols, targetRows);
           session.cols = targetCols;
           session.rows = targetRows;
           session.updatedAt = yield* nowIso;
-          yield* Effect.sync(() => session.process?.resize(targetCols, targetRows));
         }
 
         return snapshot(session);
@@ -2409,7 +2452,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
       });
     }
-    yield* Effect.sync(() => process.write(input.data));
+    yield* Effect.try({
+      try: () => process.write(input.data),
+      catch: (cause) =>
+        new TerminalWriteError({
+          threadId: input.threadId,
+          terminalId,
+          terminalPid: process.pid,
+          cause,
+        }),
+    });
   });
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
@@ -2422,10 +2474,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!process || session.value.status !== "running") {
       return;
     }
+    yield* resizePtyProcess(session.value, process, input.cols, input.rows);
     session.value.cols = input.cols;
     session.value.rows = input.rows;
     session.value.updatedAt = yield* nowIso;
-    yield* Effect.sync(() => process.resize(input.cols, input.rows));
   });
 
   const resize: TerminalManager["Service"]["resize"] = (input) =>
