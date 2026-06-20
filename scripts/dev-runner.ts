@@ -102,8 +102,8 @@ export class DevRunnerProcessError extends Schema.TaggedErrorClass<DevRunnerProc
   {
     operation: Schema.Literals(["spawn", "wait-for-exit"]),
     mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
-    command: Schema.String,
-    args: Schema.Array(Schema.String),
+    executable: Schema.Literal("vp"),
+    argumentCount: Schema.Number,
     shell: Schema.Boolean,
     cause: Schema.Defect(),
   },
@@ -117,14 +117,14 @@ export class DevRunnerProcessExitError extends Schema.TaggedErrorClass<DevRunner
   "DevRunnerProcessExitError",
   {
     mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
-    command: Schema.String,
-    args: Schema.Array(Schema.String),
+    executable: Schema.Literal("vp"),
+    argumentCount: Schema.Number,
     shell: Schema.Boolean,
     exitCode: Schema.Number,
   },
 ) {
   override get message(): string {
-    return `Dev-runner command "${this.command}" exited with code ${this.exitCode} in mode "${this.mode}".`;
+    return `Dev-runner process exited with code ${this.exitCode} in mode "${this.mode}".`;
   }
 }
 
@@ -541,8 +541,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     );
     const processContext = {
       mode: input.mode,
-      command: spawnCommand.command,
-      args: spawnCommand.args,
+      executable: "vp" as const,
+      argumentCount: spawnCommand.args.length,
       shell: spawnCommand.shell,
     } as const;
     const child = yield* ChildProcess.make(spawnCommand.command, spawnCommand.args, {

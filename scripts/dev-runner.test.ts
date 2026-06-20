@@ -59,7 +59,7 @@ const devServerInput = {
   port: 13_773,
   devUrl: undefined,
   dryRun: false,
-  runArgs: ["--inspect"],
+  runArgs: ["--inspect", "secret-token-value"],
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
@@ -519,11 +519,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         }
         assert.equal(error.operation, "spawn");
         assert.equal(error.mode, "dev:server");
-        assert.equal(error.command, "vp");
-        assert.deepStrictEqual(error.args, ["run", "--filter=t3", "dev", "--inspect"]);
+        assert.equal(error.executable, "vp");
+        assert.equal(error.argumentCount, 5);
         assert.equal(error.shell, false);
         assert.equal(error.cause, cause);
         assert.ok(!error.message.includes(cause.message));
+        assert.notProperty(error, "args");
+        assert.notInclude(error.message, "secret-token-value");
       });
     });
 
@@ -544,11 +546,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           assert.fail(`Unexpected error: ${error._tag}`);
         }
         assert.equal(error.mode, "dev:server");
-        assert.equal(error.command, "vp");
-        assert.deepStrictEqual(error.args, ["run", "--filter=t3", "dev", "--inspect"]);
+        assert.equal(error.executable, "vp");
+        assert.equal(error.argumentCount, 5);
         assert.equal(error.shell, false);
         assert.equal(error.exitCode, 17);
         assert.ok(!("cause" in error));
+        assert.notProperty(error, "args");
+        assert.notInclude(error.message, "secret-token-value");
       });
     });
 
@@ -576,11 +580,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         }
         assert.equal(error.operation, "wait-for-exit");
         assert.equal(error.mode, "dev:server");
-        assert.equal(error.command, "vp");
-        assert.deepStrictEqual(error.args, ["run", "--filter=t3", "dev", "--inspect"]);
+        assert.equal(error.executable, "vp");
+        assert.equal(error.argumentCount, 5);
         assert.equal(error.shell, false);
         assert.equal(error.cause, cause);
         assert.ok(!error.message.includes(cause.message));
+        assert.notProperty(error, "args");
+        assert.notInclude(error.message, "secret-token-value");
       });
     });
   });
