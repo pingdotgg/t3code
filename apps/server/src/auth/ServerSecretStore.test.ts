@@ -45,6 +45,31 @@ const makePermissionDeniedSecretStoreLayer = () =>
     Layer.provideMerge(PermissionDeniedFileSystemLayer),
   );
 
+const DirectoryCreateFailureFileSystemLayer = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return {
+      ...fileSystem,
+      makeDirectory: (path) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "makeDirectory",
+            pathOrDescriptor: String(path),
+          }),
+        ),
+    } satisfies FileSystem.FileSystem;
+  }),
+).pipe(Layer.provide(NodeServices.layer));
+
+const makeDirectoryCreateFailureSecretStoreLayer = (config: ServerConfig.ServerConfig["Service"]) =>
+  ServerSecretStore.layer.pipe(
+    Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+    Layer.provideMerge(DirectoryCreateFailureFileSystemLayer),
+  );
+
 const RenameFailureFileSystemLayer = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -146,6 +171,20 @@ const makeConcurrentCreateSecretStoreLayer = () =>
   );
 
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
+  it.effect("preserves directory context when secret-store initialization fails", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig.pipe(Effect.provide(makeServerConfigLayer()));
+      const error = yield* Layer.build(makeDirectoryCreateFailureSecretStoreLayer(config)).pipe(
+        Effect.scoped,
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, ServerSecretStore.SecretStoreDirectoryCreateError);
+      assert.match(error.directoryPath, /secrets$/u);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+    }),
+  );
+
   it.effect("returns Option.none when a secret file does not exist", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -232,7 +271,8 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       const error = yield* Effect.flip(secretStore.getOrCreateRandom("session-signing-key", 32));
 
       assert.instanceOf(error, ServerSecretStore.SecretStoreReadError);
-      assert.include(error.message, "Failed to read secret session-signing-key.");
+      assert.equal(error.secretName, "session-signing-key");
+      assert.match(error.secretPath, /session-signing-key\.bin$/u);
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(makePermissionDeniedSecretStoreLayer())),
@@ -247,7 +287,9 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       );
 
       assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
-      assert.include(error.message, "Failed to persist secret session-signing-key.");
+      assert.equal(error.operation, "set");
+      assert.equal(error.secretName, "session-signing-key");
+      assert.match(error.secretPath, /session-signing-key\.bin$/u);
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(makeRenameFailureSecretStoreLayer())),
@@ -260,7 +302,8 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       const error = yield* Effect.flip(secretStore.remove("session-signing-key"));
 
       assert.instanceOf(error, ServerSecretStore.SecretStoreRemoveError);
-      assert.include(error.message, "Failed to remove secret session-signing-key.");
+      assert.equal(error.secretName, "session-signing-key");
+      assert.match(error.secretPath, /session-signing-key\.bin$/u);
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(makeRemoveFailureSecretStoreLayer())),

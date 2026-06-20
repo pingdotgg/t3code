@@ -27,17 +27,6 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-const KEY_PAIR_RESOURCE = "environment signing key pair";
-
-const keyPairDecodeError = (cause: unknown): ServerSecretStore.SecretStoreDecodeError =>
-  new ServerSecretStore.SecretStoreDecodeError({ resource: KEY_PAIR_RESOURCE, cause });
-
-const keyPairEncodeError = (cause: unknown): ServerSecretStore.SecretStoreEncodeError =>
-  new ServerSecretStore.SecretStoreEncodeError({ resource: KEY_PAIR_RESOURCE, cause });
-
-const keyPairConcurrentReadError = (): ServerSecretStore.SecretStoreConcurrentReadError =>
-  new ServerSecretStore.SecretStoreConcurrentReadError({ resource: KEY_PAIR_RESOURCE });
-
 const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
@@ -46,7 +35,13 @@ const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
     return Option.none<EnvironmentKeyPair>();
   }
   const decoded = yield* decodeEnvironmentKeyPair(bytesToString(encoded.value)).pipe(
-    Effect.mapError(keyPairDecodeError),
+    Effect.mapError(
+      (cause) =>
+        new ServerSecretStore.SecretStoreDecodeError({
+          secretName: CLOUD_LINK_KEY_PAIR,
+          cause,
+        }),
+    ),
   );
   return Option.some(decoded);
 });
@@ -56,22 +51,34 @@ const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(functio
   keyPair: EnvironmentKeyPair,
 ) {
   const encoded = yield* encodeEnvironmentKeyPair(keyPair).pipe(
-    Effect.mapError(keyPairEncodeError),
+    Effect.mapError(
+      (cause) =>
+        new ServerSecretStore.SecretStoreEncodeError({
+          secretName: CLOUD_LINK_KEY_PAIR,
+          cause,
+        }),
+    ),
   );
   return yield* secrets.create(CLOUD_LINK_KEY_PAIR, stringToBytes(encoded)).pipe(
     Effect.as(keyPair),
-    Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-      ServerSecretStore.isSecretAlreadyExistsError(error)
-        ? readEnvironmentKeyPair(secrets).pipe(
-            Effect.flatMap(
-              Option.match({
-                onSome: Effect.succeed,
-                onNone: () => Effect.fail(keyPairConcurrentReadError()),
-              }),
-            ),
-          )
-        : Effect.fail(error),
-    ),
+    Effect.catchTags({
+      SecretStorePersistError: (error) =>
+        ServerSecretStore.isSecretAlreadyExistsError(error)
+          ? readEnvironmentKeyPair(secrets).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onSome: Effect.succeed,
+                  onNone: () =>
+                    Effect.fail(
+                      new ServerSecretStore.SecretStoreConcurrentReadError({
+                        secretName: CLOUD_LINK_KEY_PAIR,
+                      }),
+                    ),
+                }),
+              ),
+            )
+          : Effect.fail(error),
+    }),
   );
 });
 

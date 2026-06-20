@@ -6,7 +6,9 @@ import { mapDpopReplayStoreError } from "./dpop.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new SecretStorePersistError({
-    resource: "DPoP proof",
+    operation: "create",
+    secretName: "DPoP proof",
+    secretPath: "dpop-proof.bin",
     cause: PlatformError.systemError({
       _tag: tag,
       module: "FileSystem",

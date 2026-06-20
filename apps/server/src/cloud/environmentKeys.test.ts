@@ -66,7 +66,9 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
             Effect.flatMap(() =>
               Effect.fail(
                 new ServerSecretStore.SecretStorePersistError({
-                  resource: "environment signing key pair",
+                  operation: "create",
+                  secretName: "cloud-link-ed25519-key-pair",
+                  secretPath: "cloud-link-ed25519-key-pair.bin",
                   cause: PlatformError.systemError({
                     _tag: "AlreadyExists",
                     module: "FileSystem",
@@ -85,6 +87,26 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
         privateKey: "winner-private",
         publicKey: "winner-public",
       });
+    }),
+  );
+
+  it.effect("retains the secret name and decode cause for malformed keypairs", () =>
+    Effect.gen(function* () {
+      const secretStore = {
+        get: () => Effect.succeed(Option.some(new TextEncoder().encode("not-json"))),
+        set: unusedSecretStoreOperation,
+        create: unusedSecretStoreOperation,
+        getOrCreateRandom: unusedSecretStoreOperation,
+        remove: unusedSecretStoreOperation,
+      } satisfies ServerSecretStore.ServerSecretStore["Service"];
+
+      const error = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore).pipe(
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, ServerSecretStore.SecretStoreDecodeError);
+      assert.equal(error.secretName, "cloud-link-ed25519-key-pair");
+      assert.exists(error.cause);
     }),
   );
 });

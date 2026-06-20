@@ -17,7 +17,9 @@ import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayR
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
-    resource: "cloud replay guard",
+    operation: "create",
+    secretName: "cloud replay guard",
+    secretPath: "cloud-replay-guard.bin",
     cause: PlatformError.systemError({
       _tag: tag,
       module: "FileSystem",
