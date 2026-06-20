@@ -5,12 +5,13 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
-import * as Data from "effect/Data";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -108,10 +109,95 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   }),
 );
 
-class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
-  readonly cause: unknown;
-  readonly bodyJson: OtlpTracer.TraceData;
-}> {}
+function errorDiagnosticTag(cause: unknown): string {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    typeof cause._tag === "string"
+  ) {
+    return cause._tag;
+  }
+  if (cause instanceof Error) return cause.name;
+  return typeof cause;
+}
+
+export class BrowserOtlpTraceDecodeError extends Schema.TaggedErrorClass<BrowserOtlpTraceDecodeError>()(
+  "BrowserOtlpTraceDecodeError",
+  {
+    resourceSpanCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromPayload(payload: unknown, cause: unknown): BrowserOtlpTraceDecodeError {
+    const resourceSpanCount =
+      typeof payload === "object" &&
+      payload !== null &&
+      "resourceSpans" in payload &&
+      Array.isArray(payload.resourceSpans)
+        ? payload.resourceSpans.length
+        : 0;
+
+    return new BrowserOtlpTraceDecodeError({
+      resourceSpanCount,
+      cause,
+    });
+  }
+
+  override get message(): string {
+    return `Failed to decode browser OTLP payload with ${this.resourceSpanCount} resource spans.`;
+  }
+}
+
+export class BrowserOtlpTraceCollectionError extends Schema.TaggedErrorClass<BrowserOtlpTraceCollectionError>()(
+  "BrowserOtlpTraceCollectionError",
+  {
+    recordCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromRecords(
+    records: ReadonlyArray<unknown>,
+    cause: unknown,
+  ): BrowserOtlpTraceCollectionError {
+    return new BrowserOtlpTraceCollectionError({
+      recordCount: records.length,
+      cause,
+    });
+  }
+
+  override get message(): string {
+    return `Failed to collect ${this.recordCount} browser OTLP trace records locally.`;
+  }
+}
+
+export class BrowserOtlpTraceExportError extends Schema.TaggedErrorClass<BrowserOtlpTraceExportError>()(
+  "BrowserOtlpTraceExportError",
+  {
+    collectorUrlInputLength: Schema.Number,
+    collectorUrlProtocol: Schema.optionalKey(Schema.String),
+    collectorUrlHostname: Schema.optionalKey(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  static fromCollectorUrl(collectorUrl: string, cause: unknown): BrowserOtlpTraceExportError {
+    const diagnostics = getUrlDiagnostics(collectorUrl);
+    return new BrowserOtlpTraceExportError({
+      collectorUrlInputLength: diagnostics.inputLength,
+      ...(diagnostics.protocol === undefined ? {} : { collectorUrlProtocol: diagnostics.protocol }),
+      ...(diagnostics.hostname === undefined ? {} : { collectorUrlHostname: diagnostics.hostname }),
+      cause,
+    });
+  }
+
+  override get message(): string {
+    const collector =
+      this.collectorUrlHostname === undefined
+        ? "the configured collector"
+        : this.collectorUrlHostname;
+    return `Failed to export browser OTLP traces to ${collector} (collector URL input length ${this.collectorUrlInputLength}).`;
+  }
+}
 
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
@@ -127,15 +213,31 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
-      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause, bodyJson }),
+      catch: (cause) => BrowserOtlpTraceDecodeError.fromPayload(bodyJson, cause),
     }).pipe(
-      Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to decode browser OTLP traces", {
-          cause,
-          bodyJson,
-        }),
+      Effect.flatMap((records) =>
+        browserTraceCollector
+          .record(records)
+          .pipe(
+            Effect.catchDefect((cause) =>
+              Effect.fail(BrowserOtlpTraceCollectionError.fromRecords(records, cause)),
+            ),
+          ),
       ),
+      Effect.catchTags({
+        BrowserOtlpTraceDecodeError: (error) =>
+          Effect.logWarning(error.message, {
+            errorTag: error._tag,
+            resourceSpanCount: error.resourceSpanCount,
+            causeTag: errorDiagnosticTag(error.cause),
+          }),
+        BrowserOtlpTraceCollectionError: (error) =>
+          Effect.logWarning(error.message, {
+            errorTag: error._tag,
+            recordCount: error.recordCount,
+            causeTag: errorDiagnosticTag(error.cause),
+          }),
+      }),
     );
 
     if (otlpTracesUrl === undefined) {
@@ -149,15 +251,23 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.as(HttpServerResponse.empty({ status: 204 })),
-        Effect.tapError((cause) =>
-          Effect.logWarning("Failed to export browser OTLP traces", {
-            cause,
-            otlpTracesUrl,
-          }),
+        Effect.mapError((cause) =>
+          BrowserOtlpTraceExportError.fromCollectorUrl(otlpTracesUrl, cause),
         ),
-        Effect.orElseSucceed(() =>
-          HttpServerResponse.text("Trace export failed.", { status: 502 }),
-        ),
+        Effect.catchTags({
+          BrowserOtlpTraceExportError: (error) =>
+            Effect.logWarning(error.message, {
+              errorTag: error._tag,
+              collectorUrlInputLength: error.collectorUrlInputLength,
+              ...(error.collectorUrlProtocol === undefined
+                ? {}
+                : { collectorUrlProtocol: error.collectorUrlProtocol }),
+              ...(error.collectorUrlHostname === undefined
+                ? {}
+                : { collectorUrlHostname: error.collectorUrlHostname }),
+              causeTag: errorDiagnosticTag(error.cause),
+            }).pipe(Effect.as(HttpServerResponse.text("Trace export failed.", { status: 502 }))),
+        }),
       );
   }).pipe(
     Effect.catchTags({
