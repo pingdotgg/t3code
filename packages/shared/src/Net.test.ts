@@ -45,6 +45,11 @@ const openServer = (host?: string): Effect.Effect<NodeNet.Server, NetService.Net
 
 it.layer(NetService.layer)("NetService", (it) => {
   describe("Net helpers", () => {
+    it("preserves the loopback reservation error message", () => {
+      const error = new NetService.NetError({ host: "127.0.0.1" });
+      assert.equal(error.message, "Failed to reserve loopback port");
+    });
+
     it.effect("reserveLoopbackPort returns a positive loopback port", () =>
       Effect.gen(function* () {
         const net = yield* NetService.NetService;

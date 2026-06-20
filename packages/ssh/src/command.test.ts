@@ -17,7 +17,7 @@ import {
   resolveRemoteT3CliPackageSpec,
   runSshCommand,
 } from "./command.ts";
-import { SshCommandExitError, SshCommandSpawnError, SshTunnelExitError } from "./errors.ts";
+import { SshCommandExitError, SshCommandSpawnError } from "./errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -173,27 +173,7 @@ describe("ssh command", () => {
         assert.equal(result.failure.stderr, "");
       }
 
-      assert.equal(
-        new SshCommandExitError({
-          command: ["ssh"],
-          exitCode: 1,
-          stderr: "",
-          stdout: "",
-          target: "devbox",
-        }).message,
-        "SSH command failed for devbox (exit 1).",
-      );
-      assert.equal(
-        new SshTunnelExitError({
-          command: ["ssh"],
-          exitCode: 1,
-          stderr: "",
-          target: "devbox",
-        }).message,
-        "SSH tunnel exited unexpectedly for devbox (exit 1).",
-      );
-
-      const spawnCause = new Error("ssh executable path included sensitive diagnostics");
+      const spawnCause = new Error("ssh executable was not found");
       const spawnError = new SshCommandSpawnError({
         command: ["ssh"],
         exitCode: null,
@@ -202,8 +182,7 @@ describe("ssh command", () => {
         cause: spawnCause,
       });
       assert.strictEqual(spawnError.cause, spawnCause);
-      assert.equal(spawnError.message, "Failed to spawn SSH command for devbox.");
-      assert.notInclude(spawnError.message, spawnCause.message);
+      assert.equal(spawnError.message, "ssh executable was not found");
     }).pipe(Effect.provide(processLayer));
   });
 

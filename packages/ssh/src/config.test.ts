@@ -24,7 +24,7 @@ describe("ssh config", () => {
     const error = new SshHostDiscoveryError({ homeDir: "/home/test", cause });
 
     assert.strictEqual(error.cause, cause);
-    assert.equal(error.message, "SSH host discovery failed for /home/test.");
+    assert.equal(error.message, "Failed to discover SSH hosts.");
     assert.notInclude(error.message, cause.message);
   });
 

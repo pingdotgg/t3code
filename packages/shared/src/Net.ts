@@ -11,7 +11,7 @@ export class NetError extends Schema.TaggedErrorClass<NetError>()("NetError", {
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Failed to reserve loopback port on ${this.host}.`;
+    return "Failed to reserve loopback port";
   }
 }
 

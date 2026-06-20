@@ -8,7 +8,7 @@ export class SshHostDiscoveryError extends Schema.TaggedErrorClass<SshHostDiscov
   },
 ) {
   override get message(): string {
-    return `SSH host discovery failed${this.homeDir === null ? "" : ` for ${this.homeDir}`}.`;
+    return "Failed to discover SSH hosts.";
   }
 }
 
@@ -62,7 +62,7 @@ export class SshAuthenticationHelperError extends Schema.TaggedErrorClass<SshAut
   },
 ) {
   override get message(): string {
-    return `Failed to prepare SSH authentication helpers${targetSuffix(this.target)}.`;
+    return "Failed to prepare SSH authentication helpers.";
   }
 }
 
@@ -73,7 +73,7 @@ export class SshCommandSpawnError extends Schema.TaggedErrorClass<SshCommandSpaw
   },
 ) {
   override get message(): string {
-    return `Failed to spawn SSH command${targetSuffix(this.target)}.`;
+    return causeMessage(this.cause, `Failed to spawn SSH command${targetSuffix(this.target)}.`);
   }
 }
 
@@ -84,7 +84,7 @@ export class SshCommandExecutionError extends Schema.TaggedErrorClass<SshCommand
   },
 ) {
   override get message(): string {
-    return `Failed to run SSH command${targetSuffix(this.target)}.`;
+    return causeMessage(this.cause, `Failed to run SSH command${targetSuffix(this.target)}.`);
   }
 }
 
@@ -132,7 +132,7 @@ export class SshTunnelSpawnError extends Schema.TaggedErrorClass<SshTunnelSpawnE
   },
 ) {
   override get message(): string {
-    return `Failed to spawn SSH tunnel${targetSuffix(this.target)}.`;
+    return causeMessage(this.cause, `Failed to spawn SSH tunnel${targetSuffix(this.target)}.`);
   }
 }
 
@@ -143,7 +143,7 @@ export class SshTunnelMonitorError extends Schema.TaggedErrorClass<SshTunnelMoni
   },
 ) {
   override get message(): string {
-    return `Failed to monitor SSH tunnel${targetSuffix(this.target)}.`;
+    return causeMessage(this.cause, `Failed to monitor SSH tunnel${targetSuffix(this.target)}.`);
   }
 }
 
@@ -258,15 +258,23 @@ export const SshPairingError = Schema.Union([
 ]);
 export type SshPairingError = typeof SshPairingError.Type;
 
+export class SshHttpBridgeMissingUrlError extends Schema.TaggedErrorClass<SshHttpBridgeMissingUrlError>()(
+  "SshHttpBridgeMissingUrlError",
+  {},
+) {
+  override get message(): string {
+    return "Invalid SSH forwarded http base URL.";
+  }
+}
+
 export class SshHttpBridgeInvalidUrlError extends Schema.TaggedErrorClass<SshHttpBridgeInvalidUrlError>()(
   "SshHttpBridgeInvalidUrlError",
   {
-    reason: Schema.Literals(["missing_url", "invalid_url"]),
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Invalid SSH forwarded HTTP base URL.";
+    return causeMessage(this.cause, "Invalid SSH forwarded http base URL.");
   }
 }
 
@@ -277,11 +285,12 @@ export class SshHttpBridgeNonLoopbackUrlError extends Schema.TaggedErrorClass<Ss
   },
 ) {
   override get message(): string {
-    return `SSH desktop bridge only supports loopback forwarded URLs${targetSuffix(this.hostname)}.`;
+    return "SSH desktop bridge only supports loopback forwarded URLs.";
   }
 }
 
 export const SshHttpBridgeError = Schema.Union([
+  SshHttpBridgeMissingUrlError,
   SshHttpBridgeInvalidUrlError,
   SshHttpBridgeNonLoopbackUrlError,
 ]);
@@ -315,6 +324,7 @@ export class SshReadinessProbeTimeoutError extends Schema.TaggedErrorClass<SshRe
 export class SshReadinessTimeoutError extends Schema.TaggedErrorClass<SshReadinessTimeoutError>()(
   "SshReadinessTimeoutError",
   {
+    baseUrl: Schema.String,
     requestUrl: Schema.String,
     timeoutMs: Schema.Number,
     attempts: Schema.Number,
@@ -322,7 +332,7 @@ export class SshReadinessTimeoutError extends Schema.TaggedErrorClass<SshReadine
   },
 ) {
   override get message(): string {
-    return `Timed out waiting ${this.timeoutMs}ms for backend readiness at ${this.requestUrl}.`;
+    return `Timed out waiting ${this.timeoutMs}ms for backend readiness at ${this.baseUrl}.`;
   }
 }
 
@@ -442,6 +452,10 @@ export type SshPasswordPromptError = typeof SshPasswordPromptError.Type;
 
 function targetSuffix(target: string | undefined): string {
   return target ? ` for ${target}` : "";
+}
+
+function causeMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
 }
 
 function exitCodeSuffix(exitCode: number | null): string {

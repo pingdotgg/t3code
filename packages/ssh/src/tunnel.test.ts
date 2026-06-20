@@ -15,7 +15,13 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as SshAuth from "./auth.ts";
-import { SshReadinessProbeTimeoutError, SshReadinessTimeoutError } from "./errors.ts";
+import {
+  SshHttpBridgeInvalidUrlError,
+  SshHttpBridgeMissingUrlError,
+  SshHttpBridgeNonLoopbackUrlError,
+  SshReadinessProbeTimeoutError,
+  SshReadinessTimeoutError,
+} from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
@@ -269,8 +275,12 @@ describe("ssh tunnel scripts", () => {
       if (Result.isFailure(result)) {
         assert.instanceOf(result.failure, SshReadinessTimeoutError);
         const timeoutError = result.failure as SshReadinessTimeoutError;
+        assert.equal(timeoutError.baseUrl, "http://127.0.0.1:41773/");
         assert.equal(timeoutError.requestUrl, "http://127.0.0.1:41773/ready");
-        assert.include(timeoutError.message, "Timed out waiting 1000ms");
+        assert.equal(
+          timeoutError.message,
+          "Timed out waiting 1000ms for backend readiness at http://127.0.0.1:41773/.",
+        );
         assert.isAbove(timeoutError.attempts, 0);
         assert.instanceOf(timeoutError.cause, SshReadinessProbeTimeoutError);
         const probeTimeout = timeoutError.cause as SshReadinessProbeTimeoutError;
@@ -282,6 +292,36 @@ describe("ssh tunnel scripts", () => {
         Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, hangingHttpClient)),
       ),
     ),
+  );
+
+  it.effect("preserves forwarded HTTP URL error messages", () =>
+    Effect.gen(function* () {
+      const missing = yield* Effect.result(SshTunnel.resolveLoopbackSshHttpBaseUrl(""));
+      assert.isTrue(Result.isFailure(missing));
+      if (Result.isFailure(missing)) {
+        assert.instanceOf(missing.failure, SshHttpBridgeMissingUrlError);
+        assert.equal(missing.failure.message, "Invalid SSH forwarded http base URL.");
+      }
+
+      const invalid = yield* Effect.result(SshTunnel.resolveLoopbackSshHttpBaseUrl("not-a-url"));
+      assert.isTrue(Result.isFailure(invalid));
+      if (Result.isFailure(invalid)) {
+        assert.instanceOf(invalid.failure, SshHttpBridgeInvalidUrlError);
+        assert.equal(invalid.failure.message, "Invalid URL");
+      }
+
+      const nonLoopback = yield* Effect.result(
+        SshTunnel.resolveLoopbackSshHttpBaseUrl("https://example.com"),
+      );
+      assert.isTrue(Result.isFailure(nonLoopback));
+      if (Result.isFailure(nonLoopback)) {
+        assert.instanceOf(nonLoopback.failure, SshHttpBridgeNonLoopbackUrlError);
+        assert.equal(
+          nonLoopback.failure.message,
+          "SSH desktop bridge only supports loopback forwarded URLs.",
+        );
+      }
+    }),
   );
 
   it("preserves primitive readiness reason values in diagnostic output", () => {

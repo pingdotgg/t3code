@@ -41,6 +41,7 @@ import {
   SshCommandCancelledError,
   SshCommandError,
   SshHttpBridgeInvalidUrlError,
+  SshHttpBridgeMissingUrlError,
   SshHttpBridgeNonLoopbackUrlError,
   SshHttpBridgeError,
   SshInvalidTargetError,
@@ -979,6 +980,7 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
           lastFailure: describeReadinessCause(lastFailure),
         });
         return yield* new SshReadinessTimeoutError({
+          baseUrl: input.baseUrl,
           requestUrl,
           timeoutMs,
           attempts: attempt,
@@ -999,11 +1001,11 @@ function isLoopbackHostname(hostname: string): boolean {
 export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopbackSshHttpBaseUrl")(
   function* (rawHttpBaseUrl: unknown): Effect.fn.Return<string, SshHttpBridgeError> {
     if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
-      return yield* new SshHttpBridgeInvalidUrlError({ reason: "missing_url" });
+      return yield* new SshHttpBridgeMissingUrlError();
     }
     const baseUrl = yield* Effect.try({
       try: () => new URL(rawHttpBaseUrl),
-      catch: (cause) => new SshHttpBridgeInvalidUrlError({ reason: "invalid_url", cause }),
+      catch: (cause) => new SshHttpBridgeInvalidUrlError({ cause }),
     });
     if (!isLoopbackHostname(baseUrl.hostname)) {
       return yield* new SshHttpBridgeNonLoopbackUrlError({
