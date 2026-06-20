@@ -19,21 +19,65 @@ import { PlatformServices } from "alchemy/Util/PlatformServices";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { Command, Flag, Prompt } from "effect/unstable/cli";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
 import RelayStack from "../alchemy.run.ts";
 
-export class RelayDeployError extends Data.TaggedError("RelayDeployError")<{
-  readonly message: string;
-}> {}
+const relayDeployOutputFields = [
+  "url",
+  "mobileTracingUrl",
+  "mobileTracingDataset",
+  "mobileTracingToken",
+  "clientTracingUrl",
+  "clientTracingDataset",
+  "clientTracingToken",
+] as const;
+
+export const RelayDeployOutputField = Schema.Literals(relayDeployOutputFields);
+export type RelayDeployOutputField = typeof RelayDeployOutputField.Type;
+
+export const RelayDeployResult = Schema.Literals([
+  "applied",
+  "noop",
+  "dry-run",
+  "cancelled",
+  "state",
+]);
+export type RelayDeployResult = typeof RelayDeployResult.Type;
+
+export class RelayDeployError extends Schema.TaggedErrorClass<RelayDeployError>()(
+  "RelayDeployError",
+  {
+    source: Schema.Literals(["alchemy_state", "alchemy_apply"]),
+    stage: Schema.String,
+    missingFields: Schema.Array(RelayDeployOutputField),
+  },
+) {
+  override get message(): string {
+    return `Relay deploy output from '${this.source}' for stage '${this.stage}' is missing required public config fields: ${this.missingFields.join(", ")}`;
+  }
+}
+
+export class RelayDeployPublicConfigUnavailableError extends Schema.TaggedErrorClass<RelayDeployPublicConfigUnavailableError>()(
+  "RelayDeployPublicConfigUnavailableError",
+  {
+    result: RelayDeployResult,
+    stage: Schema.String,
+    outputPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Relay deploy result '${this.result}' for stage '${this.stage}' did not produce public config required by GitHub environment output '${this.outputPath}'.`;
+  }
+}
 
 export interface RelayDeployOptions {
   readonly dryRun: boolean;
@@ -111,8 +155,6 @@ export function hasDeployChanges(plan: Plan.Plan): boolean {
     )
   );
 }
-
-export type RelayDeployResult = "applied" | "noop" | "dry-run" | "cancelled" | "state";
 
 export interface RelayDeployOutcome {
   readonly result: RelayDeployResult;
@@ -199,10 +241,13 @@ const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* 
 const writeGithubEnvFile = Effect.fn("relay.deploy.writeGithubEnvFile")(function* (
   outcome: RelayDeployOutcome,
   outputPath: string,
+  stage: string,
 ) {
   if (Option.isNone(outcome.publicConfig)) {
-    return yield* new RelayDeployError({
-      message: "Relay public client config is unavailable for the GitHub environment file",
+    return yield* new RelayDeployPublicConfigUnavailableError({
+      result: outcome.result,
+      stage,
+      outputPath,
     });
   }
   const fs = yield* FileSystem.FileSystem;
@@ -224,44 +269,71 @@ const deployBaseServices = Layer.mergeAll(
 );
 const deployServices = deployBaseServices;
 
-export function publicConfigFromOutput(output: unknown): RelayPublicConfig | null {
+function relayPublicConfigValues(
+  output: unknown,
+): Readonly<Record<RelayDeployOutputField, string | undefined>> {
   if (typeof output !== "object" || output === null) {
-    return null;
+    return {
+      url: undefined,
+      mobileTracingUrl: undefined,
+      mobileTracingDataset: undefined,
+      mobileTracingToken: undefined,
+      clientTracingUrl: undefined,
+      clientTracingDataset: undefined,
+      clientTracingToken: undefined,
+    };
   }
   const value = output as Record<string, unknown>;
-  const text = (name: string) => (typeof value[name] === "string" ? value[name] : undefined);
+  const text = (name: string) => {
+    const candidate = value[name];
+    return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+  };
   const secret = (name: string): string | undefined => {
     const candidate = value[name];
     if (!Redacted.isRedacted(candidate)) {
       return text(name);
     }
     const redacted = Redacted.value(candidate);
-    return typeof redacted === "string" ? redacted : undefined;
+    return typeof redacted === "string" && redacted.length > 0 ? redacted : undefined;
   };
-  const relayUrl = text("url");
-  const mobileTracingUrl = text("mobileTracingUrl");
-  const mobileTracingDataset = text("mobileTracingDataset");
-  const mobileTracingToken = secret("mobileTracingToken");
-  const clientTracingUrl = text("clientTracingUrl");
-  const clientTracingDataset = text("clientTracingDataset");
-  const clientTracingToken = secret("clientTracingToken");
-  return relayUrl &&
-    mobileTracingUrl &&
-    mobileTracingDataset &&
-    mobileTracingToken &&
-    clientTracingUrl &&
-    clientTracingDataset &&
-    clientTracingToken
-    ? {
-        relayUrl,
-        mobileTracingUrl,
-        mobileTracingDataset,
-        mobileTracingToken,
-        clientTracingUrl,
-        clientTracingDataset,
-        clientTracingToken,
-      }
-    : null;
+  return {
+    url: text("url"),
+    mobileTracingUrl: text("mobileTracingUrl"),
+    mobileTracingDataset: text("mobileTracingDataset"),
+    mobileTracingToken: secret("mobileTracingToken"),
+    clientTracingUrl: text("clientTracingUrl"),
+    clientTracingDataset: text("clientTracingDataset"),
+    clientTracingToken: secret("clientTracingToken"),
+  };
+}
+
+export function missingRelayPublicConfigFields(
+  output: unknown,
+): ReadonlyArray<RelayDeployOutputField> {
+  const values = relayPublicConfigValues(output);
+  return relayDeployOutputFields.filter((field) => values[field] === undefined);
+}
+
+function hasCompleteRelayPublicConfigValues(
+  values: Readonly<Record<RelayDeployOutputField, string | undefined>>,
+): values is Readonly<Record<RelayDeployOutputField, string>> {
+  return relayDeployOutputFields.every((field) => values[field] !== undefined);
+}
+
+export function publicConfigFromOutput(output: unknown): RelayPublicConfig | null {
+  const values = relayPublicConfigValues(output);
+  if (!hasCompleteRelayPublicConfigValues(values)) {
+    return null;
+  }
+  return {
+    relayUrl: values.url,
+    mobileTracingUrl: values.mobileTracingUrl,
+    mobileTracingDataset: values.mobileTracingDataset,
+    mobileTracingToken: values.mobileTracingToken,
+    clientTracingUrl: values.clientTracingUrl,
+    clientTracingDataset: values.clientTracingDataset,
+    clientTracingToken: values.clientTracingToken,
+  };
 }
 
 const readRelayPublicConfig = Effect.fn("relay.deploy.readState")(function* (stage: string) {
@@ -271,7 +343,9 @@ const readRelayPublicConfig = Effect.fn("relay.deploy.readState")(function* (sta
   const publicConfig = publicConfigFromOutput(output);
   if (publicConfig === null) {
     return yield* new RelayDeployError({
-      message: `Alchemy relay state for stage ${stage} did not include complete public client config`,
+      source: "alchemy_state",
+      stage,
+      missingFields: missingRelayPublicConfigFields(output),
     });
   }
   return {
@@ -285,7 +359,7 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
   function* (
     options: RelayDeployOptions,
     _configProvider: ConfigProvider.ConfigProvider,
-    _stage: string,
+    stage: string,
   ) {
     const stack = yield* RelayStack;
     const cli = yield* Cli;
@@ -318,31 +392,18 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
       }
     }
     const output = yield* Apply.apply(plan).pipe(Effect.provide(stack.services));
-    if (
-      output.url === undefined ||
-      output.mobileTracingUrl === undefined ||
-      output.mobileTracingDataset === undefined ||
-      output.mobileTracingToken === undefined ||
-      output.clientTracingUrl === undefined ||
-      output.clientTracingDataset === undefined ||
-      output.clientTracingToken === undefined
-    ) {
+    const publicConfig = publicConfigFromOutput(output);
+    if (publicConfig === null) {
       return yield* new RelayDeployError({
-        message: "Alchemy relay deploy output did not include complete public client config",
+        source: "alchemy_apply",
+        stage,
+        missingFields: missingRelayPublicConfigFields(output),
       });
     }
     return {
       result: changed ? "applied" : "noop",
       changed,
-      publicConfig: Option.some({
-        relayUrl: output.url,
-        mobileTracingUrl: output.mobileTracingUrl,
-        mobileTracingDataset: output.mobileTracingDataset,
-        mobileTracingToken: Redacted.value(output.mobileTracingToken),
-        clientTracingUrl: output.clientTracingUrl,
-        clientTracingDataset: output.clientTracingDataset,
-        clientTracingToken: Redacted.value(output.clientTracingToken),
-      }),
+      publicConfig: Option.some(publicConfig),
     } satisfies RelayDeployOutcome;
   },
   (effect, options, configProvider, stage) =>
@@ -379,7 +440,7 @@ export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployO
     yield* writeGithubOutput(outcome);
   }
   if (Option.isSome(options.githubEnvFile)) {
-    yield* writeGithubEnvFile(outcome, options.githubEnvFile.value);
+    yield* writeGithubEnvFile(outcome, options.githubEnvFile.value, stage);
   }
 });
 
