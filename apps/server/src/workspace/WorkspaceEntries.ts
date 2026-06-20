@@ -73,6 +73,7 @@ export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Typ
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
   WorkspacePaths.WorkspaceRootNotDirectoryError,
   WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
