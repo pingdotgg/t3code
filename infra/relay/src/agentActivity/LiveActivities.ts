@@ -7,7 +7,7 @@ import { RelayAgentActivityAggregateState as RelayAgentActivityAggregateStateSch
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { cast } from "effect/Function";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { and, eq, sql } from "drizzle-orm";
@@ -64,41 +64,40 @@ export interface LiveActivityRow {
 
 export type TargetRow = DeviceRow & LiveActivityRow;
 
-export interface LiveActivitiesShape {
-  readonly register: (input: {
-    readonly userId: string;
-    readonly registration: RelayLiveActivityRegistrationRequest;
-  }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
-  readonly listTargets: (input: {
-    readonly userId: string;
-  }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
-  readonly markDelivery: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly kind: RelayDeliveryKind;
-    readonly aggregate: RelayAgentActivityAggregateState | null;
-    readonly deliveredAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly markStartQueued: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly queuedAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly clearStartQueued: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-  readonly invalidateDeliveryToken: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly kind: RelayDeliveryKind;
-    readonly invalidatedAt: string;
-  }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
-}
-
-export class LiveActivities extends Context.Service<LiveActivities, LiveActivitiesShape>()(
-  "t3code-relay/agentActivity/LiveActivities",
-) {}
+export class LiveActivities extends Context.Service<
+  LiveActivities,
+  {
+    readonly register: (input: {
+      readonly userId: string;
+      readonly registration: RelayLiveActivityRegistrationRequest;
+    }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
+    readonly listTargets: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
+    readonly markDelivery: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly kind: RelayDeliveryKind;
+      readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly deliveredAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly markStartQueued: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly queuedAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly clearStartQueued: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    readonly invalidateDeliveryToken: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly kind: RelayDeliveryKind;
+      readonly invalidatedAt: string;
+    }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+  }
+>()("t3code-relay/agentActivity/LiveActivities") {}
 
 const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
 const encodeJsonValue = Schema.encodeEffect(Schema.UnknownFromJsonString);
@@ -223,7 +222,7 @@ const make = Effect.gen(function* () {
             ? null
             : yield* encodeRelayAgentActivityAggregateStateJson(input.aggregate).pipe(
                 Effect.flatMap(decodeJsonString),
-                Effect.map(cast<unknown, RelayAgentActivityAggregateState>),
+                Effect.map(Function.cast<unknown, RelayAgentActivityAggregateState>),
               );
 
         yield* db

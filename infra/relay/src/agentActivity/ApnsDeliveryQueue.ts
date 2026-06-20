@@ -33,34 +33,31 @@ export class ApnsDeliveryQueueSendError extends Schema.TaggedErrorClass<ApnsDeli
 
 export type ApnsDeliveryQueueError = ApnsDeliveryQueueSendError;
 
-export interface ApnsDeliveryQueueSenderShape {
-  readonly send: (body: SignedApnsDeliveryJob) => Effect.Effect<void, ApnsDeliveryQueueSendError>;
-}
-
 export class ApnsDeliveryQueueSender extends Context.Service<
   ApnsDeliveryQueueSender,
-  ApnsDeliveryQueueSenderShape
+  {
+    readonly send: (body: SignedApnsDeliveryJob) => Effect.Effect<void, ApnsDeliveryQueueSendError>;
+  }
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue/ApnsDeliveryQueueSender") {}
 
-export interface ApnsDeliveryQueueShape {
-  readonly enqueueLiveActivity: (input: {
-    readonly kind: ApnsDeliveryJobPayload["kind"];
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly token: string;
-    readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
-  }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
-  readonly enqueuePushNotification: (input: {
-    readonly userId: string;
-    readonly deviceId: string;
-    readonly token: string;
-    readonly notification: NonNullable<ApnsDeliveryJobPayload["notification"]>;
-  }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
-}
-
-export class ApnsDeliveryQueue extends Context.Service<ApnsDeliveryQueue, ApnsDeliveryQueueShape>()(
-  "t3code-relay/agentActivity/ApnsDeliveryQueue",
-) {}
+export class ApnsDeliveryQueue extends Context.Service<
+  ApnsDeliveryQueue,
+  {
+    readonly enqueueLiveActivity: (input: {
+      readonly kind: ApnsDeliveryJobPayload["kind"];
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly token: string;
+      readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
+    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
+    readonly enqueuePushNotification: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly token: string;
+      readonly notification: NonNullable<ApnsDeliveryJobPayload["notification"]>;
+    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
+  }
+>()("t3code-relay/agentActivity/ApnsDeliveryQueue") {}
 
 const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;

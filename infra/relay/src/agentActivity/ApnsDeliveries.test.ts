@@ -141,16 +141,16 @@ function makeLayer(input: {
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
   readonly queuedJobs?: Array<SignedApnsDeliveryJob>;
   readonly queuedStarts?: Array<
-    Parameters<LiveActivities.LiveActivitiesShape["markStartQueued"]>[0]
+    Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
   >;
   readonly clearedStarts?: Array<
-    Parameters<LiveActivities.LiveActivitiesShape["clearStartQueued"]>[0]
+    Parameters<LiveActivities.LiveActivities["Service"]["clearStartQueued"]>[0]
   >;
   readonly markedDeliveries?: Array<
-    Parameters<LiveActivities.LiveActivitiesShape["markDelivery"]>[0]
+    Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
   >;
   readonly invalidatedTokens?: Array<
-    Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
+    Parameters<LiveActivities.LiveActivities["Service"]["invalidateDeliveryToken"]>[0]
   >;
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
@@ -227,10 +227,10 @@ describe("ApnsDeliveries", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
     const queuedStarts: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["markStartQueued"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
     > = [];
     const markedDeliveries: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["markDelivery"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
     > = [];
 
     return Effect.gen(function* () {
@@ -933,7 +933,7 @@ describe("ApnsDeliveries", () => {
   it.effect("invalidates dead device push tokens after permanent APNs alert failures", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const invalidatedTokens: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["invalidateDeliveryToken"]>[0]
     > = [];
     const payload = makeApnsDeliveryJobPayload({
       kind: "push_notification",
@@ -1000,7 +1000,7 @@ describe("ApnsDeliveries", () => {
   it.effect("clears queued start state when a start job fails in APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const clearedStarts: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["clearStartQueued"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["clearStartQueued"]>[0]
     > = [];
     const payload = makeApnsDeliveryJobPayload({
       kind: "live_activity_start",
@@ -1035,7 +1035,7 @@ describe("ApnsDeliveries", () => {
   it.effect("invalidates dead push-to-start tokens after permanent APNs start failures", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const invalidatedTokens: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["invalidateDeliveryToken"]>[0]
     > = [];
     const payload = makeApnsDeliveryJobPayload({
       kind: "live_activity_start",
@@ -1082,7 +1082,7 @@ describe("ApnsDeliveries", () => {
   it.effect("invalidates dead Live Activity tokens after APNs unregisters them", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const invalidatedTokens: Array<
-      Parameters<LiveActivities.LiveActivitiesShape["invalidateDeliveryToken"]>[0]
+      Parameters<LiveActivities.LiveActivities["Service"]["invalidateDeliveryToken"]>[0]
     > = [];
     const payload = makeApnsDeliveryJobPayload({
       kind: "live_activity_update",

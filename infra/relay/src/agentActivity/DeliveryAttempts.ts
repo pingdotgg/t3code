@@ -43,21 +43,20 @@ export interface DeliveryAttemptCompletionInput {
 
 export type DeliverySourceJobClaimResult = "claimed" | "completed" | "in_flight";
 
-export interface DeliveryAttemptsShape {
-  readonly record: (
-    input: DeliveryAttemptInput,
-  ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
-  readonly claimSourceJob: (
-    input: DeliveryAttemptInput & { readonly sourceJobId: string },
-  ) => Effect.Effect<DeliverySourceJobClaimResult, DeliveryAttemptRecordPersistenceError>;
-  readonly completeSourceJob: (
-    input: DeliveryAttemptCompletionInput,
-  ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
-}
-
-export class DeliveryAttempts extends Context.Service<DeliveryAttempts, DeliveryAttemptsShape>()(
-  "t3code-relay/agentActivity/DeliveryAttempts",
-) {}
+export class DeliveryAttempts extends Context.Service<
+  DeliveryAttempts,
+  {
+    readonly record: (
+      input: DeliveryAttemptInput,
+    ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
+    readonly claimSourceJob: (
+      input: DeliveryAttemptInput & { readonly sourceJobId: string },
+    ) => Effect.Effect<DeliverySourceJobClaimResult, DeliveryAttemptRecordPersistenceError>;
+    readonly completeSourceJob: (
+      input: DeliveryAttemptCompletionInput,
+    ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
+  }
+>()("t3code-relay/agentActivity/DeliveryAttempts") {}
 
 const SOURCE_JOB_CLAIM_LEASE_MINUTES = 10;
 
