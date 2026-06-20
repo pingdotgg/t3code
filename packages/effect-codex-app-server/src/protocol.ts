@@ -94,12 +94,8 @@ const encodeWireMessage = (
 ): Effect.Effect<string, CodexError.CodexAppServerProtocolParseError> =>
   encodeJsonString(message).pipe(
     Effect.map((encoded) => `${encoded}\n`),
-    Effect.mapError(
-      (cause) =>
-        new CodexError.CodexAppServerProtocolParseError({
-          detail: "Failed to encode Codex App Server message",
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      CodexError.CodexAppServerProtocolParseError.fromSchemaError("encode-wire-message", cause),
     ),
   );
 
@@ -107,20 +103,19 @@ const decodeWireMessage = (
   line: string,
 ): Effect.Effect<unknown, CodexError.CodexAppServerProtocolParseError> =>
   decodeJsonString(line).pipe(
-    Effect.mapError(
-      (cause) =>
-        new CodexError.CodexAppServerProtocolParseError({
-          detail: "Failed to decode Codex App Server wire message",
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      CodexError.CodexAppServerProtocolParseError.fromSchemaError("decode-wire-message", cause),
     ),
   );
 
-const normalizeIncomingError = (error: unknown, detail: string): CodexError.CodexAppServerError =>
+const normalizeIncomingError = (
+  error: unknown,
+  operation: CodexError.CodexAppServerTransportOperation,
+): CodexError.CodexAppServerError =>
   isCodexAppServerError(error)
     ? error
     : new CodexError.CodexAppServerTransportError({
-        detail,
+        operation,
         cause: error,
       });
 
@@ -262,7 +257,13 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             ? options.onRequest(request).pipe(
                 Effect.matchEffect({
                   onFailure: (error) =>
-                    respondError(request.id, CodexError.normalizeToRequestError(error)),
+                    respondError(
+                      request.id,
+                      CodexError.CodexAppServerRequestError.fromAppServerError(
+                        error,
+                        request.method,
+                      ),
+                    ),
                   onSuccess: (result) => respond(request.id, result),
                 }),
               )
@@ -292,6 +293,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       return Effect.fail(
         new CodexError.CodexAppServerProtocolParseError({
           detail: "Received protocol message in an unknown shape",
+          operation: "route-wire-message",
         }),
       );
     };
@@ -318,8 +320,13 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             direction: "incoming",
             stage: "decode_failed",
             payload: {
-              detail: error.detail,
-              cause: error.cause,
+              operation: error.operation,
+              ...(error.method === undefined ? {} : { method: error.method }),
+              ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+              ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+              ...(error.maximumPathDepth === undefined
+                ? {}
+                : { maximumPathDepth: error.maximumPathDepth }),
             },
           }),
         ),
@@ -340,7 +347,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       Effect.matchEffect({
         onFailure: (error) =>
           handleTermination(() =>
-            Effect.succeed(normalizeIncomingError(error, "Codex App Server input stream failed")),
+            Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
           Ref.get(remainder).pipe(
@@ -351,12 +358,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                 handleTermination(
                   () =>
                     options.terminationError ??
-                    Effect.succeed(
-                      new CodexError.CodexAppServerTransportError({
-                        detail: "Codex App Server input stream ended",
-                        cause: new Error("Codex App Server input stream ended"),
-                      }),
-                    ),
+                    Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
                 ),
             }),
           ),

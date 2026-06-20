@@ -50,7 +50,7 @@ export const makeTerminationError = (
   Effect.match(handle.exitCode, {
     onFailure: (cause) =>
       new CodexError.CodexAppServerTransportError({
-        detail: "Failed to determine Codex App Server process exit status",
+        operation: "read-process-exit-status",
         cause,
       }),
     onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code }),
