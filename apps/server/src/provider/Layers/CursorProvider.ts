@@ -21,7 +21,8 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import {
   createModelCapabilities,
   getProviderOptionBooleanSelectionValue,
@@ -43,7 +44,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
@@ -416,12 +417,14 @@ const makeCursorAcpProbeRuntime = (
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner))),
     );
-    return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      Effect.provide(acpContext),
+    );
   });
 
 const withCursorAcpProbeRuntime = <A, E, R>(
   cursorSettings: CursorSettings,
-  useRuntime: (acp: AcpSessionRuntime["Service"]) => Effect.Effect<A, E, R>,
+  useRuntime: (acp: AcpSessionRuntime.AcpSessionRuntime["Service"]) => Effect.Effect<A, E, R>,
   environment?: NodeJS.ProcessEnv,
 ) =>
   makeCursorAcpProbeRuntime(cursorSettings, environment).pipe(

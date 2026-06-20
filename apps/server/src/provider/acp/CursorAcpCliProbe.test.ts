@@ -9,12 +9,12 @@ import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", () => {
   it.effect("initialize and authenticate against real agent acp", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       expect(started.initializeResult).toBeDefined();
     }).pipe(
@@ -42,7 +42,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
 
   it.effect("session/new returns configOptions with a model selector", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       const result = started.sessionSetupResult;
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -97,7 +97,7 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
 
   it.effect("session/set_config_option switches the model in-session", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime;
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       const started = yield* runtime.start();
       const newResult = started.sessionSetupResult;
 
