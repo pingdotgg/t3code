@@ -59,7 +59,7 @@ export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedErrorCl
   },
 ) {
   override get message(): string {
-    return `Project setup script project was not found for thread '${this.threadId}'.`;
+    return "Project was not found for setup script execution.";
   }
 }
 
