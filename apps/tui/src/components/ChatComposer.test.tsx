@@ -137,6 +137,29 @@ describe("ChatComposer", () => {
     t.renderer.destroy();
   });
 
+  it("Given a non-empty reply, when the editor mounts, then it seeds the draft (survives remount)", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="compose" reply="restored draft" inputFocused />,
+    );
+    expect(frame).toContain("restored draft");
+  });
+
+  it("Given a draft, when a global Ctrl-shortcut key is pressed, then the editor keeps the draft", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return <ChatComposer {...base} mode="compose" reply={reply} inputFocused onReplyInput={setReply} />;
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.typeText("keep this draft");
+    // ^U / ^K would delete-to-line-start / -end if the editor still owned them.
+    t.mockInput.pressKey("u", { ctrl: true });
+    t.mockInput.pressKey("k", { ctrl: true });
+    const frame = await t.waitForFrame((f) => f.includes("keep this draft"));
+    expect(frame).toContain("keep this draft");
+    t.renderer.destroy();
+  });
+
   it("Given a reply, when plain Enter is pressed, then it submits (like the web composer)", async () => {
     let sent = 0;
     function Harness(): React.ReactNode {

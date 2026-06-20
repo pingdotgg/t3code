@@ -3,15 +3,21 @@ import * as React from "react";
 
 import { usePalette } from "../theme.ts";
 
-// Reply key map: Enter sends (like the web composer), Shift+Enter inserts a
-// newline. linefeed (Ctrl+J) is a reliable newline fallback for terminals that
-// can't report Shift+Enter. All other editing/navigation bindings (arrows,
-// word-jumps, undo, paste) are inherited from the textarea defaults.
+// Reply key map. The textarea ALWAYS merges these over its defaults, so we can't
+// remove a default by omission — we override it. Two concerns:
+//   1. Enter sends (like the web composer); Shift+Enter / Ctrl+J insert a newline.
+//   2. The editor's default ^K (delete-to-line-end) and ^U (delete-to-line-start)
+//      collide with the app's global ^K (actions) and ^U (user-input), which fire
+//      alongside the focused editor — left as-is, pressing them would also shred
+//      the draft. Override them to harmless cursor moves so the keys belong to the
+//      app, not the editor. (^A/^E/^B/^F also overlap but only move the cursor.)
 const replyKeyBindings: typeof defaultTextareaKeyBindings = [
   ...defaultTextareaKeyBindings.filter(
     (binding) =>
       binding.name !== "return" && binding.name !== "kpenter" && binding.name !== "linefeed",
   ),
+  { name: "k", ctrl: true, action: "line-end" },
+  { name: "u", ctrl: true, action: "line-home" },
   { name: "return", shift: true, action: "newline" },
   { name: "kpenter", shift: true, action: "newline" },
   { name: "linefeed", action: "newline" },
@@ -239,6 +245,9 @@ export const ChatComposer = React.memo(function ChatComposer({
           key={`reply-${composerEpoch}`}
           ref={replyRef}
           focused
+          // Seeds on (re)mount only — restores the draft when the composer remounts
+          // after an overlay/terminal-focus, without fighting live edits.
+          initialValue={reply}
           placeholder={placeholder}
           flexGrow={1}
           wrapMode="word"
