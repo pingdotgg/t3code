@@ -22,10 +22,7 @@ type RuntimeLayerSource =
   | typeof httpClientLayer
   | typeof tracingLayer;
 
-export const runtimeLayer: Layer.Layer<
-  Layer.Success<RuntimeLayerSource>,
-  Layer.Error<RuntimeLayerSource>
-> = Layer.merge(
+const runtimeLayer = Layer.merge(
   managedRelayClientLayer(configuredRelayUrl()),
   Socket.layerWebSocketConstructorGlobal,
 ).pipe(
@@ -35,11 +32,11 @@ export const runtimeLayer: Layer.Layer<
 );
 
 export const runtime: ManagedRuntime.ManagedRuntime<
-  Layer.Success<typeof runtimeLayer>,
-  Layer.Error<typeof runtimeLayer>
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
 > = ManagedRuntime.make(runtimeLayer);
 
 export const runtimeContextLayer: Layer.Layer<
-  Layer.Success<typeof runtimeLayer>,
-  Layer.Error<typeof runtimeLayer>
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
 > = Layer.effectContext(runtime.contextEffect);

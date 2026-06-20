@@ -135,11 +135,7 @@ export const parseTailscaleStatus = (
     }),
   );
 
-export const readTailscaleStatus: Effect.Effect<
-  TailscaleStatus,
-  TailscaleCommandError | TailscaleStatusParseError,
-  ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
+export const readTailscaleStatus = Effect.gen(function* () {
   const args = ["status", "--json"];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcessPlatform;

@@ -3,7 +3,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -19,13 +20,11 @@ interface WindowsProbeOptions {
   readonly loadProfile: boolean;
 }
 
-export interface DesktopShellEnvironmentShape {
-  readonly installIntoProcess: Effect.Effect<void, never>;
-}
-
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
-  DesktopShellEnvironmentShape
+  {
+    readonly installIntoProcess: Effect.Effect<void>;
+  }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
 const LOGIN_SHELL_ENV_NAMES = [
@@ -212,11 +211,7 @@ const readLoginShellEnvironment = (
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
-const readLaunchctlPath: Effect.Effect<
-  Option.Option<string>,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = runCommandOutput({
+const readLaunchctlPath = runCommandOutput({
   command: "/bin/launchctl",
   args: ["getenv", "PATH"],
   timeout: LAUNCHCTL_TIMEOUT,
@@ -336,20 +331,20 @@ const installShellEnvironment = (
   return Effect.void;
 };
 
-export const layer = Layer.effect(
-  DesktopShellEnvironment,
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return DesktopShellEnvironment.of({
-      installIntoProcess: installShellEnvironment({
-        env: process.env,
-        platform: environment.platform,
-        userShell: Option.none(),
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
-      ),
-    });
-  }),
-);
+export const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
+    installShellEnvironment({
+      env: process.env,
+      platform: environment.platform,
+      userShell: Option.none(),
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+    );
+
+  return DesktopShellEnvironment.of({ installIntoProcess });
+});
+
+export const layer = Layer.effect(DesktopShellEnvironment, make);

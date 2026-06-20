@@ -191,11 +191,7 @@ const make = Effect.acquireRelease(
     }),
 );
 
-export const layer: Layer.Layer<
-  McpSessionRegistry,
-  never,
-  Crypto.Crypto | ServerEnvironment.ServerEnvironment | HttpServer.HttpServer
-> = Layer.effect(McpSessionRegistry, make);
+export const layer = Layer.effect(McpSessionRegistry, make);
 
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,
