@@ -503,7 +503,11 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
           createAssetUrl,
           openPreview,
         });
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        if (result._tag === "Success") {
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) {
+          openFallback();
           return;
         }
         const error = squashAtomCommandFailure(result);

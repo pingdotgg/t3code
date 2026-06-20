@@ -1060,9 +1060,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            type: "warning",
+            title: "Unable to open file preview",
+            description:
+              error instanceof Error
+                ? `${error.message} Opening the file instead.`
+                : "Opening the file instead.",
           }),
         );
         handleOpenInFilePreview();
@@ -1073,9 +1076,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
         toastManager.add(
           stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            type: "warning",
+            title: "Unable to open file preview",
+            description:
+              cause instanceof Error
+                ? `${cause.message} Opening the file instead.`
+                : "Opening the file instead.",
           }),
         );
         handleOpenInFilePreview();
@@ -1470,6 +1476,7 @@ function ChatMarkdown({
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
             onOpenInBrowser={
+              fileLinkMeta.workspaceRelativePath !== null &&
               threadRef &&
               isPreviewSupportedInRuntime() &&
               isWorkspacePreviewFile(fileLinkMeta.filePath)

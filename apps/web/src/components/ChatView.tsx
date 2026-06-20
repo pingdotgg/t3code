@@ -2776,7 +2776,11 @@ function ChatViewContent(props: ChatViewProps) {
           createAssetUrl,
           openPreview,
         });
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        if (result._tag === "Success") {
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) {
+          openFallback();
           return;
         }
         const error = squashAtomCommandFailure(result);
