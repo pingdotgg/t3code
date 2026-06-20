@@ -45,7 +45,12 @@ import {
 import { request, rpcSessionFactoryLayer, RpcSessionFactory, subscribe } from "@t3tools/client-runtime/rpc";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
 
-import { flattenModelOptions, type ModelOption } from "./models.ts";
+import {
+  flattenModelOptions,
+  type ModelOption,
+  type ReasoningChoices,
+  reasoningChoicesFor,
+} from "./models.ts";
 import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentShellState,
@@ -333,6 +338,13 @@ export interface TuiClient {
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
   readonly setModel: (threadId: ThreadId, instanceId: string, model: string) => Promise<void>;
+  /** Reasoning/effort choices for a model (null if it exposes none). */
+  readonly getReasoningChoices: (instanceId: string, model: string) => Promise<ReasoningChoices | null>;
+  readonly setReasoning: (
+    thread: Pick<OrchestrationThread, "id" | "modelSelection">,
+    descriptorId: string,
+    choiceId: string,
+  ) => Promise<void>;
   readonly terminalWrite: (
     threadId: ThreadId,
     terminalId: string,
@@ -667,6 +679,30 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
           modelSelection: {
             instanceId: ProviderInstanceId.make(instanceId),
             model: TrimmedNonEmptyString.make(model),
+          },
+        }).pipe(Effect.asVoid),
+      ),
+
+    getReasoningChoices: (instanceId, model) =>
+      runtime.runPromise(
+        request(WS_METHODS.serverGetConfig, {}).pipe(
+          Effect.map((config) => reasoningChoicesFor(config.providers, instanceId, model)),
+        ),
+      ),
+
+    setReasoning: (thread, descriptorId, choiceId) =>
+      runtime.runPromise(
+        updateThreadMetadata({
+          threadId: thread.id,
+          modelSelection: {
+            instanceId: thread.modelSelection.instanceId,
+            model: thread.modelSelection.model,
+            options: [
+              ...(thread.modelSelection.options ?? []).filter(
+                (option) => option.id !== descriptorId,
+              ),
+              { id: TrimmedNonEmptyString.make(descriptorId), value: choiceId },
+            ],
           },
         }).pipe(Effect.asVoid),
       ),

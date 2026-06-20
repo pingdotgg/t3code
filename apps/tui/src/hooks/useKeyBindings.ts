@@ -19,7 +19,7 @@ export type KeyBindingMode =
   | "confirmDelete"
   | "revert"
   | "diff"
-  | "model"
+  | "select"
   | "userInput"
   | "new"
   | "rename"
@@ -45,12 +45,13 @@ export interface KeyBindingActions {
   readonly onActionRevert: () => void;
   readonly onActionDiff: () => void;
   readonly onActionModel: () => void;
+  readonly onActionReasoning: () => void;
   readonly onCloseOverlay: () => void;
   // Model picker
-  readonly onModelPrev: () => void;
-  readonly onModelNext: () => void;
-  readonly onModelConfirm: () => void;
-  readonly onModelClose: () => void;
+  // Native <select> pickers (model / runtime / reasoning): the select owns ↑/↓ +
+  // Enter; we only close on Escape.
+  readonly onCloseSelect: () => void;
+  readonly onOpenRuntime: () => void;
   // Turn diff viewer
   readonly onDiffPrev: () => void;
   readonly onDiffNext: () => void;
@@ -98,7 +99,6 @@ export interface KeyBindingActions {
   readonly onInterrupt: () => void;
   readonly onApprove: () => void;
   readonly onDecline: () => void;
-  readonly onCycleMode: () => void;
   readonly onSend: () => void;
   readonly onEscape: () => void;
 }
@@ -128,14 +128,13 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "v") return actions.onActionRevert();
       if (key.name === "g") return actions.onActionDiff();
       if (key.name === "m") return actions.onActionModel();
+      if (key.name === "e") return actions.onActionReasoning();
       if (key.name === "escape") return actions.onCloseOverlay();
       return;
     }
-    if (actions.mode === "model") {
-      if (key.name === "up") return actions.onModelPrev();
-      if (key.name === "down") return actions.onModelNext();
-      if (key.name === "return" || key.name === "enter") return actions.onModelConfirm();
-      if (key.name === "escape") return actions.onModelClose();
+    if (actions.mode === "select") {
+      // The focused <select> handles ↑/↓ + Enter itself; we only intercept Escape.
+      if (key.name === "escape") return actions.onCloseSelect();
       return;
     }
     if (actions.mode === "diff") {
@@ -210,7 +209,7 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (key.ctrl && key.name === "g") return actions.onEditInEditor();
     if (key.ctrl && key.name === "a") return actions.onApprove();
     if (key.ctrl && key.name === "r") return actions.onDecline();
-    if (key.ctrl && key.name === "o") return actions.onCycleMode();
+    if (key.ctrl && key.name === "o") return actions.onOpenRuntime();
     // Enter/Shift+Enter are owned by the reply <textarea> (send / newline); it
     // drives sending through its onSubmit, so the global handler stays out of it.
     if (key.name === "escape") return actions.onEscape();

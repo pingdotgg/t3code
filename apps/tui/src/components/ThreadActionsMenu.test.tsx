@@ -55,11 +55,13 @@ describe("ThreadActionsMenu", () => {
     expect(frame).toContain("y delete");
   });
 
-  it("Given the actions overlay, then it lists the revert action", async () => {
+  it("Given the actions overlay, then it lists revert, model and reasoning", async () => {
     const frame = await frameOf(
       <ThreadActionsMenu overlay="actions" title="My thread" archived={false} sessionRunning />,
     );
     expect(frame).toContain("revert");
+    expect(frame).toContain("model");
+    expect(frame).toContain("reasoning");
   });
 });
 

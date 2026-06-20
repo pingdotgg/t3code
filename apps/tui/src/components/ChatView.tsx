@@ -1,4 +1,4 @@
-import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opentui/core";
 import {
   DEFAULT_TERMINAL_ID,
   type ProviderInteractionMode,
@@ -18,20 +18,26 @@ import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { statusGlyphColor, usePalette } from "../theme.ts";
-import { currentModelIndex, type ModelOption } from "../models.ts";
+import { currentModelIndex } from "../models.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { type DiffStatus, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
-import { ModelPicker, type ModelPickerStatus } from "./ModelPicker.tsx";
+import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
 import { ControlsRow } from "./ControlsRow.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
 import { UserInputForm } from "./UserInputForm.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
-import { composerControls, RUNTIME_MODES } from "../controls.ts";
+import {
+  composerControls,
+  getReasoningEffort,
+  RUNTIME_MODE_META,
+  RUNTIME_MODES,
+  runtimeModeLabel,
+} from "../controls.ts";
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
@@ -75,10 +81,14 @@ export function ChatView({
   const [diffText, setDiffText] = React.useState("");
   const diffScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Model picker (^K → m): fetched lazily on open.
-  const [modelOpen, setModelOpen] = React.useState(false);
-  const [modelIndex, setModelIndex] = React.useState(0);
-  const [modelStatus, setModelStatus] = React.useState<ModelPickerStatus>("loading");
-  const [modelOptions, setModelOptions] = React.useState<ModelOption[]>([]);
+  // A native-<select> picker for the composer controls (model / runtime / reasoning).
+  const [picker, setPicker] = React.useState<{
+    readonly kind: "model" | "runtime" | "reasoning";
+    readonly title: string;
+    readonly status: SelectStatus;
+    readonly options: ReadonlyArray<SelectOption>;
+    readonly selectedIndex: number;
+  } | null>(null);
   // Pending user-input form state.
   const [userInputDeferred, setUserInputDeferred] = React.useState(false);
   const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
@@ -158,26 +168,113 @@ export function ChatView({
     };
   }, [client, diffOpen, detail?.id, diffTurnCount]);
 
-  // Fetch the model list when the picker opens, seeding the cursor on the current model.
-  React.useEffect(() => {
-    if (!modelOpen) return;
-    let cancelled = false;
-    setModelStatus("loading");
+  const openRuntimePicker = () => {
+    if (!detail) return;
+    setPicker({
+      kind: "runtime",
+      title: "access",
+      status: "ready",
+      options: RUNTIME_MODES.map((mode) => ({
+        name: RUNTIME_MODE_META[mode].label,
+        description: RUNTIME_MODE_META[mode].description,
+        value: mode,
+      })),
+      selectedIndex: Math.max(0, RUNTIME_MODES.indexOf(detail.runtimeMode)),
+    });
+  };
+
+  const openModelPicker = () => {
+    if (!detail) return;
+    setPicker({ kind: "model", title: "model", status: "loading", options: [], selectedIndex: 0 });
     void client
       .listModels()
-      .then((options) => {
-        if (cancelled) return;
-        setModelOptions(options);
-        setModelStatus(options.length > 0 ? "ready" : "empty");
-        setModelIndex(currentModelIndex(options, detail?.modelSelection ?? null));
-      })
-      .catch(() => {
-        if (!cancelled) setModelStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, modelOpen, detail?.modelSelection]);
+      .then((models) =>
+        setPicker((current) => {
+          if (!current || current.kind !== "model") return current;
+          return {
+            ...current,
+            status: models.length > 0 ? "ready" : "empty",
+            options: models.map((model) => ({
+              name: model.label,
+              description: model.providerLabel,
+              value: `${model.instanceId} ${model.model}`,
+            })),
+            selectedIndex: currentModelIndex(models, detail.modelSelection ?? null),
+          };
+        }),
+      )
+      .catch(() =>
+        setPicker((current) =>
+          current && current.kind === "model" ? { ...current, status: "error" } : current,
+        ),
+      );
+  };
+
+  const openReasoningPicker = () => {
+    const selection = detail?.modelSelection;
+    if (!detail || !selection) {
+      store.setStatus("Select a model first.", "info");
+      return;
+    }
+    setPicker({ kind: "reasoning", title: "reasoning", status: "loading", options: [], selectedIndex: 0 });
+    void client
+      .getReasoningChoices(selection.instanceId, selection.model)
+      .then((result) =>
+        setPicker((current) => {
+          if (!current || current.kind !== "reasoning") return current;
+          if (!result || result.choices.length === 0) return { ...current, status: "empty" };
+          const currentEffort = getReasoningEffort(selection);
+          return {
+            ...current,
+            status: "ready",
+            options: result.choices.map((choice) => ({
+              name: choice.label,
+              description: choice.description ?? result.descriptorId,
+              value: `${result.descriptorId} ${choice.id}`,
+            })),
+            selectedIndex: Math.max(
+              0,
+              result.choices.findIndex((choice) => choice.id === currentEffort),
+            ),
+          };
+        }),
+      )
+      .catch(() =>
+        setPicker((current) =>
+          current && current.kind === "reasoning" ? { ...current, status: "error" } : current,
+        ),
+      );
+  };
+
+  const onPickerSelect = (_index: number, option: SelectOption | null) => {
+    const value = typeof option?.value === "string" ? option.value : null;
+    const kind = picker?.kind;
+    setPicker(null);
+    if (!detail || !value || !kind) return;
+    if (kind === "runtime") {
+      const mode = value as RuntimeMode;
+      void client
+        .setRuntimeMode(detail.id, mode)
+        .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error"));
+      store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+    } else if (kind === "model") {
+      const [instanceId, model] = value.split(" ");
+      if (instanceId && model) {
+        void client
+          .setModel(detail.id, instanceId, model)
+          .catch((error) => store.setStatus(`model change failed: ${String(error)}`, "error"));
+        store.setStatus(`Model → ${model}`, "success");
+      }
+    } else if (kind === "reasoning") {
+      const [descriptorId, choiceId] = value.split(" ");
+      if (descriptorId && choiceId) {
+        void client
+          .setReasoning(detail, descriptorId, choiceId)
+          .catch((error) => store.setStatus(`reasoning change failed: ${String(error)}`, "error"));
+        store.setStatus(`Reasoning → ${choiceId}`, "success");
+      }
+    }
+  };
 
   const pendingUserInput = React.useMemo(
     () => (detail ? (derivePendingUserInputs(detail.activities)[0] ?? null) : null),
@@ -384,8 +481,8 @@ export function ChatView({
       ? "terminal"
       : diffOpen
         ? "diff"
-        : modelOpen
-          ? "model"
+        : picker
+          ? "select"
           : overlay === "actions"
         ? "actions"
         : overlay === "confirmDelete"
@@ -626,25 +723,15 @@ export function ChatView({
     onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onDiffClose: () => setDiffOpen(false),
     onActionModel: () => {
-      if (!detail) return;
       setOverlay("none");
-      setModelOptions([]);
-      setModelIndex(0);
-      setModelOpen(true);
+      openModelPicker();
     },
-    onModelPrev: () =>
-      setModelIndex((index) => (index <= 0 ? Math.max(modelOptions.length - 1, 0) : index - 1)),
-    onModelNext: () => setModelIndex((index) => (index + 1) % Math.max(modelOptions.length, 1)),
-    onModelConfirm: () => {
-      const option = modelOptions[Math.min(modelIndex, modelOptions.length - 1)];
-      setModelOpen(false);
-      if (!detail || !option) return;
-      void client
-        .setModel(detail.id, option.instanceId, option.model)
-        .catch((error) => store.setStatus(`model change failed: ${String(error)}`, "error"));
-      store.setStatus(`Model → ${option.label}`, "success");
+    onActionReasoning: () => {
+      setOverlay("none");
+      openReasoningPicker();
     },
-    onModelClose: () => setModelOpen(false),
+    onOpenRuntime: openRuntimePicker,
+    onCloseSelect: () => setPicker(null),
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
       if (!detail) {
@@ -690,13 +777,6 @@ export function ChatView({
       if (!detail || !approval) return;
       void client.approve(detail.id, approval.requestId, "decline").catch(() => {});
       store.setStatus("Declined.", "success");
-    },
-    onCycleMode: () => {
-      if (!detail) return;
-      const current = RUNTIME_MODES.indexOf(detail.runtimeMode);
-      const nextMode = RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
-      void client.setRuntimeMode(detail.id, nextMode).catch(() => {});
-      store.setStatus(`Mode → ${nextMode}`, "success");
     },
     onSend: sendReply,
     onEscape: () => {
@@ -794,14 +874,14 @@ export function ChatView({
 
       <ControlsRow controls={controls} />
 
-      {modelOpen && detail ? (
-        <ModelPicker
-          options={modelOptions}
-          selected={Math.min(modelIndex, Math.max(modelOptions.length - 1, 0))}
-          status={modelStatus}
-          currentInstanceId={detail.modelSelection?.instanceId ?? null}
-          currentModel={detail.modelSelection?.model ?? null}
-          width={chatWidth}
+      {picker ? (
+        <SelectOverlay
+          title={picker.title}
+          status={picker.status}
+          options={picker.options}
+          selectedIndex={picker.selectedIndex}
+          height={Math.min(Math.max(picker.options.length * 2, 4), 12)}
+          onSelect={onPickerSelect}
         />
       ) : overlay === "revert" && detail ? (
         <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
@@ -834,7 +914,7 @@ export function ChatView({
           newWorktree={newWorktree}
           newField={newField}
           editorRows={promptLines}
-          inputFocused={!terminalFocused && !diffOpen && !modelOpen}
+          inputFocused={!terminalFocused && !diffOpen && !picker}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
           onReplySubmit={sendReply}
