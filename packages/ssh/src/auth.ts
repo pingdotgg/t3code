@@ -7,8 +7,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
-import type { SshPasswordPromptError } from "./errors.ts";
+import { SshReadinessError, type SshPasswordPromptError } from "./errors.ts";
 
 export interface SshPasswordRequest {
   readonly destination: string;
@@ -216,6 +217,8 @@ function isSshAuthFailureMessage(message: string): boolean {
   );
 }
 
+const isSshReadinessError = Schema.is(SshReadinessError);
+
 export function isSshAuthFailure(error: unknown): boolean {
   const visited = new Set<unknown>();
   let current = error;
@@ -227,6 +230,9 @@ export function isSshAuthFailure(error: unknown): boolean {
       return true;
     }
     if (!(current instanceof Error) || current.cause === undefined) {
+      return false;
+    }
+    if (isSshReadinessError(current)) {
       return false;
     }
     current = current.cause;
