@@ -6,6 +6,7 @@ import {
   MessageId as MessageIdSchema,
   type ModelSelection,
   NonNegativeInt,
+  ORCHESTRATION_WS_METHODS,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
   OrchestrationProposedPlanId,
@@ -316,6 +317,8 @@ export interface TuiClient {
   readonly deleteThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
+  /** Fetch the unified diff for the turn that produced the given checkpoint. */
+  readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   readonly terminalWrite: (
     threadId: ThreadId,
     terminalId: string,
@@ -625,6 +628,15 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
         revertThreadCheckpoint({ threadId, turnCount: NonNegativeInt.make(turnCount) }).pipe(
           Effect.asVoid,
         ),
+      ),
+
+    getTurnDiff: (threadId, toTurnCount) =>
+      runtime.runPromise(
+        request(ORCHESTRATION_WS_METHODS.getTurnDiff, {
+          threadId,
+          fromTurnCount: NonNegativeInt.make(Math.max(0, toTurnCount - 1)),
+          toTurnCount: NonNegativeInt.make(toTurnCount),
+        }).pipe(Effect.map((result) => result.diff)),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

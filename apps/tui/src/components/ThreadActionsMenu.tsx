@@ -71,6 +71,8 @@ export const ThreadActionsMenu = React.memo(function ThreadActionsMenu({
         <span fg={palette.dim}>{" stop   "}</span>
         <span fg={palette.text}>v</span>
         <span fg={palette.dim}>{" revert   "}</span>
+        <span fg={palette.text}>g</span>
+        <span fg={palette.dim}>{" diff   "}</span>
         <span fg={palette.dim}>Esc cancel</span>
       </text>
     </box>

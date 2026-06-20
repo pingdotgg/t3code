@@ -17,6 +17,7 @@ import { revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
+import { type DiffStatus, DiffViewer } from "./DiffViewer.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RevertMenu, ThreadActionsMenu } from "./ThreadActionsMenu.tsx";
@@ -63,6 +64,12 @@ export function ChatView({
     "none",
   );
   const [revertIndex, setRevertIndex] = React.useState(0);
+  // Turn diff viewer (^K → g): which checkpoint's diff, its fetch state, the text.
+  const [diffOpen, setDiffOpen] = React.useState(false);
+  const [diffIndex, setDiffIndex] = React.useState(0);
+  const [diffStatus, setDiffStatus] = React.useState<DiffStatus>("loading");
+  const [diffText, setDiffText] = React.useState("");
+  const diffScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Pending user-input form state.
   const [userInputDeferred, setUserInputDeferred] = React.useState(false);
   const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
@@ -108,6 +115,29 @@ export function ChatView({
     () => (detail ? revertableCheckpoints(detail.checkpoints) : []),
     [detail],
   );
+  const diffCheckpoint = diffOpen ? checkpoints[Math.min(diffIndex, checkpoints.length - 1)] : null;
+  const diffTurnCount = diffCheckpoint?.checkpointTurnCount ?? null;
+  // Fetch the selected turn's diff whenever the viewer opens or the turn changes.
+  React.useEffect(() => {
+    if (!diffOpen || !detail || diffTurnCount === null) return;
+    let cancelled = false;
+    setDiffStatus("loading");
+    setDiffText("");
+    void client
+      .getTurnDiff(detail.id, diffTurnCount)
+      .then((diff) => {
+        if (cancelled) return;
+        setDiffText(diff);
+        setDiffStatus(diff.trim().length > 0 ? "ready" : "empty");
+      })
+      .catch(() => {
+        if (!cancelled) setDiffStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, diffOpen, detail?.id, diffTurnCount]);
+
   const pendingUserInput = React.useMemo(
     () => (detail ? (derivePendingUserInputs(detail.activities)[0] ?? null) : null),
     [detail],
@@ -259,7 +289,9 @@ export function ChatView({
   const keyMode =
     activeTerminal && terminalFocused
       ? "terminal"
-      : overlay === "actions"
+      : diffOpen
+        ? "diff"
+        : overlay === "actions"
         ? "actions"
         : overlay === "confirmDelete"
           ? "confirmDelete"
@@ -455,6 +487,23 @@ export function ChatView({
     onReopenUserInput: () => {
       if (pendingUserInput) setUserInputDeferred(false);
     },
+    onActionDiff: () => {
+      if (!detail) return;
+      if (checkpoints.length === 0) {
+        setOverlay("none");
+        store.setStatus("No turn diffs yet.");
+        return;
+      }
+      setOverlay("none");
+      setDiffIndex(0);
+      setDiffOpen(true);
+    },
+    onDiffPrev: () =>
+      setDiffIndex((index) => (index <= 0 ? checkpoints.length - 1 : index - 1)),
+    onDiffNext: () => setDiffIndex((index) => (index + 1) % Math.max(checkpoints.length, 1)),
+    onDiffScrollUp: () => diffScrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
+    onDiffScrollDown: () => diffScrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
+    onDiffClose: () => setDiffOpen(false),
     onCloseOverlay: () => setOverlay("none"),
     onConfirmDelete: () => {
       if (!detail) {
@@ -546,16 +595,28 @@ export function ChatView({
           height={panesHeight}
           store={store}
         />
-        <MessagesTimeline
-          detail={detail}
-          approvals={approvals}
-          approvalIndex={activeApprovalIndex}
-          projectHint={selectedProjectTitle}
-          width={chatWidth}
-          height={panesHeight}
-          syntaxStyle={syntaxStyle}
-          scrollRef={scrollRef}
-        />
+        {diffOpen && diffCheckpoint ? (
+          <DiffViewer
+            turnCount={diffCheckpoint.checkpointTurnCount}
+            fileCount={diffCheckpoint.files.length}
+            status={diffStatus}
+            diff={diffText}
+            height={panesHeight}
+            syntaxStyle={syntaxStyle}
+            scrollRef={diffScrollRef}
+          />
+        ) : (
+          <MessagesTimeline
+            detail={detail}
+            approvals={approvals}
+            approvalIndex={activeApprovalIndex}
+            projectHint={selectedProjectTitle}
+            width={chatWidth}
+            height={panesHeight}
+            syntaxStyle={syntaxStyle}
+            scrollRef={scrollRef}
+          />
+        )}
       </box>
 
       {activeTerminal ? (
@@ -595,7 +656,7 @@ export function ChatView({
           projectName={projects[activeProjectIndex]?.title ?? "(none)"}
           interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
           newRuntimeMode={newRuntimeMode}
-          inputFocused={!terminalFocused}
+          inputFocused={!terminalFocused && !diffOpen}
           composerEpoch={composerEpoch}
           onReplyInput={setReply}
           onReplySubmit={sendReply}

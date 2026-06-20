@@ -18,6 +18,7 @@ export type KeyBindingMode =
   | "actions"
   | "confirmDelete"
   | "revert"
+  | "diff"
   | "userInput"
   | "new"
   | "rename"
@@ -40,7 +41,14 @@ export interface KeyBindingActions {
   readonly onActionDelete: () => void;
   readonly onActionStop: () => void;
   readonly onActionRevert: () => void;
+  readonly onActionDiff: () => void;
   readonly onCloseOverlay: () => void;
+  // Turn diff viewer
+  readonly onDiffPrev: () => void;
+  readonly onDiffNext: () => void;
+  readonly onDiffScrollUp: () => void;
+  readonly onDiffScrollDown: () => void;
+  readonly onDiffClose: () => void;
   readonly onConfirmDelete: () => void;
   // Checkpoint-revert picker
   readonly onRevertPrev: () => void;
@@ -104,7 +112,16 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "d") return actions.onActionDelete();
       if (key.name === "s") return actions.onActionStop();
       if (key.name === "v") return actions.onActionRevert();
+      if (key.name === "g") return actions.onActionDiff();
       if (key.name === "escape") return actions.onCloseOverlay();
+      return;
+    }
+    if (actions.mode === "diff") {
+      if (key.name === "up") return actions.onDiffPrev();
+      if (key.name === "down") return actions.onDiffNext();
+      if (key.name === "pageup") return actions.onDiffScrollUp();
+      if (key.name === "pagedown") return actions.onDiffScrollDown();
+      if (key.name === "escape") return actions.onDiffClose();
       return;
     }
     if (actions.mode === "confirmDelete") {

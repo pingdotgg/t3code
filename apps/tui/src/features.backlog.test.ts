@@ -12,7 +12,7 @@ import { describe, it } from "bun:test";
 // proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan),
 // context-window meter, cycle pending approvals (↑/↓), checkpoint revert (^K → v),
 // plan/build badge on the prompt, pending user-input form,
-// new-thread runtime-mode + plan/build options.
+// new-thread runtime-mode + plan/build options, turn diff viewer (^K → g).
 
 describe.skip("Backlog — Low/Med: new-thread branch / worktree fields", () => {
   it("Given the new-thread dialog, when a branch/worktree is entered, then createThread receives them", () => {
@@ -24,12 +24,6 @@ describe.skip("Backlog — Low/Med: new-thread branch / worktree fields", () => 
 describe.skip("Backlog — Med/High: model / provider picker", () => {
   it("Given a thread, when the model is changed, then the new model selection is applied", () => {
     // Needs a provider/model registry — not present in the subscribed shell.
-  });
-});
-
-describe.skip("Backlog — Med/High: turn diff viewer", () => {
-  it("Given a turn diff, then it renders in a split/unified diff view", () => {
-    // OpenTUI <diff> helps; fetch + map is the work.
   });
 });
 
