@@ -4,16 +4,18 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
 import type * as DateTime from "effect/DateTime";
 
-import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@t3tools/contracts";
+import {
+  TrimmedNonEmptyString,
+  type SourceControlRepositoryVisibility,
+  type VcsError,
+} from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
-  formatGitLabJsonDecodeError,
 } from "./gitLabMergeRequests.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 
@@ -21,11 +23,63 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class GitLabCliError extends Schema.TaggedErrorClass<GitLabCliError>()("GitLabCliError", {
   operation: Schema.String,
+  command: Schema.String,
+  cwd: Schema.String,
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+
+  static fromVcsError(
+    context: {
+      readonly operation: "execute";
+      readonly command: "glab";
+      readonly cwd: string;
+    },
+    error: VcsError | unknown,
+  ): GitLabCliError {
+    const lower = errorText(error).toLowerCase();
+
+    if (lower.includes("command not found: glab") || isVcsProcessSpawnError(error)) {
+      return new GitLabCliError({
+        ...context,
+        detail: "GitLab CLI (`glab`) is required but not available on PATH.",
+        cause: error,
+      });
+    }
+
+    if (
+      lower.includes("authentication failed") ||
+      lower.includes("not logged in") ||
+      lower.includes("glab auth login") ||
+      lower.includes("token")
+    ) {
+      return new GitLabCliError({
+        ...context,
+        detail: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
+        cause: error,
+      });
+    }
+
+    if (
+      lower.includes("merge request not found") ||
+      lower.includes("not found") ||
+      lower.includes("404")
+    ) {
+      return new GitLabCliError({
+        ...context,
+        detail: "Merge request not found. Check the MR number or URL and try again.",
+        cause: error,
+      });
+    }
+
+    return new GitLabCliError({
+      ...context,
+      detail: "GitLab CLI command failed.",
+      cause: error,
+    });
   }
 }
 
@@ -46,6 +100,17 @@ export interface GitLabRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
   readonly sshUrl: string;
+}
+
+function errorText(error: VcsError | unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const tag = "_tag" in error && typeof error._tag === "string" ? error._tag : "";
+    const detail = "detail" in error && typeof error.detail === "string" ? error.detail : "";
+    const message = "message" in error && typeof error.message === "string" ? error.message : "";
+    return [tag, detail, message].filter(Boolean).join("\n");
+  }
+
+  return String(error);
 }
 
 export class GitLabCli extends Context.Service<
@@ -112,56 +177,6 @@ function isVcsProcessSpawnError(error: unknown): boolean {
   );
 }
 
-function normalizeGitLabCliError(operation: "execute" | "stdout", error: unknown): GitLabCliError {
-  if (error instanceof Error) {
-    if (error.message.includes("Command not found: glab") || isVcsProcessSpawnError(error)) {
-      return new GitLabCliError({
-        operation,
-        detail: "GitLab CLI (`glab`) is required but not available on PATH.",
-        cause: error,
-      });
-    }
-
-    const lower = error.message.toLowerCase();
-    if (
-      lower.includes("authentication failed") ||
-      lower.includes("not logged in") ||
-      lower.includes("glab auth login") ||
-      lower.includes("token")
-    ) {
-      return new GitLabCliError({
-        operation,
-        detail: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
-        cause: error,
-      });
-    }
-
-    if (
-      lower.includes("merge request not found") ||
-      lower.includes("not found") ||
-      lower.includes("404")
-    ) {
-      return new GitLabCliError({
-        operation,
-        detail: "Merge request not found. Check the MR number or URL and try again.",
-        cause: error,
-      });
-    }
-
-    return new GitLabCliError({
-      operation,
-      detail: `GitLab CLI command failed: ${error.message}`,
-      cause: error,
-    });
-  }
-
-  return new GitLabCliError({
-    operation,
-    detail: "GitLab CLI command failed.",
-    cause: error,
-  });
-}
-
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
   web_url: TrimmedNonEmptyString,
@@ -192,13 +207,16 @@ function decodeGitLabJson<S extends Schema.Top>(
   schema: S,
   operation: "getRepositoryCloneUrls" | "getDefaultBranch" | "createRepository",
   invalidDetail: string,
+  cwd: string,
 ): Effect.Effect<S["Type"], GitLabCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
     Effect.mapError(
       (error) =>
         new GitLabCliError({
           operation,
-          detail: `${invalidDetail}: ${SchemaIssue.makeFormatterDefault()(error.issue)}`,
+          command: "glab",
+          cwd,
+          detail: invalidDetail,
           cause: error,
         }),
     ),
@@ -274,7 +292,14 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
-      .pipe(Effect.mapError((error) => normalizeGitLabCliError("execute", error)));
+      .pipe(
+        Effect.mapError((error) =>
+          GitLabCliError.fromVcsError(
+            { operation: "execute", command: "glab", cwd: input.cwd },
+            error,
+          ),
+        ),
+      );
 
   return GitLabCli.of({
     execute,
@@ -303,7 +328,9 @@ export const make = Effect.gen(function* () {
                     return Effect.fail(
                       new GitLabCliError({
                         operation: "listMergeRequests",
-                        detail: `GitLab CLI returned invalid MR list JSON: ${formatGitLabJsonDecodeError(decoded.failure)}`,
+                        command: "glab",
+                        cwd: input.cwd,
+                        detail: "GitLab CLI returned invalid MR list JSON.",
                         cause: decoded.failure,
                       }),
                     );
@@ -327,7 +354,9 @@ export const make = Effect.gen(function* () {
                 return Effect.fail(
                   new GitLabCliError({
                     operation: "getMergeRequest",
-                    detail: `GitLab CLI returned invalid merge request JSON: ${formatGitLabJsonDecodeError(decoded.failure)}`,
+                    command: "glab",
+                    cwd: input.cwd,
+                    detail: "GitLab CLI returned invalid merge request JSON.",
                     cause: decoded.failure,
                   }),
                 );
@@ -350,6 +379,7 @@ export const make = Effect.gen(function* () {
             RawGitLabRepositoryCloneUrlsSchema,
             "getRepositoryCloneUrls",
             "GitLab CLI returned invalid repository JSON.",
+            input.cwd,
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
@@ -368,6 +398,7 @@ export const make = Effect.gen(function* () {
                 RawGitLabNamespaceSchema,
                 "createRepository",
                 "GitLab CLI returned invalid namespace JSON.",
+                input.cwd,
               ),
             ),
             Effect.map((namespace) => namespace.id),
@@ -402,6 +433,7 @@ export const make = Effect.gen(function* () {
             RawGitLabRepositoryCloneUrlsSchema,
             "createRepository",
             "GitLab CLI returned invalid repository JSON.",
+            input.cwd,
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
@@ -440,6 +472,7 @@ export const make = Effect.gen(function* () {
             RawGitLabDefaultBranchSchema,
             "getDefaultBranch",
             "GitLab CLI returned invalid repository JSON.",
+            input.cwd,
           ),
         ),
         Effect.map((value) => value.default_branch ?? null),

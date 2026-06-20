@@ -269,18 +269,15 @@ describe("GitHubCli.layer", () => {
 
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.fail(
-          new VcsProcessExitError({
-            operation: "GitHubCli.execute",
-            command: "gh pr view",
-            cwd: "/repo",
-            exitCode: 1,
-            detail:
-              "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)",
-          }),
-        ),
-      );
+      const cause = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh pr view",
+        cwd: "/repo",
+        exitCode: 1,
+        detail:
+          "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
 
       const gh = yield* GitHubCli.GitHubCli;
       const error = yield* gh
@@ -291,6 +288,10 @@ describe("GitHubCli.layer", () => {
         .pipe(Effect.flip);
 
       assert.equal(error.message.includes("Pull request not found"), true);
+      assert.strictEqual(error.command, "gh");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes(cause.detail), false);
     }).pipe(Effect.provide(layer)),
   );
 });

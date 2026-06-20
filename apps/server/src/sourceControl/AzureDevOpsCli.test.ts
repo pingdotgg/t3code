@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -327,6 +328,28 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("preserves VCS causes without copying upstream details into messages", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az repos list --organization sensitive-upstream-detail",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "sensitive-upstream-detail",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.strictEqual(error.command, "az");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.detail, "Azure DevOps CLI command failed.");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes("sensitive-upstream-detail"), false);
     }).pipe(Effect.provide(layer)),
   );
 });
