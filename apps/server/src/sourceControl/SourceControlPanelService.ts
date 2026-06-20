@@ -690,10 +690,11 @@ function parseFileChangesFromNumstat(input: {
       const path = pathField.value;
       if (!path) continue;
       const status = input.statuses?.get(path);
+      const resolvedOriginalPath = status?.originalPath ?? originalPath;
       files.push({
         path,
-        originalPath: status?.originalPath ?? originalPath,
-        status: status?.status ?? "modified",
+        originalPath: resolvedOriginalPath,
+        status: status?.status ?? (resolvedOriginalPath ? "renamed" : "modified"),
         insertions: parseCount(insertionsRaw),
         deletions: parseCount(deletionsRaw),
       });
@@ -701,14 +702,15 @@ function parseFileChangesFromNumstat(input: {
     return files.toSorted((left, right) => left.path.localeCompare(right.path));
   }
   for (const line of input.numstat.split("\n")) {
-    const [insertionsRaw, deletionsRaw, pathRaw, renamedPathRaw] = line.split("\t");
-    const path = renamedPathRaw ?? pathRaw;
+    const [insertionsRaw, deletionsRaw, oldPathRaw, newPathRaw] = line.split("\t");
+    const path = newPathRaw ?? oldPathRaw;
     if (!path) continue;
     const status = input.statuses?.get(path);
+    const originalPath = status?.originalPath ?? (newPathRaw ? (oldPathRaw ?? null) : null);
     files.push({
       path,
-      originalPath: status?.originalPath ?? (renamedPathRaw ? (pathRaw ?? null) : null),
-      status: status?.status ?? "modified",
+      originalPath,
+      status: status?.status ?? (originalPath ? "renamed" : "modified"),
       insertions: parseCount(insertionsRaw),
       deletions: parseCount(deletionsRaw),
     });

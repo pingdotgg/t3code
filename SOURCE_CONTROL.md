@@ -82,7 +82,7 @@ Items are sorted by operational urgency, then recency. An unclean working tree i
 
 The `Working tree` row expands to a compact changed-file list. There is no staged-versus-unstaged grouping in the panel UI. Each changed file has a selector, and newly appearing changed files are selected by default.
 
-The working-tree subsection header shows a tri-state checkbox before the selection summary. Checked means all files are selected, unchecked means none are selected, and partial means some files are selected; clicking a partial or unchecked checkbox selects all files, while clicking a checked checkbox unselects all files. The summary reads `x of y files selected` and shows selected-file `+x`/`-y` line stats immediately after the label when non-zero. When staged and unstaged entries for the same file are merged into one displayed row, the displayed stats sum both sides instead of taking only the larger staged or unstaged count.
+The working-tree subsection header shows a tri-state checkbox before the selection summary. Checked means all files are selected, unchecked means none are selected, and partial means some files are selected; clicking a partial or unchecked checkbox selects all files, while clicking a checked checkbox unselects all files. The summary reads `x of y files selected` and shows selected-file `+x`/`-y` line stats immediately after the label when non-zero. When staged and unstaged entries for the same file are merged into one displayed row, the displayed stats sum both sides instead of taking only the larger staged or unstaged count. These numbers are aggregate staged-plus-unstaged churn, not a de-duplicated net diff against `HEAD`; for example, a selected file with `+2/-1` staged and `+3/-4` unstaged is shown as `+5/-5`.
 
 The working-tree header actions are:
 
@@ -121,7 +121,7 @@ Branch action buttons appear only on row hover/focus and are absolutely position
 - Merge branch into the current branch.
 - Rebase current branch onto branch, using the `git-pull-request-arrow` icon.
 
-Smart sync handles diverged branches by prompting for force pull, normal merge sync, or force push. Normal merge sync is available only when the diverged row is the currently checked-out branch, matching Git's working-tree merge semantics; non-current diverged branch rows keep force pull and force push available without implicitly changing the user's checkout. Modifier-key tooltips stay terse; for example pull can note `Shift: reset` and `Option: fetch`.
+Smart sync handles diverged branches by prompting for force pull, normal merge sync, or force push. Normal merge sync is available only when the diverged row is the currently checked-out branch, matching Git's working-tree merge semantics; the merge button is disabled for non-current diverged branch rows. Non-current diverged branch rows keep force pull and force push available without implicitly changing the user's checkout. Modifier-key tooltips stay terse; for example pull can note `Shift: reset` and `Option: fetch`.
 
 ## Branch Details
 

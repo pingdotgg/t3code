@@ -289,11 +289,21 @@ describe("SourceControlPanelService", () => {
         .pipe(Effect.flip);
 
       assert.equal(error.operation, "vcs.panel.discardUnstagedFiles");
-      assert.deepStrictEqual(
-        calls.map((call) => call.args),
+      const relevantCalls = calls.filter((call) =>
         [
-          ["ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
-          ["restore", "--worktree", "--", "tracked.ts"],
+          "vcs.panel.discardUnstagedFiles.listIndexPaths",
+          "vcs.panel.discardUnstagedFiles",
+          "vcs.panel.cleanUntrackedFiles",
+        ].includes(call.operation),
+      );
+      assert.deepStrictEqual(
+        relevantCalls.map((call) => [call.operation, call.args]),
+        [
+          [
+            "vcs.panel.discardUnstagedFiles.listIndexPaths",
+            ["ls-files", "--cached", "--", "tracked.ts", "new-file.ts"],
+          ],
+          ["vcs.panel.discardUnstagedFiles", ["restore", "--worktree", "--", "tracked.ts"]],
         ],
       );
     }).pipe(
@@ -675,7 +685,7 @@ describe("SourceControlPanelService", () => {
     );
   });
 
-  it.effect("preserves line-based numstat rename sources when name-status is missing", () =>
+  it.effect("infers line-based numstat renames when name-status is missing", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
@@ -692,7 +702,7 @@ describe("SourceControlPanelService", () => {
         {
           path: "new-name.ts",
           originalPath: "old-name.ts",
-          status: "modified",
+          status: "renamed",
           insertions: 3,
           deletions: 1,
         },
@@ -713,6 +723,53 @@ describe("SourceControlPanelService", () => {
                 return success("");
               case "vcs.panel.commitNumstat":
                 return success("3\t1\told-name.ts\tnew-name.ts\n");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("infers nul-delimited binary numstat renames when name-status is missing", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        baseRef: "main",
+        kind: "history",
+        skip: 0,
+        limit: 10,
+      });
+
+      assert.deepStrictEqual(result.commits[0]?.files, [
+        {
+          path: "new\tname.bin",
+          originalPath: "old\tname.bin",
+          status: "renamed",
+          insertions: 0,
+          deletions: 0,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            switch (input.operation) {
+              case "vcs.panel.branchCommitCount":
+                return success("1");
+              case "vcs.panel.branchCommits":
+                return success(
+                  "abc123\tabc123\tAda\tada@example.test\t2026-06-20T12:00:00.000Z\tRename binary",
+                );
+              case "vcs.panel.commitRefs":
+              case "vcs.panel.commitNameStatus":
+                return success("");
+              case "vcs.panel.commitNumstat":
+                return success("-\t-\t\0old\tname.bin\0new\tname.bin\0");
               default:
                 return success("");
             }

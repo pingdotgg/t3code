@@ -1748,7 +1748,12 @@ export function SourceControlPanel({
           await api.vcs.pullBranch({ cwd, branchName: branch.name, force: true });
           return;
         }
-        if (!branch.current) return;
+        if (!branch.current) {
+          console.warn("Ignored diverged merge sync for a non-current branch", {
+            branchName: branch.name,
+          });
+          return;
+        }
         await api.vcs.pullBranch({ cwd, branchName: branch.name, merge: true });
         await api.vcs.pushBranch({ cwd, branchName: branch.name });
       });
@@ -3927,7 +3932,7 @@ export function SourceControlPanel({
               size="sm"
               disabled={
                 isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ||
-                divergedSyncBranch?.current === false
+                divergedSyncBranch?.current !== true
               }
               onClick={() => runDivergedSync("merge")}
             >

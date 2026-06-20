@@ -54,6 +54,8 @@ export function mergeChangeGroups(groups: readonly VcsPanelChangeGroup[]): Panel
       };
       existing.originalPath ??= file.originalPath;
       existing.statuses.add(file.status);
+      // The compact working-tree row shows aggregate staged + unstaged churn,
+      // not a de-duplicated net diff against HEAD.
       existing.insertions += file.insertions;
       existing.deletions += file.deletions;
       existing.hasStagedChanges ||= group.kind === "staged";
@@ -85,6 +87,7 @@ export function formatRelativeDate(
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return null;
   const elapsedMs = now - time;
+  if (elapsedMs <= 0) return "just now";
   if (elapsedMs < 60_000) return "just now";
   const minutes = Math.floor(elapsedMs / 60_000);
   if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
@@ -96,7 +99,7 @@ export function formatRelativeDate(
   const weeks = Math.floor(days / 7);
   if (weeks === 1) return "last week";
   if (days < 30) return `${weeks} weeks ago`;
-  const months = Math.floor(days / 30);
+  const months = Math.min(11, Math.floor(days / 30));
   if (days < 365) return `${months} month${months === 1 ? "" : "s"} ago`;
   const years = Math.floor(days / 365);
   return `${years} year${years === 1 ? "" : "s"} ago`;

@@ -129,10 +129,76 @@ describe("SourceControlPanel working-tree presentation logic", () => {
     ]);
   });
 
+  it("preserves status precedence and conflict flags when merging paths", () => {
+    expect(
+      mergeChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 1,
+              deletions: 0,
+            },
+          ],
+        },
+        {
+          kind: "conflicts",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "conflicted",
+              insertions: 0,
+              deletions: 2,
+            },
+            {
+              path: "src/áudio.ts",
+              originalPath: null,
+              status: "added",
+              insertions: 3,
+              deletions: 0,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/áudio.ts",
+        originalPath: null,
+        status: "added",
+        insertions: 3,
+        deletions: 0,
+        hasStagedChanges: false,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+      {
+        path: "src/cafe.ts",
+        originalPath: null,
+        status: "conflicted",
+        insertions: 1,
+        deletions: 2,
+        hasStagedChanges: true,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+    ]);
+  });
+
+  it("formats future timestamps as just now", () => {
+    const now = Date.parse("2026-06-20T12:00:00.000Z");
+    const then = new Date(now + 5 * 60 * 1000).toISOString();
+
+    expect(formatRelativeDate(then, now)).toBe("just now");
+  });
+
   it("formats late-month dates before the one-year threshold as months", () => {
     const now = Date.parse("2026-06-20T12:00:00.000Z");
     const then = new Date(now - 360 * 24 * 60 * 60 * 1000).toISOString();
 
-    expect(formatRelativeDate(then, now)).toBe("12 months ago");
+    expect(formatRelativeDate(then, now)).toBe("11 months ago");
   });
 });
