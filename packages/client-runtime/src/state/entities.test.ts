@@ -11,6 +11,14 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import {
+  InvalidScopedProjectKeyError,
+  InvalidScopedProjectRefCollectionKeyError,
+  InvalidScopedThreadKeyError,
+  parseProjectKey,
+  parseProjectRefCollectionKey,
+  parseThreadKey,
+} from "./entities.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
 import { createEnvironmentProjectAtoms } from "./projectEntities.ts";
@@ -24,6 +32,56 @@ const PROJECT_ID = ProjectId.make("project-1");
 const OTHER_PROJECT_ID = ProjectId.make("project-2");
 const THREAD_ID = ThreadId.make("thread-1");
 const OTHER_THREAD_ID = ThreadId.make("thread-2");
+
+describe("scoped entity keys", () => {
+  it("preserves an invalid project key as structured error data", () => {
+    const key = "missing-project-key-separator";
+    let error: unknown;
+
+    try {
+      parseProjectKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toEqual(new InvalidScopedProjectKeyError({ key }));
+  });
+
+  it("preserves an invalid thread key as structured error data", () => {
+    const key = "missing-thread-key-separator";
+    let error: unknown;
+
+    try {
+      parseThreadKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toEqual(new InvalidScopedThreadKeyError({ key }));
+  });
+
+  it("preserves malformed project reference collection input and its cause", () => {
+    const key = "not-json";
+    let error: unknown;
+
+    try {
+      parseProjectRefCollectionKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(InvalidScopedProjectRefCollectionKeyError);
+    expect(error).toMatchObject({ key, cause: expect.anything() });
+  });
+
+  it("rejects invalid project reference collection shapes", () => {
+    const key = JSON.stringify([["environment-1"]]);
+
+    expect(() => parseProjectRefCollectionKey(key)).toThrowError(
+      InvalidScopedProjectRefCollectionKeyError,
+    );
+  });
+});
 
 const THREAD_SHELL = {
   id: THREAD_ID,

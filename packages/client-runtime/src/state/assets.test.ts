@@ -4,7 +4,33 @@ import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createAssetEnvironmentAtoms } from "./assets.ts";
+import {
+  createAssetEnvironmentAtoms,
+  InvalidAssetCollectionKeyError,
+  parseAssetCollectionKey,
+} from "./assets.ts";
+
+describe("asset collection keys", () => {
+  it("preserves malformed JSON and its native cause", () => {
+    const key = "not-json";
+    let error: unknown;
+
+    try {
+      parseAssetCollectionKey(key);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(InvalidAssetCollectionKeyError);
+    expect(error).toMatchObject({ key, cause: expect.any(SyntaxError) });
+  });
+
+  it("rejects invalid asset collection shapes", () => {
+    const key = JSON.stringify(["environment-1", [{ _tag: "unknown" }]]);
+
+    expect(() => parseAssetCollectionKey(key)).toThrowError(InvalidAssetCollectionKeyError);
+  });
+});
 
 describe("createAssetEnvironmentAtoms", () => {
   it("keys asset URL queries by environment and resource", () => {
