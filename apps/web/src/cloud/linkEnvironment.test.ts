@@ -221,7 +221,9 @@ describe("web cloud link environment client", () => {
       expect(error).toBeInstanceOf(CloudEnvironmentLinkOperationError);
       expect(error).toMatchObject({
         action: "list relay-managed environments",
-        relayUrl: "https://relay.example.test",
+        relayUrlInputLength: "https://relay.example.test".length,
+        relayUrlProtocol: "https:",
+        relayUrlHostname: "relay.example.test",
         traceId: "trace-web-cloud-link",
         relayError: {
           _tag: "RelayAuthInvalidError",
@@ -289,7 +291,9 @@ describe("web cloud link environment client", () => {
       expect(error).toMatchObject({
         action: "read environment cloud link state",
         environmentId: TARGET.environmentId,
-        httpBaseUrl: TARGET.httpBaseUrl,
+        httpBaseUrlInputLength: TARGET.httpBaseUrl.length,
+        httpBaseUrlProtocol: "http:",
+        httpBaseUrlHostname: "127.0.0.1",
         environmentError: {
           _tag: "EnvironmentHttpUnauthorizedError",
           message: "Environment bearer token is invalid.",
@@ -305,11 +309,13 @@ describe("web cloud link environment client", () => {
 
   it.effect("preserves invalid environment HTTP URL parser causes", () =>
     Effect.gen(function* () {
+      const invalidUrl =
+        "https://user:password@[invalid-host]/private/path?access_token=secret#fragment";
       const error = yield* withServices(
         readPrimaryCloudLinkState({
           target: {
             ...TARGET,
-            httpBaseUrl: "not a URL",
+            httpBaseUrl: invalidUrl,
           },
         }),
       ).pipe(Effect.flip);
@@ -318,11 +324,39 @@ describe("web cloud link environment client", () => {
         _tag: "CloudEnvironmentLinkOperationError",
         action: "initialize the environment HTTP client",
         environmentId: TARGET.environmentId,
-        httpBaseUrl: "not a URL",
+        httpBaseUrlInputLength: invalidUrl.length,
       });
       expect(error.cause).toBeInstanceOf(TypeError);
+      expect(error).not.toHaveProperty("httpBaseUrl");
+      expect(error).not.toHaveProperty("httpBaseUrlProtocol");
+      expect(error).not.toHaveProperty("httpBaseUrlHostname");
+      expect(error.message).not.toMatch(/user|password|private|path|access_token|secret|fragment/);
     }),
   );
+
+  it("keeps environment endpoint secrets out of mapped error attributes", () => {
+    const httpBaseUrl =
+      "https://user:password@environment.example.test/private/path?access_token=secret#fragment";
+    const cause = new Error("request failed");
+    const error = CloudEnvironmentLinkOperationError.fromEnvironmentApi({
+      action: "read environment cloud link state",
+      environmentId: TARGET.environmentId,
+      httpBaseUrl,
+      cause,
+    });
+
+    expect(error).toMatchObject({
+      httpBaseUrlInputLength: httpBaseUrl.length,
+      httpBaseUrlProtocol: "https:",
+      httpBaseUrlHostname: "environment.example.test",
+      cause,
+    });
+    expect(error.cause).toBe(cause);
+    expect(error).not.toHaveProperty("httpBaseUrl");
+    const diagnostics = JSON.stringify(error);
+    expect(diagnostics).not.toMatch(/user|password|private|path|access_token|secret|fragment/);
+    expect(error.message).not.toMatch(/user|password|private|path|access_token|secret|fragment/);
+  });
 
   it.effect("uses desktop bearer auth for primary cloud link state", () =>
     Effect.gen(function* () {

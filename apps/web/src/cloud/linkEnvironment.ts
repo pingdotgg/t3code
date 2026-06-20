@@ -25,6 +25,7 @@ import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 
 import {
   readPrimaryEnvironmentDescriptor,
@@ -61,6 +62,26 @@ const EnvironmentCloudApiError = Schema.Union([
 type EnvironmentCloudApiError = typeof EnvironmentCloudApiError.Type;
 const isEnvironmentCloudApiError = Schema.is(EnvironmentCloudApiError);
 
+function relayUrlDiagnosticFields(relayUrl: string | undefined) {
+  if (relayUrl === undefined) return {};
+  const diagnostics = getUrlDiagnostics(relayUrl);
+  return {
+    relayUrlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { relayUrlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { relayUrlHostname: diagnostics.hostname }),
+  };
+}
+
+function httpBaseUrlDiagnosticFields(httpBaseUrl: string | undefined) {
+  if (httpBaseUrl === undefined) return {};
+  const diagnostics = getUrlDiagnostics(httpBaseUrl);
+  return {
+    httpBaseUrlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { httpBaseUrlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { httpBaseUrlHostname: diagnostics.hostname }),
+  };
+}
+
 export const CloudEnvironmentLinkAction = Schema.Literals([
   "check relay client availability",
   "confirm relay client installation",
@@ -85,8 +106,12 @@ export class CloudEnvironmentLinkOperationError extends Schema.TaggedErrorClass<
   {
     action: CloudEnvironmentLinkAction,
     environmentId: Schema.optionalKey(Schema.String),
-    relayUrl: Schema.optionalKey(Schema.String),
-    httpBaseUrl: Schema.optionalKey(Schema.String),
+    relayUrlInputLength: Schema.optionalKey(Schema.Number),
+    relayUrlProtocol: Schema.optionalKey(Schema.String),
+    relayUrlHostname: Schema.optionalKey(Schema.String),
+    httpBaseUrlInputLength: Schema.optionalKey(Schema.Number),
+    httpBaseUrlProtocol: Schema.optionalKey(Schema.String),
+    httpBaseUrlHostname: Schema.optionalKey(Schema.String),
     traceId: Schema.optionalKey(Schema.String),
     relayError: Schema.optionalKey(RelayProtectedError),
     environmentError: Schema.optionalKey(EnvironmentCloudApiError),
@@ -106,8 +131,8 @@ export class CloudEnvironmentLinkOperationError extends Schema.TaggedErrorClass<
       action: input.action,
       cause: input.cause,
       ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
-      ...(input.relayUrl === undefined ? {} : { relayUrl: input.relayUrl }),
-      ...(input.httpBaseUrl === undefined ? {} : { httpBaseUrl: input.httpBaseUrl }),
+      ...relayUrlDiagnosticFields(input.relayUrl),
+      ...httpBaseUrlDiagnosticFields(input.httpBaseUrl),
       ...(requestFailure?.traceId === undefined ? {} : { traceId: requestFailure.traceId }),
       ...(requestFailure?.relayError === undefined
         ? {}
@@ -127,7 +152,7 @@ export class CloudEnvironmentLinkOperationError extends Schema.TaggedErrorClass<
     return new CloudEnvironmentLinkOperationError({
       action: input.action,
       environmentId: input.environmentId,
-      httpBaseUrl: input.httpBaseUrl,
+      ...httpBaseUrlDiagnosticFields(input.httpBaseUrl),
       cause: input.cause,
       ...(environmentError === undefined ? {} : { environmentError }),
     });
@@ -339,7 +364,7 @@ function endpointOrigin(input: { readonly environmentId: string; readonly httpBa
       new CloudEnvironmentLinkOperationError({
         action: "derive the environment endpoint origin",
         environmentId: input.environmentId,
-        httpBaseUrl: input.httpBaseUrl,
+        ...httpBaseUrlDiagnosticFields(input.httpBaseUrl),
         cause,
       }),
   });
@@ -355,7 +380,7 @@ function makeCloudEnvironmentHttpApiClient(input: {
       new CloudEnvironmentLinkOperationError({
         action: "initialize the environment HTTP client",
         environmentId: input.environmentId,
-        httpBaseUrl: input.httpBaseUrl,
+        ...httpBaseUrlDiagnosticFields(input.httpBaseUrl),
         cause,
       }),
   }).pipe(Effect.flatten);
