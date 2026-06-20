@@ -1309,7 +1309,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                         status,
                       }),
                     ),
-                    Effect.catchIf(RelayClient.isRelayClientInstallError, (error) =>
+                    Effect.catch((error) =>
                       Queue.fail(
                         queue,
                         new RelayClientInstallFailedError({
