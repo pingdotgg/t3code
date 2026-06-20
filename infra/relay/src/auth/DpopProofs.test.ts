@@ -96,4 +96,30 @@ describe("DpopProofReplay", () => {
       Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
     );
   });
+
+  it.effect("retains the prune cutoff and database failure", () => {
+    const cause = new Error("database unavailable");
+    const fakeDb = {
+      delete: (table: unknown) => {
+        expect(table).toBe(relayDpopProofs);
+        return {
+          where: () => Effect.fail(cause),
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const replay = yield* DpopProofs.DpopProofReplay;
+      const error = yield* Effect.flip(replay.pruneExpired);
+
+      expect(error).toMatchObject({
+        _tag: "DpopProofReplayPersistenceError",
+        operation: "prune-expired",
+      });
+      expect(Date.parse(error.expiresBefore ?? "")).not.toBeNaN();
+      expect(error.cause).toBe(cause);
+    }).pipe(
+      Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
+    );
+  });
 });

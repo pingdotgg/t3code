@@ -13,28 +13,44 @@ import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persisten
 
 export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialCreatePersistenceError>()(
   "EnvironmentCredentialCreatePersistenceError",
-  { cause: Schema.Defect() },
+  {
+    stage: Schema.Literals([
+      "generate-credential",
+      "hash-token",
+      "insert-credential",
+      "revoke-previous-credentials",
+    ]),
+    environmentId: Schema.String,
+    credentialId: Schema.optionalKey(Schema.String),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to persist environment credential";
+    return `Environment credential creation failed during '${this.stage}' for environment '${this.environmentId}'${this.credentialId === undefined ? "" : `, credential '${this.credentialId}'`}`;
   }
 }
 
 export class EnvironmentCredentialAuthenticatePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialAuthenticatePersistenceError>()(
   "EnvironmentCredentialAuthenticatePersistenceError",
-  { cause: Schema.Defect() },
+  {
+    stage: Schema.Literals(["hash-token", "lookup-credential"]),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to authenticate environment credential";
+    return `Environment credential authentication failed during '${this.stage}'`;
   }
 }
 
 export class EnvironmentCredentialRevokePersistenceError extends Schema.TaggedErrorClass<EnvironmentCredentialRevokePersistenceError>()(
   "EnvironmentCredentialRevokePersistenceError",
-  { cause: Schema.Defect() },
+  {
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Failed to revoke environment credential";
+    return `Failed to revoke credentials for environment '${this.environmentId}'`;
   }
 }
 
@@ -85,13 +101,33 @@ const make = Effect.gen(function* () {
   });
 
   return EnvironmentCredentials.of({
-    create: Effect.fn("relay.environment_credentials.create")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-        const credential = yield* makeCredential();
-        const credentialHash = yield* hashToken(credential.token);
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* db.insert(relayEnvironmentCredentials).values({
+    create: Effect.fn("relay.environment_credentials.create")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      const credential = yield* makeCredential().pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentCredentialCreatePersistenceError({
+              stage: "generate-credential",
+              environmentId: input.environmentId,
+              cause,
+            }),
+        ),
+      );
+      const credentialHash = yield* hashToken(credential.token).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentCredentialCreatePersistenceError({
+              stage: "hash-token",
+              environmentId: input.environmentId,
+              credentialId: credential.credentialId,
+              cause,
+            }),
+        ),
+      );
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* db
+        .insert(relayEnvironmentCredentials)
+        .values({
           credentialId: credential.credentialId,
           environmentId: input.environmentId,
           environmentPublicKey: input.environmentPublicKey,
@@ -99,96 +135,136 @@ const make = Effect.gen(function* () {
           revokedAt: null,
           createdAt: now,
           updatedAt: now,
-        });
-        yield* db
-          .update(relayEnvironmentCredentials)
-          .set({
-            revokedAt: now,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              eq(relayEnvironmentCredentials.environmentId, input.environmentId),
-              eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
-              ne(relayEnvironmentCredentials.credentialId, credential.credentialId),
-              isNull(relayEnvironmentCredentials.revokedAt),
-            ),
-          );
-        return credential.token;
-      },
-      Effect.mapError((cause) => new EnvironmentCredentialCreatePersistenceError({ cause })),
-    ),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentCredentialCreatePersistenceError({
+                stage: "insert-credential",
+                environmentId: input.environmentId,
+                credentialId: credential.credentialId,
+                cause,
+              }),
+          ),
+        );
+      yield* db
+        .update(relayEnvironmentCredentials)
+        .set({
+          revokedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(relayEnvironmentCredentials.environmentId, input.environmentId),
+            eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
+            ne(relayEnvironmentCredentials.credentialId, credential.credentialId),
+            isNull(relayEnvironmentCredentials.revokedAt),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentCredentialCreatePersistenceError({
+                stage: "revoke-previous-credentials",
+                environmentId: input.environmentId,
+                credentialId: credential.credentialId,
+                cause,
+              }),
+          ),
+        );
+      return credential.token;
+    }),
 
-    authenticate: Effect.fn("relay.environment_credentials.authenticate")(
-      function* (token) {
-        const credentialHash = yield* hashToken(token);
-        const rows = yield* db
-          .select({
-            credentialId: relayEnvironmentCredentials.credentialId,
-            environmentId: relayEnvironmentCredentials.environmentId,
-            environmentPublicKey: relayEnvironmentCredentials.environmentPublicKey,
+    authenticate: Effect.fn("relay.environment_credentials.authenticate")(function* (token) {
+      const credentialHash = yield* hashToken(token).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentCredentialAuthenticatePersistenceError({
+              stage: "hash-token",
+              cause,
+            }),
+        ),
+      );
+      const rows = yield* db
+        .select({
+          credentialId: relayEnvironmentCredentials.credentialId,
+          environmentId: relayEnvironmentCredentials.environmentId,
+          environmentPublicKey: relayEnvironmentCredentials.environmentPublicKey,
+        })
+        .from(relayEnvironmentCredentials)
+        .where(
+          and(
+            eq(relayEnvironmentCredentials.credentialHash, credentialHash),
+            isNull(relayEnvironmentCredentials.revokedAt),
+          ),
+        )
+        .limit(1)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentCredentialAuthenticatePersistenceError({
+                stage: "lookup-credential",
+                cause,
+              }),
+          ),
+        );
+      const row = rows[0];
+      if (row) {
+        yield* Effect.annotateCurrentSpan({ "relay.environment_id": row.environmentId });
+      }
+      return row
+        ? Option.some({
+            credentialId: row.credentialId,
+            environmentId: row.environmentId,
+            environmentPublicKey: row.environmentPublicKey,
           })
-          .from(relayEnvironmentCredentials)
-          .where(
-            and(
-              eq(relayEnvironmentCredentials.credentialHash, credentialHash),
-              isNull(relayEnvironmentCredentials.revokedAt),
-            ),
-          )
-          .limit(1);
-        const row = rows[0];
-        if (row) {
-          yield* Effect.annotateCurrentSpan({ "relay.environment_id": row.environmentId });
-        }
-        return row
-          ? Option.some({
-              credentialId: row.credentialId,
-              environmentId: row.environmentId,
-              environmentPublicKey: row.environmentPublicKey,
-            })
-          : Option.none();
-      },
-      Effect.mapError((cause) => new EnvironmentCredentialAuthenticatePersistenceError({ cause })),
-    ),
+        : Option.none();
+    }),
 
     revokeForEnvironmentPublicKey: Effect.fn(
       "relay.environment_credentials.revoke_for_environment_public_key",
-    )(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-        const revokedAt = DateTime.formatIso(yield* DateTime.now);
-        const rows = yield* db
-          .update(relayEnvironmentCredentials)
-          .set({
-            revokedAt,
-            updatedAt: revokedAt,
-          })
-          .where(
-            and(
-              eq(relayEnvironmentCredentials.environmentId, input.environmentId),
-              eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
-              isNull(relayEnvironmentCredentials.revokedAt),
-              notExists(
-                db
-                  .select({ userId: relayEnvironmentLinks.userId })
-                  .from(relayEnvironmentLinks)
-                  .where(
-                    and(
-                      eq(relayEnvironmentLinks.environmentId, input.environmentId),
-                      eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
-                      isNull(relayEnvironmentLinks.revokedAt),
-                    ),
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      const revokedAt = DateTime.formatIso(yield* DateTime.now);
+      const rows = yield* db
+        .update(relayEnvironmentCredentials)
+        .set({
+          revokedAt,
+          updatedAt: revokedAt,
+        })
+        .where(
+          and(
+            eq(relayEnvironmentCredentials.environmentId, input.environmentId),
+            eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentCredentials.revokedAt),
+            notExists(
+              db
+                .select({ userId: relayEnvironmentLinks.userId })
+                .from(relayEnvironmentLinks)
+                .where(
+                  and(
+                    eq(relayEnvironmentLinks.environmentId, input.environmentId),
+                    eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+                    isNull(relayEnvironmentLinks.revokedAt),
                   ),
-              ),
+                ),
             ),
-          )
-          .returning({
-            credentialId: relayEnvironmentCredentials.credentialId,
-          });
-        return rows.length > 0;
-      },
-      Effect.mapError((cause) => new EnvironmentCredentialRevokePersistenceError({ cause })),
-    ),
+          ),
+        )
+        .returning({
+          credentialId: relayEnvironmentCredentials.credentialId,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentCredentialRevokePersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+      return rows.length > 0;
+    }),
   });
 });
 
