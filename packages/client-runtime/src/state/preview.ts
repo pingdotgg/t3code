@@ -37,6 +37,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
     automationRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:automation-requests",
       tag: WS_METHODS.previewAutomationConnect,
+      // Automation requests are commands, not cached query data. Dispose the
+      // stream immediately with its owner so stale requests cannot replay when
+      // a thread remounts and the server can clear disconnected hosts promptly.
+      idleTtlMs: 0,
     }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",

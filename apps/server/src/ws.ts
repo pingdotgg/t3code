@@ -1489,7 +1489,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
-            previewAutomationBroker.connect(input.clientId),
+            previewAutomationBroker.connect(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.previewAutomationRespond]: (input) =>
@@ -1507,7 +1507,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.previewAutomationClearOwner]: (input) =>
           observeRpcEffect(
             WS_METHODS.previewAutomationClearOwner,
-            previewAutomationBroker.clearOwner(input.clientId),
+            previewAutomationBroker.clearOwner(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>

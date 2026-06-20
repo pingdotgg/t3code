@@ -410,10 +410,15 @@ export const PreviewAutomationRecordingArtifact = Schema.Struct({
 });
 export type PreviewAutomationRecordingArtifact = typeof PreviewAutomationRecordingArtifact.Type;
 
-export const PreviewAutomationOwner = Schema.Struct({
+export const PreviewAutomationOwnerIdentity = Schema.Struct({
   clientId: TrimmedNonEmptyString,
   environmentId: EnvironmentId,
   threadId: ThreadId,
+});
+export type PreviewAutomationOwnerIdentity = typeof PreviewAutomationOwnerIdentity.Type;
+
+export const PreviewAutomationOwner = Schema.Struct({
+  ...PreviewAutomationOwnerIdentity.fields,
   tabId: Schema.NullOr(PreviewTabId),
   visible: Schema.Boolean,
   supportsAutomation: Schema.Boolean,
