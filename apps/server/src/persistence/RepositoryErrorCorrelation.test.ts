@@ -111,6 +111,48 @@ describe("persistence error correlation", () => {
       const id = "pairing-link-correlation";
       const credential = "pairing-credential-secret-sentinel";
       const subject = "pairing-subject-secret-sentinel";
+      const scopesPayload = "pairing-scopes-secret-sentinel";
+
+      yield* sql`
+        INSERT INTO auth_pairing_links (
+          id,
+          credential,
+          method,
+          scopes,
+          subject,
+          label,
+          proof_key_thumbprint,
+          created_at,
+          expires_at,
+          consumed_at,
+          revoked_at
+        )
+        VALUES (
+          ${id},
+          ${credential},
+          ${"one-time-token"},
+          ${scopesPayload},
+          ${subject},
+          NULL,
+          NULL,
+          ${DateTime.formatIso(issuedAt)},
+          ${DateTime.formatIso(expiresAt)},
+          NULL,
+          NULL
+        )
+      `;
+
+      const decodeError = yield* Effect.flip(pairingLinks.getByCredential({ credential }));
+      assert.instanceOf(decodeError, PersistenceErrors.PersistenceDecodeError);
+      assert.deepStrictEqual(decodeError.correlation, { pairingLinkId: id });
+      assert.equal(
+        decodeError.message,
+        `Decode error in AuthPairingLinkRepository.getByCredential:decodeRow: ${decodeError.issue}`,
+      );
+      assert.notInclude(decodeError.issue, credential);
+      assert.notInclude(decodeError.issue, subject);
+      assert.notInclude(decodeError.issue, scopesPayload);
+      assert.notInclude(decodeError.message, DateTime.formatIso(issuedAt));
 
       yield* sql`DROP TABLE auth_pairing_links`;
       const createError = yield* Effect.flip(
