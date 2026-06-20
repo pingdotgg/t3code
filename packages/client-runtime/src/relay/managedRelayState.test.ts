@@ -5,6 +5,7 @@ import type {
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -17,6 +18,11 @@ import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
   managedRelayAccountChanges,
+  ManagedRelaySessionUnavailableError,
+  ManagedRelayStatusEndpointMismatchError,
+  ManagedRelayStatusEnvironmentMismatchError,
+  ManagedRelayTokenReadError,
+  ManagedRelayTokenUnavailableError,
   type ManagedRelayQueryEvent,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
@@ -109,6 +115,65 @@ function clerkToken(expiresAtSeconds: number): string {
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
 
+  it("redacts endpoint mismatch secrets while retaining correlation fields", () => {
+    const expectedHttpBaseUrl =
+      "https://expected-user:expected-password@expected.example.test/private/catalog?token=expected-secret#expected-fragment";
+    const expectedWsBaseUrl =
+      "wss://expected-user:expected-password@expected.example.test/private/socket?token=expected-secret#expected-fragment";
+    const actualHttpBaseUrl =
+      "https://actual-user:actual-password@actual.example.test/private/catalog?token=actual-secret#actual-fragment";
+    const actualWsBaseUrl =
+      "wss://actual-user:actual-password@actual.example.test/private/socket?token=actual-secret#actual-fragment";
+
+    const error = ManagedRelayStatusEndpointMismatchError.fromEndpoints({
+      environmentId: environment.environmentId,
+      expectedEndpoint: {
+        providerKind: "cloudflare_tunnel",
+        httpBaseUrl: expectedHttpBaseUrl,
+        wsBaseUrl: expectedWsBaseUrl,
+      },
+      actualEndpoint: {
+        providerKind: "cloudflare_tunnel",
+        httpBaseUrl: actualHttpBaseUrl,
+        wsBaseUrl: actualWsBaseUrl,
+      },
+    });
+
+    expect(error).toMatchObject({
+      expectedProviderKind: "cloudflare_tunnel",
+      expectedHttpBaseUrlInputLength: expectedHttpBaseUrl.length,
+      expectedHttpBaseUrlProtocol: "https:",
+      expectedHttpBaseUrlHostname: "expected.example.test",
+      expectedWsBaseUrlInputLength: expectedWsBaseUrl.length,
+      expectedWsBaseUrlProtocol: "wss:",
+      expectedWsBaseUrlHostname: "expected.example.test",
+      actualProviderKind: "cloudflare_tunnel",
+      actualHttpBaseUrlInputLength: actualHttpBaseUrl.length,
+      actualHttpBaseUrlProtocol: "https:",
+      actualHttpBaseUrlHostname: "actual.example.test",
+      actualWsBaseUrlInputLength: actualWsBaseUrl.length,
+      actualWsBaseUrlProtocol: "wss:",
+      actualWsBaseUrlHostname: "actual.example.test",
+    });
+    expect(error).not.toHaveProperty("expectedEndpoint");
+    expect(error).not.toHaveProperty("actualEndpoint");
+    const exposedText = `${Object.values(error).join(" ")} ${error.message}`;
+    for (const secret of [
+      "expected-user",
+      "expected-password",
+      "/private/catalog",
+      "/private/socket",
+      "expected-secret",
+      "expected-fragment",
+      "actual-user",
+      "actual-password",
+      "actual-secret",
+      "actual-fragment",
+    ]) {
+      expect(exposedText).not.toContain(secret);
+    }
+  });
+
   it.effect("waits for the current cloud session before reading its token", () =>
     Effect.gen(function* () {
       const tokenFiber = yield* waitForManagedRelayClerkToken(registry).pipe(Effect.forkChild);
@@ -145,6 +210,62 @@ describe("createManagedRelayQueryManager", () => {
       expect(yield* Fiber.join(readsFiber)).toEqual([token, token]);
       expect(yield* session.readClerkToken()).toBe(token);
       expect(readClerkToken).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("preserves token provider failure context", () =>
+    Effect.gen(function* () {
+      const cause = new Error("Clerk session failed");
+      const session = createManagedRelaySession({
+        accountId: "account-1",
+        readClerkToken: () => Promise.reject(cause),
+      });
+
+      const error = yield* Effect.flip(session.readClerkToken());
+
+      expect(error).toBeInstanceOf(ManagedRelayTokenReadError);
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayTokenReadError",
+        accountId: "account-1",
+        cause,
+      });
+    }),
+  );
+
+  it.effect("distinguishes unavailable tokens from unavailable sessions", () =>
+    Effect.gen(function* () {
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve(null),
+      });
+
+      const tokenError = yield* Effect.flip(waitForManagedRelayClerkToken(registry));
+      expect(tokenError).toBeInstanceOf(ManagedRelayTokenUnavailableError);
+      expect(tokenError).toMatchObject({
+        _tag: "ManagedRelayTokenUnavailableError",
+        accountId: "account-1",
+      });
+
+      setManagedRelaySession(registry, null);
+      const manager = createManager();
+      const atom = manager.environmentsAtom("account-1");
+      registry.get(atom);
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          const result = registry.get(atom);
+          expect(result._tag).toBe("Failure");
+          if (result._tag !== "Failure") {
+            return;
+          }
+          const error = Cause.squash(result.cause);
+          expect(error).toBeInstanceOf(ManagedRelaySessionUnavailableError);
+          expect(error).toMatchObject({
+            _tag: "ManagedRelaySessionUnavailableError",
+            requestedAccountId: "account-1",
+          });
+        }),
+      );
     }),
   );
 
@@ -197,30 +318,38 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
-  it("emits credential changes only when the managed relay account changes", async () => {
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("first-token"),
-    });
-    const changes = Effect.runPromise(
-      managedRelayAccountChanges(registry).pipe(Stream.take(2), Stream.runCollect),
-    );
-    await vi.waitFor(() => {
-      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(0);
-    });
+  it.effect("emits credential changes only when the managed relay account changes", () =>
+    Effect.gen(function* () {
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("first-token"),
+      });
+      const changes = yield* managedRelayAccountChanges(registry).pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(
+            0,
+          );
+        }),
+      );
 
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("refreshed-token"),
-    });
-    setManagedRelaySession(registry, {
-      accountId: "account-2",
-      readClerkToken: () => Promise.resolve("second-token"),
-    });
-    setManagedRelaySession(registry, null);
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("refreshed-token"),
+      });
+      setManagedRelaySession(registry, {
+        accountId: "account-2",
+        readClerkToken: () => Promise.resolve("second-token"),
+      });
+      setManagedRelaySession(registry, null);
 
-    expect(Array.from(await changes)).toEqual(["account-2", null]);
-  });
+      expect(Array.from(yield* Fiber.join(changes))).toEqual(["account-2", null]);
+    }),
+  );
 
   it("shares one Clerk token read across concurrent relay list and status queries", async () => {
     const secondEnvironment = {
@@ -349,8 +478,20 @@ describe("createManagedRelayQueryManager", () => {
 
     registry.get(atom);
     await vi.waitFor(() => {
-      expect(readManagedRelaySnapshotState(registry.get(atom)).error).toBe(
-        "Relay returned status for a different environment.",
+      const result = registry.get(atom);
+      expect(result._tag).toBe("Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      const error = Cause.squash(result.cause);
+      expect(error).toBeInstanceOf(ManagedRelayStatusEnvironmentMismatchError);
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayStatusEnvironmentMismatchError",
+        expectedEnvironmentId: environment.environmentId,
+        actualEnvironmentId: mismatchedStatus.environmentId,
+      });
+      expect(readManagedRelaySnapshotState(result).error).toBe(
+        "Relay returned status for environment environment-2 instead of environment-1.",
       );
     });
   });

@@ -8,62 +8,130 @@ import {
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
-import * as Data from "effect/Data";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
-export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
+const requestUrlDiagnosticSchema = {
+  requestUrlInputLength: Schema.Number,
+  requestUrlProtocol: Schema.optionalKey(Schema.String),
+  requestUrlHostname: Schema.optionalKey(Schema.String),
+} as const;
+
+function requestUrlDiagnosticFields(requestUrl: string) {
+  const diagnostics = getUrlDiagnostics(requestUrl);
+  return {
+    requestUrlInputLength: diagnostics.inputLength,
+    ...(diagnostics.protocol === undefined ? {} : { requestUrlProtocol: diagnostics.protocol }),
+    ...(diagnostics.hostname === undefined ? {} : { requestUrlHostname: diagnostics.hostname }),
+  };
+}
+
+function requestUrlDescription(input: {
+  readonly requestUrlInputLength: number;
+  readonly requestUrlHostname?: string;
+}): string {
+  return input.requestUrlHostname === undefined
+    ? `an invalid URL (${input.requestUrlInputLength} characters)`
+    : `host ${input.requestUrlHostname} (${input.requestUrlInputLength} URL characters)`;
+}
+
+export class RemoteEnvironmentAuthFetchError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthFetchError>()(
   "RemoteEnvironmentAuthFetchError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
-
-export class RemoteEnvironmentAuthInvalidJsonError extends Data.TaggedError(
-  "RemoteEnvironmentAuthInvalidJsonError",
-)<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
-
-export class RemoteEnvironmentAuthUndeclaredStatusError extends Data.TaggedError(
-  "RemoteEnvironmentAuthUndeclaredStatusError",
-)<{
-  readonly message: string;
-  readonly status: number;
-  readonly requestUrl: string;
-}> {
-  constructor(requestUrl: string, status: number) {
-    super({
-      message: `Remote environment endpoint ${requestUrl} returned undeclared status ${status}.`,
-      requestUrl,
-      status,
+  {
+    ...requestUrlDiagnosticSchema,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromRequestUrl(requestUrl: string, cause: unknown): RemoteEnvironmentAuthFetchError {
+    return new RemoteEnvironmentAuthFetchError({
+      ...requestUrlDiagnosticFields(requestUrl),
+      cause,
     });
+  }
+
+  override get message(): string {
+    return `Failed to fetch remote environment endpoint at ${requestUrlDescription(this)}.`;
   }
 }
 
-export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
+export class RemoteEnvironmentAuthInvalidJsonError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthInvalidJsonError>()(
+  "RemoteEnvironmentAuthInvalidJsonError",
+  {
+    ...requestUrlDiagnosticSchema,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromRequestUrl(requestUrl: string, cause: unknown): RemoteEnvironmentAuthInvalidJsonError {
+    return new RemoteEnvironmentAuthInvalidJsonError({
+      ...requestUrlDiagnosticFields(requestUrl),
+      cause,
+    });
+  }
+
+  override get message(): string {
+    return `Remote environment endpoint at ${requestUrlDescription(this)} returned an invalid response.`;
+  }
+}
+
+export class RemoteEnvironmentAuthUndeclaredStatusError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthUndeclaredStatusError>()(
+  "RemoteEnvironmentAuthUndeclaredStatusError",
+  {
+    ...requestUrlDiagnosticSchema,
+    status: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  static fromRequestUrl(
+    requestUrl: string,
+    status: number,
+    cause: unknown,
+  ): RemoteEnvironmentAuthUndeclaredStatusError {
+    return new RemoteEnvironmentAuthUndeclaredStatusError({
+      ...requestUrlDiagnosticFields(requestUrl),
+      status,
+      cause,
+    });
+  }
+
+  override get message(): string {
+    return `Remote environment endpoint at ${requestUrlDescription(this)} returned undeclared status ${this.status}.`;
+  }
+}
+
+export const isRemoteEnvironmentAuthUndeclaredStatusError = Schema.is(
+  RemoteEnvironmentAuthUndeclaredStatusError,
+);
+
+export class RemoteEnvironmentAuthTimeoutError extends Schema.TaggedErrorClass<RemoteEnvironmentAuthTimeoutError>()(
   "RemoteEnvironmentAuthTimeoutError",
-)<{
-  readonly message: string;
-  readonly requestUrl: string;
-  readonly timeoutMs: number;
-}> {
-  constructor(requestUrl: string, timeoutMs: number) {
-    super({
-      message: `Remote environment endpoint ${requestUrl} timed out after ${timeoutMs}ms.`,
-      requestUrl,
+  {
+    ...requestUrlDiagnosticSchema,
+    timeoutMs: Schema.Number,
+  },
+) {
+  static fromRequestUrl(requestUrl: string, timeoutMs: number): RemoteEnvironmentAuthTimeoutError {
+    return new RemoteEnvironmentAuthTimeoutError({
+      ...requestUrlDiagnosticFields(requestUrl),
       timeoutMs,
     });
   }
+
+  override get message(): string {
+    return `Remote environment endpoint at ${requestUrlDescription(this)} timed out after ${this.timeoutMs}ms.`;
+  }
 }
+
+const isRemoteEnvironmentAuthTimeoutError = Schema.is(RemoteEnvironmentAuthTimeoutError);
 
 export type RemoteEnvironmentRequestError =
   | EnvironmentRequestInvalidError
@@ -101,40 +169,29 @@ const failRemoteRequest = (
   requestUrl: string,
   cause: unknown,
 ): Effect.Effect<never, RemoteEnvironmentRequestError> => {
-  if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
+  if (isRemoteEnvironmentAuthTimeoutError(cause)) {
     return Effect.fail(cause);
   }
   if (isEnvironmentHttpCommonError(cause)) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {
-    return Effect.fail(
-      new RemoteEnvironmentAuthInvalidJsonError({
-        message: `Remote environment endpoint returned an invalid response from ${requestUrl}.`,
-        cause,
-      }),
-    );
+    return Effect.fail(RemoteEnvironmentAuthInvalidJsonError.fromRequestUrl(requestUrl, cause));
   }
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const response = cause.response;
     if (response.status < 200 || response.status >= 300) {
       return Effect.fail(
-        new RemoteEnvironmentAuthUndeclaredStatusError(requestUrl, response.status),
+        RemoteEnvironmentAuthUndeclaredStatusError.fromRequestUrl(
+          requestUrl,
+          response.status,
+          cause,
+        ),
       );
     }
-    return Effect.fail(
-      new RemoteEnvironmentAuthInvalidJsonError({
-        message: `Remote environment endpoint returned an invalid response from ${requestUrl}.`,
-        cause,
-      }),
-    );
+    return Effect.fail(RemoteEnvironmentAuthInvalidJsonError.fromRequestUrl(requestUrl, cause));
   }
-  return Effect.fail(
-    new RemoteEnvironmentAuthFetchError({
-      message: `Failed to fetch remote environment endpoint ${requestUrl} (${String(cause)}).`,
-      cause,
-    }),
-  );
+  return Effect.fail(RemoteEnvironmentAuthFetchError.fromRequestUrl(requestUrl, cause));
 };
 
 export const executeEnvironmentHttpRequest = <A, E, R>(
@@ -146,7 +203,8 @@ export const executeEnvironmentHttpRequest = <A, E, R>(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(new RemoteEnvironmentAuthTimeoutError(requestUrl, timeoutMs)),
+        onNone: () =>
+          Effect.fail(RemoteEnvironmentAuthTimeoutError.fromRequestUrl(requestUrl, timeoutMs)),
         onSome: Effect.succeed,
       }),
     ),

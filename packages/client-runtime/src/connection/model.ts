@@ -81,6 +81,7 @@ export class ConnectionTransientError extends Schema.TaggedErrorClass<Connection
     reason: ConnectionTransientReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -93,7 +94,11 @@ export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBl
   {
     reason: ConnectionBlockedReason,
     detail: Schema.String,
+    connectionId: Schema.optionalKey(Schema.String),
+    expectedEnvironmentId: Schema.optionalKey(EnvironmentId),
+    actualEnvironmentId: Schema.optionalKey(EnvironmentId),
     traceId: Schema.optionalKey(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

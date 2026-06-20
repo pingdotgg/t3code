@@ -345,7 +345,9 @@ export const make = Effect.gen(function* () {
       persistedTargets,
       (target) =>
         acquireSupervisor(target.environmentId).pipe(
-          Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+          Effect.catchTags({
+            EnvironmentNotRegisteredError: () => Effect.void,
+          }),
         ),
       {
         concurrency: "unbounded",
@@ -516,7 +518,9 @@ export const make = Effect.gen(function* () {
         relayEnvironmentIds,
         (environmentId) =>
           remove(environmentId).pipe(
-            Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+            Effect.catchTags({
+              EnvironmentNotRegisteredError: () => Effect.void,
+            }),
           ),
         {
           concurrency: "unbounded",
@@ -529,7 +533,9 @@ export const make = Effect.gen(function* () {
   const retryNow = (environmentId: EnvironmentId) =>
     acquireSupervisor(environmentId).pipe(
       Effect.flatMap((supervisor) => supervisor.retryNow),
-      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      Effect.catchTags({
+        EnvironmentNotRegisteredError: () => Effect.void,
+      }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {

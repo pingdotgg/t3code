@@ -49,17 +49,20 @@ function mapInitialConfigError(error: InitialConfigError): ConnectionAttemptErro
       return new ConnectionBlockedError({
         reason: "permission",
         detail: error.message,
+        cause: error,
       });
-    case "KeybindingsConfigParseError":
+    case "KeybindingsConfigError":
     case "ServerSettingsError":
       return new ConnectionTransientErrorClass({
         reason: "remote-unavailable",
         detail: error.message,
+        cause: error,
       });
     case "RpcClientError":
       return new ConnectionTransientErrorClass({
         reason: "transport",
         detail: error.message,
+        cause: error,
       });
   }
 }

@@ -6,7 +6,7 @@ import {
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
-import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
+import { mapRemoteEnvironmentError } from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -112,9 +112,11 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
-        return yield* environmentMismatchError({
-          expected: input.expectedEnvironmentId,
-          actual: descriptor.environmentId,
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: `Connected environment ${descriptor.environmentId} does not match ${input.expectedEnvironmentId}.`,
+          expectedEnvironmentId: input.expectedEnvironmentId,
+          actualEnvironmentId: descriptor.environmentId,
         });
       }
       const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
@@ -148,10 +150,11 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new ConnectionBlockedError({
                 reason: "configuration",
                 detail: "Could not create the websocket authorization proof.",
+                cause,
               }),
           ),
         );
@@ -175,10 +178,11 @@ export const make = Effect.gen(function* () {
     }) {
       const thumbprint = yield* signer.thumbprint.pipe(
         Effect.mapError(
-          () =>
+          (cause) =>
             new ConnectionBlockedError({
               reason: "configuration",
               detail: "Could not load the environment authorization key.",
+              cause,
             }),
         ),
         Effect.withSpan("environment.authorization.dpopKey.resolve"),
@@ -236,9 +240,11 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.authorization.descriptor"),
       );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
-        return yield* environmentMismatchError({
-          expected: input.expectedEnvironmentId,
-          actual: descriptor.environmentId,
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: `Connected environment ${descriptor.environmentId} does not match ${input.expectedEnvironmentId}.`,
+          expectedEnvironmentId: input.expectedEnvironmentId,
+          actualEnvironmentId: descriptor.environmentId,
         });
       }
       const bootstrapProof = yield* signer
@@ -248,10 +254,11 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new ConnectionBlockedError({
                 reason: "configuration",
                 detail: "Could not create the environment authorization proof.",
+                cause,
               }),
           ),
         );

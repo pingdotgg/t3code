@@ -23,6 +23,7 @@ import {
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -434,6 +435,62 @@ describe("ConnectionResolver", () => {
         (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
       ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
+    }),
+  );
+
+  it.effect("retains the connection id when a bearer credential is unavailable", () =>
+    Effect.gen(function* () {
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Saved",
+        connectionId: "saved-1",
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: "saved-1",
+        environmentId: ENVIRONMENT_ID,
+        label: "Saved",
+        httpBaseUrl: ENDPOINT.httpBaseUrl,
+        wsBaseUrl: ENDPOINT.wsBaseUrl,
+      });
+      const brokerLayer = yield* makeDependencies();
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({
+        reason: "authentication",
+        connectionId: "saved-1",
+      });
+    }),
+  );
+
+  it.effect("retains both environment ids when a connection profile does not match", () =>
+    Effect.gen(function* () {
+      const actualEnvironmentId = EnvironmentId.make("environment-2");
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Saved",
+        connectionId: "saved-1",
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: "saved-1",
+        environmentId: actualEnvironmentId,
+        label: "Saved",
+        httpBaseUrl: ENDPOINT.httpBaseUrl,
+        wsBaseUrl: ENDPOINT.wsBaseUrl,
+      });
+      const brokerLayer = yield* makeDependencies();
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({
+        reason: "configuration",
+        expectedEnvironmentId: ENVIRONMENT_ID,
+        actualEnvironmentId,
+      });
     }),
   );
 

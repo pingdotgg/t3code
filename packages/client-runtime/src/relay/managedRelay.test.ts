@@ -15,15 +15,15 @@ function managedRelayTestLayer(
   fetchFn: typeof globalThis.fetch,
   relayUrl = "https://relay.example.test",
   accessTokenStore?: ManagedRelay.ManagedRelayAccessTokenStore,
+  signer: ManagedRelay.ManagedRelayDpopSigner["Service"] = {
+    thumbprint: Effect.succeed("client-thumbprint"),
+    createProof: (input) => Effect.succeed(`proof:${input.url}`),
+  },
 ) {
   const httpClientLayer = remoteHttpClientLayer(fetchFn);
   const signerLayer = Layer.succeed(
     ManagedRelay.ManagedRelayDpopSigner,
-    ManagedRelay.ManagedRelayDpopSigner.of({
-      thumbprint: Effect.succeed("client-thumbprint"),
-      createProof: (input: ManagedRelay.ManagedRelayDpopProofInput) =>
-        Effect.succeed(`proof:${input.url}`),
-    }),
+    ManagedRelay.ManagedRelayDpopSigner.of(signer),
   );
   return ManagedRelay.layer({
     relayUrl,
@@ -39,6 +39,65 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it("redacts relay URLs and DPoP targets while preserving causes", () => {
+    const relayUrl =
+      "http://relay-user:relay-password@relay.example.test/private/workspace?access_token=relay-secret#relay-fragment";
+    const dpopTarget =
+      "https://dpop-user:dpop-password@relay.example.test/v1/client/dpop-token?access_token=dpop-secret#dpop-fragment";
+    const cause = new Error("proof failed");
+    const invalidUrlError = ManagedRelay.ManagedRelayUrlInvalidError.fromInput(relayUrl);
+    const proofErrors = [
+      ManagedRelay.ManagedRelayDpopKeyLoadError.fromTarget({
+        keyStore: "indexed-db",
+        method: "POST",
+        url: dpopTarget,
+        cause,
+      }),
+      ManagedRelay.ManagedRelayDpopProofCreationError.fromTarget({
+        method: "POST",
+        url: dpopTarget,
+        cause,
+      }),
+      ManagedRelay.ManagedRelayTokenProofCreationError.fromTarget({
+        method: "POST",
+        url: dpopTarget,
+        cause,
+      }),
+      ManagedRelay.ManagedRelayRequestProofCreationError.fromTarget({
+        method: "POST",
+        url: dpopTarget,
+        cause,
+      }),
+    ];
+
+    expect(invalidUrlError).toMatchObject({
+      relayUrlInputLength: relayUrl.length,
+      relayUrlProtocol: "http:",
+      relayUrlHostname: "relay.example.test",
+    });
+    const invalidUrlDiagnostics = JSON.stringify(invalidUrlError);
+    for (const secret of [
+      "relay-user",
+      "relay-password",
+      "/private/workspace",
+      "relay-secret",
+      "relay-fragment",
+    ]) {
+      expect(invalidUrlDiagnostics).not.toContain(secret);
+      expect(invalidUrlError.message).not.toContain(secret);
+    }
+
+    for (const error of proofErrors) {
+      expect(error.requestTarget).toBe("https://relay.example.test/v1/client/dpop-token");
+      expect(error.cause).toBe(cause);
+      const diagnostics = JSON.stringify(error);
+      for (const secret of ["dpop-user", "dpop-password", "dpop-secret", "dpop-fragment"]) {
+        expect(diagnostics).not.toContain(secret);
+        expect(error.message).not.toContain(secret);
+      }
+    }
+  });
+
   it.effect("owns tracing at service and implementation boundaries", () => {
     const spanNames: Array<string> = [];
     const tracer = Tracer.make({
@@ -124,11 +183,55 @@ describe("ManagedRelayClient", () => {
 
       expect(error).toMatchObject({
         _tag: "ManagedRelayUrlInvalidError",
-        relayUrl: "http://relay.example.test",
+        relayUrlInputLength: "http://relay.example.test".length,
+        relayUrlProtocol: "http:",
+        relayUrlHostname: "relay.example.test",
         message: "Relay URL must be a secure absolute HTTPS origin.",
       });
       expect(requestCount).toBe(0);
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, "http://relay.example.test")));
+  });
+
+  it.effect("preserves key-load failures when creating a token proof", () => {
+    const keyStoreCause = new Error("IndexedDB unavailable");
+    const fetchFn = (() => Promise.resolve(Response.json({}))) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .getEnvironmentStatus({
+          clerkToken: clerkToken("user-1", "session-1"),
+          scopes: [RelayEnvironmentStatusScope],
+          environmentId: EnvironmentId.make("env-1"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayTokenProofCreationError",
+        cause: {
+          _tag: "ManagedRelayDpopKeyLoadError",
+          keyStore: "indexed-db",
+          method: "POST",
+          message: "Could not load relay DPoP proof key.",
+          cause: keyStoreCause,
+        },
+      });
+    }).pipe(
+      Effect.provide(
+        managedRelayTestLayer(fetchFn, undefined, undefined, {
+          thumbprint: Effect.succeed("client-thumbprint"),
+          createProof: (input) =>
+            Effect.fail(
+              ManagedRelay.ManagedRelayDpopKeyLoadError.fromTarget({
+                keyStore: "indexed-db",
+                method: input.method,
+                url: input.url,
+                cause: keyStoreCause,
+              }),
+            ),
+        }),
+      ),
+    );
   });
 
   it.effect("reuses usable DPoP tokens and refreshes cleared or expiring cache entries", () => {

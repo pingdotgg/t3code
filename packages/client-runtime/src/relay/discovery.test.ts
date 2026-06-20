@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -55,7 +56,9 @@ function status(
   };
 }
 
-const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
+const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* (
+  testEnvironments: ReadonlyArray<RelayClientEnvironmentRecord> = environments,
+) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
@@ -74,7 +77,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
       Deferred.Deferred<RelayEnvironmentStatusResponse, ManagedRelay.ManagedRelayClientError>
     >(),
   );
-  for (const environment of environments) {
+  for (const environment of testEnvironments) {
     const request = yield* Deferred.make<
       RelayEnvironmentStatusResponse,
       ManagedRelay.ManagedRelayClientError
@@ -98,7 +101,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         if (failure) {
           return yield* failure;
         }
-        return environments;
+        return testEnvironments;
       }),
     getEnvironmentStatus: ({ environmentId }) =>
       Ref.get(statusRequests).pipe(
@@ -170,6 +173,52 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
 });
 
 describe("RelayEnvironmentDiscovery", () => {
+  it.effect("keeps managed endpoint secrets out of offline warnings", () => {
+    const httpBaseUrl =
+      "https://endpoint-user:endpoint-password@offline.example.test/private/workspace?access_token=endpoint-secret#endpoint-fragment";
+    const environment = {
+      ...environments[0]!,
+      endpoint: {
+        ...environments[0]!.endpoint,
+        httpBaseUrl,
+      },
+    } satisfies RelayClientEnvironmentRecord;
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
+
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness([environment]);
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const refreshFiber = yield* Effect.forkChild(discovery.refresh);
+        const requests = yield* Ref.get(harness.statusRequests);
+        yield* Deferred.succeed(
+          requests.get(environment.environmentId)!,
+          status(environment, "offline"),
+        );
+        yield* Fiber.join(refreshFiber);
+
+        expect(capturedLogs).toHaveLength(1);
+        const logFields = capturedLogs[0]?.find(
+          (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+        );
+        expect(logFields).toMatchObject({
+          environmentId: environment.environmentId,
+          endpointInputLength: httpBaseUrl.length,
+          endpointProtocol: "https:",
+          endpointHostname: "offline.example.test",
+        });
+        expect(logFields).not.toHaveProperty("endpoint");
+      }).pipe(
+        Effect.provide(
+          Layer.merge(harness.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
+    });
+  });
+
   it.effect("publishes each environment status as soon as that lookup completes", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

@@ -309,13 +309,14 @@ export const make = Effect.gen(function* () {
     yield* runStartupPhase(
       "keybindings.start",
       keybindings.start.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to start keybindings runtime", {
-            path: error.configPath,
-            detail: error.detail,
-            cause: error.cause,
-          }),
-        ),
+        Effect.catchTags({
+          KeybindingsConfigError: (error) =>
+            Effect.logWarning("failed to start keybindings runtime", {
+              path: error.configPath,
+              operation: error.operation,
+              errorTag: error._tag,
+            }),
+        }),
         Effect.forkScoped,
       ),
     );
