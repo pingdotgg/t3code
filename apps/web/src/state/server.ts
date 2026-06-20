@@ -15,15 +15,15 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { primaryEnvironmentIdAtom } from "./environments";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
-  initialConfigValueAtom: environmentSession.configValueAtom,
+  initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  configValueAtom: serverEnvironment.configValueAtom,
+  serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 
 interface PrimaryServerState {

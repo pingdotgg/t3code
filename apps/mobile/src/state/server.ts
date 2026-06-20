@@ -6,9 +6,9 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentSession } from "./session";
 
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
-  initialConfigValueAtom: environmentSession.configValueAtom,
+  initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  configValueAtom: serverEnvironment.configValueAtom,
+  serverConfigValueAtom: serverEnvironment.configValueAtom,
 });

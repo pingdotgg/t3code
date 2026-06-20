@@ -118,9 +118,21 @@ export function createServerEnvironmentAtoms<R, E>(
       return projection?.config ?? get(options.initialConfigValueAtom(environmentId));
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
+  const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
+      Atom.withLabel(`environment-data:server:settings:${environmentId}`),
+    ),
+  );
+  const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
+      Atom.withLabel(`environment-data:server:providers:${environmentId}`),
+    ),
+  );
 
   return {
     configValueAtom,
+    settingsValueAtom,
+    providersValueAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

@@ -5,11 +5,11 @@ import {
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
 import { usePreparedConnection } from "./session";
@@ -20,15 +20,6 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
 }
-
-export const primaryEnvironmentIdAtom = Atom.make((get) => {
-  for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
-    if (entry.target._tag === "PrimaryConnectionTarget") {
-      return environmentId;
-    }
-  }
-  return null;
-}).pipe(Atom.withLabel("web-primary-environment-id"));
 
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,

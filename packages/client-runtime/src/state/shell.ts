@@ -268,13 +268,13 @@ export function createEnvironmentShellSummaryAtom(input: {
 
 export function createEnvironmentServerConfigsAtom(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
-  readonly configValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
+  readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
 }) {
   let previousServerConfigs = EMPTY_SERVER_CONFIGS;
   return Atom.make((get) => {
     const next = new Map<EnvironmentId, ServerConfig>();
     for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
-      const config = get(input.configValueAtom(environmentId));
+      const config = get(input.serverConfigValueAtom(environmentId));
       if (config !== null) {
         next.set(environmentId, config);
       }
