@@ -9,7 +9,7 @@ import { describe, it } from "bun:test";
 // Already shipped (covered by real specs elsewhere, NOT skipped here):
 // plan↔build toggle, rename, archive/unarchive, delete, stop-session, search/filter,
 // multiline composer + paste, tool-call rows, changed-files summary, working indicator,
-// proposed-plan card.
+// proposed-plan card, implement-plan (^Y, same thread via sourceProposedPlan).
 
 describe.skip("Backlog — Low/Med: cycle through all pending approvals", () => {
   it("Given several pending approvals, when navigating, then each can be approved/declined in turn", () => {
@@ -27,10 +27,6 @@ describe.skip("Backlog — Med: pending multi-question user input form", () => {
   it("Given a thread awaiting user input, when answered, then respondToThreadUserInput is sent", () => {
     // Data in thread.activities; needs a small select/text form.
   });
-});
-
-describe.skip("Backlog — Med: implement plan in a new thread", () => {
-  it("Given a proposed plan, when 'implement in new thread' runs, then createThread + startThreadTurn fire with sourceProposedPlan", () => {});
 });
 
 describe.skip("Backlog — Med: checkpoint revert", () => {

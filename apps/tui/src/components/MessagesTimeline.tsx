@@ -120,7 +120,7 @@ function ProposedPlanCard({
         <strong>{plan.title}</strong>
       </text>
       <markdown content={plan.body} syntaxStyle={syntaxStyle} />
-      <text fg={palette.dim}>proposed plan · ^B to build mode, then reply to refine</text>
+      <text fg={palette.dim}>proposed plan · ^Y implement · ^B build mode to refine</text>
     </box>
   );
 }

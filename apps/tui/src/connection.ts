@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
+  OrchestrationProposedPlanId,
   type ProjectId,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
@@ -287,6 +288,10 @@ export interface TuiClient {
     readonly modelSelection: ModelSelection;
     readonly firstMessage: string;
   }) => Promise<void>;
+  readonly implementPlan: (
+    thread: Pick<OrchestrationThread, "id" | "runtimeMode">,
+    planId: string,
+  ) => Promise<void>;
   readonly interrupt: (threadId: ThreadId) => Promise<void>;
   readonly approve: (
     threadId: ThreadId,
@@ -532,6 +537,26 @@ export function makeTuiClient(runtime: TuiRuntime): TuiClient {
             message: { messageId, role: "user", text: input.firstMessage, attachments: [] },
             runtimeMode: "full-access",
             interactionMode: "default",
+          });
+        }),
+      ),
+
+    implementPlan: (thread, planId) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const messageId = MessageIdSchema.make(yield* newId);
+          yield* startThreadTurn({
+            threadId: thread.id,
+            message: {
+              messageId,
+              role: "user",
+              text: "Implement the plan.",
+              attachments: [],
+            },
+            runtimeMode: thread.runtimeMode,
+            // Implementing means leaving plan mode so the agent executes the plan.
+            interactionMode: "default",
+            sourceProposedPlan: { threadId: thread.id, planId: OrchestrationProposedPlanId.make(planId) },
           });
         }),
       ),

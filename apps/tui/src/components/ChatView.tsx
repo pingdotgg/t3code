@@ -6,6 +6,7 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import type { TuiClient } from "../connection.ts";
 import { useKeyBindings } from "../hooks/useKeyBindings.ts";
+import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { usePalette } from "../theme.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
@@ -78,6 +79,10 @@ export function ChatView({
   const detail = state.detail;
   const sessionActive =
     !!detail && ["starting", "running", "ready"].includes(detail.session?.status ?? "");
+  const actionablePlan = React.useMemo(
+    () => (detail ? latestActionableProposedPlan(detail) : null),
+    [detail],
+  );
   const approvals = React.useMemo(
     () => (detail ? derivePendingApprovals(detail.activities) : []),
     [detail],
@@ -265,6 +270,13 @@ export function ChatView({
       void client.setInteractionMode(detail.id, next).catch(() => {});
       store.setStatus(next === "plan" ? "Plan mode." : "Build mode.");
     },
+    onImplementPlan: () => {
+      if (!detail || !actionablePlan) return;
+      void client
+        .implementPlan(detail, actionablePlan.id)
+        .catch((error) => store.setStatus(`implement failed: ${String(error)}`));
+      store.setStatus("Implementing plan…");
+    },
     onOpenActions: () => {
       if (!detail) {
         store.setStatus("Select a thread first.");
@@ -369,7 +381,7 @@ export function ChatView({
 
   const hint = activeTerminal
     ? "^P switch focus · ^E close · ^↑/^↓ size · Enter send · ^N new · ^G stop · ^C quit"
-    : "↑/↓ · Enter send · ^N new · ^B plan/build · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
+    : "↑/↓ · Enter send · ^N new · ^B plan/build · ^Y implement · ^O mode · ^E term · ^G stop · ^A/^R approve · ^K actions · ^F find · ^C quit";
 
   return (
     <box flexDirection="column" width={width} height={height}>

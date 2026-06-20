@@ -144,5 +144,6 @@ describe("MessagesTimeline body", () => {
     });
     expect(frame).toContain("Migrate the parser");
     expect(frame).toContain("proposed plan");
+    expect(frame).toContain("^Y implement");
   });
 });
