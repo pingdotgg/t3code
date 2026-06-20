@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import {
   makeCloudCliOAuthConfig,
@@ -86,6 +87,27 @@ it.effect("requires Clerk OAuth config when the server bundle has no injected va
     clerkPublishableKeyFallback: "",
     clerkCliOAuthClientIdFallback: "",
   }).pipe(provideEnv({}), Effect.flip),
+);
+
+it.effect("reports malformed Clerk publishable keys as typed configuration failures", () =>
+  Effect.gen(function* () {
+    const result = yield* makeCloudCliOAuthConfig({
+      clerkPublishableKeyFallback: "pk_test_not-base64!!",
+      clerkCliOAuthClientIdFallback: "oauth_client_embedded",
+    }).pipe(provideEnv({}), Effect.result);
+
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.equal(result.failure.cause._tag, "SourceError");
+      if (result.failure.cause._tag === "SourceError") {
+        assert.equal(
+          result.failure.cause.message,
+          "Failed to derive Clerk Frontend API URL from the publishable key.",
+        );
+        assert.instanceOf(result.failure.cause.cause, Error);
+      }
+    }
+  }),
 );
 
 it("resolves relay client tracing from runtime config with build-time fallback", () => {

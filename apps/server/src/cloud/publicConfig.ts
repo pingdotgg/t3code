@@ -1,6 +1,7 @@
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -131,16 +132,29 @@ export function makeCloudCliOAuthConfig({
       clerkCliOAuthClientIdFallback,
     ),
   }).pipe(
-    Config.map(({ clerkPublishableKey, clientId }) => {
-      const clerkFrontendApiUrl = clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey);
-      return {
-        authorizationEndpoint: `${clerkFrontendApiUrl}/oauth/authorize`,
-        tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
-        clientId,
-        redirectUri: CLOUD_CLI_OAUTH_REDIRECT_URI,
-        scopes: CLOUD_CLI_OAUTH_SCOPES,
-      } satisfies CloudCliOAuthConfig;
-    }),
+    Config.mapOrFail(({ clerkPublishableKey, clientId }) =>
+      Effect.try({
+        try: () => clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey),
+        catch: (cause) =>
+          new Config.ConfigError(
+            new ConfigProvider.SourceError({
+              message: "Failed to derive Clerk Frontend API URL from the publishable key.",
+              cause,
+            }),
+          ),
+      }).pipe(
+        Effect.map(
+          (clerkFrontendApiUrl) =>
+            ({
+              authorizationEndpoint: `${clerkFrontendApiUrl}/oauth/authorize`,
+              tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
+              clientId,
+              redirectUri: CLOUD_CLI_OAUTH_REDIRECT_URI,
+              scopes: CLOUD_CLI_OAUTH_SCOPES,
+            }) satisfies CloudCliOAuthConfig,
+        ),
+      ),
+    ),
   );
 }
 
