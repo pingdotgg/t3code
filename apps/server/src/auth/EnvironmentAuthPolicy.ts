@@ -3,21 +3,19 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { resolveSessionCookieName } from "./utils.ts";
 import { isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
 
-export interface EnvironmentAuthPolicyShape {
-  readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
-}
-
 export class EnvironmentAuthPolicy extends Context.Service<
   EnvironmentAuthPolicy,
-  EnvironmentAuthPolicyShape
+  {
+    readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
+  }
 >()("t3/auth/EnvironmentAuthPolicy") {}
 
-export const make = Effect.fn("makeEnvironmentAuthPolicy")(function* () {
-  const config = yield* ServerConfig;
+export const make = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
   const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
 
   const policy =
@@ -46,10 +44,10 @@ export const make = Effect.fn("makeEnvironmentAuthPolicy")(function* () {
     }),
   };
 
-  return {
+  return EnvironmentAuthPolicy.of({
     getDescriptor: () =>
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuthPolicy.getDescriptor")),
-  } satisfies EnvironmentAuthPolicyShape;
+  });
 });
 
-export const layer = Layer.effect(EnvironmentAuthPolicy, make());
+export const layer = Layer.effect(EnvironmentAuthPolicy, make);
