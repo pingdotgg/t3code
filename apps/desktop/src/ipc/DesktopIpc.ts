@@ -24,6 +24,39 @@ export interface DesktopIpcMain {
   on(channel: string, listener: DesktopIpcSyncListener): void;
 }
 
+export class DesktopIpcRegistrationError extends Schema.TaggedErrorClass<DesktopIpcRegistrationError>()(
+  "DesktopIpcRegistrationError",
+  {
+    handlerKind: Schema.Literals(["invoke", "sync"]),
+    channel: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to register the ${this.handlerKind} IPC handler for ${this.channel}.`;
+  }
+}
+
+export class DesktopIpcUnregistrationError extends Schema.TaggedErrorClass<DesktopIpcUnregistrationError>()(
+  "DesktopIpcUnregistrationError",
+  {
+    handlerKind: Schema.Literals(["invoke", "sync"]),
+    channel: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to unregister the ${this.handlerKind} IPC handler for ${this.channel}.`;
+  }
+}
+
+export const DesktopIpcError = Schema.Union([
+  DesktopIpcRegistrationError,
+  DesktopIpcUnregistrationError,
+]);
+export type DesktopIpcError = typeof DesktopIpcError.Type;
+export const isDesktopIpcError = Schema.is(DesktopIpcError);
+
 export interface DesktopIpcMethod<E, R> {
   readonly channel: string;
   readonly handler: (raw: unknown) => Effect.Effect<unknown, E, R>;
@@ -39,10 +72,10 @@ export class DesktopIpc extends Context.Service<
   {
     readonly handle: <E, R>(
       input: DesktopIpcMethod<E, R>,
-    ) => Effect.Effect<void, never, R | Scope.Scope>;
+    ) => Effect.Effect<void, DesktopIpcRegistrationError, R | Scope.Scope>;
     readonly handleSync: <E, R>(
       input: DesktopSyncIpcMethod<E, R>,
-    ) => Effect.Effect<void, never, R | Scope.Scope>;
+    ) => Effect.Effect<void, DesktopIpcRegistrationError, R | Scope.Scope>;
   }
 >()("@t3tools/desktop/ipc/DesktopIpc") {}
 
@@ -57,18 +90,27 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
       const runPromise = Effect.runPromiseWith(context);
 
       yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          ipcMain.removeHandler(channel);
-          ipcMain.handle(channel, (_event, raw) =>
-            runPromise(
-              Effect.gen(function* () {
-                yield* Effect.annotateCurrentSpan({ channel });
-                return yield* handler(raw);
-              }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
-            ),
-          );
+        Effect.try({
+          try: () => {
+            ipcMain.removeHandler(channel);
+            ipcMain.handle(channel, (_event, raw) =>
+              runPromise(
+                Effect.gen(function* () {
+                  yield* Effect.annotateCurrentSpan({ channel });
+                  return yield* handler(raw);
+                }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
+              ),
+            );
+          },
+          catch: (cause) =>
+            new DesktopIpcRegistrationError({ handlerKind: "invoke", channel, cause }),
         }),
-        () => Effect.sync(() => ipcMain.removeHandler(channel)),
+        () =>
+          Effect.try({
+            try: () => ipcMain.removeHandler(channel),
+            catch: (cause) =>
+              new DesktopIpcUnregistrationError({ handlerKind: "invoke", channel, cause }),
+          }).pipe(Effect.orDie),
       );
     }),
 
@@ -81,18 +123,30 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
       const runSync = Effect.runSyncWith(context);
 
       yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          ipcMain.removeAllListeners(channel);
-          ipcMain.on(channel, (event) => {
-            event.returnValue = runSync(
-              Effect.gen(function* () {
-                yield* Effect.annotateCurrentSpan({ channel });
-                return yield* handler();
-              }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invokeSync")),
-            );
-          });
+        Effect.try({
+          try: () => {
+            ipcMain.removeAllListeners(channel);
+            ipcMain.on(channel, (event) => {
+              event.returnValue = runSync(
+                Effect.gen(function* () {
+                  yield* Effect.annotateCurrentSpan({ channel });
+                  return yield* handler();
+                }).pipe(
+                  Effect.annotateLogs({ channel }),
+                  Effect.withSpan("desktop.ipc.invokeSync"),
+                ),
+              );
+            });
+          },
+          catch: (cause) =>
+            new DesktopIpcRegistrationError({ handlerKind: "sync", channel, cause }),
         }),
-        () => Effect.sync(() => ipcMain.removeAllListeners(channel)),
+        () =>
+          Effect.try({
+            try: () => ipcMain.removeAllListeners(channel),
+            catch: (cause) =>
+              new DesktopIpcUnregistrationError({ handlerKind: "sync", channel, cause }),
+          }).pipe(Effect.orDie),
       );
     }),
   });
