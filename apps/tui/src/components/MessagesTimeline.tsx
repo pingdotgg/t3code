@@ -11,12 +11,12 @@ import {
 } from "../contextWindow.ts";
 import { clip } from "../format.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
+import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import {
   buildTimeline,
   changedFilesByMessage,
   diffStat,
   isWorking,
-  workingElapsedSeconds,
   workingStartedAt,
 } from "../timeline.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor, usePalette } from "../theme.ts";
@@ -179,14 +179,6 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
 
   const working = detail ? isWorking(detail) : false;
   const startedAt = detail ? workingStartedAt(detail) : null;
-  // Tick once a second while a turn runs so the elapsed counter advances.
-  const [nowMs, setNowMs] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    if (!working) return;
-    setNowMs(Date.now());
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [working]);
 
   const timeline = React.useMemo(
     () => (detail ? buildTimeline(detail.messages, detail.activities) : []),
@@ -220,9 +212,6 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
       </box>
     );
   }
-
-  const elapsed = working ? workingElapsedSeconds(startedAt, nowMs) : null;
-  const workingLabel = elapsed !== null ? `Working… ${elapsed}s` : "Working…";
 
   return (
     <box
@@ -295,14 +284,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         {proposedPlan ? (
           <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
         ) : null}
-        {working ? (
-          <box marginBottom={1}>
-            <text>
-              <span fg={palette.accent}>{"⟳ "}</span>
-              <span fg={palette.dim}>{workingLabel}</span>
-            </text>
-          </box>
-        ) : null}
+        {working ? <WorkingIndicator startedAt={startedAt} /> : null}
       </scrollbox>
 
       {approvals.length > 0 ? (
