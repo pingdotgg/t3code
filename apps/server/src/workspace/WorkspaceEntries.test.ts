@@ -9,18 +9,18 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
-import { WorkspacePathsLive } from "./Layers/WorkspacePaths.ts";
+import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePathsLive))),
-  Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
     }),
   ),
@@ -363,7 +363,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           })
           .pipe(Effect.flip);
 
-        expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
+        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
+        expect(error.message).toBe(
+          "A current project is required to browse relative workspace path './src'.",
+        );
       }),
     );
 

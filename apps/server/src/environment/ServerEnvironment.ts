@@ -1,16 +1,24 @@
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { ServerConfig } from "../../config.ts";
-import { layer as ProcessRunnerLive } from "../../processRunner.ts";
-import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
-import packageJson from "../../../package.json" with { type: "json" };
+import packageJson from "../../package.json" with { type: "json" };
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+
+export class ServerEnvironment extends Context.Service<
+  ServerEnvironment,
+  {
+    readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
+    readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
+  }
+>()("t3/environment/ServerEnvironment") {}
 
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (platform) {
@@ -38,10 +46,10 @@ function platformArch(
   }
 }
 
-export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const serverConfig = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -77,9 +85,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
 
   const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({
-    cwdBaseName,
-  });
+  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -94,12 +100,15 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
     },
   };
 
-  return {
+  return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     getDescriptor: Effect.succeed(descriptor),
-  } satisfies ServerEnvironmentShape;
+  });
 });
 
-export const ServerEnvironmentLive = Layer.effect(ServerEnvironment, makeServerEnvironment()).pipe(
-  Layer.provide(ProcessRunnerLive),
-);
+/**
+ * ServerEnvironment is acquired from persisted filesystem and host-process
+ * state. It intentionally has no fallback Layer.succeed value: callers must
+ * provide the external platform services and a ServerConfig.
+ */
+export const layer = Layer.effect(ServerEnvironment, make).pipe(Layer.provide(ProcessRunner.layer));

@@ -41,7 +41,7 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
-import * as ServerEnvironment from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 

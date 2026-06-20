@@ -1,4 +1,4 @@
-import * as NodeCrypto from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import type {
@@ -29,7 +29,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -348,7 +348,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
   });
 
   it("signs the activity publish JWT and rejects tampering", async () => {
-    const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+    const keyPair = generateKeyPairSync("ed25519", {
       privateKeyEncoding: { format: "pem", type: "pkcs8" },
       publicKeyEncoding: { format: "pem", type: "spki" },
     });
@@ -494,7 +494,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
-          Layer.succeed(ServerEnvironment, {
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),
@@ -642,7 +642,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
-          Layer.succeed(ServerEnvironment, {
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),

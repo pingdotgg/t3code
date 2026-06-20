@@ -43,7 +43,7 @@ import {
 
 import { GitManagerError } from "@t3tools/contracts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import * as ProjectSetupScriptRunner from "../project/Services/ProjectSetupScriptRunner.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";

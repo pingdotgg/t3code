@@ -9,7 +9,7 @@ import { HttpClient, HttpServerRequest } from "effect/unstable/http";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerEnvironment from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
