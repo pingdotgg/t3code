@@ -5,6 +5,8 @@ import type {
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import { getUrlDiagnostics } from "@t3tools/shared/urlDiagnostics";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -243,7 +245,24 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export function describeReadinessCause(cause: unknown): unknown {
+const SSH_FAILURE_DIAGNOSTIC_DEPTH = 6;
+
+function describeReadinessCauseAtDepth(cause: unknown, depth: number): unknown {
+  if (depth >= SSH_FAILURE_DIAGNOSTIC_DEPTH) return { truncated: true };
+  const describeNested = (nested: unknown) => describeReadinessCauseAtDepth(nested, depth + 1);
+  if (Cause.isCause(cause)) {
+    return {
+      reasons: cause.reasons.map((reason) => {
+        if (Cause.isFailReason(reason)) {
+          return { _tag: reason._tag, error: describeNested(reason.error) };
+        }
+        if (Cause.isDieReason(reason)) {
+          return { _tag: reason._tag, defect: describeNested(reason.defect) };
+        }
+        return { _tag: reason._tag, fiberId: reason.fiberId };
+      }),
+    };
+  }
   if (isSshReadinessError(cause)) {
     const { cause: nestedCause, ...attributes } = cause as SshReadinessError & {
       readonly cause?: unknown;
@@ -251,13 +270,15 @@ export function describeReadinessCause(cause: unknown): unknown {
     return {
       ...attributes,
       message: cause.message,
-      ...(nestedCause === undefined ? {} : { cause: describeReadinessCause(nestedCause) }),
+      ...(nestedCause === undefined ? {} : { cause: describeNested(nestedCause) }),
     };
   }
   if (cause instanceof Error) {
+    const tagged = cause as Error & { readonly _tag?: unknown; readonly reason?: unknown };
     return {
-      name: cause.name,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
+      ...(typeof tagged._tag === "string" ? { _tag: tagged._tag } : { name: cause.name }),
+      ...(tagged.reason === undefined ? {} : { reason: describeNested(tagged.reason) }),
+      ...(cause.cause === undefined ? {} : { cause: describeNested(cause.cause) }),
     };
   }
   if (typeof cause !== "object" || cause === null) {
@@ -267,17 +288,23 @@ export function describeReadinessCause(cause: unknown): unknown {
   const record = cause as Readonly<Record<string, unknown>>;
   return {
     ...(typeof record._tag === "string" ? { _tag: record._tag } : {}),
-    ...(record.reason === undefined ? {} : { reason: describeReadinessCause(record.reason) }),
-    ...(record.cause === undefined ? {} : { cause: describeReadinessCause(record.cause) }),
+    ...(record.reason === undefined ? {} : { reason: describeNested(record.reason) }),
+    ...(record.cause === undefined ? {} : { cause: describeNested(record.cause) }),
   };
 }
 
-function readinessUrlDiagnostics(url: URL, urlLength: number) {
+export function describeReadinessCause(cause: unknown): unknown {
+  return describeReadinessCauseAtDepth(cause, 0);
+}
+
+function readinessUrlDiagnostics(input: string) {
+  const url = new URL(input);
+  const diagnostics = getUrlDiagnostics(input);
   return {
-    protocol: url.protocol,
-    hostname: url.hostname,
+    protocol: diagnostics.protocol ?? url.protocol,
+    hostname: diagnostics.hostname ?? url.hostname,
     ...(url.port === "" ? {} : { port: url.port }),
-    urlLength,
+    urlLength: diagnostics.inputLength,
     pathnameLength: utf8ByteLength(url.pathname),
     hasQuery: url.search !== "",
     hasFragment: url.hash !== "",
@@ -900,8 +927,8 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   const baseUrl = new URL(input.baseUrl);
   const request = new URL(input.path ?? "/", baseUrl);
   const requestUrl = request.toString();
-  const base = readinessUrlDiagnostics(baseUrl, utf8ByteLength(input.baseUrl));
-  const requestDiagnostics = readinessUrlDiagnostics(request, utf8ByteLength(requestUrl));
+  const base = readinessUrlDiagnostics(input.baseUrl);
+  const requestDiagnostics = readinessUrlDiagnostics(requestUrl);
   const client = yield* HttpClient.HttpClient;
   const lastProbeFailure = yield* Ref.make<unknown>(null);
   let attempt = 0;
@@ -1088,6 +1115,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   const sshCommand = yield* resolveSshCommand;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
+  const httpBaseUrlDiagnostics = getUrlDiagnostics(input.httpBaseUrl);
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
     command: sshCommand,
@@ -1095,7 +1123,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     localPort: input.localPort,
     remotePort: input.remotePort,
     remoteServerKind: input.remoteServerKind,
-    httpBaseUrl: input.httpBaseUrl,
+    httpBaseUrlDiagnostics,
   });
   const child = yield* spawner
     .spawn(
@@ -1128,7 +1156,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     pid: child.pid,
     localPort: input.localPort,
     remotePort: input.remotePort,
-    httpBaseUrl: input.httpBaseUrl,
+    httpBaseUrlDiagnostics,
   });
   const tunnelEntry: SshTunnelEntry = {
     key: input.key,
@@ -1171,7 +1199,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         pid: child.pid,
         localPort: input.localPort,
         remotePort: input.remotePort,
-        httpBaseUrl: input.httpBaseUrl,
+        httpBaseUrlDiagnostics,
         exitCode,
         stderrBytes: utf8ByteLength(stderr),
       }).pipe(Effect.andThen(Effect.fail(error)));
@@ -1192,7 +1220,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         pid: child.pid,
         localPort: input.localPort,
         remotePort: input.remotePort,
-        httpBaseUrl: input.httpBaseUrl,
+        httpBaseUrlDiagnostics,
       }),
     ),
     Effect.tapError((cause) =>
@@ -1220,19 +1248,19 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           processRunning,
           ...(Exit.isSuccess(processRunningExit)
             ? {}
-            : { processRunningError: processRunningExit.cause }),
+            : { processRunningFailure: describeReadinessCause(processRunningExit.cause) }),
           localPort: input.localPort,
           localPortListening: localPortAvailable === null ? null : !localPortAvailable,
           remotePort: input.remotePort,
-          httpBaseUrl: input.httpBaseUrl,
+          httpBaseUrlDiagnostics,
           ...(Exit.isSuccess(localPortAvailableExit)
             ? {}
-            : { localPortProbeError: localPortAvailableExit.cause }),
+            : { localPortProbeFailure: describeReadinessCause(localPortAvailableExit.cause) }),
           ...(remoteLogTail === null ? {} : { remoteLogTailBytes: utf8ByteLength(remoteLogTail) }),
           ...(Exit.isSuccess(remoteLogTailExit)
             ? {}
-            : { remoteLogTailError: remoteLogTailExit.cause }),
-          cause,
+            : { remoteLogTailFailure: describeReadinessCause(remoteLogTailExit.cause) }),
+          failure: describeReadinessCause(cause),
         });
       }),
     ),
@@ -1370,7 +1398,7 @@ export const make = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function*
         ...sshTargetLogFields(input.target),
         key: input.key,
         promptCount: input.promptCount,
-        cause: input.error,
+        failure: describeReadinessCause(input.error),
       });
       const promptService = yield* SshAuth.SshPasswordPrompt;
       if (!promptService.isAvailable) {
@@ -1569,7 +1597,7 @@ export const make = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function*
         key,
         localPort: entry.localPort,
         remotePort: entry.remotePort,
-        cause: readinessExit.cause,
+        failure: describeReadinessCause(readinessExit.cause),
       });
       yield* closeTunnelEntry(entry);
       yield* cancelPendingTunnelEntry(key, resolvedTarget);
@@ -1597,7 +1625,7 @@ export const make = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function*
         Effect.logWarning("ssh.environment.tunnel.create.failed", {
           ...sshTargetLogFields(resolvedTarget),
           key,
-          cause,
+          failure: describeReadinessCause(cause),
         }),
       ),
       Effect.onExit((exit) =>

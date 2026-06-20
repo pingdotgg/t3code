@@ -5,12 +5,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -21,6 +23,7 @@ import {
   SshHttpBridgeMissingUrlError,
   SshHttpBridgeNonLoopbackUrlError,
   SshPairingOutputParseError,
+  SshReadinessProbeError,
   SshReadinessProbeTimeoutError,
   SshReadinessTimeoutError,
 } from "./errors.ts";
@@ -86,6 +89,14 @@ const testNetService = NetService.NetService.of({
 
 function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
+}
+
+function flattenedLogText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.entries(value)
+    .flatMap(([key, nested]) => [key, flattenedLogText(nested)])
+    .join("\n");
 }
 
 describe("ssh tunnel scripts", () => {
@@ -255,13 +266,22 @@ describe("ssh tunnel scripts", () => {
     assert.include(SshTunnel.REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
   });
 
-  it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () =>
-    Effect.gen(function* () {
+  it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () => {
+    const baseUrl =
+      "http://ssh-user:ssh-password@127.0.0.1:41773/private/base?token=base-secret#base-fragment";
+    const path = "/ready/private?credential=request-secret#request-fragment";
+    const requestUrl = new URL(path, baseUrl).toString();
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
+
+    return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
         Effect.result(
           SshTunnel.waitForHttpReady({
-            baseUrl: "http://127.0.0.1:41773/?token=base-secret#fragment",
-            path: "/ready?credential=request-secret#fragment",
+            baseUrl,
+            path,
             timeoutMs: 1_000,
             intervalMs: 100,
             probeTimeoutMs: 250,
@@ -281,8 +301,8 @@ describe("ssh tunnel scripts", () => {
           protocol: "http:",
           hostname: "127.0.0.1",
           port: "41773",
-          urlLength: 50,
-          pathnameLength: 1,
+          urlLength: baseUrl.length,
+          pathnameLength: new TextEncoder().encode(new URL(baseUrl).pathname).length,
           hasQuery: true,
           hasFragment: true,
         });
@@ -290,8 +310,8 @@ describe("ssh tunnel scripts", () => {
           protocol: "http:",
           hostname: "127.0.0.1",
           port: "41773",
-          urlLength: 63,
-          pathnameLength: 6,
+          urlLength: requestUrl.length,
+          pathnameLength: new TextEncoder().encode(new URL(requestUrl).pathname).length,
           hasQuery: true,
           hasFragment: true,
         });
@@ -311,13 +331,91 @@ describe("ssh tunnel scripts", () => {
         const probeTimeout = timeoutError.cause as SshReadinessProbeTimeoutError;
         assert.equal(probeTimeout.attempt, timeoutError.attempts);
         assert.isFalse("cause" in probeTimeout);
+
+        const logText = flattenedLogText(capturedLogs);
+        assert.include(logText, "127.0.0.1");
+        assert.notInclude(logText, "ssh-user");
+        assert.notInclude(logText, "ssh-password");
+        assert.notInclude(logText, "/private/base");
+        assert.notInclude(logText, "base-secret");
+        assert.notInclude(logText, "/ready/private");
+        assert.notInclude(logText, "request-secret");
+        assert.notInclude(logText, "base-fragment");
+        assert.notInclude(logText, "request-fragment");
       }
     }).pipe(
       Effect.provide(
-        Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, hangingHttpClient)),
+        Layer.mergeAll(
+          TestClock.layer(),
+          Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
       ),
-    ),
-  );
+    );
+  });
+
+  it.effect("preserves the exact HTTP transport cause without logging request secrets", () => {
+    const baseUrl =
+      "http://transport-user:transport-password@127.0.0.1:41773/private?token=transport-secret#fragment";
+    const transportCause = new Error("socket closed");
+    const clientErrors: Array<HttpClientError.HttpClientError> = [];
+    const failingHttpClient = HttpClient.make((request) => {
+      const error = new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({ request, cause: transportCause }),
+      });
+      clientErrors.push(error);
+      return Effect.fail(error);
+    });
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        Effect.result(
+          SshTunnel.waitForHttpReady({
+            baseUrl,
+            timeoutMs: 300,
+            intervalMs: 100,
+            probeTimeoutMs: 250,
+          }),
+        ),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(300));
+
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, SshReadinessTimeoutError);
+        const timeoutError = result.failure as SshReadinessTimeoutError;
+        assert.instanceOf(timeoutError.cause, SshReadinessProbeError);
+        const probeError = timeoutError.cause as SshReadinessProbeError;
+        assert.strictEqual(probeError.cause, clientErrors.at(-1));
+        assert.strictEqual(
+          (probeError.cause as HttpClientError.HttpClientError).reason.cause,
+          transportCause,
+        );
+
+        const logText = flattenedLogText(capturedLogs);
+        assert.include(logText, "HttpClientError");
+        assert.include(logText, "TransportError");
+        assert.notInclude(logText, "transport-user");
+        assert.notInclude(logText, "transport-password");
+        assert.notInclude(logText, "/private");
+        assert.notInclude(logText, "transport-secret");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          Layer.succeed(HttpClient.HttpClient, failingHttpClient),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
 
   it.effect("preserves forwarded HTTP URL error messages", () =>
     Effect.gen(function* () {
@@ -363,6 +461,10 @@ describe("ssh tunnel scripts", () => {
         cause: { type: "string" },
       },
     );
+
+    const cyclicCause: { readonly _tag: string; cause?: unknown } = { _tag: "CyclicCause" };
+    cyclicCause.cause = cyclicCause;
+    assert.include(flattenedLogText(SshTunnel.describeReadinessCause(cyclicCause)), "truncated");
   });
 
   it("preserves structured readiness attributes in diagnostic output", () => {
@@ -542,6 +644,10 @@ describe("ssh tunnel scripts", () => {
     const spawnedCommands: Array<ReadonlyArray<string>> = [];
     let tunnelKillCount = 0;
     let stopCommandCount = 0;
+    const capturedLogs: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ message }) => {
+      capturedLogs.push(Array.isArray(message) ? message : [message]);
+    });
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         const args = commandArgs(command);
@@ -568,6 +674,7 @@ describe("ssh tunnel scripts", () => {
       Layer.succeed(NetService.NetService, testNetService),
       SshAuth.disabledLayer,
       SshTunnel.layer(),
+      Logger.layer([logger], { mergeWithExisting: false }),
     );
     const target = {
       alias: "devbox",
@@ -590,6 +697,10 @@ describe("ssh tunnel scripts", () => {
 
       assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
       assert.equal(tunnelKillCount, 1);
+
+      const logText = flattenedLogText(capturedLogs);
+      assert.include(logText, "httpBaseUrlDiagnostics");
+      assert.notInclude(logText, "httpBaseUrl\nhttp://");
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });

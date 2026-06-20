@@ -350,7 +350,10 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
       Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(target)),
     ),
     Effect.catch((cause) =>
-      Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
+      Effect.logDebug("ssh.target.resolve.fallback", {
+        alias: trimmedAlias,
+        failureTag: cause._tag,
+      }).pipe(
         Effect.as({
           alias: trimmedAlias,
           hostname: trimmedAlias,
