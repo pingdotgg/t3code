@@ -1,4 +1,4 @@
-import { ModelSelection, OrchestrationV2AppThread, ProviderKind } from "@t3tools/contracts";
+import { ModelSelection, OrchestrationV2AppThread, ProviderDriverKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,12 +15,12 @@ import {
 export class RuntimePolicyResolveError extends Schema.TaggedErrorClass<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
   {
-    provider: ProviderKind,
+    driver: ProviderDriverKind,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to resolve runtime policy for ${this.provider}.`;
+    return `Failed to resolve runtime policy for ${this.driver}.`;
   }
 }
 

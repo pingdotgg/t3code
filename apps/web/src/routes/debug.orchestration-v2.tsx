@@ -676,7 +676,7 @@ function buildStreamTimeline(logEntries: ReadonlyArray<LogEntry>): ReadonlyArray
       title: event.type,
       subtitle: compactId(event.threadId),
       sequence: value.sequence,
-      status: stringifyShort(payload.status) ?? stringifyShort(event.provider) ?? "received",
+      status: stringifyShort(payload.status) ?? stringifyShort(event.driver) ?? "received",
       body: readText(payload, ["text", "title", "detail", "markdown"]),
       raw: value,
     };
@@ -1721,7 +1721,16 @@ function OrchestrationV2DebugRoute() {
     unsubscribeRef.current = null;
   }, []);
 
-  useEffect(() => clearSubscription, [clearSubscription]);
+    setShellThreadsById((current) => {
+      const next = new Map(current);
+      if (item.kind === "thread.removed") {
+        next.delete(item.threadId);
+        return next;
+      }
+      next.set(item.thread.id, item.thread);
+      return next;
+    });
+  }, [shellSubscription.data]);
 
   useEffect(() => {
     shellUnsubscribeRef.current = api.subscribeShell((item) => {
@@ -3296,7 +3305,8 @@ function workLogRowContent(item: OrchestrationV2TurnItem): WorkLogRowContent {
         glyph: "⇄",
         label: "Handoff",
         preview:
-          clipOneLine(item.summary, 120) ?? `${item.fromProviders.join(", ")} → ${item.toProvider}`,
+          clipOneLine(item.summary, 120) ??
+          `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`,
         tone: "muted",
       };
     case "fork":
@@ -3749,7 +3759,10 @@ function ChatItem(props: {
       return (
         <ChatSystemDivider
           label="Handoff"
-          description={item.summary ?? `${item.fromProviders.join(", ")} → ${item.toProvider}`}
+          description={
+            item.summary ??
+            `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`
+          }
           timestamp={timestamp}
           nowMs={nowMs}
         />

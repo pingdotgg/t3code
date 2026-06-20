@@ -13,7 +13,7 @@ import {
   ProviderTurnId,
   ThreadId,
   TurnItemId,
-  type ProviderKind,
+  ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -44,21 +44,24 @@ const projectId = ProjectId.make("project:provider-switch");
 const firstPrompt = "Respond with exactly: codex before switch";
 const claudePrompt = "Respond with exactly: claude switched response";
 const returnPrompt = "Respond with exactly: codex after return";
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 
 interface CapturedTurn {
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly text: string;
 }
 
-function unimplemented(provider: ProviderKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ provider, detail }));
+function unimplemented(driver: ProviderDriverKind, detail: string) {
+  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeTestAdapter(input: {
   readonly instanceId: ProviderInstanceId;
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly modelSelection: ModelSelection;
   readonly responseByRunOrdinal: Readonly<Record<number, string>>;
@@ -67,7 +70,7 @@ function makeTestAdapter(input: {
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
-    provider: input.provider,
+    driver: input.driver,
     getCapabilities: () => Effect.succeed(input.capabilities),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
@@ -75,7 +78,8 @@ function makeTestAdapter(input: {
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
-          provider: input.provider,
+          driver: input.driver,
+          providerInstanceId: input.instanceId,
           status: "ready",
           cwd: sessionInput.runtimePolicy.cwd ?? process.cwd(),
           model: input.modelSelection.model,
@@ -87,7 +91,7 @@ function makeTestAdapter(input: {
 
         return {
           instanceId: input.instanceId,
-          provider: input.provider,
+          driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           rawEvents: Stream.empty,
@@ -95,15 +99,16 @@ function makeTestAdapter(input: {
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
-              const nativeThreadId = `${input.provider}:${threadInput.threadId}`;
+              const nativeThreadId = `${input.driver}:${threadInput.threadId}`;
               return {
                 id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
-                provider: input.provider,
+                driver: input.driver,
+                providerInstanceId: input.instanceId,
                 providerSessionId: sessionInput.providerSessionId,
                 appThreadId: threadInput.threadId,
                 ownerNodeId: null,
                 nativeThreadRef: {
-                  provider: input.provider,
+                  driver: input.driver,
                   nativeId: nativeThreadId,
                   strength: "strong",
                 },
@@ -124,7 +129,7 @@ function makeTestAdapter(input: {
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
                 {
-                  provider: input.provider,
+                  driver: input.driver,
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
                   text: turnInput.message.text,
@@ -132,23 +137,23 @@ function makeTestAdapter(input: {
               ]);
               const eventTime = yield* DateTime.now;
               const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
-                `${input.provider} response for run ${turnInput.runOrdinal}`;
+                `${input.driver} response for run ${turnInput.runOrdinal}`;
               const providerEvents: ReadonlyArray<ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
-                  provider: input.provider,
+                  driver: input.driver,
                   providerTurn: {
                     id: providerTurnId,
                     providerThreadId: turnInput.providerThread.id,
                     nodeId: turnInput.rootNodeId,
                     runAttemptId: turnInput.attemptId,
                     nativeTurnRef: {
-                      provider: input.provider,
+                      driver: input.driver,
                       nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
                       strength: "strong",
                     },
@@ -160,10 +165,10 @@ function makeTestAdapter(input: {
                 },
                 {
                   type: "turn_item.updated",
-                  provider: input.provider,
+                  driver: input.driver,
                   turnItem: {
                     id: TurnItemId.make(
-                      `turn-item:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
                     threadId: turnInput.threadId,
                     runId: turnInput.runId,
@@ -180,7 +185,7 @@ function makeTestAdapter(input: {
                     updatedAt: eventTime,
                     type: "assistant_message",
                     messageId: MessageId.make(
-                      `message:${input.provider}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
                     ),
                     text: response,
                     streaming: false,
@@ -188,7 +193,7 @@ function makeTestAdapter(input: {
                 },
                 {
                   type: "turn.terminal",
-                  provider: input.provider,
+                  driver: input.driver,
                   providerTurnId,
                   status: "completed",
                 },
@@ -201,11 +206,11 @@ function makeTestAdapter(input: {
           interruptTurn: () => Effect.void,
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
-            unimplemented(input.provider, "readThreadSnapshot unused in provider switch test"),
+            unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
           rollbackThread: () =>
-            unimplemented(input.provider, "rollbackThread unused in provider switch test"),
+            unimplemented(input.driver, "rollbackThread unused in provider switch test"),
           forkThread: () =>
-            unimplemented(input.provider, "forkThread unused in provider switch test"),
+            unimplemented(input.driver, "forkThread unused in provider switch test"),
         };
       }),
   };
@@ -238,7 +243,7 @@ describe("orchestration v2 provider switching", () => {
         const registryLayer = makeProviderAdapterRegistryLayer([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
-            provider: "codex",
+            driver: CODEX_DRIVER,
             capabilities: CodexProviderCapabilitiesV2,
             modelSelection: CODEX_MODEL_SELECTION,
             responseByRunOrdinal: {
@@ -249,7 +254,7 @@ describe("orchestration v2 provider switching", () => {
           }),
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("claudeAgent"),
-            provider: "claudeAgent",
+            driver: CLAUDE_DRIVER,
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: { 2: "claude switched response" },
@@ -340,7 +345,7 @@ describe("orchestration v2 provider switching", () => {
         const turns = yield* Ref.get(capturedTurns);
 
         assert.deepEqual(
-          projection.runs.map((run) => [run.provider, run.status]),
+          projection.runs.map((run) => [run.providerInstanceId, run.status]),
           [
             ["codex", "completed"],
             ["claudeAgent", "completed"],
@@ -373,7 +378,7 @@ describe("orchestration v2 provider switching", () => {
         );
         assert.deepEqual(
           projection.providerThreads.map((providerThread) => [
-            providerThread.provider,
+            providerThread.driver,
             providerThread.status,
             providerThread.handoffIds.length,
           ]),
@@ -407,7 +412,7 @@ describe("orchestration v2 provider switching", () => {
         const registryLayer = makeProviderAdapterRegistryLayer([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
-            provider: "codex",
+            driver: CODEX_DRIVER,
             capabilities: CodexProviderCapabilitiesV2,
             modelSelection: CODEX_MODEL_SELECTION,
             responseByRunOrdinal: { 1: "The release color is violet." },
@@ -415,7 +420,7 @@ describe("orchestration v2 provider switching", () => {
           }),
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("claudeAgent"),
-            provider: "claudeAgent",
+            driver: CLAUDE_DRIVER,
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: { 1: "I will remember violet." },
@@ -504,11 +509,11 @@ describe("orchestration v2 provider switching", () => {
         const targetTurn = turns.find((turn) => turn.threadId === targetThreadId);
 
         assert.deepEqual(
-          targetProjection.runs.map((run) => [run.provider, run.status]),
+          targetProjection.runs.map((run) => [run.providerInstanceId, run.status]),
           [["codex", "completed"]],
         );
         assert.lengthOf(targetProjection.providerThreads, 1);
-        assert.equal(targetProjection.providerThreads[0]?.provider, "codex");
+        assert.equal(targetProjection.providerThreads[0]?.driver, "codex");
         assert.isNull(targetProjection.providerThreads[0]?.forkedFrom);
         assert.deepEqual(
           targetProjection.contextTransfers.map((transfer) => [
@@ -547,7 +552,7 @@ describe("orchestration v2 provider switching", () => {
         const registryLayer = makeProviderAdapterRegistryLayer([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("cursor"),
-            provider: "cursor",
+            driver: CURSOR_DRIVER,
             capabilities: CursorProviderCapabilitiesV2,
             modelSelection: CURSOR_MODEL_SELECTION,
             responseByRunOrdinal: {},
@@ -640,11 +645,11 @@ describe("orchestration v2 provider switching", () => {
         const targetTurn = turns.find((turn) => turn.threadId === targetThreadId);
 
         assert.deepEqual(
-          targetProjection.runs.map((run) => [run.provider, run.status]),
+          targetProjection.runs.map((run) => [run.providerInstanceId, run.status]),
           [["cursor", "completed"]],
         );
         assert.lengthOf(targetProjection.providerThreads, 1);
-        assert.equal(targetProjection.providerThreads[0]?.provider, "cursor");
+        assert.equal(targetProjection.providerThreads[0]?.driver, "cursor");
         assert.isNull(targetProjection.providerThreads[0]?.forkedFrom);
         assert.deepEqual(
           targetProjection.contextTransfers.map((transfer) => [
@@ -680,7 +685,7 @@ describe("orchestration v2 provider switching", () => {
         const registryLayer = makeProviderAdapterRegistryLayer([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
-            provider: "codex",
+            driver: CODEX_DRIVER,
             capabilities: CodexProviderCapabilitiesV2,
             modelSelection: CODEX_MODEL_SELECTION,
             responseByRunOrdinal: {},
@@ -697,7 +702,7 @@ describe("orchestration v2 provider switching", () => {
           }),
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("claudeAgent"),
-            provider: "claudeAgent",
+            driver: CLAUDE_DRIVER,
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: { 2: "I will remember violet." },
@@ -822,7 +827,7 @@ describe("orchestration v2 provider switching", () => {
         );
         const turns = yield* Ref.get(capturedTurns);
         const mergedTurn = turns.findLast(
-          (turn) => turn.threadId === sourceThreadId && turn.provider === "codex",
+          (turn) => turn.threadId === sourceThreadId && turn.driver === "codex",
         );
         const mergeTransfer = projection.contextTransfers.find(
           (transfer) => transfer.type === "merge_back",
@@ -840,8 +845,119 @@ describe("orchestration v2 provider switching", () => {
         assert.include(mergedTurn.text, mergePrompt);
         assert.isDefined(mergeTransfer);
         assert.equal(mergeTransfer.status, "consumed");
-        assert.equal(mergeTransfer.targetProvider, "codex");
+        assert.equal(mergeTransfer.targetProviderInstanceId, "codex");
         assert.equal(mergeTransfer.resolution?.strategy, "fork_delta_context");
+      }),
+    ),
+  );
+
+  it.live("routes two custom instances of the same driver independently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const personalThreadId = ThreadId.make("thread:custom-codex-personal");
+        const workThreadId = ThreadId.make("thread:custom-codex-work");
+        const personalSelection = {
+          instanceId: ProviderInstanceId.make("codex_personal"),
+          model: "gpt-5.4",
+        } satisfies ModelSelection;
+        const workSelection = {
+          instanceId: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5.4",
+        } satisfies ModelSelection;
+        const cwd = yield* checkpointWorkspace("custom-codex-instances");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const registryLayer = makeProviderAdapterRegistryLayer([
+          makeTestAdapter({
+            instanceId: personalSelection.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: personalSelection,
+            responseByRunOrdinal: { 1: "personal response" },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: workSelection.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: workSelection,
+            responseByRunOrdinal: { 1: "work response" },
+            capturedTurns,
+          }),
+        ]);
+
+        const [personal, work] = yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          for (const [targetThreadId, selection, suffix] of [
+            [personalThreadId, personalSelection, "personal"],
+            [workThreadId, workSelection, "work"],
+          ] as const) {
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:custom-codex:${suffix}:create`),
+              threadId: targetThreadId,
+              projectId,
+              title: `Custom Codex ${suffix}`,
+              modelSelection: selection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:custom-codex:${suffix}:message`),
+              threadId: targetThreadId,
+              messageId: MessageId.make(`message:custom-codex:${suffix}`),
+              text: `${suffix} prompt`,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* waitForIdle(targetThreadId);
+          }
+          return yield* Effect.all([
+            orchestrator.getThreadProjection(personalThreadId),
+            orchestrator.getThreadProjection(workThreadId),
+          ]);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "custom-codex-instances",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        );
+
+        assert.equal(personal.runs[0]?.providerInstanceId, personalSelection.instanceId);
+        assert.equal(
+          personal.providerSessions[0]?.providerInstanceId,
+          personalSelection.instanceId,
+        );
+        assert.equal(work.runs[0]?.providerInstanceId, workSelection.instanceId);
+        assert.equal(work.providerSessions[0]?.providerInstanceId, workSelection.instanceId);
+        assert.notEqual(personal.providerSessions[0]?.id, work.providerSessions[0]?.id);
+        assert.deepEqual(
+          (yield* Ref.get(capturedTurns)).map((turn) => [turn.threadId, turn.text]),
+          [
+            [personalThreadId, "personal prompt"],
+            [workThreadId, "work prompt"],
+          ],
+        );
       }),
     ),
   );

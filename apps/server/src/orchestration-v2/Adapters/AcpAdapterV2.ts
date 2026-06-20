@@ -15,7 +15,7 @@ import {
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
-  type ProviderKind,
+  type ProviderDriverKind,
   type ProviderRequestKind,
   type ProviderUserInputAnswers,
   type RuntimeRequestId,
@@ -97,7 +97,7 @@ export interface AcpAdapterV2ExtensionContext {
 }
 
 export interface AcpAdapterV2Flavor {
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly makeRuntime: (
     input: AcpAdapterV2RuntimeInput,
@@ -265,11 +265,11 @@ function acpMcpServers(threadId: ThreadId): ReadonlyArray<EffectAcpSchema.McpSer
   ];
 }
 
-function nativeThreadId(provider: ProviderKind, thread: OrchestrationV2ProviderThread): string {
+function nativeThreadId(driver: ProviderDriverKind, thread: OrchestrationV2ProviderThread): string {
   const id = thread.nativeThreadRef?.nativeId;
   if (id === null || id === undefined || id.trim().length === 0) {
     throw new ProviderAdapterProtocolError({
-      provider,
+      driver,
       detail: `Provider thread ${thread.id} is missing its ACP session id`,
     });
   }
@@ -277,7 +277,8 @@ function nativeThreadId(provider: ProviderKind, thread: OrchestrationV2ProviderT
 }
 
 function makeProviderThread(input: {
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
@@ -288,15 +289,16 @@ function makeProviderThread(input: {
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
-      provider: input.provider,
+      driver: input.driver,
       nativeThreadId: input.nativeThreadId,
     }),
-    provider: input.provider,
+    driver: input.driver,
+    providerInstanceId: input.providerInstanceId,
     providerSessionId: input.providerSessionId,
     appThreadId: input.appThreadId,
     ownerNodeId: input.ownerNodeId ?? null,
     nativeThreadRef: {
-      provider: input.provider,
+      driver: input.driver,
       nativeId: input.nativeThreadId,
       strength: "strong",
     },
@@ -491,9 +493,11 @@ function jsonRpcId(value: unknown): string | number | null {
 
 function elicitationContent(
   answers: ProviderUserInputAnswers,
+  allowedKeys: ReadonlySet<string>,
 ): Record<string, EffectAcpSchema.ElicitationContentValue> {
   const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
   for (const [key, value] of Object.entries(answers)) {
+    if (!allowedKeys.has(key)) continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       content[key] = value;
     } else if (Array.isArray(value)) {
@@ -596,11 +600,11 @@ function oppositeDirection(direction: "incoming" | "outgoing"): "incoming" | "ou
 
 export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV2Shape {
   const { flavor, fileSystem, idAllocator, serverConfig } = options;
-  const provider = flavor.provider;
+  const driver = flavor.driver;
 
   return ProviderAdapterV2.of({
     instanceId: options.instanceId,
-    provider,
+    driver,
     getCapabilities: () => Effect.succeed(flavor.capabilities),
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
@@ -662,7 +666,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               });
               yield* Queue.offer(rawEvents, {
                 id: rawEventId,
-                provider,
+                driver,
+                providerInstanceId: options.instanceId,
                 providerSessionId: input.providerSessionId,
                 sequence: state.sequence,
                 direction: event.direction,
@@ -676,7 +681,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.acp-raw-event-failed", {
-                provider,
+                driver,
                 providerSessionId: input.providerSessionId,
                 cause,
               }),
@@ -744,21 +749,21 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider,
+            driver,
             nativeItemId: segment.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider,
+            driver,
             nativeItemId: segment.nativeItemId,
           });
           const nativeItemRef = {
-            provider,
+            driver,
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider,
+            driver,
             node: {
               id: nodeId,
               threadId: context.input.threadId,
@@ -779,7 +784,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           if (kind === "assistant") {
             const messageId = idAllocator.derive.messageFromProviderItem({
-              provider,
+              driver,
               nativeItemId: segment.nativeItemId,
             });
             const message: OrchestrationV2ConversationMessage = {
@@ -796,10 +801,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               createdAt: segment.startedAt,
               updatedAt: now,
             };
-            yield* emitProviderEvent({ type: "message.updated", provider, message });
+            yield* emitProviderEvent({ type: "message.updated", driver, message });
             yield* emitProviderEvent({
               type: "turn_item.updated",
-              provider,
+              driver,
               turnItem: {
                 id: turnItemId,
                 threadId: context.input.threadId,
@@ -826,7 +831,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider,
+            driver,
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
@@ -896,15 +901,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           context.tools.set(toolCall.toolCallId, toolCall);
           const status = toolStatus(toolCall.status);
           const now = yield* DateTime.now;
-          const nativeItemId = `${nativeThreadId(provider, context.input.providerThread)}:tool:${toolCall.toolCallId}`;
+          const nativeItemId = `${nativeThreadId(driver, context.input.providerThread)}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
-          const nodeId = idAllocator.derive.nodeFromProviderItem({ provider, nativeItemId });
+          const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider,
+            driver,
             nativeItemId,
           });
           const nativeItemRef = {
-            provider,
+            driver,
             nativeId: toolCall.toolCallId,
             strength: "strong" as const,
           };
@@ -914,7 +919,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const title = toolCall.title ?? null;
           yield* emitProviderEvent({
             type: "node.updated",
-            provider,
+            driver,
             node: {
               id: nodeId,
               threadId: context.input.threadId,
@@ -1028,7 +1033,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 ...(rawOutput === undefined ? {} : { output: rawOutput }),
               };
           }
-          yield* emitProviderEvent({ type: "turn_item.updated", provider, turnItem });
+          yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
         });
 
         const emitPlan = Effect.fnUntraced(function* (
@@ -1039,9 +1044,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const nativeItemId = `${context.nativeTurnId}:plan`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const now = yield* DateTime.now;
-          const nodeId = idAllocator.derive.nodeFromProviderItem({ provider, nativeItemId });
+          const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider,
+            driver,
             nativeItemId,
           });
           if (context.plan === null) {
@@ -1049,7 +1054,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               id: yield* idAllocator.allocate.plan({
                 threadId: context.input.threadId,
                 runId: context.input.runId,
-                provider,
+                driver,
               }),
               startedAt: now,
             };
@@ -1066,7 +1071,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   : "pending",
           }));
           const completed = steps.length > 0 && steps.every((step) => step.status === "completed");
-          const nativeItemRef = { provider, nativeId: nativeItemId, strength: "weak" as const };
+          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
           const plan: OrchestrationV2PlanArtifact = {
             id: planId,
             threadId: context.input.threadId,
@@ -1079,7 +1084,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider,
+            driver,
             node: {
               id: nodeId,
               threadId: context.input.threadId,
@@ -1098,10 +1103,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               completedAt: completed ? now : null,
             },
           });
-          yield* emitProviderEvent({ type: "plan.updated", provider, plan });
+          yield* emitProviderEvent({ type: "plan.updated", driver, plan });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider,
+            driver,
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
@@ -1138,7 +1143,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const loadingIndex = startsNew ? current.loadingIndex + 1 : current.loadingIndex;
               const nativeItemId = `${notification.sessionId}:history:${role}:${loadingIndex}`;
               const messageId = idAllocator.derive.messageFromProviderItem({
-                provider,
+                driver,
                 nativeItemId,
               });
               const key = String(messageId);
@@ -1249,7 +1254,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const parsed = parsePermissionRequest(params);
           const nativeRequestId = params.toolCall.toolCallId;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
-            provider,
+            driver,
             providerTurnId: context.providerTurnId,
             nativeRequestId,
           });
@@ -1257,7 +1262,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const now = yield* DateTime.now;
           const nodeId = idAllocator.derive.approvalNode({ requestId });
           const requestKind = providerRequestKind(parsed.kind);
-          const nativeItemRef = { provider, nativeId: nativeRequestId, strength: "weak" as const };
+          const nativeItemRef = { driver, nativeId: nativeRequestId, strength: "weak" as const };
           const ordinal = yield* resolveItemOrdinal(
             context,
             `${context.nativeTurnId}:approval:${nativeRequestId}`,
@@ -1327,18 +1332,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           yield* emitProviderEvent({
             type: "node.updated",
-            provider,
+            driver,
             node,
           });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
-            provider,
+            driver,
             threadId: context.input.threadId,
             runtimeRequest,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider,
+            driver,
             turnItem,
           });
           const resolved = yield* Deferred.await(decision).pipe(
@@ -1394,22 +1399,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const context = yield* activeContext;
           yield* closeTextStreams(context);
           const requestId = yield* idAllocator.allocate.runtimeRequest({
-            provider,
+            driver,
             providerTurnId: context.providerTurnId,
             nativeRequestId: request.nativeRequestId,
           });
           const answers = yield* Deferred.make<ProviderUserInputAnswers | null>();
           const now = yield* DateTime.now;
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider,
+            driver,
             nativeItemId: request.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider,
+            driver,
             nativeItemId: request.nativeItemId,
           });
           const nativeItemRef = {
-            provider,
+            driver,
             nativeId: request.nativeItemId,
             strength: "weak" as const,
           };
@@ -1419,7 +1424,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             nodeId,
             providerTurnId: context.providerTurnId,
             nativeRequestRef: {
-              provider,
+              driver,
               nativeId: request.nativeRequestId,
               strength: "weak",
             },
@@ -1482,18 +1487,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           yield* emitProviderEvent({
             type: "node.updated",
-            provider,
+            driver,
             node,
           });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
-            provider,
+            driver,
             threadId: context.input.threadId,
             runtimeRequest,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider,
+            driver,
             turnItem,
           });
           return yield* Deferred.await(answers).pipe(
@@ -1534,7 +1539,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
                 yield* emitProviderEvent({
                   type: "runtime_request.updated",
-                  provider,
+                  driver,
                   threadId: request.node.threadId,
                   runtimeRequest: {
                     ...request.runtimeRequest,
@@ -1544,7 +1549,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 });
                 yield* emitProviderEvent({
                   type: "node.updated",
-                  provider,
+                  driver,
                   node: {
                     ...request.node,
                     status: "cancelled",
@@ -1553,7 +1558,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 });
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
-                  provider,
+                  driver,
                   turnItem: {
                     ...request.turnItem,
                     status: "cancelled",
@@ -1606,7 +1611,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             return answers === null
               ? ({ action: { action: "cancel" } } as const)
-              : ({ action: { action: "accept", content: elicitationContent(answers) } } as const);
+              : ({
+                  action: {
+                    action: "accept",
+                    content: elicitationContent(
+                      answers,
+                      new Set(Object.keys(params.requestedSchema.properties ?? {})),
+                    ),
+                  },
+                } as const);
           }),
         );
 
@@ -1631,7 +1644,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             return yield* runtime.resumeSession(sessionId);
           }
           return yield* new ProviderAdapterProtocolError({
-            provider,
+            driver,
             detail: `ACP driver cannot load or resume session ${sessionId}`,
           });
         });
@@ -1679,7 +1692,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const createdAt = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
-          provider,
+          driver,
+          providerInstanceId: options.instanceId,
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           model: input.modelSelection.model,
@@ -1699,7 +1713,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           nodeId: context.input.rootNodeId,
           runAttemptId: context.input.attemptId,
           nativeTurnRef: {
-            provider,
+            driver,
             nativeId: context.nativeTurnId,
             strength: "weak",
           },
@@ -1725,13 +1739,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           yield* emitProviderEvent({
             type: "provider_turn.updated",
-            provider,
+            driver,
             threadId: context.input.threadId,
             providerTurn: turn,
           });
           yield* emitProviderEvent({
             type: "provider_thread.updated",
-            provider,
+            driver,
             providerThread: {
               ...context.input.providerThread,
               providerSessionId: input.providerSessionId,
@@ -1744,7 +1758,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
           yield* emitProviderEvent({
             type: "turn.terminal",
-            provider,
+            driver,
             providerTurnId: context.providerTurnId,
             status,
           });
@@ -1761,7 +1775,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
           if (turnInput.message.attachments.length > 0 && !supportsImagePrompts) {
             return yield* new ProviderAdapterProtocolError({
-              provider,
+              driver,
               detail: "ACP driver did not negotiate image prompt support",
             });
           }
@@ -1772,7 +1786,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             if (path === null) {
               return yield* new ProviderAdapterProtocolError({
-                provider,
+                driver,
                 detail: `Invalid attachment id '${attachment.id}'`,
               });
             }
@@ -1780,7 +1794,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterProtocolError({
-                    provider,
+                    driver,
                     detail: `Failed to read attachment '${attachment.id}'`,
                     payload: cause,
                   }),
@@ -1794,7 +1808,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
           if (prompt.length === 0) {
             return yield* new ProviderAdapterProtocolError({
-              provider,
+              driver,
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
@@ -1806,11 +1820,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             const existing = yield* Ref.get(activeTurn);
             if (existing !== null) {
               return yield* new ProviderAdapterProtocolError({
-                provider,
+                driver,
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
               });
             }
-            const requestedSessionId = nativeThreadId(provider, turnInput.providerThread);
+            const requestedSessionId = nativeThreadId(driver, turnInput.providerThread);
             if ((yield* Ref.get(activeSessionId)) !== requestedSessionId) {
               const activated = yield* activateSession(requestedSessionId);
               yield* Ref.set(activeSessionId, activated.sessionId);
@@ -1819,7 +1833,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             const prompt = yield* resolvePromptParts(turnInput);
             const startedAt = yield* DateTime.now;
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
-            const providerTurnId = idAllocator.derive.providerTurn({ provider, nativeTurnId });
+            const providerTurnId = idAllocator.derive.providerTurn({ driver, nativeTurnId });
             const completed = yield* Deferred.make<void, never>();
             const context: ActiveAcpTurn = {
               input: turnInput,
@@ -1844,13 +1858,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             yield* emitProviderEvent({
               type: "provider_turn.updated",
-              provider,
+              driver,
               threadId: turnInput.threadId,
               providerTurn: runningTurn,
             });
             yield* emitProviderEvent({
               type: "provider_thread.updated",
-              provider,
+              driver,
               providerThread: {
                 ...turnInput.providerThread,
                 providerSessionId: input.providerSessionId,
@@ -1886,7 +1900,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 finalizeTurn(context, context.interrupted ? "interrupted" : "failed").pipe(
                   Effect.andThen(
                     Effect.logWarning("orchestration-v2.acp-prompt-failed", {
-                      provider,
+                      driver,
                       providerSessionId: input.providerSessionId,
                       providerThreadId: turnInput.providerThread.id,
                       providerTurnId,
@@ -1903,7 +1917,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterTurnStartError({
-                    provider,
+                    driver,
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
@@ -1937,7 +1951,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const sessionRuntime: ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
-          provider,
+          driver,
           providerSessionId: input.providerSessionId,
           providerSession,
           rawEvents: Stream.fromEffectRepeat(Queue.take(rawEvents)),
@@ -1948,12 +1962,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const sessionId = yield* Ref.get(activeSessionId);
               if (sessionId === null) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: "ACP runtime did not produce a session id",
                 });
               }
               return makeProviderThread({
-                provider,
+                driver,
+                providerInstanceId: options.instanceId,
                 idAllocator,
                 appThreadId: threadInput.threadId,
                 providerSessionId: input.providerSessionId,
@@ -1966,7 +1981,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterEnsureThreadError({
-                      provider,
+                      driver,
                       threadId: threadInput.threadId,
                       cause,
                     }),
@@ -1975,7 +1990,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           ),
           resumeThread: Effect.fn("AcpAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
-              const sessionId = nativeThreadId(provider, threadInput.providerThread);
+              const sessionId = nativeThreadId(driver, threadInput.providerThread);
               if ((yield* Ref.get(activeSessionId)) !== sessionId) {
                 yield* Ref.set(snapshot, {
                   order: [],
@@ -2000,7 +2015,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterResumeThreadError({
-                      provider,
+                      driver,
                       providerSessionId: input.providerSessionId,
                       providerThreadId: threadInput.providerThread.id,
                       cause,
@@ -2012,7 +2027,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           steerTurn: (turnInput) =>
             Effect.fail(
               new ProviderAdapterSteerRunUnsupportedError({
-                provider,
+                driver,
                 providerThreadId: turnInput.providerThread.id,
               }),
             ),
@@ -2021,7 +2036,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const context = yield* Ref.get(activeTurn);
               if (context?.providerTurnId !== turnInput.providerTurnId) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: `ACP provider turn ${turnInput.providerTurnId} is not active`,
                 });
               }
@@ -2032,7 +2047,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               );
               if (Option.isNone(stopped)) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
                 });
               }
@@ -2042,7 +2057,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterInterruptError({
-                      provider,
+                      driver,
                       providerThreadId: turnInput.providerThread.id,
                       providerTurnId: turnInput.providerTurnId,
                       cause,
@@ -2057,7 +2072,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               );
               if (pending === undefined) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: `No pending ACP runtime request ${requestInput.requestId}`,
                 });
               }
@@ -2067,7 +2082,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               }
               if (requestInput.decision === undefined) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: `ACP approval request ${requestInput.requestId} requires a decision`,
                 });
               }
@@ -2076,7 +2091,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterRuntimeRequestResponseError({
-                    provider,
+                    driver,
                     requestId: requestInput.requestId,
                     cause,
                   }),
@@ -2084,11 +2099,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ),
           readThreadSnapshot: Effect.fn("AcpAdapterV2.readThreadSnapshot")(
             function* (snapshotInput) {
-              const sessionId = nativeThreadId(provider, snapshotInput.providerThread);
+              const sessionId = nativeThreadId(driver, snapshotInput.providerThread);
               if ((yield* Ref.get(activeSessionId)) !== sessionId) {
                 if (!capabilities.threads.canReadThreadSnapshot) {
                   return yield* new ProviderAdapterProtocolError({
-                    provider,
+                    driver,
                     detail: "ACP driver does not support session/load snapshots",
                   });
                 }
@@ -2124,7 +2139,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterReadThreadSnapshotError({
-                      provider,
+                      driver,
                       providerThreadId: snapshotInput.providerThread.id,
                       cause,
                     }),
@@ -2134,7 +2149,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           rollbackThread: (rollbackInput) =>
             Effect.fail(
               new ProviderAdapterRollbackThreadError({
-                provider,
+                driver,
                 providerThreadId: rollbackInput.providerThread.id,
                 checkpointId: rollbackInput.target.checkpointId,
                 cause: "ACP does not define conversation rollback.",
@@ -2144,22 +2159,23 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             function* (forkInput) {
               if (!capabilities.threads.canForkThread) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: "ACP driver did not negotiate session/fork",
                 });
               }
               if (forkInput.providerTurnId !== undefined) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider,
+                  driver,
                   detail: "ACP session/fork can only fork the current session head",
                 });
               }
-              const sourceSessionId = nativeThreadId(provider, forkInput.sourceProviderThread);
+              const sourceSessionId = nativeThreadId(driver, forkInput.sourceProviderThread);
               const forked = yield* runtime.forkSession(sourceSessionId);
               yield* Ref.set(activeSessionId, forked.sessionId);
               const now = yield* DateTime.now;
               return makeProviderThread({
-                provider,
+                driver,
+                providerInstanceId: options.instanceId,
                 idAllocator,
                 appThreadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
@@ -2181,7 +2197,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterForkThreadError({
-                      provider,
+                      driver,
                       providerThreadId: forkInput.sourceProviderThread.id,
                       cause,
                     }),
@@ -2196,7 +2212,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({
-                provider,
+                driver,
                 providerSessionId: input.providerSessionId,
                 cause,
               }),

@@ -8,7 +8,7 @@ import {
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
-  type ProviderKind,
+  ProviderDriverKind,
   type ProviderReplayTranscript,
   ThreadId,
 } from "@t3tools/contracts";
@@ -53,30 +53,30 @@ const SECOND_SIBLING_MERGE_USER_TEXT =
   "Retain the second transferred marker for later. Respond with exactly: second merge delta stored";
 
 interface ProviderVariant {
-  readonly provider: ProviderKind;
+  readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
 }
 
 const PROVIDERS: ReadonlyArray<ProviderVariant> = [
   {
-    provider: "codex",
+    driver: ProviderDriverKind.make("codex"),
     modelSelection: CODEX_MODEL_SELECTION,
   },
   {
-    provider: "claudeAgent",
+    driver: ProviderDriverKind.make("claudeAgent"),
     modelSelection: CLAUDE_MODEL_SELECTION,
   },
 ];
 
-function transcriptPath(scenario: string, provider: ProviderKind): string {
-  const fileName = provider === "codex" ? "codex_transcript.ndjson" : "claude_transcript.ndjson";
+function transcriptPath(scenario: string, driver: ProviderDriverKind): string {
+  const fileName = driver === "codex" ? "codex_transcript.ndjson" : "claude_transcript.ndjson";
   return `${import.meta.dirname}/fixtures/${scenario}/${fileName}`;
 }
 
-function readTranscript(scenario: string, provider: ProviderKind) {
+function readTranscript(scenario: string, driver: ProviderDriverKind) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(transcriptPath(scenario, provider));
+    const text = yield* fs.readFileString(transcriptPath(scenario, driver));
     return yield* decodeProviderReplayNdjson(text);
   });
 }
@@ -200,24 +200,24 @@ function makeCreateCommand(input: {
 
 describe("orchestration V2 merge-back provider replay", () => {
   for (const variant of PROVIDERS) {
-    it.effect(`merges one fork delta back into the original ${variant.provider} thread`, () =>
+    it.effect(`merges one fork delta back into the original ${variant.driver} thread`, () =>
       Effect.gen(function* () {
-        const rawTranscript = yield* readTranscript("thread_merge_back_continue", variant.provider);
+        const rawTranscript = yield* readTranscript("thread_merge_back_continue", variant.driver);
         const materialized = yield* Effect.gen(function* () {
           const ids = yield* IdAllocatorV2;
           const projectId = yield* ids.allocate.project({
-            fixtureName: `thread-merge-back-${variant.provider}`,
+            fixtureName: `thread-merge-back-${variant.driver}`,
           });
           const sourceThreadId = yield* ids.allocate.thread({
-            fixtureName: `thread-merge-back-${variant.provider}-source`,
+            fixtureName: `thread-merge-back-${variant.driver}-source`,
             projectId,
           });
-          const forkThreadId = ThreadId.make(`thread-merge-back-${variant.provider}-fork`);
+          const forkThreadId = ThreadId.make(`thread-merge-back-${variant.driver}-fork`);
           const forkRunId = ids.derive.run({ threadId: forkThreadId, ordinal: 1 });
           const commands = [
             makeCreateCommand({
               commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.provider}`,
+                fixtureName: `thread-merge-back-${variant.driver}`,
                 commandName: "create",
               }),
               threadId: sourceThreadId,
@@ -229,11 +229,11 @@ describe("orchestration V2 merge-back provider replay", () => {
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.provider}`,
+                fixtureName: `thread-merge-back-${variant.driver}`,
                 commandName: "source",
               }),
               threadId: sourceThreadId,
-              messageId: MessageId.make(`message-merge-source-${variant.provider}`),
+              messageId: MessageId.make(`message-merge-source-${variant.driver}`),
               text: THREAD_MERGE_BACK_SOURCE_PROMPT,
               attachments: [],
               modelSelection: variant.modelSelection,
@@ -243,7 +243,7 @@ describe("orchestration V2 merge-back provider replay", () => {
               type: "thread.fork",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make(`command-merge-fork-${variant.provider}`),
+              commandId: CommandId.make(`command-merge-fork-${variant.driver}`),
               sourceThreadId,
               targetThreadId: forkThreadId,
               sourcePoint: { type: "latest_stable" },
@@ -254,11 +254,11 @@ describe("orchestration V2 merge-back provider replay", () => {
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.provider}`,
+                fixtureName: `thread-merge-back-${variant.driver}`,
                 commandName: "fork-delta",
               }),
               threadId: forkThreadId,
-              messageId: MessageId.make(`message-merge-fork-${variant.provider}`),
+              messageId: MessageId.make(`message-merge-fork-${variant.driver}`),
               text: THREAD_MERGE_BACK_FORK_PROMPT,
               attachments: [],
               modelSelection: variant.modelSelection,
@@ -268,7 +268,7 @@ describe("orchestration V2 merge-back provider replay", () => {
               type: "thread.merge_back",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make(`command-merge-back-${variant.provider}`),
+              commandId: CommandId.make(`command-merge-back-${variant.driver}`),
               sourceThreadId: forkThreadId,
               targetThreadId: sourceThreadId,
               sourcePoint: { type: "run", runId: forkRunId },
@@ -278,11 +278,11 @@ describe("orchestration V2 merge-back provider replay", () => {
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.provider}`,
+                fixtureName: `thread-merge-back-${variant.driver}`,
                 commandName: "consume-merge",
               }),
               threadId: sourceThreadId,
-              messageId: MessageId.make(`message-consume-merge-${variant.provider}`),
+              messageId: MessageId.make(`message-consume-merge-${variant.driver}`),
               text: MERGE_BACK_USER_TEXT,
               attachments: [],
               modelSelection: variant.modelSelection,
@@ -293,11 +293,11 @@ describe("orchestration V2 merge-back provider replay", () => {
               createdBy: "user",
               creationSource: "web",
               commandId: yield* ids.allocate.command({
-                fixtureName: `thread-merge-back-${variant.provider}`,
+                fixtureName: `thread-merge-back-${variant.driver}`,
                 commandName: "recall",
               }),
               threadId: sourceThreadId,
-              messageId: MessageId.make(`message-merge-recall-${variant.provider}`),
+              messageId: MessageId.make(`message-merge-recall-${variant.driver}`),
               text: THREAD_MERGE_BACK_RECALL_PROMPT,
               attachments: [],
               modelSelection: variant.modelSelection,
@@ -317,7 +317,7 @@ describe("orchestration V2 merge-back provider replay", () => {
           [THREAD_MERGE_BACK_HANDOFF_PROMPT, generatedProviderMessage],
         ]);
         const cwd = yield* Effect.acquireRelease(
-          Effect.promise(() => makeCheckpointWorkspace(`merge-back-${variant.provider}`)),
+          Effect.promise(() => makeCheckpointWorkspace(`merge-back-${variant.driver}`)),
           (directory) =>
             Effect.service(FileSystem.FileSystem).pipe(
               Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
@@ -325,7 +325,7 @@ describe("orchestration V2 merge-back provider replay", () => {
             ),
         );
         const scenario = {
-          name: `thread_merge_back_continue/${variant.provider}`,
+          name: `thread_merge_back_continue/${variant.driver}`,
           commands: materialized.commands,
           steps: [
             { type: "dispatch" as const, command: materialized.commands[0]!, await: true },
@@ -345,7 +345,7 @@ describe("orchestration V2 merge-back provider replay", () => {
           runtimePolicyOverride: { cwd },
         };
         const result =
-          variant.provider === "codex"
+          variant.driver === "codex"
             ? yield* runOrchestratorV2ProviderReplayScenario(
                 {
                   ...scenario,
@@ -392,12 +392,12 @@ describe("orchestration V2 merge-back provider replay", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
-    it.effect(`merges two sibling fork deltas into the original ${variant.provider} thread`, () =>
+    it.effect(`merges two sibling fork deltas into the original ${variant.driver} thread`, () =>
       Effect.gen(function* () {
-        const rawTranscript = yield* readTranscript("thread_merge_back_siblings", variant.provider);
+        const rawTranscript = yield* readTranscript("thread_merge_back_siblings", variant.driver);
         const materialized = yield* Effect.gen(function* () {
           const ids = yield* IdAllocatorV2;
-          const fixtureName = `thread-merge-back-siblings-${variant.provider}`;
+          const fixtureName = `thread-merge-back-siblings-${variant.driver}`;
           const projectId = yield* ids.allocate.project({ fixtureName });
           const sourceThreadId = yield* ids.allocate.thread({
             fixtureName: `${fixtureName}-source`,
@@ -559,7 +559,7 @@ describe("orchestration V2 merge-back provider replay", () => {
           ],
         ]);
         const cwd = yield* Effect.acquireRelease(
-          Effect.promise(() => makeCheckpointWorkspace(`merge-back-siblings-${variant.provider}`)),
+          Effect.promise(() => makeCheckpointWorkspace(`merge-back-siblings-${variant.driver}`)),
           (directory) =>
             Effect.service(FileSystem.FileSystem).pipe(
               Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
@@ -587,7 +587,7 @@ describe("orchestration V2 merge-back provider replay", () => {
           { type: "await_thread_idle" as const, threadId: materialized.sourceThreadId },
         ];
         const scenario = {
-          name: `thread_merge_back_siblings/${variant.provider}`,
+          name: `thread_merge_back_siblings/${variant.driver}`,
           commands: materialized.commands,
           steps,
           projectionThreadIds: [
@@ -598,7 +598,7 @@ describe("orchestration V2 merge-back provider replay", () => {
           runtimePolicyOverride: { cwd },
         };
         const result =
-          variant.provider === "codex"
+          variant.driver === "codex"
             ? yield* runOrchestratorV2ProviderReplayScenario(
                 {
                   ...scenario,

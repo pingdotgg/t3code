@@ -24,7 +24,6 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
-  ProviderDriverKind,
   type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -87,7 +86,7 @@ import {
 
 export { CURSOR_PROVIDER } from "./CursorAgentSdk.ts";
 
-export const CURSOR_DRIVER_KIND = ProviderDriverKind.make(CURSOR_PROVIDER);
+export const CURSOR_DRIVER_KIND = CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
 const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
 
@@ -241,13 +240,15 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
 
 function providerSession(input: {
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly providerInstanceId: ProviderInstanceId;
   readonly cwd: string | null;
   readonly model: string;
   readonly now: DateTime.Utc;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
-    provider: CURSOR_PROVIDER,
+    driver: CURSOR_PROVIDER,
+    providerInstanceId: input.providerInstanceId,
     status: "ready",
     cwd: input.cwd ?? process.cwd(),
     model: input.model,
@@ -260,6 +261,7 @@ function providerSession(input: {
 
 function makeProviderThread(input: {
   readonly idAllocator: IdAllocatorV2Shape;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly nativeThreadId: string;
@@ -269,15 +271,16 @@ function makeProviderThread(input: {
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
-      provider: CURSOR_PROVIDER,
+      driver: CURSOR_PROVIDER,
       nativeThreadId: input.nativeThreadId,
     }),
-    provider: CURSOR_PROVIDER,
+    driver: CURSOR_PROVIDER,
+    providerInstanceId: input.providerInstanceId,
     providerSessionId: input.providerSessionId,
     appThreadId: input.appThreadId,
     ownerNodeId: input.ownerNodeId ?? null,
     nativeThreadRef: {
-      provider: CURSOR_PROVIDER,
+      driver: CURSOR_PROVIDER,
       nativeId: input.nativeThreadId,
       strength: "strong",
     },
@@ -296,7 +299,7 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
   const id = providerThread.nativeThreadRef?.nativeId;
   if (id === null || id === undefined) {
     throw new ProviderAdapterProtocolError({
-      provider: CURSOR_PROVIDER,
+      driver: CURSOR_PROVIDER,
       detail: `Provider thread ${providerThread.id} is missing its Cursor agent id.`,
     });
   }
@@ -826,7 +829,7 @@ export function makeCursorAdapterV2(
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
-    provider: CURSOR_PROVIDER,
+    driver: CURSOR_PROVIDER,
     getCapabilities: () => Effect.succeed(CursorProviderCapabilitiesV2),
     openSession: Effect.fn("CursorAdapterV2.openSession")(
       function* (input: ProviderAdapterV2OpenSessionInput) {
@@ -834,6 +837,7 @@ export function makeCursorAdapterV2(
         const createdAt = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
+          providerInstanceId: adapterOptions.instanceId,
           cwd: input.runtimePolicy.cwd,
           model: input.modelSelection.model,
           now: createdAt,
@@ -882,7 +886,7 @@ export function makeCursorAdapterV2(
           const planId = yield* idAllocator.allocate.plan({
             threadId: context.input.threadId,
             runId: context.input.runId,
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
           });
           yield* Ref.update(planIds, (current) => {
             const updated = new Map(current);
@@ -912,25 +916,25 @@ export function makeCursorAdapterV2(
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: segment.nativeItemId,
           });
           const messageId = idAllocator.derive.messageFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: segment.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: segment.nativeItemId,
           });
           const nativeItemRef = {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: nodeId,
               threadId: context.input.threadId,
@@ -951,7 +955,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "message.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             message: {
               createdBy: "agent",
               creationSource: "provider",
@@ -969,7 +973,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
@@ -1004,21 +1008,21 @@ export function makeCursorAdapterV2(
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: segment.nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: segment.nativeItemId,
           });
           const nativeItemRef = {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: nodeId,
               threadId: context.input.threadId,
@@ -1039,7 +1043,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
@@ -1105,15 +1109,15 @@ export function makeCursorAdapterV2(
           const failed = input.completed && cursorToolFailed(toolCall);
           const status = input.completed ? (failed ? "failed" : "completed") : "running";
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: active.callId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId: active.callId,
           });
           const nativeItemRef = {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: active.callId,
             strength: "strong" as const,
           };
@@ -1236,12 +1240,12 @@ export function makeCursorAdapterV2(
           }
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem,
           });
         });
@@ -1282,16 +1286,16 @@ export function makeCursorAdapterV2(
           const planId = yield* resolvePlanId(input.context, nativeItemId);
           const ordinal = yield* resolveItemOrdinal(input.context, nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId,
           });
           const status = input.failed ? "failed" : input.completed ? "completed" : "running";
           const nativeItemRef = {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: input.callId,
             strength: "strong" as const,
           };
@@ -1306,7 +1310,7 @@ export function makeCursorAdapterV2(
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: nodeId,
               threadId: input.context.input.threadId,
@@ -1327,12 +1331,12 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "plan.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             plan,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: input.context.input.threadId,
@@ -1368,23 +1372,23 @@ export function makeCursorAdapterV2(
           const planId = yield* resolvePlanId(input.context, nativeItemId);
           const ordinal = yield* resolveItemOrdinal(input.context, nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId,
           });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeItemId,
           });
           const status = input.failed ? "failed" : input.completed ? "completed" : "running";
           const steps = cursorTodoSteps(input.toolCall);
           const nativeItemRef = {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: input.callId,
             strength: "strong" as const,
           };
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: nodeId,
               threadId: input.context.input.threadId,
@@ -1405,7 +1409,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "plan.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             plan: {
               id: planId,
               threadId: input.context.input.threadId,
@@ -1418,7 +1422,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: input.context.input.threadId,
@@ -1467,19 +1471,19 @@ export function makeCursorAdapterV2(
           const nodeId =
             existing?.task.id ??
             idAllocator.derive.nodeFromProviderItem({
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               nativeItemId,
             });
           const childRootNodeId =
             existing?.childRootNodeId ??
             idAllocator.derive.nodeFromProviderItem({
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               nativeItemId: `${nativeItemId}:child-root`,
             });
           const childThreadId =
             existing?.childThreadId ??
             idAllocator.derive.threadFromProviderThread({
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               nativeThreadId: `${input.context.run.runId}:task:${input.callId}`,
             });
           const task: OrchestrationV2Subagent = {
@@ -1490,11 +1494,12 @@ export function makeCursorAdapterV2(
               parentNodeId: input.context.input.rootNodeId,
               origin: "provider_native" as const,
               createdBy: "agent" as const,
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
+              providerInstanceId: input.context.input.modelSelection.instanceId,
               providerThreadId: null,
               childThreadId,
               nativeTaskRef: {
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 nativeId: input.callId,
                 strength: "strong" as const,
               },
@@ -1505,7 +1510,7 @@ export function makeCursorAdapterV2(
               startedAt: now,
             }),
             nativeTaskRef: {
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               nativeId: input.callId,
               strength: "strong" as const,
             },
@@ -1522,7 +1527,7 @@ export function makeCursorAdapterV2(
             turnItemId:
               existing?.turnItemId ??
               idAllocator.derive.turnItemFromProviderItem({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 nativeItemId,
               }),
             turnItemOrdinal:
@@ -1535,7 +1540,7 @@ export function makeCursorAdapterV2(
           if (existing === undefined) {
             yield* emitProviderEvent({
               type: "app_thread.created",
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               appThread: makeSubagentChildThread({
                 parentThread: input.context.input.appThread,
                 childThreadId,
@@ -1557,11 +1562,11 @@ export function makeCursorAdapterV2(
             const promptNativeId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
               messageId: idAllocator.derive.messageFromProviderItem({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 nativeItemId: promptNativeId,
               }),
               turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 nativeItemId: promptNativeId,
               }),
               threadId: childThreadId,
@@ -1569,7 +1574,7 @@ export function makeCursorAdapterV2(
               providerThreadId: null,
               providerTurnId: null,
               nativeItemRef: {
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 nativeId: promptNativeId,
                 strength: "weak",
               },
@@ -1580,19 +1585,19 @@ export function makeCursorAdapterV2(
             });
             yield* emitProviderEvent({
               type: "message.updated",
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               message: promptArtifacts.message,
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               turnItem: promptArtifacts.turnItem,
             });
           }
 
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: nodeId,
               threadId: input.context.input.threadId,
@@ -1613,7 +1618,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "node.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             node: {
               id: childRootNodeId,
               threadId: childThreadId,
@@ -1634,12 +1639,12 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "subagent.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             subagent: task,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             turnItem: {
               id: subagent.turnItemId,
               threadId: input.context.input.threadId,
@@ -1658,7 +1663,8 @@ export function makeCursorAdapterV2(
               type: "subagent",
               subagentId: task.id,
               origin: task.origin,
-              provider: task.provider,
+              driver: task.driver,
+              providerInstanceId: task.providerInstanceId,
               childThreadId,
               prompt: task.prompt,
               result: task.result,
@@ -1692,11 +1698,11 @@ export function makeCursorAdapterV2(
               const resultNativeId = `${nativeItemId}:result`;
               const resultArtifacts = makeSubagentConversationArtifacts({
                 messageId: idAllocator.derive.messageFromProviderItem({
-                  provider: CURSOR_PROVIDER,
+                  driver: CURSOR_PROVIDER,
                   nativeItemId: resultNativeId,
                 }),
                 turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                  provider: CURSOR_PROVIDER,
+                  driver: CURSOR_PROVIDER,
                   nativeItemId: resultNativeId,
                 }),
                 threadId: childThreadId,
@@ -1704,7 +1710,7 @@ export function makeCursorAdapterV2(
                 providerThreadId: null,
                 providerTurnId: null,
                 nativeItemRef: {
-                  provider: CURSOR_PROVIDER,
+                  driver: CURSOR_PROVIDER,
                   nativeId: resultNativeId,
                   strength: "weak",
                 },
@@ -1715,12 +1721,12 @@ export function makeCursorAdapterV2(
               });
               yield* emitProviderEvent({
                 type: "message.updated",
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 message: resultArtifacts.message,
               });
               yield* emitProviderEvent({
                 type: "turn_item.updated",
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 turnItem: resultArtifacts.turnItem,
               });
             }
@@ -1863,7 +1869,7 @@ export function makeCursorAdapterV2(
           nodeId: input.context.input.rootNodeId,
           runAttemptId: input.context.input.attemptId,
           nativeTurnRef: {
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             nativeId: input.context.run.runId,
             strength: "strong",
           },
@@ -1893,7 +1899,7 @@ export function makeCursorAdapterV2(
           yield* completeAssistant(input.context);
           yield* emitProviderEvent({
             type: "provider_turn.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             providerTurn: providerTurnPayload({
               context: input.context,
               status: input.status,
@@ -1902,7 +1908,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "provider_thread.updated",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             providerThread: {
               ...input.context.input.providerThread,
               providerSessionId: session.id,
@@ -1916,7 +1922,7 @@ export function makeCursorAdapterV2(
           });
           yield* emitProviderEvent({
             type: "turn.terminal",
-            provider: CURSOR_PROVIDER,
+            driver: CURSOR_PROVIDER,
             providerTurnId: input.context.providerTurnId,
             status: input.status,
           });
@@ -1998,7 +2004,7 @@ export function makeCursorAdapterV2(
                 });
                 if (path === null) {
                   return yield* new ProviderAdapterProtocolError({
-                    provider: CURSOR_PROVIDER,
+                    driver: CURSOR_PROVIDER,
                     detail: `Invalid attachment id '${attachment.id}'.`,
                   });
                 }
@@ -2006,7 +2012,7 @@ export function makeCursorAdapterV2(
                   Effect.mapError(
                     (cause) =>
                       new ProviderAdapterProtocolError({
-                        provider: CURSOR_PROVIDER,
+                        driver: CURSOR_PROVIDER,
                         detail: `Failed to read attachment '${attachment.id}'.`,
                         payload: cause,
                       }),
@@ -2021,7 +2027,7 @@ export function makeCursorAdapterV2(
           );
           if (turnInput.message.text.length === 0 && images.length === 0) {
             return yield* new ProviderAdapterProtocolError({
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
@@ -2038,7 +2044,7 @@ export function makeCursorAdapterV2(
             const current = yield* Ref.get(activeTurn);
             if (current !== null) {
               return yield* new ProviderAdapterProtocolError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 detail: `Cursor provider turn ${current.providerTurnId} is still active.`,
               });
             }
@@ -2073,7 +2079,7 @@ export function makeCursorAdapterV2(
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               nativeTurnId: sdkRun.runId,
             });
             context = {
@@ -2098,7 +2104,7 @@ export function makeCursorAdapterV2(
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               providerTurn: providerTurnPayload({
                 context,
                 status: "running",
@@ -2107,7 +2113,7 @@ export function makeCursorAdapterV2(
             });
             yield* emitProviderEvent({
               type: "provider_thread.updated",
-              provider: CURSOR_PROVIDER,
+              driver: CURSOR_PROVIDER,
               providerThread: {
                 ...turnInput.providerThread,
                 providerSessionId: session.id,
@@ -2167,7 +2173,7 @@ export function makeCursorAdapterV2(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterTurnStartError({
-                    provider: CURSOR_PROVIDER,
+                    driver: CURSOR_PROVIDER,
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
@@ -2196,7 +2202,7 @@ export function makeCursorAdapterV2(
 
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
-          provider: CURSOR_PROVIDER,
+          driver: CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
           rawEvents: Stream.empty,
@@ -2212,6 +2218,7 @@ export function makeCursorAdapterV2(
               const now = yield* DateTime.now;
               return makeProviderThread({
                 idAllocator,
+                providerInstanceId: adapterOptions.instanceId,
                 appThreadId: threadInput.threadId,
                 providerSessionId: input.providerSessionId,
                 nativeThreadId: opened.nativeThreadId,
@@ -2223,7 +2230,7 @@ export function makeCursorAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterEnsureThreadError({
-                      provider: CURSOR_PROVIDER,
+                      driver: CURSOR_PROVIDER,
                       threadId: threadInput.threadId,
                       cause,
                     }),
@@ -2253,7 +2260,7 @@ export function makeCursorAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterResumeThreadError({
-                      provider: CURSOR_PROVIDER,
+                      driver: CURSOR_PROVIDER,
                       providerSessionId: input.providerSessionId,
                       providerThreadId: threadInput.providerThread.id,
                       cause,
@@ -2265,7 +2272,7 @@ export function makeCursorAdapterV2(
           steerTurn: (turnInput) =>
             Effect.fail(
               new ProviderAdapterSteerRunUnsupportedError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 providerThreadId: turnInput.providerThread.id,
               }),
             ),
@@ -2274,7 +2281,7 @@ export function makeCursorAdapterV2(
               const context = yield* Ref.get(activeTurn);
               if (context?.providerTurnId !== turnInput.providerTurnId) {
                 return yield* new ProviderAdapterProtocolError({
-                  provider: CURSOR_PROVIDER,
+                  driver: CURSOR_PROVIDER,
                   detail: `Cursor provider turn ${turnInput.providerTurnId} is not active.`,
                 });
               }
@@ -2298,7 +2305,7 @@ export function makeCursorAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterInterruptError({
-                      provider: CURSOR_PROVIDER,
+                      driver: CURSOR_PROVIDER,
                       providerThreadId: turnInput.providerThread.id,
                       providerTurnId: turnInput.providerTurnId,
                       cause,
@@ -2309,10 +2316,10 @@ export function makeCursorAdapterV2(
           respondToRuntimeRequest: (requestInput) =>
             Effect.fail(
               new ProviderAdapterRuntimeRequestResponseError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 requestId: requestInput.requestId,
                 cause: new ProviderAdapterProtocolError({
-                  provider: CURSOR_PROVIDER,
+                  driver: CURSOR_PROVIDER,
                   detail: "Cursor Agent SDK does not expose interactive approval requests.",
                 }),
               }),
@@ -2341,7 +2348,7 @@ export function makeCursorAdapterV2(
                       createdBy: message.type === "user" ? "user" : "agent",
                       creationSource: "provider",
                       id: idAllocator.derive.messageFromProviderItem({
-                        provider: CURSOR_PROVIDER,
+                        driver: CURSOR_PROVIDER,
                         nativeItemId: message.uuid,
                       }),
                       threadId,
@@ -2378,7 +2385,7 @@ export function makeCursorAdapterV2(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterReadThreadSnapshotError({
-                      provider: CURSOR_PROVIDER,
+                      driver: CURSOR_PROVIDER,
                       providerThreadId: snapshotInput.providerThread.id,
                       cause,
                     }),
@@ -2388,7 +2395,7 @@ export function makeCursorAdapterV2(
           rollbackThread: (rollbackInput) =>
             Effect.fail(
               new ProviderAdapterRollbackThreadError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 providerThreadId: rollbackInput.providerThread.id,
                 checkpointId: rollbackInput.target.checkpointId,
                 cause: "Cursor Agent SDK does not expose conversation rollback.",
@@ -2397,7 +2404,7 @@ export function makeCursorAdapterV2(
           forkThread: (forkInput) =>
             Effect.fail(
               new ProviderAdapterForkThreadError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 providerThreadId: forkInput.sourceProviderThread.id,
                 cause: "Cursor Agent SDK does not expose native agent forks.",
               }),
@@ -2410,7 +2417,7 @@ export function makeCursorAdapterV2(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterOpenSessionError({
-                provider: CURSOR_PROVIDER,
+                driver: CURSOR_PROVIDER,
                 providerSessionId: input.providerSessionId,
                 cause,
               }),

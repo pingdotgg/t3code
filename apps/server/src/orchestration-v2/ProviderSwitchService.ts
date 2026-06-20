@@ -1,78 +1,87 @@
 import {
   ModelSelection,
-  OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
+  ProviderSessionId,
   ProviderThreadId,
-  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
-export const ProviderSwitchStrategyV2 = Schema.Literals([
-  "resume_with_delta_handoff",
-  "resume_with_full_handoff",
-  "new_thread_with_full_handoff",
-]);
-export type ProviderSwitchStrategyV2 = typeof ProviderSwitchStrategyV2.Type;
-
-export const ProviderSwitchPlanV2 = Schema.Struct({
-  strategy: ProviderSwitchStrategyV2,
-  targetProviderThreadId: Schema.NullOr(ProviderThreadId),
-  handoff: Schema.NullOr(OrchestrationV2ContextHandoff),
-});
-export type ProviderSwitchPlanV2 = typeof ProviderSwitchPlanV2.Type;
+export interface ProviderSwitchPlanV2 {
+  readonly instanceChanged: boolean;
+  readonly modelChanged: boolean;
+  readonly targetProviderThreadId: ProviderThreadId | null;
+  readonly releaseProviderSessionIds: ReadonlyArray<ProviderSessionId>;
+}
 
 export class ProviderSwitchPlanError extends Schema.TaggedErrorClass<ProviderSwitchPlanError>()(
   "ProviderSwitchPlanError",
   {
     threadId: ThreadId,
-    targetRunId: RunId,
-    targetProvider: Schema.String,
+    targetProviderInstanceId: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
-) {
-  override get message(): string {
-    return `Failed to plan provider switch to ${this.targetProvider} for run ${this.targetRunId}.`;
-  }
-}
-
-export class ProviderSwitchApplyError extends Schema.TaggedErrorClass<ProviderSwitchApplyError>()(
-  "ProviderSwitchApplyError",
-  {
-    threadId: ThreadId,
-    targetRunId: RunId,
-    strategy: ProviderSwitchStrategyV2,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Failed to apply provider switch strategy ${this.strategy} for run ${this.targetRunId}.`;
-  }
-}
-
-export const ProviderSwitchServiceV2Error = Schema.Union([
-  ProviderSwitchPlanError,
-  ProviderSwitchApplyError,
-]);
-export type ProviderSwitchServiceV2Error = typeof ProviderSwitchServiceV2Error.Type;
+) {}
 
 export interface ProviderSwitchServiceV2Shape {
   readonly plan: (input: {
     readonly projection: OrchestrationV2ThreadProjection;
-    readonly targetRunId: RunId;
     readonly targetModelSelection: ModelSelection;
-  }) => Effect.Effect<ProviderSwitchPlanV2, ProviderSwitchServiceV2Error>;
-  readonly apply: (input: {
-    readonly projection: OrchestrationV2ThreadProjection;
-    readonly targetRunId: RunId;
-    readonly targetModelSelection: ModelSelection;
-    readonly plan: ProviderSwitchPlanV2;
-  }) => Effect.Effect<ProviderSwitchPlanV2, ProviderSwitchServiceV2Error>;
+  }) => Effect.Effect<ProviderSwitchPlanV2, ProviderSwitchPlanError>;
 }
 
 export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2,
   ProviderSwitchServiceV2Shape
 >()("t3/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
+
+export const layer: Layer.Layer<ProviderSwitchServiceV2> = Layer.succeed(
+  ProviderSwitchServiceV2,
+  ProviderSwitchServiceV2.of({
+    plan: ({ projection, targetModelSelection }) =>
+      Effect.sync(() => {
+        const current = projection.thread.modelSelection;
+        const instanceChanged = current.instanceId !== targetModelSelection.instanceId;
+        const modelChanged = current.model !== targetModelSelection.model;
+        const targetProviderThread = projection.providerThreads
+          .filter(
+            (thread) =>
+              thread.appThreadId === projection.thread.id &&
+              thread.ownerNodeId === null &&
+              thread.providerInstanceId === targetModelSelection.instanceId,
+          )
+          .toSorted(
+            (left, right) =>
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          )[0];
+        const releaseProviderSessionIds = projection.providerSessions
+          .filter((session) => {
+            if (session.status === "stopped" || session.status === "error") return false;
+            if (instanceChanged) {
+              return session.providerInstanceId !== targetModelSelection.instanceId;
+            }
+            return modelChanged && !session.capabilities.sessions.supportsModelSwitchInSession;
+          })
+          .map((session) => session.id);
+        return {
+          instanceChanged,
+          modelChanged,
+          targetProviderThreadId: targetProviderThread?.id ?? null,
+          releaseProviderSessionIds,
+        };
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderSwitchPlanError({
+              threadId: projection.thread.id,
+              targetProviderInstanceId: targetModelSelection.instanceId,
+              cause,
+            }),
+        ),
+      ),
+  }),
+);

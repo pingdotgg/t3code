@@ -1,5 +1,5 @@
 import {
-  ProviderKind,
+  ProviderDriverKind,
   ProviderReplayEntry,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
@@ -18,7 +18,7 @@ import {
 import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "./AcpAdapterV2.ts";
 
 export const AcpReplayTranscript = Schema.Struct({
-  provider: ProviderKind,
+  provider: ProviderDriverKind,
   protocol: Schema.Literal(ACP_PROTOCOL),
   version: Schema.String,
   scenario: Schema.String,
@@ -32,8 +32,8 @@ const decodeAcpReplayTranscriptSchema = Schema.decodeUnknownEffect(AcpReplayTran
 export class AcpReplayTranscriptDecodeError extends Schema.TaggedErrorClass<AcpReplayTranscriptDecodeError>()(
   "AcpReplayTranscriptDecodeError",
   {
-    expectedProvider: ProviderKind,
-    provider: Schema.optional(Schema.String),
+    expectedProvider: ProviderDriverKind,
+    driver: Schema.optional(Schema.String),
     protocol: Schema.optional(Schema.String),
     scenario: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -60,7 +60,7 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
 
 export function decodeAcpReplayTranscript(
   transcript: ProviderReplayTranscript,
-  expectedProvider: ProviderKind,
+  expectedProvider: ProviderDriverKind,
   options: { readonly retargetProvider?: boolean } = {},
 ): Effect.Effect<AcpReplayTranscript, AcpReplayTranscriptDecodeError> {
   const candidate = options.retargetProvider
