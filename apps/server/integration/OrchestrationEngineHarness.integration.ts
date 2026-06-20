@@ -22,8 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
-import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
+import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
 import { TextGeneration, type TextGenerationShape } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
@@ -179,7 +178,7 @@ export interface OrchestrationIntegrationHarness {
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQuery["Service"];
   readonly providerService: ProviderService["Service"];
-  readonly checkpointStore: CheckpointStore["Service"];
+  readonly checkpointStore: CheckpointStore.CheckpointStore["Service"];
   readonly checkpointRepository: ProjectionCheckpointRepository["Service"];
   readonly pendingApprovalRepository: ProjectionPendingApprovalRepository["Service"];
   readonly waitForThread: (
@@ -294,7 +293,7 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(providerEventLoggersLayer),
         );
 
-    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistry.layer));
+    const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer));
     const projectionSnapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive;
     const runtimeServicesLayer = Layer.mergeAll(
       projectionSnapshotQueryLayer,
@@ -396,7 +395,7 @@ export const makeOrchestrationIntegrationHarness = (
       runtime.runPromise(Effect.service(ProviderService)),
     ).pipe(Effect.orDie);
     const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
-      runtime.runPromise(Effect.service(CheckpointStore)),
+      runtime.runPromise(Effect.service(CheckpointStore.CheckpointStore)),
     ).pipe(Effect.orDie);
     const checkpointRepository = yield* tryRuntimePromise(
       "load ProjectionCheckpointRepository service",
