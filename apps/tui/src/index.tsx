@@ -3,6 +3,7 @@ import { createRoot } from "@opentui/react";
 
 import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
+import { applyTerminalColors } from "./theme.ts";
 
 // This is the Bun entry point spawned by the Node `t3 tui` command. It receives
 // the server origin + a bearer token via env, and mints fresh websocket URLs by
@@ -90,11 +91,12 @@ async function main(): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, backgroundColor: "transparent" });
 
   try {
-    // Detect the terminal's actual palette + default fg/bg up front, so our indexed
-    // and default colour intents resolve to the user's real theme (not a fallback
-    // palette) even on truecolor terminals. Best-effort: themes that don't answer
-    // the OSC query just keep the conventional ANSI mapping.
-    await renderer.getPalette({ timeout: 250 }).catch(() => {});
+    // Detect the terminal's actual palette + default fg/bg up front and feed it into
+    // the theme, so our indexed/default colour intents render with the user's REAL
+    // colours instead of OpenTUI's built-in (darker) xterm fallback. Best-effort:
+    // terminals that don't answer the OSC query keep the conventional ANSI mapping.
+    const detectedColors = await renderer.getPalette({ timeout: 1000 }).catch(() => null);
+    if (detectedColors) applyTerminalColors(detectedColors);
     let resolveDone: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;

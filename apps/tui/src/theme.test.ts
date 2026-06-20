@@ -94,3 +94,21 @@ describe("statusGlyphColor", () => {
     expect(color.slot).toBe(2);
   });
 });
+
+describe("applyTerminalColors", () => {
+  it("Given a detected palette, then theme colours snapshot to the terminal's real colours", async () => {
+    const { THEME, applyTerminalColors } = await import("./theme.ts");
+    applyTerminalColors({
+      palette: Array.from({ length: 16 }, (_, i) => (i === 6 ? "#ff66cc" : "#123456")),
+      defaultForeground: "#eeeeee",
+      defaultBackground: "#102030",
+    } as never);
+    const accent = THEME.accent;
+    expect([Math.round(accent.r * 255), Math.round(accent.g * 255), Math.round(accent.b * 255)]).toEqual([
+      255, 102, 204,
+    ]);
+    // Intent is preserved (still an indexed slot 6), so it also themes correctly.
+    expect(accent.intent).toBe("indexed");
+    expect(accent.slot).toBe(6);
+  });
+});
