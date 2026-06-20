@@ -78,4 +78,6 @@ Review changed TypeScript and directly affected call sites for the conventions b
 
 ## Reporting
 
-Report only concrete violations introduced or retained in the pull request's changed scope. Prefer precise inline comments on the smallest relevant line range and state the expected fix. A clear convention violation may fail the check. Do not fail for optional style preferences or unrelated legacy code. If there are no findings, report exactly `All clear`.
+Report only concrete violations introduced or retained in the pull request's changed scope. Prefer precise inline comments on the smallest relevant line range and state the expected fix. A clear convention violation may fail the check. Do not fail for optional style preferences or unrelated legacy code.
+
+This check defaults to failure. When there are no findings, stop immediately and make the entire final response exactly `All clear` on one line. Do not add a title, explanation, punctuation, Markdown, JSON, or trailing analysis, and do not continue reasoning after deciding the review is clean.
